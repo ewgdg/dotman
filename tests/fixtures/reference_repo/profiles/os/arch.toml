@@ -1,0 +1,4 @@
+includes = ["runtime/python"]
+
+[vars]
+INSTALL = "sh \"$DOTMAN_REPO_ROOT/scripts/install_arch_packages.sh\""

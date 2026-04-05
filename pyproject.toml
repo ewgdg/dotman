@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dotman"
+version = "0.1.0"
+description = "Dry-run planner for the package-oriented dotman engine"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "Jinja2>=3.1.4",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[project.scripts]
+dotman = "dotman.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dotman"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

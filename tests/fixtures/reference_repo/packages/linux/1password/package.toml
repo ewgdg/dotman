@@ -1,0 +1,8 @@
+id = "linux/1password"
+description = "Fixture Linux variant"
+extends = ["1password"]
+
+[targets.quickaccess_desktop]
+source = "files/local/share/applications/1password-quickaccess.desktop"
+path = "~/.local/share/applications/1password-quickaccess.desktop"
+chmod = "600"

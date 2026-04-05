@@ -1,0 +1,2 @@
+[vars]
+UV_RUN = "uv run --project \"$DOTMAN_REPO_ROOT\""

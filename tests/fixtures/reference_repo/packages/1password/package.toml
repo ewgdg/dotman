@@ -1,0 +1,7 @@
+id = "1password"
+description = "Fixture base 1Password package"
+
+[targets.ssh_dir]
+source = "files/config/1Password/ssh"
+path = "~/.config/1Password/ssh"
+chmod = "700"

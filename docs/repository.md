@@ -14,6 +14,8 @@ This document captures the current repository structure and configuration schema
 - Packages live under `packages/`.
 - Packages may declare `depends` for hard requirements.
 - Packages that exist only for hard dependency aggregation should use a `-meta` suffix by convention.
+- A package's target live paths are implicitly reserved.
+- Packages may define `reserved_paths = [...]` for additional live paths that must stay exclusive to that package.
 - A package directly under `packages/` is in the default namespace.
 - Namespaced packages stay explicit, for example `work/git`.
 - Groups live under `groups/` and are used for package selection and composition.
@@ -24,6 +26,7 @@ This document captures the current repository structure and configuration schema
 - Included profiles merge in declaration order.
 - Later included profiles override earlier included profiles.
 - The profile's own vars override all included profiles.
+- Repos may define optional repo-wide defaults in `repo.toml`.
 - `local.toml` is the convention for machine-local or private overrides.
 
 ## Resolution Model
@@ -56,6 +59,7 @@ This document captures the current repository structure and configuration schema
 - `append` should fail if the targeted inherited field is not a list.
 - Targets and hooks should stay keyed so merges remain deterministic.
 - Conflicting target ownership or incompatible target/path collisions should fail hard.
+- Reserved path collisions should also fail hard when one package reserves a live path used or reserved by another package.
 - A child package may override inherited targets, hooks, vars, and metadata.
 - Platform variants such as `linux/1password` are a primary use case for `extends`.
 - `extends` is preferable to cross-package relative `source` references when a variant wants to inherit most of a base package.
@@ -98,6 +102,11 @@ chmod = "600"
 - `apply_ignore` is for tracked files that should stay in the repo but should not be installed, for example `*.archived`.
 - Targets may define `import_ignore` as gitignore-style patterns relative to the live target root.
 - `import_ignore` is for live-side ignore during import planning and reconciliation.
+- Repos may define repo-wide ignore defaults in `repo.toml`:
+  - `[ignore]`
+  - `apply = [...]`
+  - `import = [...]`
+- Repo-level ignore defaults are prepended to target-level ignore lists.
 - For directory targets, old install-ignore style rules should map to `apply_ignore`.
 - For directory targets, old update-ignore style rules should map to `import_ignore`.
 - In v1, directory-target `import_ignore` should also preserve matching live paths during apply cleanup, so users do not need to maintain a duplicate preserve list.
@@ -106,6 +115,13 @@ chmod = "600"
 - For directory targets, `apply` and `upgrade` should also remove stale live paths that are no longer present in the repo source, except paths matched by `import_ignore`.
 - Source files can follow a default import convention by mirroring the live path under `files/`.
 - Template suffixes such as `.tmpl` are optional conventions, not the source of truth.
+
+Example repo defaults:
+
+```toml
+[ignore]
+import = ["*.dotdropbak"]
+```
 
 ## Hooks And Commands
 
@@ -133,6 +149,8 @@ chmod = "600"
   - default live-side view: `capture` if available, otherwise `raw`
 - `import_view_repo` and `import_view_live` must stay non-interactive and side-effect free.
 - `reconcile` is the explicit reverse workflow. A `reconcile` command may open an editor or otherwise guide manual source reconciliation.
+- Dotman may provide helper commands for package-authored `reconcile` workflows; for example, `dotman reconcile editor` can accept repeated `--additional-source` args for multi-source reconcile workflows.
+- For `dotman reconcile editor`, `--repo-path` is the primary repo-side target source and repeated `--additional-source` args are for extra repo files that should be opened alongside it during reconciliation.
 - `reconcile` should run only after the target has already been selected for import work.
 - If both `capture` and `reconcile` are defined, dotman should use `capture` for import planning and `reconcile` for the actual selected import step.
 - If a transformed file target has no `reconcile`, dotman may still import by writing repo-side content from `capture`, but `reconcile` is preferred when interactive or custom logic is needed.

@@ -1,0 +1,4 @@
+includes = ["runtime/python"]
+
+[vars]
+INSTALL = "brew install"

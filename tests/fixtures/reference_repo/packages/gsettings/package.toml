@@ -1,0 +1,46 @@
+id = "gsettings"
+description = "Fixture gsettings package"
+
+[targets.desktop]
+source = "files/config/gsettings/desktop.ini"
+path = "~/.config/gsettings/desktop.ini"
+
+[targets.nautilus]
+source = "files/config/gsettings/nautilus.ini"
+path = "~/.config/gsettings/nautilus.ini"
+
+[targets.gtk3_dir]
+source = "files/config/gtk-3.0"
+path = "~/.config/gtk-3.0"
+chmod = "700"
+apply_ignore = [
+  "assets/*",
+  "bookmarks",
+  "*.backup.*",
+  "settings.ini",
+]
+import_ignore = [
+  "assets/*",
+  "bookmarks",
+  "*.backup.*",
+  "settings.ini",
+]
+
+[targets.gtk3_settings]
+source = "files/config/gtk-3.0/settings.ini"
+path = "~/.config/gtk-3.0/settings.ini"
+
+[targets.gtk4_dir]
+source = "files/config/gtk-4.0"
+path = "~/.config/gtk-4.0"
+chmod = "700"
+apply_ignore = [
+  "settings.ini",
+]
+import_ignore = [
+  "settings.ini",
+]
+
+[targets.gtk4_settings]
+source = "files/config/gtk-4.0/settings.ini"
+path = "~/.config/gtk-4.0/settings.ini"

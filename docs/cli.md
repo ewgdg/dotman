@@ -60,6 +60,8 @@ This document captures the current command and selector direction for `dotman`.
 
 - `apply` is the command for selecting and applying a binding.
 - `apply` should resolve the binding into a package set, then merge profile and local values, then install/update the managed files for that desired state.
+- `apply` should also persist the selected root binding into repo state so later `upgrade`, `import`, and installed-state queries can replay the current managed selection.
+- Reapplying the same root selector in the same repo should update that tracked binding instead of appending a duplicate entry.
 - Group composition should let a user keep a stable entrypoint such as `host/arch-niri` without manually listing every lower-level group.
 - Examples:
   - `dotman apply main:git@default`
@@ -74,6 +76,31 @@ This document captures the current command and selector direction for `dotman`.
 - If group membership or package `depends` change in the repo, `upgrade` should pick up newly introduced managed packages and files.
 - `upgrade` should only touch files within the current managed selection.
 - Removal of dropped packages/files should stay a separate concern, for example a future `prune`.
+
+## Remove
+
+- `remove binding <binding>` should remove one tracked root binding from persisted state.
+- `remove binding` should be state-only in v1.
+- `remove binding` should not delete live files, run hooks, or infer target ownership.
+- `remove binding` should match tracked bindings, not current repo manifests, so stale bindings can still be removed after repo changes.
+- `remove binding` should accept either `selector` or `selector@profile`.
+- If the profile is omitted, dotman should remove the unique tracked binding that matches the selector.
+- If the selector only names a package that is present through another tracked binding, dotman should explain which tracked bindings currently include it instead of just saying "not tracked".
+- Repo qualification may still be omitted when the tracked binding is unique across configured repos.
+- Example:
+  - `dotman remove binding main:git@default`
+  - `dotman remove binding git`
+
+## Installed State
+
+- `list installed` should report the packages currently tracked by persisted bindings.
+- `list installed` should resolve the current binding state against the current repo manifests.
+- `list installed` should not guess from the live filesystem.
+- `list installed` should not run apply/import planning or execute render/capture commands.
+- `dotman list installed` should list unique installed packages and the bindings that currently include them.
+- `dotman info installed <package>` should show detailed information for one currently installed package.
+- Package detail should include the owning repo, description, bindings, resolved targets, and rendered hook commands for each binding context.
+- Package lookup for `info installed` may use the same repo-qualified and partial-selector rules as other package-oriented commands, but it should search only tracked installed packages.
 
 ## Import Direction
 
@@ -138,6 +165,7 @@ profile = "personal"
 
 - `upgrade` should recompute the current package set from persisted bindings and the current repo state.
 - `import` with no selector should also recompute from persisted bindings and the current repo state.
+- `remove binding` should update only the persisted binding set.
 - Target ownership and prune-oriented state can be added later when prune behavior is introduced.
 
 ## Host Entry Points

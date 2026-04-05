@@ -1,0 +1,28 @@
+id = "sunshine"
+description = "Fixture Sunshine package"
+
+[targets.config]
+source = "files/config/sunshine"
+path = "~/.config/sunshine"
+apply_ignore = [
+  "__pycache__/*",
+  "tests/*",
+  "sunshine-*.conf",
+]
+import_ignore = [
+  "__pycache__/*",
+  "tests/*",
+  "sunshine-*.conf",
+  "sunshine.conf",
+  "credentials/*",
+  "sunshine.log",
+  "*state.json",
+]
+
+[targets.selected_config]
+source = "files/config/sunshine/sunshine-{{ desktop }}.conf"
+path = "~/.config/sunshine/sunshine.conf"
+
+[targets.service_override]
+source = "files/config/systemd/user/sunshine.service.d"
+path = "~/.config/systemd/user/sunshine.service.d"

@@ -1,0 +1,3 @@
+includes = ["os/arch", "de/niri"]
+
+[vars]

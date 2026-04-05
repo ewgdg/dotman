@@ -1,0 +1,8 @@
+id = "host/linux-meta"
+description = "Fixture Linux host entrypoint"
+
+depends = [
+  "gsettings",
+  "sunshine",
+  "linux/1password",
+]
