@@ -1,2 +1,2 @@
 [ignore]
-import = ["*.bak"]
+pull = ["*.bak"]

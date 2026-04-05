@@ -9,8 +9,8 @@ colorscheme = "habamax"
 source = "files/config/nvim/init.lua.tmpl"
 path = "~/.config/nvim/init.lua"
 render = "sh hooks/render.sh"
-import_view_repo = "render"
-import_view_live = "raw"
+pull_view_repo = "render"
+pull_view_live = "raw"
 reconcile = "sh hooks/reconcile.sh"
 
 [hooks]

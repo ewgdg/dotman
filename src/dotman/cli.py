@@ -2,11 +2,305 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from dataclasses import dataclass, replace
 from typing import Sequence
 
-from dotman.engine import DotmanEngine
+from dotman.engine import DotmanEngine, parse_binding_text
 from dotman.reconcile import run_basic_reconcile
+
+
+ANSI_RESET = "\033[0m"
+MENU_HEADER_MARKER = "::"
+MENU_HEADER_MARKER_STYLE = ("1", "34")
+MENU_INDEX_STYLE = ("1", "36")
+MENU_PROMPT_STYLE = ("1",)
+MENU_HINT_STYLE = ("2",)
+MENU_REPO_STYLE = ("2", "34")
+INTERRUPTED_EXIT_CODE = 130
+MENU_ACTION_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
+    "install": ("1", "32"),
+    "update": ("1", "36"),
+    "pull": ("1", "33"),
+    "remove": ("1", "31"),
+    "missing": ("1", "31"),
+}
+
+
+@dataclass(frozen=True)
+class PendingSelectionItem:
+    binding_label: str
+    package_id: str
+    target_name: str
+    action: str
+    source_path: str
+    destination_path: str
+
+
+def prompt(message: str) -> str:
+    sys.stdout.write(message)
+    sys.stdout.flush()
+    answer = sys.stdin.readline()
+    return answer.strip()
+
+
+def colors_enabled() -> bool:
+    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+def style_text(text: str, *codes: str) -> str:
+    if not codes:
+        return text
+    return f"\033[{';'.join(codes)}m{text}{ANSI_RESET}"
+
+
+def print_selection_header(header_text: str) -> None:
+    if not colors_enabled():
+        print(header_text)
+        return
+    print(
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(header_text, '1')}"
+    )
+
+
+def print_selection_item(index: int, label: str) -> None:
+    if not colors_enabled():
+        print(f"  {index:>2}) {label}")
+        return
+    print(f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} {label}")
+
+
+def parse_selection_index(raw_answer: str, item_count: int) -> int:
+    answer = raw_answer.strip()
+    if not answer:
+        return 1
+    if not answer.isdigit():
+        raise ValueError(f"unsupported selection: {answer}")
+    selected_index = int(answer)
+    if not 1 <= selected_index <= item_count:
+        raise ValueError(f"selection index out of range: {selected_index}")
+    return selected_index
+
+
+def parse_selection_token(token: str, item_count: int) -> set[int]:
+    if token.isdigit():
+        selected_index = int(token)
+        if not 1 <= selected_index <= item_count:
+            raise ValueError(f"selection index out of range: {selected_index}")
+        return {selected_index}
+    if "-" not in token:
+        raise ValueError(f"unsupported token: {token}")
+    start_text, end_text = token.split("-", 1)
+    if not start_text.isdigit() or not end_text.isdigit():
+        raise ValueError(f"unsupported token: {token}")
+    start_index = int(start_text)
+    end_index = int(end_text)
+    if start_index > end_index:
+        raise ValueError(f"invalid range: {token}")
+    if start_index < 1 or end_index > item_count:
+        raise ValueError(f"selection index out of range: {token}")
+    return set(range(start_index, end_index + 1))
+
+
+def parse_selection_indexes(raw_answer: str, item_count: int) -> set[int]:
+    answer = raw_answer.strip()
+    if not answer:
+        return set()
+    keep_only_mode = answer.startswith("^")
+    if keep_only_mode:
+        answer = answer[1:].strip()
+        if not answer:
+            raise ValueError("missing keep-only selection after '^'")
+    selected_indexes: set[int] = set()
+    for token in answer.replace(",", " ").split():
+        selected_indexes.update(parse_selection_token(token, item_count))
+    if keep_only_mode:
+        return set(range(1, item_count + 1)) - selected_indexes
+    return selected_indexes
+
+
+def select_menu_option(*, header_text: str, option_labels: Sequence[str]) -> int:
+    print_selection_header(header_text)
+    for index, option_label in enumerate(option_labels, start=1):
+        print_selection_item(index, option_label)
+    while True:
+        try:
+            answer = prompt(selection_prompt())
+            return parse_selection_index(answer, len(option_labels)) - 1
+        except ValueError as exc:
+            print(f"invalid selection: {exc}", file=sys.stderr)
+
+
+def selection_prompt() -> str:
+    prompt_text = "Select a number"
+    hint_text = "(default: 1)"
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text}: "
+    return (
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+    )
+
+
+def pending_selection_prompt() -> str:
+    prompt_text = "Exclude by number or range"
+    hint_text = '(default: none; e.g. "1 2 4-6" or "^3")'
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text}: "
+    return (
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+    )
+
+
+def interactive_mode_enabled(*, json_output: bool) -> bool:
+    return not json_output and sys.stdin.isatty()
+
+
+def resolve_binding_text(
+    engine: DotmanEngine,
+    binding_text: str,
+    *,
+    json_output: bool,
+) -> tuple[str, str]:
+    explicit_repo, selector, selector_profile = parse_binding_text(binding_text)
+    exact_matches, partial_matches = engine.find_selector_matches(selector, explicit_repo)
+    interactive = interactive_mode_enabled(json_output=json_output)
+
+    if len(exact_matches) == 1:
+        repo, resolved_selector, _selector_kind = exact_matches[0]
+    elif len(exact_matches) > 1:
+        if not interactive:
+            candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_matches)
+            raise ValueError(f"selector '{selector}' is defined in multiple repos: {candidates}")
+        selected_index = select_menu_option(
+            header_text=f"Select a repo for exact selector '{selector}':",
+            option_labels=[f"{repo.config.name}:{match} [{kind}]" for repo, match, kind in exact_matches],
+        )
+        repo, resolved_selector, _selector_kind = exact_matches[selected_index]
+    elif len(partial_matches) == 1:
+        repo, resolved_selector, _selector_kind = partial_matches[0]
+    elif len(partial_matches) > 1:
+        if not interactive:
+            candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches)
+            raise ValueError(f"selector '{selector}' is ambiguous: {candidates}")
+        selected_index = select_menu_option(
+            header_text=f"Select a selector match for '{selector}':",
+            option_labels=[f"{repo.config.name}:{match} [{kind}]" for repo, match, kind in partial_matches],
+        )
+        repo, resolved_selector, _selector_kind = partial_matches[selected_index]
+    else:
+        raise ValueError(f"selector '{selector}' did not match any package or group")
+
+    resolved_profile = selector_profile
+    if not resolved_profile:
+        available_profiles = engine.list_profiles(repo.config.name)
+        if not available_profiles:
+            raise ValueError(f"repo '{repo.config.name}' does not define any profiles")
+        if len(available_profiles) == 1:
+            resolved_profile = available_profiles[0]
+        elif interactive:
+            selected_index = select_menu_option(
+                header_text=f"Select a profile for {repo.config.name}:{resolved_selector}:",
+                option_labels=list(available_profiles),
+            )
+            resolved_profile = available_profiles[selected_index]
+        else:
+            raise ValueError("profile is required in non-interactive mode")
+
+    return f"{repo.config.name}:{resolved_selector}", resolved_profile
+
+
+def collect_pending_selection_items(plans: Sequence) -> list[PendingSelectionItem]:
+    selection_items: list[PendingSelectionItem] = []
+    for plan in plans:
+        binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
+        for target in plan.target_plans:
+            if target.action == "noop":
+                continue
+            selection_items.append(
+                PendingSelectionItem(
+                    binding_label=binding_label,
+                    package_id=target.package_id,
+                    target_name=target.target_name,
+                    action=target.action,
+                    source_path=str(target.repo_path),
+                    destination_path=str(target.live_path),
+                )
+            )
+    return selection_items
+
+
+def print_pending_selection_item(index: int, item: PendingSelectionItem) -> None:
+    repo_name = item.binding_label.split(":", 1)[0]
+    package_text = f"{repo_name}/{item.package_id}"
+    if not colors_enabled():
+        item_text = (
+            f"[{item.action}] {package_text} ({item.target_name}): "
+            f"{item.source_path} -> {item.destination_path}"
+        )
+        print(f"  {index:>2}) {item_text}")
+        return
+
+    action_style = MENU_ACTION_STYLE_BY_NAME.get(item.action, ("1",))
+    action_text = style_text(f"[{item.action}]", *action_style)
+    package_label = (
+        f"{style_text(repo_name, *MENU_REPO_STYLE)}"
+        f"{style_text('/', *MENU_HINT_STYLE)}"
+        f"{style_text(item.package_id, '1')}"
+    )
+    target_label = style_text(f"({item.target_name})", *MENU_HINT_STYLE)
+    arrow_text = style_text("->", *MENU_HINT_STYLE)
+    print(
+        f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+        f"{action_text} {package_label} {target_label}: {item.source_path} {arrow_text} {item.destination_path}"
+    )
+
+
+def prompt_for_excluded_items(selection_items: Sequence[PendingSelectionItem], *, operation: str) -> set[int]:
+    print_selection_header(f"Select items to exclude from {operation}:")
+    for index, item in enumerate(selection_items, start=1):
+        print_pending_selection_item(index, item)
+    while True:
+        try:
+            return parse_selection_indexes(prompt(pending_selection_prompt()), len(selection_items))
+        except ValueError as exc:
+            print(f"invalid selection: {exc}", file=sys.stderr)
+
+
+def filter_plans_for_interactive_selection(*, plans: Sequence, operation: str, json_output: bool) -> list:
+    if not interactive_mode_enabled(json_output=json_output):
+        return list(plans)
+    selection_items = collect_pending_selection_items(plans)
+    if not selection_items:
+        return list(plans)
+    excluded_indexes = prompt_for_excluded_items(selection_items, operation=operation)
+    if not excluded_indexes:
+        return list(plans)
+
+    excluded_targets: set[tuple[str, str, str, str]] = set()
+    for excluded_index in excluded_indexes:
+        item = selection_items[excluded_index - 1]
+        excluded_targets.add((item.binding_label, item.package_id, item.target_name, item.destination_path))
+
+    filtered_plans = []
+    for plan in plans:
+        binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
+        filtered_targets = [
+            target
+            for target in plan.target_plans
+            if (binding_label, target.package_id, target.target_name, str(target.live_path)) not in excluded_targets
+        ]
+        filtered_plans.append(replace(plan, target_plans=filtered_targets))
+    return filtered_plans
+
+
+def emit_interrupt_notice() -> None:
+    sys.stderr.write("\ninterrupted\n")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,18 +310,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    apply_parser = subparsers.add_parser("apply")
-    apply_parser.add_argument("binding")
+    track_parser = subparsers.add_parser("track")
+    track_parser.add_argument("binding")
 
-    import_parser = subparsers.add_parser("import")
-    import_parser.add_argument("binding")
+    push_parser = subparsers.add_parser("push")
+    push_parser.add_argument("binding", nargs="?")
 
-    subparsers.add_parser("upgrade")
+    pull_parser = subparsers.add_parser("pull")
+    pull_parser.add_argument("binding", nargs="?")
 
-    remove_parser = subparsers.add_parser("remove")
-    remove_subparsers = remove_parser.add_subparsers(dest="remove_command", required=True)
-    remove_binding_parser = remove_subparsers.add_parser("binding")
-    remove_binding_parser.add_argument("binding")
+    untrack_parser = subparsers.add_parser("untrack")
+    untrack_parser.add_argument("binding")
+
+    forget_parser = subparsers.add_parser("forget")
+    forget_parser.add_argument("binding")
 
     list_parser = subparsers.add_parser("list")
     list_subparsers = list_parser.add_subparsers(dest="list_command", required=True)
@@ -50,19 +346,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def emit_payload(*, operation: str, plans: Sequence, json_output: bool) -> int:
+    visible_plans = []
+    for plan in plans:
+        visible_targets = [target for target in plan.target_plans if target.action != "noop"]
+        if not visible_targets:
+            continue
+        visible_plans.append(replace(plan, target_plans=visible_targets))
     payload = {
         "mode": "dry-run",
         "operation": operation,
-        "bindings": [plan.to_dict() for plan in plans],
+        "bindings": [plan.to_dict() for plan in visible_plans],
     }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    for plan in plans:
-        print(f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}")
+    for plan in visible_plans:
         for target in plan.target_plans:
-            print(f"  {target.package_id}:{target.target_name} -> {target.action}")
+            print(f"{target.package_id}:{target.target_name} -> {target.action}")
     return 0
 
 
@@ -82,10 +383,10 @@ def emit_installed_packages(*, packages: Sequence, json_output: bool) -> int:
     return 0
 
 
-def emit_removed_binding(*, binding, json_output: bool) -> int:
+def emit_forgotten_binding(*, binding, json_output: bool) -> int:
     payload = {
         "mode": "state-only",
-        "operation": "remove-binding",
+        "operation": "untrack",
         "binding": {
             "repo": binding.repo,
             "selector": binding.selector,
@@ -96,7 +397,25 @@ def emit_removed_binding(*, binding, json_output: bool) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"removed {binding.repo}:{binding.selector}@{binding.profile}")
+    print(f"untracked {binding.repo}:{binding.selector}@{binding.profile}")
+    return 0
+
+
+def emit_tracked_binding(*, binding, json_output: bool) -> int:
+    payload = {
+        "mode": "state-only",
+        "operation": "track",
+        "binding": {
+            "repo": binding.repo,
+            "selector": binding.selector,
+            "profile": binding.profile,
+        },
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"tracked {binding.repo}:{binding.selector}@{binding.profile}")
     return 0
 
 
@@ -121,8 +440,8 @@ def emit_installed_package_detail(*, package_detail, json_output: bool) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(list(argv) if argv is not None else None)
     try:
+        args = build_parser().parse_args(list(argv) if argv is not None else None)
         if args.command == "reconcile" and args.reconcile_command == "editor":
             return run_basic_reconcile(
                 repo_path=args.repo_path,
@@ -131,16 +450,69 @@ def main(argv: Sequence[str] | None = None) -> int:
                 editor=args.editor,
             )
         engine = DotmanEngine.from_config_path(args.config)
-        if args.command == "apply":
-            plan = engine.plan_apply(args.binding)
-            engine.record_binding(plan.binding)
-            return emit_payload(operation="apply", plans=[plan], json_output=args.json_output)
-        if args.command == "import":
-            return emit_payload(operation="import", plans=[engine.plan_import(args.binding)], json_output=args.json_output)
-        if args.command == "upgrade":
-            return emit_payload(operation="upgrade", plans=engine.plan_upgrade(), json_output=args.json_output)
-        if args.command == "remove" and args.remove_command == "binding":
-            return emit_removed_binding(binding=engine.remove_binding(args.binding), json_output=args.json_output)
+        if args.command == "track":
+            binding_text, profile = resolve_binding_text(engine, args.binding, json_output=args.json_output)
+            _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=profile)
+            engine.record_binding(binding)
+            return emit_tracked_binding(binding=binding, json_output=args.json_output)
+        if args.command == "push":
+            if args.binding:
+                _repo, binding = engine.resolve_tracked_binding(
+                    args.binding,
+                    operation="push",
+                    allow_package_owners=True,
+                )
+                binding_text = f"{binding.repo}:{binding.selector}"
+                plan = engine.plan_push_binding(binding_text, profile=binding.profile)
+                filtered_plans = filter_plans_for_interactive_selection(
+                    plans=[plan],
+                    operation="push",
+                    json_output=args.json_output,
+                )
+                plan = filtered_plans[0]
+                return emit_payload(operation="push", plans=[plan], json_output=args.json_output)
+            return emit_payload(
+                operation="push",
+                plans=filter_plans_for_interactive_selection(
+                    plans=engine.plan_push(),
+                    operation="push",
+                    json_output=args.json_output,
+                ),
+                json_output=args.json_output,
+            )
+        if args.command == "pull":
+            if args.binding:
+                _repo, binding = engine.resolve_tracked_binding(
+                    args.binding,
+                    operation="pull",
+                    allow_package_owners=True,
+                )
+                binding_text = f"{binding.repo}:{binding.selector}"
+                profile = binding.profile
+                plans = filter_plans_for_interactive_selection(
+                    plans=[engine.plan_pull_binding(binding_text, profile=profile)],
+                    operation="pull",
+                    json_output=args.json_output,
+                )
+                return emit_payload(
+                    operation="pull",
+                    plans=plans,
+                    json_output=args.json_output,
+                )
+            return emit_payload(
+                operation="pull",
+                plans=filter_plans_for_interactive_selection(
+                    plans=engine.plan_pull(),
+                    operation="pull",
+                    json_output=args.json_output,
+                ),
+                json_output=args.json_output,
+            )
+        if args.command in {"untrack", "forget"}:
+            return emit_forgotten_binding(
+                binding=engine.remove_binding(args.binding, operation="untrack"),
+                json_output=args.json_output,
+            )
         if args.command == "list" and args.list_command == "installed":
             return emit_installed_packages(packages=engine.list_installed_packages(), json_output=args.json_output)
         if args.command == "info" and args.info_command == "installed":
@@ -148,6 +520,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 package_detail=engine.describe_installed_package(args.package),
                 json_output=args.json_output,
             )
+    except KeyboardInterrupt:
+        emit_interrupt_notice()
+        return INTERRUPTED_EXIT_CODE
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

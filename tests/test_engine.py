@@ -147,8 +147,8 @@ def test_import_plan_uses_declared_repo_and_live_views_for_rendered_targets(
     plan = engine.plan_import("example:nvim@basic")
 
     target = plan.target_plans[0]
-    assert target.import_view_repo == "render"
-    assert target.import_view_live == "raw"
+    assert target.pull_view_repo == "render"
+    assert target.pull_view_live == "raw"
     assert target.action == "noop"
     assert target.reconcile_command == "sh hooks/reconcile.sh"
 
@@ -265,11 +265,11 @@ def test_sandbox_nested_directory_and_file_targets_plan_without_collision(
     }
 
     gtk3_dir = next(target for target in plan.target_plans if target.target_name == "gtk3_dir")
-    assert "settings.ini" in gtk3_dir.apply_ignore
-    assert "settings.ini" in gtk3_dir.import_ignore
+    assert "settings.ini" in gtk3_dir.push_ignore
+    assert "settings.ini" in gtk3_dir.pull_ignore
 
 
-def test_repo_toml_import_ignore_applies_to_directory_targets(
+def test_repo_toml_pull_ignore_applies_to_directory_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -285,7 +285,7 @@ def test_repo_toml_import_ignore_applies_to_directory_targets(
         "\n".join(
             [
                 "[ignore]",
-                'import = ["*.bak"]',
+                'pull = ["*.bak"]',
                 "",
             ]
         ),
@@ -349,8 +349,8 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
         "\n".join(
             [
                 "[ignore]",
-                'apply = ["*.archived"]',
-                'import = ["*.bak"]',
+                'push = ["*.archived"]',
+                'pull = ["*.bak"]',
                 "",
             ]
         ),
@@ -364,7 +364,7 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
                 "[targets.config]",
                 'source = "files/config"',
                 'path = "~/.config/sample"',
-                'import_ignore = ["keep.local"]',
+                'pull_ignore = ["keep.local"]',
                 "",
             ]
         ),
@@ -399,8 +399,8 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
     plan = engine.plan_apply("fixture:sample@default")
 
     assert plan.target_plans[0].action == "noop"
-    assert plan.target_plans[0].apply_ignore == ("*.archived",)
-    assert plan.target_plans[0].import_ignore == ("*.bak", "keep.local")
+    assert plan.target_plans[0].push_ignore == ("*.archived",)
+    assert plan.target_plans[0].pull_ignore == ("*.bak", "keep.local")
 
 
 def test_package_reserved_paths_conflict_with_other_package_target(
@@ -746,6 +746,6 @@ def test_remove_binding_reports_tracked_owner_when_selector_is_only_a_dependency
 
     with pytest.raises(
         ValueError,
-        match=r"cannot remove 'example:nvim': required by tracked bindings: example:core-cli-meta@basic",
+        match=r"cannot untrack 'example:nvim': required by tracked bindings: example:core-cli-meta@basic",
     ):
         engine.remove_binding("nvim@basic")

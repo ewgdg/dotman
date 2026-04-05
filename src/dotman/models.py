@@ -33,10 +33,10 @@ class TargetSpec:
     render: str | None = None
     capture: str | None = None
     reconcile: str | None = None
-    import_view_repo: str | None = None
-    import_view_live: str | None = None
-    apply_ignore: tuple[str, ...] | None = None
-    import_ignore: tuple[str, ...] | None = None
+    pull_view_repo: str | None = None
+    pull_view_live: str | None = None
+    push_ignore: tuple[str, ...] | None = None
+    pull_ignore: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -78,8 +78,8 @@ class ProfileSpec:
 
 @dataclass(frozen=True)
 class RepoIgnoreDefaults:
-    apply: tuple[str, ...] = ()
-    import_: tuple[str, ...] = ()
+    push: tuple[str, ...] = ()
+    pull: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -130,10 +130,10 @@ class InstalledTargetSummary:
     render_command: str | None = None
     capture_command: str | None = None
     reconcile_command: str | None = None
-    import_view_repo: str = "raw"
-    import_view_live: str = "raw"
-    apply_ignore: tuple[str, ...] = ()
-    import_ignore: tuple[str, ...] = ()
+    pull_view_repo: str = "raw"
+    pull_view_live: str = "raw"
+    push_ignore: tuple[str, ...] = ()
+    pull_ignore: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,10 +144,10 @@ class InstalledTargetSummary:
             "render_command": self.render_command,
             "capture_command": self.capture_command,
             "reconcile_command": self.reconcile_command,
-            "import_view_repo": self.import_view_repo,
-            "import_view_live": self.import_view_live,
-            "apply_ignore": list(self.apply_ignore),
-            "import_ignore": list(self.import_ignore),
+            "pull_view_repo": self.pull_view_repo,
+            "pull_view_live": self.pull_view_live,
+            "push_ignore": list(self.push_ignore),
+            "pull_ignore": list(self.pull_ignore),
         }
 
 
@@ -211,10 +211,10 @@ class TargetPlan:
     capture_command: str | None = None
     reconcile_command: str | None = None
     projection_error: str | None = None
-    import_view_repo: str = "raw"
-    import_view_live: str = "raw"
-    apply_ignore: tuple[str, ...] = ()
-    import_ignore: tuple[str, ...] = ()
+    pull_view_repo: str = "raw"
+    pull_view_live: str = "raw"
+    push_ignore: tuple[str, ...] = ()
+    pull_ignore: tuple[str, ...] = ()
     desired_bytes: bytes | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
@@ -230,10 +230,10 @@ class TargetPlan:
             "capture_command": self.capture_command,
             "reconcile_command": self.reconcile_command,
             "projection_error": self.projection_error,
-            "import_view_repo": self.import_view_repo,
-            "import_view_live": self.import_view_live,
-            "apply_ignore": list(self.apply_ignore),
-            "import_ignore": list(self.import_ignore),
+            "pull_view_repo": self.pull_view_repo,
+            "pull_view_live": self.pull_view_live,
+            "push_ignore": list(self.push_ignore),
+            "pull_ignore": list(self.pull_ignore),
         }
 
 

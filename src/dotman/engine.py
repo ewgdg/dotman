@@ -111,6 +111,16 @@ def normalize_string_list(value: Any) -> tuple[str, ...] | None:
     raise ValueError(f"expected string or list[str], got {type(value).__name__}")
 
 
+def read_schema_alias(payload: dict[str, Any], primary_key: str, legacy_key: str) -> Any:
+    primary_value = payload.get(primary_key)
+    legacy_value = payload.get(legacy_key)
+    if primary_value is not None and legacy_value is not None and primary_value != legacy_value:
+        raise ValueError(f"conflicting schema keys '{primary_key}' and legacy '{legacy_key}'")
+    if primary_value is not None:
+        return primary_value
+    return legacy_value
+
+
 def merge_ignore_patterns(*pattern_sets: tuple[str, ...]) -> tuple[str, ...]:
     merged: list[str] = []
     for pattern_set in pattern_sets:
@@ -193,8 +203,8 @@ class Repository:
         if not isinstance(ignore_payload, dict):
             raise ValueError(f"repo config {repo_config_path} [ignore] must be a table")
         return RepoIgnoreDefaults(
-            apply=normalize_string_list(ignore_payload.get("apply")) or (),
-            import_=normalize_string_list(ignore_payload.get("import")) or (),
+            push=normalize_string_list(read_schema_alias(ignore_payload, "push", "apply")) or (),
+            pull=normalize_string_list(read_schema_alias(ignore_payload, "pull", "import")) or (),
         )
 
     def _load_packages(self) -> dict[str, PackageSpec]:
@@ -218,10 +228,10 @@ class Repository:
                         render=target_payload.get("render"),
                         capture=target_payload.get("capture"),
                         reconcile=target_payload.get("reconcile"),
-                        import_view_repo=target_payload.get("import_view_repo"),
-                        import_view_live=target_payload.get("import_view_live"),
-                        apply_ignore=normalize_string_list(target_payload.get("apply_ignore")),
-                        import_ignore=normalize_string_list(target_payload.get("import_ignore")),
+                        pull_view_repo=read_schema_alias(target_payload, "pull_view_repo", "import_view_repo"),
+                        pull_view_live=read_schema_alias(target_payload, "pull_view_live", "import_view_live"),
+                        push_ignore=normalize_string_list(read_schema_alias(target_payload, "push_ignore", "apply_ignore")),
+                        pull_ignore=normalize_string_list(read_schema_alias(target_payload, "pull_ignore", "import_ignore")),
                     )
                     for target_name, target_payload in targets_payload.items()
                 }
@@ -373,10 +383,10 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         render=override.render if override.render is not None else base.render,
         capture=override.capture if override.capture is not None else base.capture,
         reconcile=override.reconcile if override.reconcile is not None else base.reconcile,
-        import_view_repo=override.import_view_repo if override.import_view_repo is not None else base.import_view_repo,
-        import_view_live=override.import_view_live if override.import_view_live is not None else base.import_view_live,
-        apply_ignore=override.apply_ignore if override.apply_ignore is not None else base.apply_ignore,
-        import_ignore=override.import_ignore if override.import_ignore is not None else base.import_ignore,
+        pull_view_repo=override.pull_view_repo if override.pull_view_repo is not None else base.pull_view_repo,
+        pull_view_live=override.pull_view_live if override.pull_view_live is not None else base.pull_view_live,
+        push_ignore=override.push_ignore if override.push_ignore is not None else base.push_ignore,
+        pull_ignore=override.pull_ignore if override.pull_ignore is not None else base.pull_ignore,
     )
 
 
@@ -449,8 +459,17 @@ class DotmanEngine:
         except KeyError as exc:
             raise ValueError(f"unknown repo '{repo_name}'") from exc
 
-    def resolve_selector(self, selector: str, repo_name: str | None = None) -> tuple[Repository, str, str]:
-        candidate_repos = [self.get_repo(repo_name)] if repo_name else [self.repos[repo.name] for repo in self.config.ordered_repos]
+    def candidate_repos(self, repo_name: str | None = None) -> list[Repository]:
+        if repo_name:
+            return [self.get_repo(repo_name)]
+        return [self.repos[repo.name] for repo in self.config.ordered_repos]
+
+    def find_selector_matches(
+        self,
+        selector: str,
+        repo_name: str | None = None,
+    ) -> tuple[list[tuple[Repository, str, str]], list[tuple[Repository, str, str]]]:
+        candidate_repos = self.candidate_repos(repo_name)
         exact_matches: list[tuple[Repository, str, str]] = []
         partial_matches: list[tuple[Repository, str, str]] = []
         for repo in candidate_repos:
@@ -470,17 +489,25 @@ class DotmanEngine:
             for group_id in repo.groups:
                 if selector in group_id:
                     partial_matches.append((repo, group_id, "group"))
+        unique_partials = {(repo.config.name, match, kind): (repo, match, kind) for repo, match, kind in partial_matches}
+        return exact_matches, list(unique_partials.values())
+
+    def list_profiles(self, repo_name: str) -> list[str]:
+        repo = self.get_repo(repo_name)
+        return rank_profiles({profile_id: profile.includes for profile_id, profile in repo.profiles.items()})
+
+    def resolve_selector(self, selector: str, repo_name: str | None = None) -> tuple[Repository, str, str]:
+        exact_matches, partial_matches = self.find_selector_matches(selector, repo_name)
 
         if len(exact_matches) == 1:
             return exact_matches[0]
         if len(exact_matches) > 1:
             candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_matches)
             raise ValueError(f"selector '{selector}' is defined in multiple repos: {candidates}")
-        unique_partials = {(repo.config.name, match, kind): (repo, match, kind) for repo, match, kind in partial_matches}
-        if len(unique_partials) == 1:
-            return next(iter(unique_partials.values()))
-        if len(unique_partials) > 1:
-            candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in unique_partials.values())
+        if len(partial_matches) == 1:
+            return partial_matches[0]
+        if len(partial_matches) > 1:
+            candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches)
             raise ValueError(f"selector '{selector}' is ambiguous: {candidates}")
         raise ValueError(f"selector '{selector}' did not match any package or group")
 
@@ -496,13 +523,27 @@ class DotmanEngine:
         repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
         return self._build_plan(repo, binding, selector_kind, operation="apply")
 
+    def plan_push_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
+        repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
+        return self._build_plan(repo, binding, selector_kind, operation="push")
+
     def plan_import(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
         repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
         return self._build_plan(repo, binding, selector_kind, operation="import")
 
-    def resolve_tracked_binding(self, binding_text: str) -> tuple[Repository, Binding]:
+    def plan_pull_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
+        repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
+        return self._build_plan(repo, binding, selector_kind, operation="pull")
+
+    def resolve_tracked_binding(
+        self,
+        binding_text: str,
+        *,
+        operation: str = "untrack",
+        allow_package_owners: bool = False,
+    ) -> tuple[Repository, Binding]:
         explicit_repo, selector, profile = parse_binding_text(binding_text)
-        candidate_repos = [self.get_repo(explicit_repo)] if explicit_repo else [self.repos[repo.name] for repo in self.config.ordered_repos]
+        candidate_repos = self.candidate_repos(explicit_repo)
         tracked = [
             (repo, binding)
             for repo in candidate_repos
@@ -533,6 +574,19 @@ class DotmanEngine:
 
         owner_bindings = self._find_tracked_package_owners(candidate_repos, selector, profile)
         if owner_bindings:
+            if allow_package_owners:
+                if len(owner_bindings) == 1:
+                    owner_repo, owner_binding = owner_bindings[0]
+                    return owner_repo, Binding(
+                        repo=owner_repo.config.name,
+                        selector=selector,
+                        profile=owner_binding.profile,
+                    )
+                candidates = ", ".join(
+                    f"{repo.config.name}:{binding.selector}@{binding.profile}"
+                    for repo, binding in owner_bindings
+                )
+                raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked bindings: {candidates}")
             owners = ", ".join(
                 f"{repo.config.name}:{binding.selector}@{binding.profile}"
                 for repo, binding in owner_bindings
@@ -540,7 +594,7 @@ class DotmanEngine:
             required_repo = explicit_repo or owner_bindings[0][0].config.name
             required_ref = f"{required_repo}:{selector}"
             raise ValueError(
-                f"cannot remove '{required_ref}': required by tracked bindings: {owners}"
+                f"cannot {operation} '{required_ref}': required by tracked bindings: {owners}"
             )
 
         raise ValueError(f"binding '{binding_label}' is not currently tracked")
@@ -552,6 +606,28 @@ class DotmanEngine:
             for binding in self.read_bindings(repo):
                 selector_kind = "group" if binding.selector in repo.groups else "package"
                 plans.append(self._build_plan(repo, binding, selector_kind, operation="upgrade"))
+        return plans
+
+    def plan_push(self) -> list[BindingPlan]:
+        plans: list[BindingPlan] = []
+        for repo_config in self.config.ordered_repos:
+            repo = self.get_repo(repo_config.name)
+            for binding in self.read_bindings(repo):
+                selector_kind = "group" if binding.selector in repo.groups else "package"
+                plans.append(self._build_plan(repo, binding, selector_kind, operation="push"))
+        return plans
+
+    def plan_upgrade_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
+        repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
+        return self._build_plan(repo, binding, selector_kind, operation="upgrade")
+
+    def plan_pull(self) -> list[BindingPlan]:
+        plans: list[BindingPlan] = []
+        for repo_config in self.config.ordered_repos:
+            repo = self.get_repo(repo_config.name)
+            for binding in self.read_bindings(repo):
+                selector_kind = "group" if binding.selector in repo.groups else "package"
+                plans.append(self._build_plan(repo, binding, selector_kind, operation="pull"))
         return plans
 
     def list_installed_packages(self) -> list[InstalledPackageSummary]:
@@ -641,8 +717,8 @@ class DotmanEngine:
             normalized.append(binding)
         self.write_bindings(repo, normalized)
 
-    def remove_binding(self, binding_text: str) -> Binding:
-        repo, binding = self.resolve_tracked_binding(binding_text)
+    def remove_binding(self, binding_text: str, *, operation: str = "untrack") -> Binding:
+        repo, binding = self.resolve_tracked_binding(binding_text, operation=operation)
         remaining = [
             existing
             for existing in self.read_bindings(repo)
@@ -705,7 +781,7 @@ class DotmanEngine:
         if profile is not None:
             raise ValueError("installed show expects a package selector, not a binding")
 
-        candidate_repos = [self.get_repo(explicit_repo)] if explicit_repo else [self.repos[repo.name] for repo in self.config.ordered_repos]
+        candidate_repos = self.candidate_repos(explicit_repo)
         installed_ids = {
             (repo.config.name, package_id): repo
             for repo, _binding, _selector_kind, package_ids in self._iter_installed_bindings()
@@ -798,10 +874,10 @@ class DotmanEngine:
                     render_command=render_command,
                     capture_command=capture_command,
                     reconcile_command=reconcile_command,
-                    import_view_repo=target.import_view_repo or "raw",
-                    import_view_live=target.import_view_live or ("capture" if capture_command else "raw"),
-                    apply_ignore=merge_ignore_patterns(repo.ignore_defaults.apply, target.apply_ignore or ()),
-                    import_ignore=merge_ignore_patterns(repo.ignore_defaults.import_, target.import_ignore or ()),
+                    pull_view_repo=target.pull_view_repo or "raw",
+                    pull_view_live=target.pull_view_live or ("capture" if capture_command else "raw"),
+                    push_ignore=merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ()),
+                    pull_ignore=merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ()),
                 )
             )
         return target_summaries
@@ -897,8 +973,8 @@ class DotmanEngine:
                         target,
                         repo_path,
                         live_path,
-                        merge_ignore_patterns(repo.ignore_defaults.apply, target.apply_ignore or ()),
-                        merge_ignore_patterns(repo.ignore_defaults.import_, target.import_ignore or ()),
+                        merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ()),
+                        merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ()),
                     )
                 )
 
@@ -906,7 +982,7 @@ class DotmanEngine:
         self._validate_reserved_path_conflicts(packages, rendered_targets, context)
 
         plans: list[TargetPlan] = []
-        for package, target, repo_path, live_path, apply_ignore, import_ignore in rendered_targets:
+        for package, target, repo_path, live_path, push_ignore, pull_ignore in rendered_targets:
             render_command = (
                 render_template_string(target.render, context, base_dir=target.declared_in)
                 if target.render is not None
@@ -923,7 +999,7 @@ class DotmanEngine:
                 else None
             )
             if repo_path.is_dir():
-                action = self._plan_directory_action(repo_path, live_path, apply_ignore, import_ignore)
+                action = self._plan_directory_action(repo_path, live_path, push_ignore, pull_ignore)
                 plans.append(
                     TargetPlan(
                         package_id=package.id,
@@ -936,10 +1012,10 @@ class DotmanEngine:
                         render_command=render_command,
                         capture_command=capture_command,
                         reconcile_command=reconcile_command,
-                        import_view_repo=target.import_view_repo or "raw",
-                        import_view_live=target.import_view_live or ("capture" if capture_command else "raw"),
-                        apply_ignore=apply_ignore,
-                        import_ignore=import_ignore,
+                        pull_view_repo=target.pull_view_repo or "raw",
+                        pull_view_live=target.pull_view_live or ("capture" if capture_command else "raw"),
+                        push_ignore=push_ignore,
+                        pull_ignore=pull_ignore,
                     )
                 )
                 continue
@@ -961,13 +1037,13 @@ class DotmanEngine:
                     inferred_os=inferred_os,
                 )
             except ValueError as exc:
-                if operation in {"apply", "upgrade"} and not live_path.exists():
+                if operation in {"apply", "upgrade", "push"} and not live_path.exists():
                     projection_error = str(exc)
                     projection_kind = "command"
                 else:
                     raise
-            import_view_repo = target.import_view_repo or "raw"
-            import_view_live = target.import_view_live or ("capture" if capture_command else "raw")
+            pull_view_repo = target.pull_view_repo or "raw"
+            pull_view_live = target.pull_view_live or ("capture" if capture_command else "raw")
             action = self._plan_file_action(
                 repo=repo,
                 package=package,
@@ -981,8 +1057,8 @@ class DotmanEngine:
                 binding=binding,
                 operation=operation,
                 inferred_os=inferred_os,
-                import_view_repo=import_view_repo,
-                import_view_live=import_view_live,
+                pull_view_repo=pull_view_repo,
+                pull_view_live=pull_view_live,
             )
             desired_text = None
             if desired_bytes is not None:
@@ -1004,10 +1080,10 @@ class DotmanEngine:
                     capture_command=capture_command,
                     reconcile_command=reconcile_command,
                     projection_error=projection_error,
-                    import_view_repo=import_view_repo,
-                    import_view_live=import_view_live,
-                    apply_ignore=apply_ignore,
-                    import_ignore=import_ignore,
+                    pull_view_repo=pull_view_repo,
+                    pull_view_live=pull_view_live,
+                    push_ignore=push_ignore,
+                    pull_ignore=pull_ignore,
                     desired_bytes=desired_bytes,
                 )
             )
@@ -1017,14 +1093,14 @@ class DotmanEngine:
         self,
         rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...]]],
     ) -> None:
-        for index, (package, target, _repo_path, live_path, apply_ignore, import_ignore) in enumerate(rendered_targets):
+        for index, (package, target, _repo_path, live_path, push_ignore, pull_ignore) in enumerate(rendered_targets):
             for (
                 other_package,
                 other_target,
                 _other_repo_path,
                 other_live_path,
-                other_apply_ignore,
-                other_import_ignore,
+                other_push_ignore,
+                other_pull_ignore,
             ) in rendered_targets[index + 1 :]:
                 if live_path == other_live_path:
                     raise ValueError(
@@ -1032,14 +1108,14 @@ class DotmanEngine:
                     )
                 if live_path in other_live_path.parents:
                     relative = other_live_path.relative_to(live_path).as_posix()
-                    parent_ignore = set(apply_ignore) | set(import_ignore)
+                    parent_ignore = set(push_ignore) | set(pull_ignore)
                     if not any(matches_ignore_pattern(relative, pattern) for pattern in parent_ignore):
                         raise ValueError(
                             f"incompatible nested targets: {package.id}:{target.name} contains {other_package.id}:{other_target.name}"
                         )
                 elif other_live_path in live_path.parents:
                     relative = live_path.relative_to(other_live_path).as_posix()
-                    parent_ignore = set(other_apply_ignore) | set(other_import_ignore)
+                    parent_ignore = set(other_push_ignore) | set(other_pull_ignore)
                     if not any(matches_ignore_pattern(relative, pattern) for pattern in parent_ignore):
                         raise ValueError(
                             f"incompatible nested targets: {other_package.id}:{other_target.name} contains {package.id}:{target.name}"
@@ -1053,7 +1129,7 @@ class DotmanEngine:
     ) -> None:
         target_claims = [
             (package.id, f"{package.id}:{target.name}", live_path)
-            for package, target, _repo_path, live_path, _apply_ignore, _import_ignore in rendered_targets
+            for package, target, _repo_path, live_path, _push_ignore, _pull_ignore in rendered_targets
         ]
         reserved_claims: list[tuple[str, Path]] = []
         for package in packages:
@@ -1118,13 +1194,13 @@ class DotmanEngine:
         self,
         repo_path: Path,
         live_path: Path,
-        apply_ignore: tuple[str, ...],
-        import_ignore: tuple[str, ...],
+        push_ignore: tuple[str, ...],
+        pull_ignore: tuple[str, ...],
     ) -> str:
-        desired_files = list_directory_files(repo_path, apply_ignore)
+        desired_files = list_directory_files(repo_path, push_ignore)
         if not live_path.exists():
             return "install"
-        live_files = list_directory_files(live_path, import_ignore)
+        live_files = list_directory_files(live_path, pull_ignore)
         desired_rel_paths = set(desired_files)
         live_rel_paths = set(live_files)
         if desired_rel_paths != live_rel_paths:
@@ -1151,10 +1227,10 @@ class DotmanEngine:
         binding: Binding,
         operation: str,
         inferred_os: str,
-        import_view_repo: str,
-        import_view_live: str,
+        pull_view_repo: str,
+        pull_view_live: str,
     ) -> str:
-        if operation in {"apply", "upgrade"}:
+        if operation in {"apply", "upgrade", "push"}:
             if not live_path.exists():
                 return "install"
             if desired_bytes is None:
@@ -1169,7 +1245,7 @@ class DotmanEngine:
             target=target,
             repo_path=repo_path,
             live_path=live_path,
-            view=import_view_repo,
+            view=pull_view_repo,
             repo_side=True,
             render_command=render_command,
             capture_command=capture_command,
@@ -1184,7 +1260,7 @@ class DotmanEngine:
             target=target,
             repo_path=repo_path,
             live_path=live_path,
-            view=import_view_live,
+            view=pull_view_live,
             repo_side=False,
             render_command=render_command,
             capture_command=capture_command,

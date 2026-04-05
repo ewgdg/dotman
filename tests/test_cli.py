@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from dotman.cli import main
+import dotman.cli as cli
+import pytest
+from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -13,28 +15,33 @@ REFERENCE_REPO = PROJECT_ROOT / "tests" / "fixtures" / "reference_repo"
 
 
 def write_manager_config(tmp_path: Path) -> Path:
+    return write_named_manager_config(
+        tmp_path,
+        {
+            "example": EXAMPLE_REPO,
+            "sandbox": REFERENCE_REPO,
+        },
+    )
+
+
+def write_named_manager_config(tmp_path: Path, repos: dict[str, Path]) -> Path:
     config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
+    lines: list[str] = []
+    for index, (repo_name, repo_path) in enumerate(repos.items(), start=1):
+        lines.extend(
             [
-                "[repos.example]",
-                f'path = "{EXAMPLE_REPO}"',
-                "order = 10",
-                f'state_path = "{tmp_path / "state" / "example"}"',
-                "",
-                "[repos.sandbox]",
-                f'path = "{REFERENCE_REPO}"',
-                "order = 20",
-                f'state_path = "{tmp_path / "state" / "sandbox"}"',
+                f"[repos.{repo_name}]",
+                f'path = "{repo_path}"',
+                f"order = {index * 10}",
+                f'state_path = "{tmp_path / "state" / repo_name}"',
                 "",
             ]
-        ),
-        encoding="utf-8",
-    )
+        )
+    config_path.write_text("\n".join(lines), encoding="utf-8")
     return config_path
 
 
-def test_apply_cli_emits_dry_run_json(
+def test_track_cli_emits_state_only_json(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -48,18 +55,18 @@ def test_apply_cli_emits_dry_run_json(
             "--config",
             str(write_manager_config(tmp_path)),
             "--json",
-            "apply",
+            "track",
             "example:git@basic",
         ]
     )
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["mode"] == "dry-run"
-    assert payload["operation"] == "apply"
-    assert payload["bindings"][0]["repo"] == "example"
-    assert payload["bindings"][0]["selector"] == "git"
-    assert payload["bindings"][0]["targets"][0]["action"] == "install"
+    assert payload["mode"] == "state-only"
+    assert payload["operation"] == "track"
+    assert payload["binding"]["repo"] == "example"
+    assert payload["binding"]["selector"] == "git"
+    assert payload["binding"]["profile"] == "basic"
     assert (tmp_path / "state" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
         [
             "version = 1",
@@ -73,7 +80,45 @@ def test_apply_cli_emits_dry_run_json(
     )
 
 
-def test_upgrade_cli_uses_state_bindings_in_dry_run_json(
+def test_track_cli_interactively_selects_profile_when_missing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["1", ""])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "example:git",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select a profile for example:git:" in output
+    assert "tracked example:git@basic" in output
+    assert (tmp_path / "state" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "example"',
+            'selector = "git"',
+            'profile = "basic"',
+            "",
+        ]
+    )
+
+
+def test_push_cli_uses_tracked_binding_profile_without_prompting(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -105,18 +150,646 @@ def test_upgrade_cli_uses_state_bindings_in_dry_run_json(
             "--config",
             str(config_path),
             "--json",
-            "upgrade",
+            "push",
+            "git",
         ]
     )
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["operation"] == "upgrade"
+    assert payload["operation"] == "push"
+    assert payload["bindings"][0]["selector"] == "git"
+    assert payload["bindings"][0]["profile"] == "basic"
+    assert payload["bindings"][0]["targets"][0]["action"] == "install"
+
+
+def test_prompt_for_excluded_items_uses_archived_colored_style(
+    monkeypatch,
+    capsys,
+) -> None:
+    selection_items = [
+        PendingSelectionItem(
+            binding_label="example:git@basic",
+            package_id="git",
+            target_name="gitconfig",
+            action="install",
+            source_path="/repo/gitconfig",
+            destination_path="/home/.gitconfig",
+        )
+    ]
+
+    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+
+    excluded = prompt_for_excluded_items(selection_items, operation="push")
+    output = capsys.readouterr().out
+
+    assert excluded == set()
+    assert "\033[1;34m::\033[0m" in output
+    assert "\033[1;36m 1)\033[0m" in output
+    assert "\033[1;32m[install]\033[0m" in output
+    assert "\033[2;34mexample\033[0m" in output
+    assert "\033[2m/\033[0m" in output
+    assert "\033[1mgit\033[0m" in output
+    assert "\033[2m(gitconfig)\033[0m" in output
+    assert "\033[2m->\033[0m" in output
+    assert "(example:git@basic)" not in output
+    assert "example:git@basic \033[1;32m[install]\033[0m" not in output
+    assert "Select items to exclude from push:" in output
+
+
+def test_push_cli_errors_for_untracked_binding(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "push",
+            "example:git",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "is not currently tracked" in capsys.readouterr().err
+
+
+def test_track_cli_returns_130_on_keyboard_interrupt_during_profile_selection(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "example:git",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 130
+    assert "interrupted" in captured.err
+
+
+def test_track_cli_interactively_selects_repo_for_exact_selector_collision(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["2", ""])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    config_path = write_named_manager_config(
+        tmp_path,
+        {
+            "alpha": REFERENCE_REPO,
+            "beta": REFERENCE_REPO,
+        },
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "track",
+            "sunshine@host/linux",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select a repo for exact selector 'sunshine':" in output
+    assert "tracked beta:sunshine@host/linux" in output
+    assert (tmp_path / "state" / "beta" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "beta"',
+            'selector = "sunshine"',
+            'profile = "host/linux"',
+            "",
+        ]
+    )
+
+
+def test_track_cli_interactively_selects_partial_selector_match(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["2", ""])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "sandbox:1pass@host/linux",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select a selector match for '1pass':" in output
+    assert "tracked sandbox:linux/1password@host/linux" in output
+    assert (tmp_path / "state" / "sandbox" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "sandbox"',
+            'selector = "linux/1password"',
+            'profile = "host/linux"',
+            "",
+        ]
+    )
+
+
+def test_push_cli_uses_state_bindings_in_dry_run_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "push",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "push"
     assert payload["bindings"][0]["selector"] == "git"
     assert payload["bindings"][0]["profile"] == "basic"
 
 
-def test_remove_binding_cli_updates_state(
+def test_pull_cli_accepts_explicit_binding_and_does_not_write_state(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config" / "nvim").mkdir(parents=True)
+    (home / ".config" / "nvim" / "init.lua").write_text(
+        'vim.g.mapleader = ","\nvim.cmd.colorscheme("industry")\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "nvim"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "pull",
+            "example:nvim@basic",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "pull"
+    assert len(payload["bindings"]) == 1
+    assert payload["bindings"][0]["repo"] == "example"
+    assert payload["bindings"][0]["selector"] == "nvim"
+    assert payload["bindings"][0]["profile"] == "basic"
+    assert payload["bindings"][0]["targets"][0]["action"] == "update"
+    assert (tmp_path / "state" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "example"',
+            'selector = "nvim"',
+            'profile = "basic"',
+            "",
+        ]
+    )
+
+
+def test_push_cli_combined_selection_menu_excludes_selected_targets_across_tracked_bindings(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["1", ""])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "nvim"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select items to exclude from push:" in output
+    assert "example:git@basic\n" not in output
+    assert "git:gitconfig -> install" not in output
+    assert "example:nvim@basic\n" not in output
+    assert "nvim:init_lua -> install" in output
+
+
+def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config" / "nvim").mkdir(parents=True)
+    (home / ".config" / "nvim" / "init.lua").write_text(
+        'vim.g.mapleader = " "\nvim.cmd.colorscheme("industry")\n',
+        encoding="utf-8",
+    )
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "1")
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "nvim"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select items to exclude from push:" in output
+    assert "example:git@basic\n" not in output
+    assert "example:nvim@basic\n" not in output
+    assert "git:gitconfig -> install" not in output
+    assert "nvim:init_lua -> noop" not in output
+
+
+def test_track_cli_updates_existing_binding_when_profile_selection_changes(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["2"])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "example:git",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select a profile for example:git:" in output
+    assert "tracked example:git@work" in output
+    assert (tmp_path / "state" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "example"',
+            'selector = "git"',
+            'profile = "work"',
+            "",
+        ]
+    )
+
+
+def test_pull_cli_emits_dry_run_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config" / "nvim").mkdir(parents=True)
+    (home / ".config" / "nvim" / "init.lua").write_text(
+        'vim.g.mapleader = ","\nvim.cmd.colorscheme("industry")\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "nvim"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "--json",
+            "pull",
+            "example:nvim@basic",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "dry-run"
+    assert payload["operation"] == "pull"
+    assert payload["bindings"][0]["repo"] == "example"
+    assert payload["bindings"][0]["selector"] == "nvim"
+    assert payload["bindings"][0]["targets"][0]["action"] == "update"
+
+
+def test_pull_cli_uses_tracked_binding_profile_without_prompting(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "pull",
+            "git",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "pull"
+    assert payload["bindings"][0]["selector"] == "git"
+    assert payload["bindings"][0]["profile"] == "basic"
+    assert payload["bindings"][0]["targets"][0]["action"] == "missing"
+
+
+def test_pull_cli_allows_package_selected_through_tracked_owner_binding(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "pull",
+            "nvim@basic",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "pull"
+    assert payload["bindings"][0]["selector"] == "nvim"
+    assert payload["bindings"][0]["profile"] == "basic"
+    assert payload["bindings"][0]["targets"][0]["action"] == "missing"
+
+
+def test_push_cli_allows_package_selected_through_tracked_owner_binding(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "push",
+            "nvim",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "push"
+    assert payload["bindings"][0]["selector"] == "nvim"
+    assert payload["bindings"][0]["profile"] == "basic"
+    assert payload["bindings"][0]["targets"][0]["action"] == "install"
+
+
+@pytest.mark.parametrize("command", ["apply", "upgrade", "import", "remove"])
+def test_legacy_top_level_cli_commands_are_not_available(command: str) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args([command, "example:nvim@basic"])
+
+    assert exc_info.value.code == 2
+
+
+def test_untrack_cli_updates_state(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -153,8 +826,7 @@ def test_remove_binding_cli_updates_state(
             "--config",
             str(config_path),
             "--json",
-            "remove",
-            "binding",
+            "untrack",
             "example:git@basic",
         ]
     )
@@ -162,7 +834,7 @@ def test_remove_binding_cli_updates_state(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "state-only"
-    assert payload["operation"] == "remove-binding"
+    assert payload["operation"] == "untrack"
     assert payload["binding"] == {
         "repo": "example",
         "selector": "git",
@@ -181,7 +853,7 @@ def test_remove_binding_cli_updates_state(
     )
 
 
-def test_remove_binding_cli_allows_selector_only_when_unique(
+def test_untrack_cli_allows_selector_only_when_unique(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -213,8 +885,7 @@ def test_remove_binding_cli_allows_selector_only_when_unique(
             "--config",
             str(config_path),
             "--json",
-            "remove",
-            "binding",
+            "untrack",
             "example:git",
         ]
     )
@@ -228,7 +899,7 @@ def test_remove_binding_cli_allows_selector_only_when_unique(
     }
 
 
-def test_remove_binding_cli_errors_for_untracked_binding(
+def test_untrack_cli_errors_for_untracked_binding(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -243,8 +914,7 @@ def test_remove_binding_cli_errors_for_untracked_binding(
         [
             "--config",
             str(config_path),
-            "remove",
-            "binding",
+            "untrack",
             "example:git@basic",
         ]
     )
@@ -253,7 +923,7 @@ def test_remove_binding_cli_errors_for_untracked_binding(
     assert "is not currently tracked" in capsys.readouterr().err
 
 
-def test_remove_binding_cli_reports_dependency_owner_for_untracked_package_selector(
+def test_untrack_cli_reports_dependency_owner_for_untracked_package_selector(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -284,14 +954,13 @@ def test_remove_binding_cli_reports_dependency_owner_for_untracked_package_selec
         [
             "--config",
             str(config_path),
-            "remove",
-            "binding",
+            "untrack",
             "nvim@basic",
         ]
     )
 
     assert exit_code == 2
-    assert "cannot remove 'example:nvim': required by tracked bindings: example:core-cli-meta@basic" in capsys.readouterr().err
+    assert "cannot untrack 'example:nvim': required by tracked bindings: example:core-cli-meta@basic" in capsys.readouterr().err
 
 
 def test_list_installed_cli_lists_unique_installed_packages_with_bindings(
