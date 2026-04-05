@@ -1,0 +1,9 @@
+[user]
+	name = {{ vars.git.user_name }}
+	email = {{ vars.git.user_email }}
+
+[core]
+	editor = {{ vars.git.core_editor }}
+
+[include]
+	path = {{ vars.git.includes_path }}

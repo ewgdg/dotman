@@ -1,0 +1,4 @@
+id = "core-cli-meta"
+description = "Meta-package example using hard package dependencies"
+
+depends = ["git", "nvim"]

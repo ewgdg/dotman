@@ -1,0 +1,10 @@
+includes = ["os/linux"]
+
+[vars]
+
+[vars.git]
+user_email = "shared@example.test"
+
+[vars.nvim]
+leader = " "
+colorscheme = "evening"

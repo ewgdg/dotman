@@ -1,0 +1,9 @@
+id = "work/git"
+description = "Work Git variant that extends the base git package"
+extends = ["git"]
+
+[vars.git]
+user_name = "Work User"
+user_email = "work@example.test"
+core_editor = "nvim"
+includes_path = "~/.config/git/includes/work.inc"

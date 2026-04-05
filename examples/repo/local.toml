@@ -1,0 +1,8 @@
+[vars]
+INSTALL = "brew install"
+
+[vars.git]
+user_email = "local@example.test"
+
+[vars.nvim]
+colorscheme = "industry"

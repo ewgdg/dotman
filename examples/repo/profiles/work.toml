@@ -1,0 +1,7 @@
+includes = ["os/mac"]
+
+[vars]
+
+[vars.nvim]
+leader = " "
+colorscheme = "habamax"

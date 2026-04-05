@@ -1,0 +1,23 @@
+id = "git"
+description = "Base Git configuration"
+
+[vars.git]
+user_name = "Example User"
+core_editor = "nvim"
+
+[targets.gitconfig]
+source = "files/gitconfig"
+path = "~/.gitconfig"
+chmod = "600"
+
+[hooks]
+check = '''
+command -v git >/dev/null 2>&1
+'''
+pre_apply = [
+  "{{ INSTALL }} git",
+  '''
+  "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"
+  ''',
+]
+post_apply = "sh hooks/post-apply.sh"
