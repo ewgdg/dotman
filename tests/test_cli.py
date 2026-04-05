@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.models import Binding, BindingPlan, DirectoryPlanItem, TargetPlan
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -196,6 +197,125 @@ def test_prompt_for_excluded_items_uses_archived_colored_style(
     assert "(example:git@basic)" not in output
     assert "example:git@basic \033[1;32m[install]\033[0m" not in output
     assert "Select items to exclude from push:" in output
+
+
+def test_filter_plans_for_interactive_selection_excludes_directory_child_pull_item(
+    monkeypatch,
+) -> None:
+    target_plan = TargetPlan(
+        package_id="sandbox/bin",
+        target_name="bin",
+        repo_path=Path("/repo/bin"),
+        live_path=Path("/home/bin"),
+        action="update",
+        target_kind="directory",
+        projection_kind="directory",
+        directory_items=(
+            DirectoryPlanItem(
+                relative_path="alpha.sh",
+                action="pull",
+                repo_path=Path("/repo/bin/alpha.sh"),
+                live_path=Path("/home/bin/alpha.sh"),
+            ),
+            DirectoryPlanItem(
+                relative_path="beta.sh",
+                action="pull",
+                repo_path=Path("/repo/bin/beta.sh"),
+                live_path=Path("/home/bin/beta.sh"),
+            ),
+        ),
+    )
+    plan = BindingPlan(
+        operation="pull",
+        binding=Binding(repo="sandbox", selector="sandbox/bin", profile="default"),
+        selector_kind="package",
+        package_ids=["sandbox/bin"],
+        variables={},
+        hooks={},
+        target_plans=[target_plan],
+    )
+
+    monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: True)
+    monkeypatch.setattr(cli, "prompt_for_excluded_items", lambda selection_items, *, operation: {1})
+
+    filtered_plans = cli.filter_plans_for_interactive_selection(
+        plans=[plan],
+        operation="pull",
+        json_output=False,
+    )
+
+    filtered_target = filtered_plans[0].target_plans[0]
+    assert [item.relative_path for item in filtered_target.directory_items] == ["beta.sh"]
+
+
+def test_collect_pending_selection_items_for_pull_uses_live_to_repo_paths() -> None:
+    target_plan = TargetPlan(
+        package_id="sandbox/bin",
+        target_name="bin",
+        repo_path=Path("/repo/bin"),
+        live_path=Path("/home/bin"),
+        action="update",
+        target_kind="directory",
+        projection_kind="directory",
+        directory_items=(
+            DirectoryPlanItem(
+                relative_path="alpha.sh",
+                action="pull",
+                repo_path=Path("/repo/bin/alpha.sh"),
+                live_path=Path("/home/bin/alpha.sh"),
+            ),
+        ),
+    )
+    plan = BindingPlan(
+        operation="pull",
+        binding=Binding(repo="sandbox", selector="sandbox/bin", profile="default"),
+        selector_kind="package",
+        package_ids=["sandbox/bin"],
+        variables={},
+        hooks={},
+        target_plans=[target_plan],
+    )
+
+    selection_items = cli.collect_pending_selection_items_for_operation([plan], operation="pull")
+
+    assert [(item.action, item.source_path, item.destination_path) for item in selection_items] == [
+        ("pull", "/home/bin/alpha.sh", "/repo/bin/alpha.sh"),
+    ]
+
+
+def test_collect_pending_selection_items_for_push_uses_repo_to_live_paths() -> None:
+    target_plan = TargetPlan(
+        package_id="sandbox/bin",
+        target_name="bin",
+        repo_path=Path("/repo/bin"),
+        live_path=Path("/home/bin"),
+        action="update",
+        target_kind="directory",
+        projection_kind="directory",
+        directory_items=(
+            DirectoryPlanItem(
+                relative_path="alpha.sh",
+                action="update",
+                repo_path=Path("/repo/bin/alpha.sh"),
+                live_path=Path("/home/bin/alpha.sh"),
+            ),
+        ),
+    )
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="sandbox", selector="sandbox/bin", profile="default"),
+        selector_kind="package",
+        package_ids=["sandbox/bin"],
+        variables={},
+        hooks={},
+        target_plans=[target_plan],
+    )
+
+    selection_items = cli.collect_pending_selection_items_for_operation([plan], operation="push")
+
+    assert [(item.action, item.source_path, item.destination_path) for item in selection_items] == [
+        ("update", "/repo/bin/alpha.sh", "/home/bin/alpha.sh"),
+    ]
 
 
 def test_push_cli_errors_for_untracked_binding(

@@ -14,6 +14,7 @@ from dotman.config import expand_path, load_manager_config
 from dotman.models import (
     Binding,
     BindingPlan,
+    DirectoryPlanItem,
     GroupSpec,
     HookPlan,
     HookSpec,
@@ -999,7 +1000,13 @@ class DotmanEngine:
                 else None
             )
             if repo_path.is_dir():
-                action = self._plan_directory_action(repo_path, live_path, push_ignore, pull_ignore)
+                action, directory_items = self._plan_directory_action(
+                    repo_path,
+                    live_path,
+                    push_ignore,
+                    pull_ignore,
+                    operation=operation,
+                )
                 plans.append(
                     TargetPlan(
                         package_id=package.id,
@@ -1016,6 +1023,7 @@ class DotmanEngine:
                         pull_view_live=target.pull_view_live or ("capture" if capture_command else "raw"),
                         push_ignore=push_ignore,
                         pull_ignore=pull_ignore,
+                        directory_items=directory_items,
                     )
                 )
                 continue
@@ -1196,21 +1204,89 @@ class DotmanEngine:
         live_path: Path,
         push_ignore: tuple[str, ...],
         pull_ignore: tuple[str, ...],
-    ) -> str:
+        *,
+        operation: str,
+    ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
         desired_files = list_directory_files(repo_path, push_ignore)
-        if not live_path.exists():
-            return "install"
-        live_files = list_directory_files(live_path, pull_ignore)
+        live_exists = live_path.exists()
+        live_files = list_directory_files(live_path, pull_ignore) if live_exists else {}
         desired_rel_paths = set(desired_files)
         live_rel_paths = set(live_files)
-        if desired_rel_paths != live_rel_paths:
-            return "update"
-        for relative_path, source_path in desired_files.items():
+        directory_items: list[DirectoryPlanItem] = []
+
+        if operation in {"apply", "upgrade", "push"}:
+            for relative_path in sorted(desired_rel_paths - live_rel_paths):
+                directory_items.append(
+                    DirectoryPlanItem(
+                        relative_path=relative_path,
+                        action="install",
+                        repo_path=desired_files[relative_path],
+                        live_path=live_path / relative_path,
+                    )
+                )
+            for relative_path in sorted(live_rel_paths - desired_rel_paths):
+                directory_items.append(
+                    DirectoryPlanItem(
+                        relative_path=relative_path,
+                        action="remove",
+                        repo_path=repo_path / relative_path,
+                        live_path=live_files[relative_path],
+                    )
+                )
+            for relative_path in sorted(desired_rel_paths & live_rel_paths):
+                source_path = desired_files[relative_path]
+                live_file = live_files[relative_path]
+                desired_bytes, _projection_kind = render_template_file(source_path, {})
+                if desired_bytes != live_file.read_bytes():
+                    directory_items.append(
+                        DirectoryPlanItem(
+                            relative_path=relative_path,
+                            action="update",
+                            repo_path=source_path,
+                            live_path=live_file,
+                        )
+                    )
+            if not directory_items:
+                return "noop", ()
+            ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))
+            return ("install" if not live_exists else "update"), ordered_items
+
+        for relative_path in sorted(desired_rel_paths - live_rel_paths):
+            directory_items.append(
+                DirectoryPlanItem(
+                    relative_path=relative_path,
+                    action="remove",
+                    repo_path=desired_files[relative_path],
+                    live_path=live_path / relative_path,
+                )
+            )
+        for relative_path in sorted(live_rel_paths - desired_rel_paths):
+            directory_items.append(
+                DirectoryPlanItem(
+                    relative_path=relative_path,
+                    action="pull",
+                    repo_path=repo_path / relative_path,
+                    live_path=live_files[relative_path],
+                )
+            )
+        for relative_path in sorted(desired_rel_paths & live_rel_paths):
+            source_path = desired_files[relative_path]
             live_file = live_files[relative_path]
             desired_bytes, _projection_kind = render_template_file(source_path, {})
             if desired_bytes != live_file.read_bytes():
-                return "update"
-        return "noop"
+                directory_items.append(
+                    DirectoryPlanItem(
+                        relative_path=relative_path,
+                        action="pull",
+                        repo_path=source_path,
+                        live_path=live_file,
+                    )
+                )
+
+        if not directory_items:
+            return "noop", ()
+        ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))
+        return ("missing" if not live_exists else "update"), ordered_items
 
     def _plan_file_action(
         self,

@@ -333,6 +333,128 @@ def test_repo_toml_pull_ignore_applies_to_directory_targets(
     assert plan.target_plans[0].action == "noop"
 
 
+def test_pull_plan_exposes_file_level_items_for_directory_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "alpha.toml").write_text('value = "repo alpha"\n', encoding="utf-8")
+    (source_root / "beta.toml").write_text('value = "repo beta"\n', encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "sample"
+    live_root.mkdir(parents=True)
+    (live_root / "alpha.toml").write_text('value = "live alpha"\n', encoding="utf-8")
+    (live_root / "gamma.toml").write_text('value = "live gamma"\n', encoding="utf-8")
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.fixture]",
+                f'path = "{repo_root}"',
+                "order = 10",
+                f'state_path = "{tmp_path / "state" / "fixture"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = engine.plan_pull_binding("fixture:sample@default")
+
+    target = plan.target_plans[0]
+    assert target.action == "update"
+    assert [(item.action, item.relative_path) for item in target.directory_items] == [
+        ("pull", "alpha.toml"),
+        ("remove", "beta.toml"),
+        ("pull", "gamma.toml"),
+    ]
+
+
+def test_push_plan_exposes_file_level_items_for_directory_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "alpha.toml").write_text('value = "repo alpha"\n', encoding="utf-8")
+    (source_root / "beta.toml").write_text('value = "repo beta"\n', encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "sample"
+    live_root.mkdir(parents=True)
+    (live_root / "alpha.toml").write_text('value = "live alpha"\n', encoding="utf-8")
+    (live_root / "gamma.toml").write_text('value = "live gamma"\n', encoding="utf-8")
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.fixture]",
+                f'path = "{repo_root}"',
+                "order = 10",
+                f'state_path = "{tmp_path / "state" / "fixture"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = engine.plan_push_binding("fixture:sample@default")
+
+    target = plan.target_plans[0]
+    assert target.action == "update"
+    assert [(item.action, item.relative_path) for item in target.directory_items] == [
+        ("update", "alpha.toml"),
+        ("install", "beta.toml"),
+        ("remove", "gamma.toml"),
+    ]
+
+
 def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

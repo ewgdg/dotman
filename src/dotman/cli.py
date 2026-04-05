@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Sequence
 
 from dotman.engine import DotmanEngine, parse_binding_text
@@ -216,20 +217,84 @@ def resolve_binding_text(
 
 
 def collect_pending_selection_items(plans: Sequence) -> list[PendingSelectionItem]:
+    return collect_pending_selection_items_for_operation(plans, operation="push")
+
+
+def selection_item_paths(*, operation: str, repo_path: Path | str, live_path: Path | str) -> tuple[str, str]:
+    repo_text = str(repo_path)
+    live_text = str(live_path)
+    if operation == "pull":
+        return live_text, repo_text
+    return repo_text, live_text
+
+
+def selection_item_action(*, operation: str, action: str) -> str:
+    if operation == "pull" and action == "update":
+        return "pull"
+    return action
+
+
+def selection_item_identity(
+    *,
+    binding_label: str,
+    package_id: str,
+    target_name: str,
+    operation: str,
+    repo_path: Path | str,
+    live_path: Path | str,
+) -> tuple[str, str, str, str, str]:
+    source_path, destination_path = selection_item_paths(
+        operation=operation,
+        repo_path=repo_path,
+        live_path=live_path,
+    )
+    return (
+        binding_label,
+        package_id,
+        target_name,
+        source_path,
+        destination_path,
+    )
+
+
+def collect_pending_selection_items_for_operation(plans: Sequence, *, operation: str) -> list[PendingSelectionItem]:
     selection_items: list[PendingSelectionItem] = []
     for plan in plans:
         binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
         for target in plan.target_plans:
+            if target.directory_items:
+                for item in target.directory_items:
+                    source_path, destination_path = selection_item_paths(
+                        operation=operation,
+                        repo_path=item.repo_path,
+                        live_path=item.live_path,
+                    )
+                    selection_items.append(
+                        PendingSelectionItem(
+                            binding_label=binding_label,
+                            package_id=target.package_id,
+                            target_name=target.target_name,
+                            action=selection_item_action(operation=operation, action=item.action),
+                            source_path=source_path,
+                            destination_path=destination_path,
+                        )
+                    )
+                continue
             if target.action == "noop":
                 continue
+            source_path, destination_path = selection_item_paths(
+                operation=operation,
+                repo_path=target.repo_path,
+                live_path=target.live_path,
+            )
             selection_items.append(
                 PendingSelectionItem(
                     binding_label=binding_label,
                     package_id=target.package_id,
                     target_name=target.target_name,
-                    action=target.action,
-                    source_path=str(target.repo_path),
-                    destination_path=str(target.live_path),
+                    action=selection_item_action(operation=operation, action=target.action),
+                    source_path=source_path,
+                    destination_path=destination_path,
                 )
             )
     return selection_items
@@ -275,26 +340,59 @@ def prompt_for_excluded_items(selection_items: Sequence[PendingSelectionItem], *
 def filter_plans_for_interactive_selection(*, plans: Sequence, operation: str, json_output: bool) -> list:
     if not interactive_mode_enabled(json_output=json_output):
         return list(plans)
-    selection_items = collect_pending_selection_items(plans)
+    selection_items = collect_pending_selection_items_for_operation(plans, operation=operation)
     if not selection_items:
         return list(plans)
     excluded_indexes = prompt_for_excluded_items(selection_items, operation=operation)
     if not excluded_indexes:
         return list(plans)
 
-    excluded_targets: set[tuple[str, str, str, str]] = set()
+    excluded_targets: set[tuple[str, str, str, str, str]] = set()
     for excluded_index in excluded_indexes:
         item = selection_items[excluded_index - 1]
-        excluded_targets.add((item.binding_label, item.package_id, item.target_name, item.destination_path))
+        excluded_targets.add(
+            (
+                item.binding_label,
+                item.package_id,
+                item.target_name,
+                item.source_path,
+                item.destination_path,
+            )
+        )
 
     filtered_plans = []
     for plan in plans:
         binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
-        filtered_targets = [
-            target
-            for target in plan.target_plans
-            if (binding_label, target.package_id, target.target_name, str(target.live_path)) not in excluded_targets
-        ]
+        filtered_targets = []
+        for target in plan.target_plans:
+            if target.directory_items:
+                remaining_items = tuple(
+                    item
+                    for item in target.directory_items
+                    if selection_item_identity(
+                        binding_label=binding_label,
+                        package_id=target.package_id,
+                        target_name=target.target_name,
+                        operation=operation,
+                        repo_path=item.repo_path,
+                        live_path=item.live_path,
+                    )
+                    not in excluded_targets
+                )
+                if remaining_items:
+                    filtered_targets.append(replace(target, directory_items=remaining_items))
+                else:
+                    filtered_targets.append(replace(target, action="noop", directory_items=()))
+                continue
+            if selection_item_identity(
+                binding_label=binding_label,
+                package_id=target.package_id,
+                target_name=target.target_name,
+                operation=operation,
+                repo_path=target.repo_path,
+                live_path=target.live_path,
+            ) not in excluded_targets:
+                filtered_targets.append(target)
         filtered_plans.append(replace(plan, target_plans=filtered_targets))
     return filtered_plans
 

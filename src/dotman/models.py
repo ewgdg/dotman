@@ -216,6 +216,7 @@ class TargetPlan:
     push_ignore: tuple[str, ...] = ()
     pull_ignore: tuple[str, ...] = ()
     desired_bytes: bytes | None = field(default=None, repr=False)
+    directory_items: tuple["DirectoryPlanItem", ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -234,6 +235,7 @@ class TargetPlan:
             "pull_view_live": self.pull_view_live,
             "push_ignore": list(self.push_ignore),
             "pull_ignore": list(self.pull_ignore),
+            "directory_items": [item.to_dict() for item in self.directory_items],
         }
 
 
@@ -256,4 +258,20 @@ class BindingPlan:
             "packages": self.package_ids,
             "targets": [target.to_dict() for target in self.target_plans],
             "hooks": {name: [item.to_dict() for item in items] for name, items in self.hooks.items()},
+        }
+
+
+@dataclass(frozen=True)
+class DirectoryPlanItem:
+    relative_path: str
+    action: str
+    repo_path: Path
+    live_path: Path
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "relative_path": self.relative_path,
+            "action": self.action,
+            "repo_path": str(self.repo_path),
+            "live_path": str(self.live_path),
         }
