@@ -55,7 +55,7 @@ This document captures the current repository structure and configuration schema
 - Packages may define `append` to append to inherited list-valued fields without replacing the whole list.
 - `append` should mirror the object shape it targets, for example:
   - `[append.hooks]`
-  - `pre_apply = ["{{ INSTALL }} extra-tool"]`
+  - `pre_push = ["{{ INSTALL }} extra-tool"]`
 - `append` should fail if the targeted inherited field is not a list.
 - Targets and hooks should stay keyed so merges remain deterministic.
 - Conflicting target ownership or incompatible target/path collisions should fail hard.
@@ -129,7 +129,7 @@ pull = ["*.dotdropbak"]
 - Hook lists run in declaration order and stop on first failure.
 - Repo-wide helper scripts live under `scripts/`.
 - Package-specific scripts live inside the package, for example `hooks/`.
-- Prefer explicit runner commands such as `sh hooks/apply.sh`, `python3 hooks/render.py`, or `uv run hooks/render.py` instead of relying on executable bits.
+- Prefer explicit runner commands such as `sh hooks/push.sh`, `python3 hooks/render.py`, or `uv run hooks/render.py` instead of relying on executable bits.
 - When a Python helper depends on repo-managed dependencies, prefer `uv run --project "$DOTMAN_REPO_ROOT" ...` so it uses the repo `pyproject.toml` and lockfile.
 - Bare script paths should be reserved for cases where the repository intentionally manages executability.
 - Reusable root-level action definitions are not needed in v1. Shared behavior should live in `scripts/` and be invoked from hooks or transform strings with template-expanded args.

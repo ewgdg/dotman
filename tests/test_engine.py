@@ -57,7 +57,7 @@ def test_config_validation_rejects_duplicate_repo_order(tmp_path: Path) -> None:
         DotmanEngine.from_config_path(config_path)
 
 
-def test_example_apply_plan_renders_package_defaults_profile_and_local_overrides(
+def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -67,13 +67,13 @@ def test_example_apply_plan_renders_package_defaults_profile_and_local_overrides
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_apply("example:git@basic")
+    plan = engine.plan_push_binding("example:git@basic")
 
     assert plan.binding.repo == "example"
     assert plan.binding.selector == "git"
     assert plan.binding.profile == "basic"
     assert plan.package_ids == ["git"]
-    assert [hook.command for hook in plan.hooks["pre_apply"]] == [
+    assert [hook.command for hook in plan.hooks["pre_push"]] == [
         "brew install git",
         '"$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"',
     ]
@@ -89,7 +89,7 @@ def test_example_apply_plan_renders_package_defaults_profile_and_local_overrides
     assert "[include]" not in target.desired_text
 
 
-def test_example_group_apply_plan_expands_depends_and_render_target(
+def test_example_group_push_plan_expands_depends_and_render_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -99,7 +99,7 @@ def test_example_group_apply_plan_expands_depends_and_render_target(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_apply("example:os/arch@basic")
+    plan = engine.plan_push_binding("example:os/arch@basic")
 
     assert plan.binding.selector == "os/arch"
     assert plan.selector_kind == "group"
@@ -121,7 +121,7 @@ def test_example_extends_preserves_child_values_after_local_merge(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_apply("example:work/git@work")
+    plan = engine.plan_push_binding("example:work/git@work")
 
     assert plan.package_ids == ["work/git"]
     target = plan.target_plans[0]
@@ -130,7 +130,7 @@ def test_example_extends_preserves_child_values_after_local_merge(
     assert "path = ~/.config/git/includes/work.inc" in target.desired_text
 
 
-def test_import_plan_uses_declared_repo_and_live_views_for_rendered_targets(
+def test_pull_plan_uses_declared_repo_and_live_views_for_rendered_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -144,7 +144,7 @@ def test_import_plan_uses_declared_repo_and_live_views_for_rendered_targets(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_import("example:nvim@basic")
+    plan = engine.plan_pull_binding("example:nvim@basic")
 
     target = plan.target_plans[0]
     assert target.pull_view_repo == "render"
@@ -209,7 +209,7 @@ def test_template_file_render_supports_relative_include(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_apply("fixture:shell@default")
+    plan = engine.plan_push_binding("fixture:shell@default")
 
     assert plan.target_plans[0].projection_kind == "template"
     assert plan.target_plans[0].desired_text.strip().splitlines() == [
@@ -228,7 +228,7 @@ def test_sandbox_host_plan_composes_profile_vars_and_namespaced_packages(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_apply("host/linux-meta@host/linux")
+    plan = engine.plan_push_binding("host/linux-meta@host/linux")
 
     assert plan.binding.repo == "sandbox"
     assert "linux/1password" in plan.package_ids
@@ -253,7 +253,7 @@ def test_sandbox_nested_directory_and_file_targets_plan_without_collision(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_apply("gsettings@host/linux")
+    plan = engine.plan_push_binding("gsettings@host/linux")
 
     assert {target.target_name for target in plan.target_plans} == {
         "desktop",
@@ -328,7 +328,7 @@ def test_repo_toml_pull_ignore_applies_to_directory_targets(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_apply("fixture:sample@default")
+    plan = engine.plan_push_binding("fixture:sample@default")
 
     assert plan.target_plans[0].action == "noop"
 
@@ -518,7 +518,7 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_apply("fixture:sample@default")
+    plan = engine.plan_push_binding("fixture:sample@default")
 
     assert plan.target_plans[0].action == "noop"
     assert plan.target_plans[0].push_ignore == ("*.archived",)
@@ -590,7 +590,7 @@ def test_package_reserved_paths_conflict_with_other_package_target(
         ValueError,
         match=r"reserved path conflict: alpha reserves .+shared and beta:beta maps to .+shared/beta\.conf",
     ):
-        engine.plan_apply("fixture:all@default")
+        engine.plan_push_binding("fixture:all@default")
 
 
 def test_package_reserved_paths_conflict_with_other_package_reserved_paths(
@@ -649,7 +649,7 @@ def test_package_reserved_paths_conflict_with_other_package_reserved_paths(
         ValueError,
         match=r"reserved path conflict: alpha reserves .+shared and beta reserves .+shared/session",
     ):
-        engine.plan_apply("fixture:all@default")
+        engine.plan_push_binding("fixture:all@default")
 
 
 def test_upgrade_uses_persisted_bindings_without_writing_new_state(
@@ -698,7 +698,7 @@ def test_record_binding_writes_resolved_binding_state(
 
     config_path = write_manager_config(tmp_path)
     engine = DotmanEngine.from_config_path(config_path)
-    plan = engine.plan_apply("example:git@basic")
+    plan = engine.plan_push_binding("example:git@basic")
 
     engine.record_binding(plan.binding)
 
@@ -749,7 +749,7 @@ def test_record_binding_replaces_existing_selector_binding_with_new_profile(
         encoding="utf-8",
     )
 
-    plan = engine.plan_apply("example:git@work")
+    plan = engine.plan_push_binding("example:git@work")
 
     engine.record_binding(plan.binding)
 

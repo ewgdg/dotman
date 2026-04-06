@@ -1187,9 +1187,9 @@ def test_info_installed_cli_emits_package_details_for_installed_package(
     assert [binding["selector"] for binding in package["bindings"]] == ["core-cli-meta", "git"]
     target_names = {target["target_name"] for target in package["bindings"][0]["targets"]}
     assert target_names == {"gitconfig"}
-    pre_apply = package["bindings"][0]["hooks"]["pre_apply"]
-    assert pre_apply[0]["package_id"] == "git"
-    assert "git" in pre_apply[0]["command"]
+    pre_push = package["bindings"][0]["hooks"]["pre_push"]
+    assert pre_push[0]["package_id"] == "git"
+    assert "git" in pre_push[0]["command"]
 
 
 def test_reconcile_editor_subcommand_invokes_editor_with_repo_live_and_additional_sources(

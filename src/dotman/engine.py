@@ -337,7 +337,7 @@ class Repository:
             merged = parent_spec if merged is None else merge_package_specs(merged, parent_spec)
         current = strip_package_extensions(loaded)
         merged = current if merged is None else merge_package_specs(merged, current)
-        merged = apply_remove_and_append(merged, loaded.remove or (), loaded.append or {})
+        merged = patch_remove_and_append(merged, loaded.remove or (), loaded.append or {})
         self._resolved_packages[package_id] = merged
         return merged
 
@@ -414,7 +414,7 @@ def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec
     )
 
 
-def apply_remove_and_append(package: PackageSpec, remove_paths: tuple[str, ...], append_payload: dict[str, Any]) -> PackageSpec:
+def patch_remove_and_append(package: PackageSpec, remove_paths: tuple[str, ...], append_payload: dict[str, Any]) -> PackageSpec:
     vars_payload = _copy_map(package.vars or {})
     for dotted_path in remove_paths:
         if dotted_path.startswith("vars."):
@@ -520,17 +520,9 @@ class DotmanEngine:
             raise ValueError("profile is required in non-interactive mode")
         return repo, Binding(repo=repo.config.name, selector=resolved_selector, profile=resolved_profile), selector_kind
 
-    def plan_apply(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
-        repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
-        return self._build_plan(repo, binding, selector_kind, operation="apply")
-
     def plan_push_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
         repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
         return self._build_plan(repo, binding, selector_kind, operation="push")
-
-    def plan_import(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
-        repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
-        return self._build_plan(repo, binding, selector_kind, operation="import")
 
     def plan_pull_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
         repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
@@ -1045,7 +1037,7 @@ class DotmanEngine:
                     inferred_os=inferred_os,
                 )
             except ValueError as exc:
-                if operation in {"apply", "upgrade", "push"} and not live_path.exists():
+                if operation in {"upgrade", "push"} and not live_path.exists():
                     projection_error = str(exc)
                     projection_kind = "command"
                 else:
@@ -1214,7 +1206,7 @@ class DotmanEngine:
         live_rel_paths = set(live_files)
         directory_items: list[DirectoryPlanItem] = []
 
-        if operation in {"apply", "upgrade", "push"}:
+        if operation in {"upgrade", "push"}:
             for relative_path in sorted(desired_rel_paths - live_rel_paths):
                 directory_items.append(
                     DirectoryPlanItem(
@@ -1306,7 +1298,7 @@ class DotmanEngine:
         pull_view_repo: str,
         pull_view_live: str,
     ) -> str:
-        if operation in {"apply", "upgrade", "push"}:
+        if operation in {"upgrade", "push"}:
             if not live_path.exists():
                 return "install"
             if desired_bytes is None:
@@ -1315,7 +1307,7 @@ class DotmanEngine:
 
         if not live_path.exists():
             return "missing"
-        repo_bytes = self._import_view_bytes(
+        repo_bytes = self._pull_view_bytes(
             repo=repo,
             package=package,
             target=target,
@@ -1330,7 +1322,7 @@ class DotmanEngine:
             operation=operation,
             inferred_os=inferred_os,
         )
-        live_bytes = self._import_view_bytes(
+        live_bytes = self._pull_view_bytes(
             repo=repo,
             package=package,
             target=target,
@@ -1347,7 +1339,7 @@ class DotmanEngine:
         )
         return "noop" if repo_bytes == live_bytes else "update"
 
-    def _import_view_bytes(
+    def _pull_view_bytes(
         self,
         *,
         repo: Repository,

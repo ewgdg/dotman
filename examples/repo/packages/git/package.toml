@@ -14,10 +14,10 @@ chmod = "600"
 check = '''
 command -v git >/dev/null 2>&1
 '''
-pre_apply = [
+pre_push = [
   "{{ INSTALL }} git",
   '''
   "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"
   ''',
 ]
-post_apply = "sh hooks/post-apply.sh"
+post_push = "sh hooks/post-push.sh"
