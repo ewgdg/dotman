@@ -37,6 +37,7 @@ class TargetSpec:
     pull_view_live: str | None = None
     push_ignore: tuple[str, ...] | None = None
     pull_ignore: tuple[str, ...] | None = None
+    disabled: bool = False
 
 
 @dataclass(frozen=True)

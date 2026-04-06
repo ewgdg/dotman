@@ -233,6 +233,7 @@ class Repository:
                         pull_view_live=read_schema_alias(target_payload, "pull_view_live", "import_view_live"),
                         push_ignore=normalize_string_list(read_schema_alias(target_payload, "push_ignore", "apply_ignore")),
                         pull_ignore=normalize_string_list(read_schema_alias(target_payload, "pull_ignore", "import_ignore")),
+                        disabled=bool(target_payload.get("disabled", False)),
                     )
                     for target_name, target_payload in targets_payload.items()
                 }
@@ -388,6 +389,7 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         pull_view_live=override.pull_view_live if override.pull_view_live is not None else base.pull_view_live,
         push_ignore=override.push_ignore if override.push_ignore is not None else base.push_ignore,
         pull_ignore=override.pull_ignore if override.pull_ignore is not None else base.pull_ignore,
+        disabled=override.disabled or base.disabled,
     )
 
 
@@ -837,6 +839,8 @@ class DotmanEngine:
     ) -> list[InstalledTargetSummary]:
         target_summaries: list[InstalledTargetSummary] = []
         for target in (package.targets or {}).values():
+            if target.disabled:
+                continue
             if target.source is None or target.path is None:
                 raise ValueError(f"target '{package.id}:{target.name}' must define source and path")
             rendered_source = render_template_string(target.source, context, base_dir=target.declared_in)
@@ -954,6 +958,8 @@ class DotmanEngine:
         rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...]]] = []
         for package in packages:
             for target in (package.targets or {}).values():
+                if target.disabled:
+                    continue
                 if target.source is None or target.path is None:
                     raise ValueError(f"target '{package.id}:{target.name}' must define source and path")
                 rendered_source = render_template_string(target.source, context, base_dir=target.declared_in)
