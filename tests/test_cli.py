@@ -161,7 +161,7 @@ def test_push_cli_uses_tracked_binding_profile_without_prompting(
     assert payload["operation"] == "push"
     assert payload["bindings"][0]["selector"] == "git"
     assert payload["bindings"][0]["profile"] == "basic"
-    assert payload["bindings"][0]["targets"][0]["action"] == "install"
+    assert payload["bindings"][0]["targets"][0]["action"] == "create"
 
 
 def test_prompt_for_excluded_items_uses_archived_colored_style(
@@ -173,7 +173,7 @@ def test_prompt_for_excluded_items_uses_archived_colored_style(
             binding_label="example:git@basic",
             package_id="git",
             target_name="gitconfig",
-            action="install",
+            action="create",
             source_path="/repo/gitconfig",
             destination_path="/home/.gitconfig",
         )
@@ -188,14 +188,14 @@ def test_prompt_for_excluded_items_uses_archived_colored_style(
     assert excluded == set()
     assert "\033[1;34m::\033[0m" in output
     assert "\033[1;36m 1)\033[0m" in output
-    assert "\033[1;32m[install]\033[0m" in output
+    assert "\033[1;32m[create]\033[0m" in output
     assert "\033[2;34mexample\033[0m" in output
     assert "\033[2m/\033[0m" in output
     assert "\033[1mgit\033[0m" in output
     assert "\033[2m(gitconfig)\033[0m" in output
     assert "\033[2m->\033[0m" in output
     assert "(example:git@basic)" not in output
-    assert "example:git@basic \033[1;32m[install]\033[0m" not in output
+    assert "example:git@basic \033[1;32m[create]\033[0m" not in output
     assert "Select items to exclude from push:" in output
 
 
@@ -213,13 +213,13 @@ def test_filter_plans_for_interactive_selection_excludes_directory_child_pull_it
         directory_items=(
             DirectoryPlanItem(
                 relative_path="alpha.sh",
-                action="pull",
+                action="update",
                 repo_path=Path("/repo/bin/alpha.sh"),
                 live_path=Path("/home/bin/alpha.sh"),
             ),
             DirectoryPlanItem(
                 relative_path="beta.sh",
-                action="pull",
+                action="update",
                 repo_path=Path("/repo/bin/beta.sh"),
                 live_path=Path("/home/bin/beta.sh"),
             ),
@@ -260,7 +260,7 @@ def test_collect_pending_selection_items_for_pull_uses_live_to_repo_paths() -> N
         directory_items=(
             DirectoryPlanItem(
                 relative_path="alpha.sh",
-                action="pull",
+                action="update",
                 repo_path=Path("/repo/bin/alpha.sh"),
                 live_path=Path("/home/bin/alpha.sh"),
             ),
@@ -279,7 +279,7 @@ def test_collect_pending_selection_items_for_pull_uses_live_to_repo_paths() -> N
     selection_items = cli.collect_pending_selection_items_for_operation([plan], operation="pull")
 
     assert [(item.action, item.source_path, item.destination_path) for item in selection_items] == [
-        ("pull", "/home/bin/alpha.sh", "/repo/bin/alpha.sh"),
+        ("update", "/home/bin/alpha.sh", "/repo/bin/alpha.sh"),
     ]
 
 
@@ -600,9 +600,9 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
     output = capsys.readouterr().out
     assert "Select items to exclude from push:" in output
     assert "example:git@basic\n" not in output
-    assert "git:gitconfig -> install" not in output
+    assert "git:gitconfig -> add" not in output
     assert "example:nvim@basic\n" not in output
-    assert "nvim:init_lua -> install" in output
+    assert "nvim:init_lua -> create" in output
 
 
 def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
@@ -657,7 +657,7 @@ def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
     assert "Select items to exclude from push:" in output
     assert "example:git@basic\n" not in output
     assert "example:nvim@basic\n" not in output
-    assert "git:gitconfig -> install" not in output
+    assert "git:gitconfig -> create" not in output
     assert "nvim:init_lua -> noop" not in output
 
 
@@ -806,7 +806,7 @@ def test_pull_cli_uses_tracked_binding_profile_without_prompting(
     assert payload["operation"] == "pull"
     assert payload["bindings"][0]["selector"] == "git"
     assert payload["bindings"][0]["profile"] == "basic"
-    assert payload["bindings"][0]["targets"][0]["action"] == "missing"
+    assert payload["bindings"][0]["targets"][0]["action"] == "delete"
 
 
 def test_pull_cli_allows_package_selected_through_tracked_owner_binding(
@@ -851,7 +851,7 @@ def test_pull_cli_allows_package_selected_through_tracked_owner_binding(
     assert payload["operation"] == "pull"
     assert payload["bindings"][0]["selector"] == "nvim"
     assert payload["bindings"][0]["profile"] == "basic"
-    assert payload["bindings"][0]["targets"][0]["action"] == "missing"
+    assert payload["bindings"][0]["targets"][0]["action"] == "delete"
 
 
 def test_push_cli_allows_package_selected_through_tracked_owner_binding(
@@ -896,7 +896,7 @@ def test_push_cli_allows_package_selected_through_tracked_owner_binding(
     assert payload["operation"] == "push"
     assert payload["bindings"][0]["selector"] == "nvim"
     assert payload["bindings"][0]["profile"] == "basic"
-    assert payload["bindings"][0]["targets"][0]["action"] == "install"
+    assert payload["bindings"][0]["targets"][0]["action"] == "create"
 
 
 @pytest.mark.parametrize("command", ["apply", "upgrade", "import", "remove"])

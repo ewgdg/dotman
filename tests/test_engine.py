@@ -81,7 +81,7 @@ def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
     target = plan.target_plans[0]
     assert target.package_id == "git"
     assert target.target_name == "gitconfig"
-    assert target.action == "install"
+    assert target.action == "create"
     assert target.live_path == home / ".gitconfig"
     assert "name = Example User" in target.desired_text
     assert "email = local@example.test" in target.desired_text
@@ -388,9 +388,9 @@ def test_pull_plan_exposes_file_level_items_for_directory_targets(
     target = plan.target_plans[0]
     assert target.action == "update"
     assert [(item.action, item.relative_path) for item in target.directory_items] == [
-        ("pull", "alpha.toml"),
-        ("remove", "beta.toml"),
-        ("pull", "gamma.toml"),
+        ("update", "alpha.toml"),
+        ("delete", "beta.toml"),
+        ("create", "gamma.toml"),
     ]
 
 
@@ -450,8 +450,8 @@ def test_push_plan_exposes_file_level_items_for_directory_targets(
     assert target.action == "update"
     assert [(item.action, item.relative_path) for item in target.directory_items] == [
         ("update", "alpha.toml"),
-        ("install", "beta.toml"),
-        ("remove", "gamma.toml"),
+        ("create", "beta.toml"),
+        ("delete", "gamma.toml"),
     ]
 
 

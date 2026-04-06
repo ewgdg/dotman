@@ -1211,7 +1211,7 @@ class DotmanEngine:
                 directory_items.append(
                     DirectoryPlanItem(
                         relative_path=relative_path,
-                        action="install",
+                        action="create",
                         repo_path=desired_files[relative_path],
                         live_path=live_path / relative_path,
                     )
@@ -1220,7 +1220,7 @@ class DotmanEngine:
                 directory_items.append(
                     DirectoryPlanItem(
                         relative_path=relative_path,
-                        action="remove",
+                        action="delete",
                         repo_path=repo_path / relative_path,
                         live_path=live_files[relative_path],
                     )
@@ -1241,13 +1241,13 @@ class DotmanEngine:
             if not directory_items:
                 return "noop", ()
             ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))
-            return ("install" if not live_exists else "update"), ordered_items
+            return ("create" if not live_exists else "update"), ordered_items
 
         for relative_path in sorted(desired_rel_paths - live_rel_paths):
             directory_items.append(
                 DirectoryPlanItem(
                     relative_path=relative_path,
-                    action="remove",
+                    action="delete",
                     repo_path=desired_files[relative_path],
                     live_path=live_path / relative_path,
                 )
@@ -1256,7 +1256,7 @@ class DotmanEngine:
             directory_items.append(
                 DirectoryPlanItem(
                     relative_path=relative_path,
-                    action="pull",
+                    action="create",
                     repo_path=repo_path / relative_path,
                     live_path=live_files[relative_path],
                 )
@@ -1269,7 +1269,7 @@ class DotmanEngine:
                 directory_items.append(
                     DirectoryPlanItem(
                         relative_path=relative_path,
-                        action="pull",
+                        action="update",
                         repo_path=source_path,
                         live_path=live_file,
                     )
@@ -1278,7 +1278,7 @@ class DotmanEngine:
         if not directory_items:
             return "noop", ()
         ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))
-        return ("missing" if not live_exists else "update"), ordered_items
+        return ("delete" if not live_exists else "update"), ordered_items
 
     def _plan_file_action(
         self,
@@ -1300,13 +1300,13 @@ class DotmanEngine:
     ) -> str:
         if operation in {"upgrade", "push"}:
             if not live_path.exists():
-                return "install"
+                return "create"
             if desired_bytes is None:
                 return "unknown"
             return "noop" if desired_bytes == live_path.read_bytes() else "update"
 
         if not live_path.exists():
-            return "missing"
+            return "delete"
         repo_bytes = self._pull_view_bytes(
             repo=repo,
             package=package,

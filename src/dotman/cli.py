@@ -21,11 +21,9 @@ MENU_HINT_STYLE = ("2",)
 MENU_REPO_STYLE = ("2", "34")
 INTERRUPTED_EXIT_CODE = 130
 MENU_ACTION_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
-    "install": ("1", "32"),
+    "create": ("1", "32"),
     "update": ("1", "36"),
-    "pull": ("1", "33"),
-    "remove": ("1", "31"),
-    "missing": ("1", "31"),
+    "delete": ("1", "31"),
 }
 
 
@@ -229,8 +227,6 @@ def selection_item_paths(*, operation: str, repo_path: Path | str, live_path: Pa
 
 
 def selection_item_action(*, operation: str, action: str) -> str:
-    if operation == "pull" and action == "update":
-        return "pull"
     return action
 
 
