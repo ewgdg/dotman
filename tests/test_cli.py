@@ -900,7 +900,7 @@ def test_print_selection_header_prepends_blank_line(monkeypatch, capsys) -> None
 def test_review_menu_prompt_prepends_blank_line(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
-    assert cli.review_menu_prompt() == '\nReview command ("?", number, "a", "e <number>", "c", "q"; default: continue): '
+    assert cli.review_menu_prompt() == '\nReview command ("?", number, "a", "c", "q"; default: continue): '
 
 
 def test_pending_selection_prompt_prepends_blank_line(monkeypatch) -> None:
@@ -982,7 +982,7 @@ def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> 
 
     output = capsys.readouterr().out
     assert "Review commands:" in output
-    assert "  e <number> open editor/reconcile" in output
+    assert "  a          inspect all diffs" in output
     assert '  "?"        show this help' in output
 
 

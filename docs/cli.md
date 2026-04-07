@@ -78,6 +78,7 @@ This document captures the current command and selector direction for `dotman`.
 - In interactive mode, `push` should present one combined selection menu for pending non-noop target actions so the user can exclude specific items before execution.
 - After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
 - The interactive diff review stage should stay inspection-only in v1.
+- Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `live/...` and `repo/...` paths instead of opaque `before-*` or `after-*` temp names.
 - Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
@@ -102,6 +103,7 @@ This document captures the current command and selector direction for `dotman`.
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
 - The interactive diff review stage should stay inspection-only in v1.
+- Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `repo/...` and `live/...` paths instead of opaque `before-*` or `after-*` temp names.
 - Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.

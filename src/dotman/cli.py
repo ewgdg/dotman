@@ -12,9 +12,7 @@ from dotman.diff_review import (
     ReviewItem,
     build_review_items,
     diff_status as review_diff_status,
-    edit_status as review_edit_status,
     run_review_item_diff,
-    run_review_item_edit,
 )
 from dotman.engine import DotmanEngine, parse_binding_text
 from dotman.reconcile import run_basic_reconcile
@@ -189,7 +187,7 @@ def pending_selection_prompt() -> str:
 
 def review_menu_prompt() -> str:
     prompt_text = "Review command"
-    hint_text = '("?", number, "a", "e <number>", "c", "q"; default: continue)'
+    hint_text = '("?", number, "a", "c", "q"; default: continue)'
     if not colors_enabled():
         return f"\n{prompt_text} {hint_text}: "
     return (
@@ -216,7 +214,6 @@ def print_review_command_help() -> None:
     print("Review commands:")
     print("  <number>   inspect one diff")
     print("  a          inspect all diffs")
-    print("  e <number> open editor/reconcile")
     print("  c          continue")
     print("  q          abort")
     print('  "?"        show this help')
@@ -239,10 +236,6 @@ def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | N
     if answer.isdigit():
         selected_index = parse_selection_index(answer, item_count)
         return "inspect", selected_index - 1
-    command_parts = answer.split()
-    if len(command_parts) == 2 and command_parts[0] == "e":
-        selected_index = parse_selection_index(command_parts[1], item_count)
-        return "edit", selected_index - 1
     raise ValueError(f"unsupported review command: {raw_answer.strip()}")
 
 
@@ -494,11 +487,10 @@ def print_review_item(index: int, item: ReviewItem) -> None:
         target_name=item.target_name,
     )
     diff_text = review_diff_status(item)
-    edit_text = review_edit_status(item)
     if not colors_enabled():
         item_text = (
             f"[{item.action}] {package_target} "
-            f"[{diff_text}; {edit_text}]: {item.source_path} -> {item.destination_path}"
+            f"[{diff_text}]: {item.source_path} -> {item.destination_path}"
         )
         print(f"  {index:>2}) {item_text}")
         return
@@ -510,7 +502,7 @@ def print_review_item(index: int, item: ReviewItem) -> None:
         package_id=item.package_id,
         target_name=item.target_name,
     )
-    status_label = style_text(f"[{diff_text}; {edit_text}]", *MENU_HINT_STYLE)
+    status_label = style_text(f"[{diff_text}]", *MENU_HINT_STYLE)
     arrow_text = style_text("->", *MENU_HINT_STYLE)
     print(
         f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
@@ -612,14 +604,6 @@ def run_diff_review_menu(review_items: Sequence[ReviewItem], *, operation: str) 
                 print_review_diff_footer(index=selected_index + 1, total=len(review_items))
             except ValueError as exc:
                 print(f"review unavailable: {exc}", file=sys.stderr)
-            continue
-        if command_name == "edit":
-            try:
-                exit_code = run_review_item_edit(review_items[selected_index])
-                if exit_code != 0:
-                    print(f"edit exited with code {exit_code}", file=sys.stderr)
-            except ValueError as exc:
-                print(f"edit unavailable: {exc}", file=sys.stderr)
             continue
     return True
 
