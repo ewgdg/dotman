@@ -997,6 +997,17 @@ class DotmanEngine:
                 if target.reconcile is not None
                 else None
             )
+            command_env = self._build_target_command_env(
+                repo=repo,
+                package=package,
+                target=target,
+                repo_path=repo_path,
+                live_path=live_path,
+                binding=binding,
+                operation=operation,
+                inferred_os=inferred_os,
+                context=context,
+            )
             if repo_path.is_dir():
                 action, directory_items = self._plan_directory_action(
                     repo_path,
@@ -1021,6 +1032,8 @@ class DotmanEngine:
                         pull_view_live=target.pull_view_live or ("capture" if capture_command else "raw"),
                         push_ignore=push_ignore,
                         pull_ignore=pull_ignore,
+                        command_cwd=target.declared_in,
+                        command_env=command_env,
                         directory_items=directory_items,
                     )
                 )
@@ -1066,6 +1079,22 @@ class DotmanEngine:
                 pull_view_repo=pull_view_repo,
                 pull_view_live=pull_view_live,
             )
+            review_before_bytes, review_after_bytes = self._build_file_review_bytes(
+                repo=repo,
+                package=package,
+                target=target,
+                repo_path=repo_path,
+                live_path=live_path,
+                desired_bytes=desired_bytes,
+                render_command=render_command,
+                capture_command=capture_command,
+                context=context,
+                binding=binding,
+                operation=operation,
+                inferred_os=inferred_os,
+                pull_view_repo=pull_view_repo,
+                pull_view_live=pull_view_live,
+            )
             desired_text = None
             if desired_bytes is not None:
                 try:
@@ -1090,7 +1119,11 @@ class DotmanEngine:
                     pull_view_live=pull_view_live,
                     push_ignore=push_ignore,
                     pull_ignore=pull_ignore,
+                    command_cwd=target.declared_in,
+                    command_env=command_env,
                     desired_bytes=desired_bytes,
+                    review_before_bytes=review_before_bytes,
+                    review_after_bytes=review_after_bytes,
                 )
             )
         return plans
@@ -1345,6 +1378,62 @@ class DotmanEngine:
         )
         return "noop" if repo_bytes == live_bytes else "update"
 
+    def _build_file_review_bytes(
+        self,
+        *,
+        repo: Repository,
+        package: PackageSpec,
+        target: TargetSpec,
+        repo_path: Path,
+        live_path: Path,
+        desired_bytes: bytes | None,
+        render_command: str | None,
+        capture_command: str | None,
+        context: dict[str, Any],
+        binding: Binding,
+        operation: str,
+        inferred_os: str,
+        pull_view_repo: str,
+        pull_view_live: str,
+    ) -> tuple[bytes | None, bytes | None]:
+        if operation in {"upgrade", "push"}:
+            live_bytes = live_path.read_bytes() if live_path.exists() else b""
+            return live_bytes, desired_bytes
+
+        repo_bytes = self._pull_view_bytes(
+            repo=repo,
+            package=package,
+            target=target,
+            repo_path=repo_path,
+            live_path=live_path,
+            view=pull_view_repo,
+            repo_side=True,
+            render_command=render_command,
+            capture_command=capture_command,
+            context=context,
+            binding=binding,
+            operation=operation,
+            inferred_os=inferred_os,
+        )
+        if not live_path.exists():
+            return repo_bytes, b""
+        live_bytes = self._pull_view_bytes(
+            repo=repo,
+            package=package,
+            target=target,
+            repo_path=repo_path,
+            live_path=live_path,
+            view=pull_view_live,
+            repo_side=False,
+            render_command=render_command,
+            capture_command=capture_command,
+            context=context,
+            binding=binding,
+            operation=operation,
+            inferred_os=inferred_os,
+        )
+        return repo_bytes, live_bytes
+
     def _pull_view_bytes(
         self,
         *,
@@ -1423,23 +1512,18 @@ class DotmanEngine:
     ) -> bytes:
         env = os.environ.copy()
         env.update(
-            {
-                "DOTMAN_REPO_NAME": repo.config.name,
-                "DOTMAN_REPO_ROOT": str(repo.root),
-                "DOTMAN_STATE_PATH": str(repo.config.state_path),
-                "DOTMAN_PACKAGE_ID": package.id,
-                "DOTMAN_PACKAGE_ROOT": str(package.package_root),
-                "DOTMAN_TARGET_NAME": target.name,
-                "DOTMAN_REPO_PATH": str(repo_path),
-                "DOTMAN_SOURCE": str(repo_path),
-                "DOTMAN_LIVE_PATH": str(live_path),
-                "DOTMAN_PROFILE": binding.profile,
-                "DOTMAN_OPERATION": operation,
-                "DOTMAN_OS": inferred_os,
-            }
+            self._build_target_command_env(
+                repo=repo,
+                package=package,
+                target=target,
+                repo_path=repo_path,
+                live_path=live_path,
+                binding=binding,
+                operation=operation,
+                inferred_os=inferred_os,
+                context=context,
+            )
         )
-        for flat_key, value in flatten_vars(context["vars"]).items():
-            env[f"DOTMAN_VAR_{flat_key}"] = value
         completed = subprocess.run(
             command,
             cwd=str(target.declared_in),
@@ -1453,6 +1537,37 @@ class DotmanEngine:
             stderr = completed.stderr.decode("utf-8", errors="replace")
             raise ValueError(f"command projection failed for {package.id}:{target.name}: {stderr.strip()}")
         return completed.stdout
+
+    def _build_target_command_env(
+        self,
+        *,
+        repo: Repository,
+        package: PackageSpec,
+        target: TargetSpec,
+        repo_path: Path,
+        live_path: Path,
+        binding: Binding,
+        operation: str,
+        inferred_os: str,
+        context: dict[str, Any],
+    ) -> dict[str, str]:
+        env = {
+            "DOTMAN_REPO_NAME": repo.config.name,
+            "DOTMAN_REPO_ROOT": str(repo.root),
+            "DOTMAN_STATE_PATH": str(repo.config.state_path),
+            "DOTMAN_PACKAGE_ID": package.id,
+            "DOTMAN_PACKAGE_ROOT": str(package.package_root),
+            "DOTMAN_TARGET_NAME": target.name,
+            "DOTMAN_REPO_PATH": str(repo_path),
+            "DOTMAN_SOURCE": str(repo_path),
+            "DOTMAN_LIVE_PATH": str(live_path),
+            "DOTMAN_PROFILE": binding.profile,
+            "DOTMAN_OPERATION": operation,
+            "DOTMAN_OS": inferred_os,
+        }
+        for flat_key, value in flatten_vars(context["vars"]).items():
+            env[f"DOTMAN_VAR_{flat_key}"] = value
+        return env
 
 
 __all__ = [

@@ -76,6 +76,13 @@ This document captures the current command and selector direction for `dotman`.
 - If group membership or package `depends` change in the repo, `push` should pick up newly introduced managed packages and files.
 - `push` should only touch files within the current managed selection.
 - In interactive mode, `push` should present one combined selection menu for pending non-noop target actions so the user can exclude specific items before execution.
+- After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
+- The interactive diff review stage should stay inspection-only in v1.
+- Diff review should use `git diff --no-index --color=auto`.
+- Diff review headers should use explicit `live/...` and `repo/...` paths instead of opaque `before-*` or `after-*` temp names.
+- Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
+- In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
+- Review commands should support inspecting one item, inspecting all items, opening an editor for supported items, continuing, or aborting.
 - If the requested selector is not currently tracked, `push` should fail instead of implicitly creating or retargeting state. The user should use `track` for that.
 - Group composition should let a user keep a stable entrypoint such as `host/arch-niri` without manually listing every lower-level group.
 - Examples:
@@ -92,6 +99,14 @@ This document captures the current command and selector direction for `dotman`.
 - If the requested selector is not currently tracked, `pull` should fail instead of implicitly creating state. The user should use `track` first.
 - `pull` should first build a reverse-sync plan before changing any sources.
 - In interactive mode, `pull` should present one combined selection menu for pending non-noop target actions so the user can exclude specific items before execution.
+- After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
+- The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
+- The interactive diff review stage should stay inspection-only in v1.
+- Diff review should use `git diff --no-index --color=auto`.
+- Diff review headers should use explicit `repo/...` and `live/...` paths instead of opaque `before-*` or `after-*` temp names.
+- Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
+- In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
+- Review commands should support inspecting one item, inspecting all items, opening target reconcile or an editor for supported items, continuing, or aborting.
 - For plain copied files, pull planning can compare the package source directly against the live file.
 - For transformed targets, pull planning should compare repo-side and live-side views.
 - Default pull planning should compare:

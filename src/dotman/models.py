@@ -216,7 +216,11 @@ class TargetPlan:
     pull_view_live: str = "raw"
     push_ignore: tuple[str, ...] = ()
     pull_ignore: tuple[str, ...] = ()
+    command_cwd: Path | None = None
+    command_env: dict[str, str] | None = field(default=None, repr=False)
     desired_bytes: bytes | None = field(default=None, repr=False)
+    review_before_bytes: bytes | None = field(default=None, repr=False)
+    review_after_bytes: bytes | None = field(default=None, repr=False)
     directory_items: tuple["DirectoryPlanItem", ...] = ()
 
     def to_dict(self) -> dict[str, Any]:

@@ -605,6 +605,110 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
     assert "nvim:init_lua -> create" in output
 
 
+def test_push_cli_enters_diff_review_menu_after_selection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    recorded: dict[str, object] = {}
+
+    def fake_run_diff_review_menu(review_items, *, operation: str) -> bool:
+        recorded["operation"] = operation
+        recorded["item_count"] = len(review_items)
+        return True
+
+    monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+        ]
+    )
+
+    assert exit_code == 0
+    assert recorded == {
+        "operation": "push",
+        "item_count": 1,
+    }
+
+
+def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    recorded: dict[str, object] = {}
+
+    def fake_run_diff_review_menu(review_items, *, operation: str) -> bool:
+        recorded["operation"] = operation
+        recorded["item_count"] = len(review_items)
+        recorded["first_action"] = review_items[0].action
+        return True
+
+    monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+        ]
+    )
+
+    assert exit_code == 0
+    assert recorded == {
+        "operation": "push",
+        "item_count": 1,
+        "first_action": "create",
+    }
+
+
 def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
     tmp_path: Path,
     monkeypatch,
@@ -659,6 +763,270 @@ def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
     assert "example:nvim@basic\n" not in output
     assert "git:gitconfig -> create" not in output
     assert "nvim:init_lua -> noop" not in output
+
+
+def test_pull_cli_returns_130_when_diff_review_aborts(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config" / "nvim").mkdir(parents=True)
+    (home / ".config" / "nvim" / "init.lua").write_text(
+        'vim.g.mapleader = ","\nvim.cmd.colorscheme("industry")\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    monkeypatch.setattr(cli, "run_diff_review_menu", lambda review_items, *, operation: False)
+
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "nvim"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "pull",
+        ]
+    )
+
+    assert exit_code == 130
+    assert capsys.readouterr().err == "\ninterrupted\n"
+
+
+def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(
+    monkeypatch,
+    capsys,
+) -> None:
+    review_items = [
+        cli.ReviewItem(
+            binding_label="example:git@basic",
+            package_id="git",
+            target_name="gitconfig",
+            action="update",
+            operation="push",
+            repo_path=Path("/repo/gitconfig"),
+            live_path=Path("/live/gitconfig"),
+            source_path="/repo/gitconfig",
+            destination_path="/live/gitconfig",
+            before_bytes=b"before\n",
+            after_bytes=b"after\n",
+        ),
+        cli.ReviewItem(
+            binding_label="example:zsh@basic",
+            package_id="zsh",
+            target_name="zshrc",
+            action="update",
+            operation="push",
+            repo_path=Path("/repo/.zshrc"),
+            live_path=Path("/live/.zshrc"),
+            source_path="/repo/.zshrc",
+            destination_path="/live/.zshrc",
+            before_bytes=b"before\n",
+            after_bytes=b"after\n",
+        ),
+    ]
+    prompts = iter(["a", "c"])
+    inspected: list[str] = []
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.run_diff_review_menu(review_items, operation="push") is True
+
+    output = capsys.readouterr().out
+    assert inspected == ["gitconfig", "zshrc"]
+    assert "----- Diff 1/2: example/git (gitconfig) [update] -----" in output
+    assert "----- End Diff 1/2 -----" in output
+    assert "----- Diff 2/2: example/zsh (zshrc) [update] -----" in output
+    assert "----- End Diff 2/2 -----" in output
+
+
+def test_run_diff_review_menu_prints_footer_after_single_inspect(
+    monkeypatch,
+    capsys,
+) -> None:
+    review_item = cli.ReviewItem(
+        binding_label="example:git@basic",
+        package_id="git",
+        target_name="gitconfig",
+        action="update",
+        operation="push",
+        repo_path=Path("/repo/gitconfig"),
+        live_path=Path("/live/gitconfig"),
+        source_path="/repo/gitconfig",
+        destination_path="/live/gitconfig",
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+    prompts = iter(["1", "c"])
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "run_review_item_diff", lambda item: None)
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.run_diff_review_menu([review_item], operation="push") is True
+
+    output = capsys.readouterr().out
+    assert "----- Diff 1/1: example/git (gitconfig) [update] -----" in output
+    assert "----- End Diff 1/1 -----" in output
+
+
+def test_print_selection_header_prepends_blank_line(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    cli.print_selection_header("Review pending diffs for pull:")
+
+    assert capsys.readouterr().out == "\nReview pending diffs for pull:\n"
+
+
+def test_review_menu_prompt_prepends_blank_line(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.review_menu_prompt() == '\nReview command ("?", number, "a", "e <number>", "c", "q"; default: continue): '
+
+
+def test_pending_selection_prompt_prepends_blank_line(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.pending_selection_prompt() == '\nExclude by number or range ("?"; e.g. "1 2 4-6" or "^3"; default: none): '
+
+
+def test_selection_prompt_mentions_help(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.selection_prompt() == 'Select a number ("?"; default: 1): '
+
+
+def test_select_menu_option_shows_help_then_accepts_selection(monkeypatch, capsys) -> None:
+    prompts = iter(["?", "2"])
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    selected_index = cli.select_menu_option(
+        header_text="Select a profile:",
+        option_labels=["basic", "work"],
+    )
+
+    output = capsys.readouterr().out
+    assert selected_index == 1
+    assert "Selection help:" in output
+    assert "  <number>  choose that item" in output
+    assert "Enter" not in output
+
+
+def test_prompt_for_excluded_items_shows_help_then_returns_selection(monkeypatch, capsys) -> None:
+    prompts = iter(["?", "1 3-4"])
+    items = [
+        cli.PendingSelectionItem(
+            binding_label="example:git@basic",
+            package_id="git",
+            target_name="gitconfig",
+            action="update",
+            source_path="/repo/gitconfig",
+            destination_path="/live/gitconfig",
+        )
+        for _ in range(4)
+    ]
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    excluded = cli.prompt_for_excluded_items(items, operation="push")
+
+    output = capsys.readouterr().out
+    assert excluded == {1, 3, 4}
+    assert "Selection help:" in output
+    assert "  ^<selection>   keep only the selected items" in output
+    assert "Enter" not in output
+
+
+def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> None:
+    review_item = cli.ReviewItem(
+        binding_label="example:git@basic",
+        package_id="git",
+        target_name="gitconfig",
+        action="update",
+        operation="push",
+        repo_path=Path("/repo/gitconfig"),
+        live_path=Path("/live/gitconfig"),
+        source_path="/repo/gitconfig",
+        destination_path="/live/gitconfig",
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+    prompts = iter(["?", "c"])
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.run_diff_review_menu([review_item], operation="push") is True
+
+    output = capsys.readouterr().out
+    assert "Review commands:" in output
+    assert "  e <number> open editor/reconcile" in output
+    assert '  "?"        show this help' in output
+
+
+def test_push_cli_skips_diff_review_for_json_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        cli,
+        "run_diff_review_menu",
+        lambda review_items, *, operation: (_ for _ in ()).throw(AssertionError("review menu should not run")),
+    )
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "push",
+        ]
+    )
+
+    assert exit_code == 0
 
 
 def test_track_cli_updates_existing_binding_when_profile_selection_changes(
@@ -1208,6 +1576,37 @@ def test_reconcile_editor_subcommand_invokes_editor_with_repo_live_and_additiona
     def fake_run(command: list[str], check: bool):
         recorded["command"] = command
         recorded["check"] = check
+        review_path = Path(command[1])
+        assert review_path.name == "reconcile-review.md"
+        assert review_path.read_text(encoding="utf-8") == "\n".join(
+            [
+                "# Dotman Reconcile Review",
+                "",
+                "Review only. Do not edit this file.",
+                "Inspect the diff below, then edit the real repo source files listed under editable sources.",
+                "",
+                "## Review Inputs",
+                "",
+                f"- review repo path: {repo_path.resolve()}",
+                f"- review live path: {live_path.resolve()}",
+                "",
+                "## Editable Sources",
+                "",
+                f"- {repo_path.resolve()}",
+                f"- {include_path.resolve()}",
+                "",
+                "## Diff",
+                "",
+                "```diff",
+                f"--- {repo_path.resolve()}",
+                f"+++ {live_path.resolve()}",
+                "@@ -1 +1 @@",
+                "-repo",
+                "+live",
+                "```",
+                "",
+            ]
+        )
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
@@ -1217,7 +1616,7 @@ def test_reconcile_editor_subcommand_invokes_editor_with_repo_live_and_additiona
             "reconcile",
             "editor",
             "--editor",
-            "nvim -d",
+            "nvim",
             "--repo-path",
             str(repo_path),
             "--live-path",
@@ -1229,11 +1628,10 @@ def test_reconcile_editor_subcommand_invokes_editor_with_repo_live_and_additiona
 
     assert exit_code == 0
     assert recorded["check"] is False
-    assert recorded["command"] == [
-        "nvim",
-        "-d",
+    command = recorded["command"]
+    assert command[0] == "nvim"
+    assert command[2:] == [
         str(repo_path.resolve()),
-        str(live_path.resolve()),
         str(include_path.resolve()),
     ]
 

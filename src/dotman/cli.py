@@ -8,6 +8,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Sequence
 
+from dotman.diff_review import (
+    ReviewItem,
+    build_review_items,
+    diff_status as review_diff_status,
+    edit_status as review_edit_status,
+    run_review_item_diff,
+    run_review_item_edit,
+)
 from dotman.engine import DotmanEngine, parse_binding_text
 from dotman.reconcile import run_basic_reconcile
 
@@ -54,7 +62,27 @@ def style_text(text: str, *codes: str) -> str:
     return f"\033[{';'.join(codes)}m{text}{ANSI_RESET}"
 
 
+def repo_name_from_binding_label(binding_label: str) -> str:
+    return binding_label.split(":", 1)[0]
+
+
+def package_target_text(*, repo_name: str, package_id: str, target_name: str) -> str:
+    return f"{repo_name}/{package_id} ({target_name})"
+
+
+def render_package_target_label(*, repo_name: str, package_id: str, target_name: str) -> str:
+    if not colors_enabled():
+        return package_target_text(repo_name=repo_name, package_id=package_id, target_name=target_name)
+    return (
+        f"{style_text(repo_name, *MENU_REPO_STYLE)}"
+        f"{style_text('/', *MENU_HINT_STYLE)}"
+        f"{style_text(package_id, '1')} "
+        f"{style_text(f'({target_name})', *MENU_HINT_STYLE)}"
+    )
+
+
 def print_selection_header(header_text: str) -> None:
+    print()
     if not colors_enabled():
         print(header_text)
         return
@@ -127,6 +155,9 @@ def select_menu_option(*, header_text: str, option_labels: Sequence[str]) -> int
     while True:
         try:
             answer = prompt(selection_prompt())
+            if answer.strip() == "?":
+                print_selection_help()
+                continue
             return parse_selection_index(answer, len(option_labels)) - 1
         except ValueError as exc:
             print(f"invalid selection: {exc}", file=sys.stderr)
@@ -134,7 +165,7 @@ def select_menu_option(*, header_text: str, option_labels: Sequence[str]) -> int
 
 def selection_prompt() -> str:
     prompt_text = "Select a number"
-    hint_text = "(default: 1)"
+    hint_text = '("?"; default: 1)'
     if not colors_enabled():
         return f"{prompt_text} {hint_text}: "
     return (
@@ -146,18 +177,73 @@ def selection_prompt() -> str:
 
 def pending_selection_prompt() -> str:
     prompt_text = "Exclude by number or range"
-    hint_text = '(default: none; e.g. "1 2 4-6" or "^3")'
+    hint_text = '("?"; e.g. "1 2 4-6" or "^3"; default: none)'
     if not colors_enabled():
-        return f"{prompt_text} {hint_text}: "
+        return f"\n{prompt_text} {hint_text}: "
     return (
-        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"\n{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
         f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
         f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
     )
 
 
+def review_menu_prompt() -> str:
+    prompt_text = "Review command"
+    hint_text = '("?", number, "a", "e <number>", "c", "q"; default: continue)'
+    if not colors_enabled():
+        return f"\n{prompt_text} {hint_text}: "
+    return (
+        f"\n{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+    )
+
+
+def print_selection_help() -> None:
+    print("Selection help:")
+    print("  <number>  choose that item")
+
+
+def print_pending_selection_help() -> None:
+    print("Selection help:")
+    print("  <number>       exclude one item")
+    print("  <a-b>          exclude a range")
+    print("  1 3 5-7        exclude multiple items or ranges")
+    print("  ^<selection>   keep only the selected items")
+
+
+def print_review_command_help() -> None:
+    print("Review commands:")
+    print("  <number>   inspect one diff")
+    print("  a          inspect all diffs")
+    print("  e <number> open editor/reconcile")
+    print("  c          continue")
+    print("  q          abort")
+    print('  "?"        show this help')
+
+
 def interactive_mode_enabled(*, json_output: bool) -> bool:
     return not json_output and sys.stdin.isatty()
+
+
+def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | None]:
+    answer = raw_answer.strip().lower()
+    if not answer or answer == "c":
+        return "continue", None
+    if answer == "?":
+        return "help", None
+    if answer == "a":
+        return "all", None
+    if answer == "q":
+        return "abort", None
+    if answer.isdigit():
+        selected_index = parse_selection_index(answer, item_count)
+        return "inspect", selected_index - 1
+    command_parts = answer.split()
+    if len(command_parts) == 2 and command_parts[0] == "e":
+        selected_index = parse_selection_index(command_parts[1], item_count)
+        return "edit", selected_index - 1
+    raise ValueError(f"unsupported review command: {raw_answer.strip()}")
 
 
 def resolve_binding_text(
@@ -297,11 +383,15 @@ def collect_pending_selection_items_for_operation(plans: Sequence, *, operation:
 
 
 def print_pending_selection_item(index: int, item: PendingSelectionItem) -> None:
-    repo_name = item.binding_label.split(":", 1)[0]
-    package_text = f"{repo_name}/{item.package_id}"
+    repo_name = repo_name_from_binding_label(item.binding_label)
+    package_target = package_target_text(
+        repo_name=repo_name,
+        package_id=item.package_id,
+        target_name=item.target_name,
+    )
     if not colors_enabled():
         item_text = (
-            f"[{item.action}] {package_text} ({item.target_name}): "
+            f"[{item.action}] {package_target}: "
             f"{item.source_path} -> {item.destination_path}"
         )
         print(f"  {index:>2}) {item_text}")
@@ -309,16 +399,15 @@ def print_pending_selection_item(index: int, item: PendingSelectionItem) -> None
 
     action_style = MENU_ACTION_STYLE_BY_NAME.get(item.action, ("1",))
     action_text = style_text(f"[{item.action}]", *action_style)
-    package_label = (
-        f"{style_text(repo_name, *MENU_REPO_STYLE)}"
-        f"{style_text('/', *MENU_HINT_STYLE)}"
-        f"{style_text(item.package_id, '1')}"
+    package_label = render_package_target_label(
+        repo_name=repo_name,
+        package_id=item.package_id,
+        target_name=item.target_name,
     )
-    target_label = style_text(f"({item.target_name})", *MENU_HINT_STYLE)
     arrow_text = style_text("->", *MENU_HINT_STYLE)
     print(
         f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
-        f"{action_text} {package_label} {target_label}: {item.source_path} {arrow_text} {item.destination_path}"
+        f"{action_text} {package_label}: {item.source_path} {arrow_text} {item.destination_path}"
     )
 
 
@@ -328,7 +417,11 @@ def prompt_for_excluded_items(selection_items: Sequence[PendingSelectionItem], *
         print_pending_selection_item(index, item)
     while True:
         try:
-            return parse_selection_indexes(prompt(pending_selection_prompt()), len(selection_items))
+            answer = prompt(pending_selection_prompt())
+            if answer.strip() == "?":
+                print_pending_selection_help()
+                continue
+            return parse_selection_indexes(answer, len(selection_items))
         except ValueError as exc:
             print(f"invalid selection: {exc}", file=sys.stderr)
 
@@ -393,6 +486,153 @@ def filter_plans_for_interactive_selection(*, plans: Sequence, operation: str, j
     return filtered_plans
 
 
+def print_review_item(index: int, item: ReviewItem) -> None:
+    repo_name = repo_name_from_binding_label(item.binding_label)
+    package_target = package_target_text(
+        repo_name=repo_name,
+        package_id=item.package_id,
+        target_name=item.target_name,
+    )
+    diff_text = review_diff_status(item)
+    edit_text = review_edit_status(item)
+    if not colors_enabled():
+        item_text = (
+            f"[{item.action}] {package_target} "
+            f"[{diff_text}; {edit_text}]: {item.source_path} -> {item.destination_path}"
+        )
+        print(f"  {index:>2}) {item_text}")
+        return
+
+    action_style = MENU_ACTION_STYLE_BY_NAME.get(item.action, ("1",))
+    action_text = style_text(f"[{item.action}]", *action_style)
+    package_label = render_package_target_label(
+        repo_name=repo_name,
+        package_id=item.package_id,
+        target_name=item.target_name,
+    )
+    status_label = style_text(f"[{diff_text}; {edit_text}]", *MENU_HINT_STYLE)
+    arrow_text = style_text("->", *MENU_HINT_STYLE)
+    print(
+        f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+        f"{action_text} {package_label} {status_label}: "
+        f"{item.source_path} {arrow_text} {item.destination_path}"
+    )
+
+
+def review_diff_header(review_item: ReviewItem, *, index: int, total: int) -> str:
+    return (
+        f"Diff {index}/{total}: "
+        f"{package_target_text(
+            repo_name=repo_name_from_binding_label(review_item.binding_label),
+            package_id=review_item.package_id,
+            target_name=review_item.target_name,
+        )} "
+        f"[{review_item.action}]"
+    )
+
+
+def print_review_diff_header(review_item: ReviewItem, *, index: int, total: int) -> None:
+    header_text = review_diff_header(review_item, index=index, total=total)
+    separator = "-" * 5
+    if not colors_enabled():
+        print()
+        print(f"{separator} {header_text} {separator}")
+        return
+    repo_name = repo_name_from_binding_label(review_item.binding_label)
+    prefix_text = style_text(f"Diff {index}/{total}:", "1")
+    package_label = render_package_target_label(
+        repo_name=repo_name,
+        package_id=review_item.package_id,
+        target_name=review_item.target_name,
+    )
+    action_text = style_text(f"[{review_item.action}]", *MENU_ACTION_STYLE_BY_NAME.get(review_item.action, ("1",)))
+    print()
+    print(
+        f"{style_text(separator, *MENU_HINT_STYLE)} "
+        f"{prefix_text} {package_label} {action_text} "
+        f"{style_text(separator, *MENU_HINT_STYLE)}"
+    )
+
+
+def review_diff_footer(*, index: int, total: int) -> str:
+    return f"End Diff {index}/{total}"
+
+
+def print_review_diff_footer(*, index: int, total: int) -> None:
+    footer_text = review_diff_footer(index=index, total=total)
+    separator = "-" * 5
+    if not colors_enabled():
+        print(f"{separator} {footer_text} {separator}")
+        return
+    print(
+        f"{style_text(separator, *MENU_HINT_STYLE)} "
+        f"{style_text(footer_text, *MENU_HINT_STYLE)} "
+        f"{style_text(separator, *MENU_HINT_STYLE)}"
+    )
+
+
+def run_diff_review_menu(review_items: Sequence[ReviewItem], *, operation: str) -> bool:
+    print_selection_header(f"Review pending diffs for {operation}:")
+    for index, item in enumerate(review_items, start=1):
+        print_review_item(index, item)
+    while True:
+        try:
+            command_name, selected_index = parse_review_command(prompt(review_menu_prompt()), len(review_items))
+        except ValueError as exc:
+            print(f"invalid selection: {exc}", file=sys.stderr)
+            continue
+
+        if command_name == "help":
+            print_review_command_help()
+            continue
+        if command_name == "continue":
+            return True
+        if command_name == "abort":
+            return False
+        if command_name == "all":
+            for item_index, item in enumerate(review_items, start=1):
+                try:
+                    print_review_diff_header(item, index=item_index, total=len(review_items))
+                    run_review_item_diff(item)
+                    print_review_diff_footer(index=item_index, total=len(review_items))
+                except ValueError as exc:
+                    print(f"review unavailable: {exc}", file=sys.stderr)
+            continue
+        if selected_index is None:
+            print("invalid selection: missing review item", file=sys.stderr)
+            continue
+        if command_name == "inspect":
+            try:
+                print_review_diff_header(
+                    review_items[selected_index],
+                    index=selected_index + 1,
+                    total=len(review_items),
+                )
+                run_review_item_diff(review_items[selected_index])
+                print_review_diff_footer(index=selected_index + 1, total=len(review_items))
+            except ValueError as exc:
+                print(f"review unavailable: {exc}", file=sys.stderr)
+            continue
+        if command_name == "edit":
+            try:
+                exit_code = run_review_item_edit(review_items[selected_index])
+                if exit_code != 0:
+                    print(f"edit exited with code {exit_code}", file=sys.stderr)
+            except ValueError as exc:
+                print(f"edit unavailable: {exc}", file=sys.stderr)
+            continue
+    return True
+
+
+def review_plans_for_interactive_diffs(*, plans: Sequence, operation: str, json_output: bool) -> bool:
+    if not interactive_mode_enabled(json_output=json_output):
+        return True
+    review_items = build_review_items(plans, operation=operation)
+    if not review_items:
+        return True
+    return run_diff_review_menu(review_items, operation=operation)
+
+
 def emit_interrupt_notice() -> None:
     sys.stderr.write("\ninterrupted\n")
 
@@ -434,6 +674,8 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile_editor_parser = reconcile_subparsers.add_parser("editor")
     reconcile_editor_parser.add_argument("--repo-path", required=True)
     reconcile_editor_parser.add_argument("--live-path", required=True)
+    reconcile_editor_parser.add_argument("--review-repo-path")
+    reconcile_editor_parser.add_argument("--review-live-path")
     reconcile_editor_parser.add_argument("--additional-source", action="append", default=[])
     reconcile_editor_parser.add_argument("--editor")
     return parser
@@ -541,6 +783,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 repo_path=args.repo_path,
                 live_path=args.live_path,
                 additional_sources=args.additional_source,
+                review_repo_path=args.review_repo_path,
+                review_live_path=args.review_live_path,
                 editor=args.editor,
             )
         engine = DotmanEngine.from_config_path(args.config)
@@ -563,15 +807,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                     operation="push",
                     json_output=args.json_output,
                 )
-                plan = filtered_plans[0]
-                return emit_payload(operation="push", plans=[plan], json_output=args.json_output)
-            return emit_payload(
-                operation="push",
-                plans=filter_plans_for_interactive_selection(
-                    plans=engine.plan_push(),
+                if not review_plans_for_interactive_diffs(
+                    plans=filtered_plans,
                     operation="push",
                     json_output=args.json_output,
-                ),
+                ):
+                    emit_interrupt_notice()
+                    return INTERRUPTED_EXIT_CODE
+                plan = filtered_plans[0]
+                return emit_payload(operation="push", plans=[plan], json_output=args.json_output)
+            plans = filter_plans_for_interactive_selection(
+                plans=engine.plan_push(),
+                operation="push",
+                json_output=args.json_output,
+            )
+            if not review_plans_for_interactive_diffs(
+                plans=plans,
+                operation="push",
+                json_output=args.json_output,
+            ):
+                emit_interrupt_notice()
+                return INTERRUPTED_EXIT_CODE
+            return emit_payload(
+                operation="push",
+                plans=plans,
                 json_output=args.json_output,
             )
         if args.command == "pull":
@@ -588,18 +847,33 @@ def main(argv: Sequence[str] | None = None) -> int:
                     operation="pull",
                     json_output=args.json_output,
                 )
+                if not review_plans_for_interactive_diffs(
+                    plans=plans,
+                    operation="pull",
+                    json_output=args.json_output,
+                ):
+                    emit_interrupt_notice()
+                    return INTERRUPTED_EXIT_CODE
                 return emit_payload(
                     operation="pull",
                     plans=plans,
                     json_output=args.json_output,
                 )
+            plans = filter_plans_for_interactive_selection(
+                plans=engine.plan_pull(),
+                operation="pull",
+                json_output=args.json_output,
+            )
+            if not review_plans_for_interactive_diffs(
+                plans=plans,
+                operation="pull",
+                json_output=args.json_output,
+            ):
+                emit_interrupt_notice()
+                return INTERRUPTED_EXIT_CODE
             return emit_payload(
                 operation="pull",
-                plans=filter_plans_for_interactive_selection(
-                    plans=engine.plan_pull(),
-                    operation="pull",
-                    json_output=args.json_output,
-                ),
+                plans=plans,
                 json_output=args.json_output,
             )
         if args.command in {"untrack", "forget"}:
