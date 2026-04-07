@@ -152,16 +152,19 @@ This document captures the current command and selector direction for `dotman`.
   - `dotman untrack main:git@default`
   - `dotman untrack git`
 
-## Installed State
+## Tracked State
 
-- `list installed` should report the packages currently tracked by persisted bindings.
-- `list installed` should resolve the current binding state against the current repo manifests.
-- `list installed` should not guess from the live filesystem.
-- `list installed` should not run push/pull planning or execute render/capture commands.
-- `dotman list installed` should list unique installed packages and the bindings that currently include them.
-- `dotman info installed <package>` should show detailed information for one currently installed package.
-- Package detail should include the owning repo, description, bindings, resolved targets, and rendered hook commands for each binding context.
-- Package lookup for `info installed` may use the same repo-qualified and partial-selector rules as other package-oriented commands, but it should search only tracked installed packages.
+- `list tracked` should report the packages currently tracked by persisted bindings.
+- `list tracked` should resolve the current binding state against the current repo manifests.
+- `list tracked` should not guess from the live filesystem.
+- `list tracked` should not run push/pull planning or execute render/capture commands.
+- `dotman list tracked` should list unique tracked packages and the bindings that currently include them.
+- `dotman info tracked <package>` should show detailed information for one currently tracked package.
+- Package detail should include the owning repo, description, provenance entries with explicit or implicit reasons, effective targets with their winning profiles, and rendered hook commands for each tracked context.
+- Package lookup for `info tracked` may use the same repo-qualified and partial-selector rules as other package-oriented commands, but it should search only tracked packages.
+- When tracked bindings resolve the same target path, explicit provenance should override implicit provenance.
+- Conflicting explicit candidates should fail, and conflicting implicit-only candidates should also fail.
+- In interactive `track`, dotman may offer a non-conflicting profile switch before failing.
 
 ## State
 

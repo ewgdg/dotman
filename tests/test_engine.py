@@ -111,6 +111,39 @@ def test_example_group_push_plan_expands_depends_and_render_target(
     assert nvim_target.desired_text == 'vim.g.mapleader = " "\nvim.cmd.colorscheme("industry")\n'
 
 
+def test_group_selected_package_is_marked_explicit_in_tracked_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "os/arch"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    package_detail = engine.describe_installed_package("example:core-cli-meta")
+
+    assert [binding.tracked_reason for binding in package_detail.bindings] == ["explicit"]
+
+
 def test_example_extends_preserves_child_values_after_local_merge(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -686,6 +719,66 @@ def test_upgrade_uses_persisted_bindings_without_writing_new_state(
     assert plans[0].binding.selector == "os/arch"
     assert plans[0].package_ids == ["core-cli-meta", "git", "nvim"]
     assert not (state_dir / "bindings.toml").with_suffix(".tmp").exists()
+
+
+def test_plan_push_prefers_explicit_targets_over_implicit_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "os/arch"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "work/git"',
+                'profile = "work"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plans = engine.plan_push()
+    plans_by_selector = {plan.binding.selector: plan for plan in plans}
+
+    assert {target.package_id for target in plans_by_selector["os/arch"].target_plans} == {"nvim"}
+    assert {target.package_id for target in plans_by_selector["work/git"].target_plans} == {"work/git"}
+    assert "Work User" in plans_by_selector["work/git"].target_plans[0].desired_text
+
+
+def test_record_binding_rejects_conflicting_explicit_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
+
+    engine.record_binding(engine.resolve_binding("example:git@basic")[1])
+
+    with pytest.raises(
+        ValueError,
+        match=r"conflicting explicit tracked targets for .+\.gitconfig: example:git@basic \(git:gitconfig\), example:work/git@work \(work/git:gitconfig\)",
+    ):
+        engine.record_binding(engine.resolve_binding("example:work/git@work")[1])
 
 
 def test_record_binding_writes_resolved_binding_state(

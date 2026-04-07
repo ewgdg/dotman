@@ -14,7 +14,7 @@ from dotman.diff_review import (
     diff_status as review_diff_status,
     run_review_item_diff,
 )
-from dotman.engine import DotmanEngine, parse_binding_text
+from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text
 from dotman.reconcile import run_basic_reconcile
 
 
@@ -64,19 +64,55 @@ def repo_name_from_binding_label(binding_label: str) -> str:
     return binding_label.split(":", 1)[0]
 
 
-def package_target_text(*, repo_name: str, package_id: str, target_name: str) -> str:
-    return f"{repo_name}/{package_id} ({target_name})"
+def package_label_text(*, repo_name: str, package_id: str, target_name: str | None = None) -> str:
+    package_text = f"{repo_name}/{package_id}"
+    if target_name is None:
+        return package_text
+    return f"{package_text} ({target_name})"
 
 
-def render_package_target_label(*, repo_name: str, package_id: str, target_name: str) -> str:
+def render_package_label(*, repo_name: str, package_id: str, target_name: str | None = None) -> str:
     if not colors_enabled():
-        return package_target_text(repo_name=repo_name, package_id=package_id, target_name=target_name)
-    return (
+        return package_label_text(repo_name=repo_name, package_id=package_id, target_name=target_name)
+    package_label = (
         f"{style_text(repo_name, *MENU_REPO_STYLE)}"
         f"{style_text('/', *MENU_HINT_STYLE)}"
         f"{style_text(package_id, '1')} "
-        f"{style_text(f'({target_name})', *MENU_HINT_STYLE)}"
     )
+    if target_name is None:
+        return package_label.rstrip()
+    return f"{package_label}{style_text(f'({target_name})', *MENU_HINT_STYLE)}"
+
+
+def render_package_target_label(*, repo_name: str, package_id: str, target_name: str) -> str:
+    return render_package_label(repo_name=repo_name, package_id=package_id, target_name=target_name)
+
+
+def binding_label_text(*, repo_name: str, selector: str, profile: str) -> str:
+    return f"{repo_name}:{selector}@{profile}"
+
+
+def render_binding_label(*, repo_name: str, selector: str, profile: str) -> str:
+    if not colors_enabled():
+        return binding_label_text(repo_name=repo_name, selector=selector, profile=profile)
+    return (
+        f"{style_text(repo_name, *MENU_REPO_STYLE)}"
+        f"{style_text(':', *MENU_HINT_STYLE)}"
+        f"{style_text(selector, '1')}"
+        f"{style_text(f'@{profile}', *MENU_HINT_STYLE)}"
+    )
+
+
+def render_tracked_reason(reason: str) -> str:
+    if not colors_enabled():
+        return reason
+    return style_text(reason, *MENU_HINT_STYLE)
+
+
+def render_target_profile_label(*, target_name: str, profile: str) -> str:
+    if not colors_enabled():
+        return f"{target_name}@{profile}"
+    return f"{style_text(target_name, '1')}{style_text(f'@{profile}', *MENU_HINT_STYLE)}"
 
 
 def print_selection_header(header_text: str) -> None:
@@ -293,6 +329,37 @@ def resolve_binding_text(
     return f"{repo.config.name}:{resolved_selector}", resolved_profile
 
 
+def select_non_conflicting_track_profile(
+    engine: DotmanEngine,
+    *,
+    binding_text: str,
+    current_profile: str,
+    json_output: bool,
+) -> str | None:
+    if not interactive_mode_enabled(json_output=json_output):
+        return None
+    repo_name, _selector, _profile = parse_binding_text(binding_text)
+    if repo_name is None:
+        return None
+    valid_profiles: list[str] = []
+    for candidate_profile in engine.list_profiles(repo_name):
+        if candidate_profile == current_profile:
+            continue
+        _repo, candidate_binding, _selector_kind = engine.resolve_binding(binding_text, profile=candidate_profile)
+        try:
+            engine.validate_recorded_binding(candidate_binding)
+        except ValueError:
+            continue
+        valid_profiles.append(candidate_profile)
+    if not valid_profiles:
+        return None
+    selected_index = select_menu_option(
+        header_text=f"Select a non-conflicting profile for {binding_text}:",
+        option_labels=valid_profiles,
+    )
+    return valid_profiles[selected_index]
+
+
 def collect_pending_selection_items(plans: Sequence) -> list[PendingSelectionItem]:
     return collect_pending_selection_items_for_operation(plans, operation="push")
 
@@ -377,7 +444,7 @@ def collect_pending_selection_items_for_operation(plans: Sequence, *, operation:
 
 def print_pending_selection_item(index: int, item: PendingSelectionItem) -> None:
     repo_name = repo_name_from_binding_label(item.binding_label)
-    package_target = package_target_text(
+    package_target = package_label_text(
         repo_name=repo_name,
         package_id=item.package_id,
         target_name=item.target_name,
@@ -481,7 +548,7 @@ def filter_plans_for_interactive_selection(*, plans: Sequence, operation: str, j
 
 def print_review_item(index: int, item: ReviewItem) -> None:
     repo_name = repo_name_from_binding_label(item.binding_label)
-    package_target = package_target_text(
+    package_target = package_label_text(
         repo_name=repo_name,
         package_id=item.package_id,
         target_name=item.target_name,
@@ -514,7 +581,7 @@ def print_review_item(index: int, item: ReviewItem) -> None:
 def review_diff_header(review_item: ReviewItem, *, index: int, total: int) -> str:
     return (
         f"Diff {index}/{total}: "
-        f"{package_target_text(
+        f"{package_label_text(
             repo_name=repo_name_from_binding_label(review_item.binding_label),
             package_id=review_item.package_id,
             target_name=review_item.target_name,
@@ -645,11 +712,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list")
     list_subparsers = list_parser.add_subparsers(dest="list_command", required=True)
-    list_subparsers.add_parser("installed")
+    list_subparsers.add_parser("tracked")
+    list_subparsers.add_parser("installed", help=argparse.SUPPRESS)
 
     info_parser = subparsers.add_parser("info")
     info_subparsers = info_parser.add_subparsers(dest="info_command", required=True)
-    info_installed_parser = info_subparsers.add_parser("installed")
+    info_tracked_parser = info_subparsers.add_parser("tracked")
+    info_tracked_parser.add_argument("package")
+    info_installed_parser = info_subparsers.add_parser("installed", help=argparse.SUPPRESS)
     info_installed_parser.add_argument("package")
 
     reconcile_parser = subparsers.add_parser("reconcile")
@@ -687,10 +757,10 @@ def emit_payload(*, operation: str, plans: Sequence, json_output: bool) -> int:
     return 0
 
 
-def emit_installed_packages(*, packages: Sequence, json_output: bool) -> int:
+def emit_tracked_packages(*, packages: Sequence, json_output: bool) -> int:
     payload = {
         "mode": "dry-run",
-        "operation": "list-installed",
+        "operation": "list-tracked",
         "packages": [package.to_dict() for package in packages],
     }
     if json_output:
@@ -698,8 +768,7 @@ def emit_installed_packages(*, packages: Sequence, json_output: bool) -> int:
         return 0
 
     for package in packages:
-        bindings = ", ".join(f"{binding.repo}:{binding.selector}@{binding.profile}" for binding in package.bindings)
-        print(f"{package.repo}:{package.package_id} [{bindings}]")
+        print(render_package_label(repo_name=package.repo, package_id=package.package_id))
     return 0
 
 
@@ -739,23 +808,36 @@ def emit_tracked_binding(*, binding, json_output: bool) -> int:
     return 0
 
 
-def emit_installed_package_detail(*, package_detail, json_output: bool) -> int:
+def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
     payload = {
         "mode": "dry-run",
-        "operation": "info-installed",
+        "operation": "info-tracked",
         "package": package_detail.to_dict(),
     }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"{package_detail.repo}:{package_detail.package_id}")
+    print(render_package_label(repo_name=package_detail.repo, package_id=package_detail.package_id))
     if package_detail.description:
         print(f"  {package_detail.description}")
+    if package_detail.bindings:
+        print("  ::provenance")
     for binding in package_detail.bindings:
-        print(f"  {binding.binding.repo}:{binding.binding.selector}@{binding.binding.profile}")
-        for target in binding.targets:
-            print(f"    {target.target_name} -> {target.live_path}")
+        binding_label = render_binding_label(
+            repo_name=binding.binding.repo,
+            selector=binding.binding.selector,
+            profile=binding.binding.profile,
+        )
+        print(f"    {render_tracked_reason(binding.tracked_reason)}: {binding_label}")
+    if package_detail.effective_targets:
+        print("  ::effective targets")
+    for target in package_detail.effective_targets:
+        print(
+            "    "
+            + f"{render_target_profile_label(target_name=target.target.target_name, profile=target.binding.profile)} "
+            + f"-> {target.target.live_path}"
+        )
     return 0
 
 
@@ -775,7 +857,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "track":
             binding_text, profile = resolve_binding_text(engine, args.binding, json_output=args.json_output)
             _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=profile)
-            engine.record_binding(binding)
+            try:
+                engine.record_binding(binding)
+            except TrackedTargetConflictError:
+                alternative_profile = select_non_conflicting_track_profile(
+                    engine,
+                    binding_text=binding_text,
+                    current_profile=binding.profile,
+                    json_output=args.json_output,
+                )
+                if alternative_profile is None:
+                    raise
+                _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=alternative_profile)
+                engine.record_binding(binding)
             return emit_tracked_binding(binding=binding, json_output=args.json_output)
         if args.command == "push":
             if args.binding:
@@ -865,10 +959,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 binding=engine.remove_binding(args.binding, operation="untrack"),
                 json_output=args.json_output,
             )
-        if args.command == "list" and args.list_command == "installed":
-            return emit_installed_packages(packages=engine.list_installed_packages(), json_output=args.json_output)
-        if args.command == "info" and args.info_command == "installed":
-            return emit_installed_package_detail(
+        if args.command == "list" and args.list_command in {"tracked", "installed"}:
+            return emit_tracked_packages(packages=engine.list_installed_packages(), json_output=args.json_output)
+        if args.command == "info" and args.info_command in {"tracked", "installed"}:
+            return emit_tracked_package_detail(
                 package_detail=engine.describe_installed_package(args.package),
                 json_output=args.json_output,
             )

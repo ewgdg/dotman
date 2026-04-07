@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tomllib
 from collections import defaultdict
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -19,6 +19,7 @@ from dotman.models import (
     HookPlan,
     HookSpec,
     InstalledBindingSummary,
+    InstalledEffectiveTargetDetail,
     InstalledPackageBindingDetail,
     InstalledPackageDetail,
     InstalledPackageSummary,
@@ -33,6 +34,29 @@ from dotman.models import (
 )
 from dotman.profiles import compute_profile_heights, rank_profiles
 from dotman.templates import build_template_context, render_template_file, render_template_string
+
+
+class TrackedTargetConflictError(ValueError):
+    def __init__(self, *, live_path: Path, precedence: str, contenders: list[str]) -> None:
+        self.live_path = live_path
+        self.precedence = precedence
+        self.contenders = tuple(contenders)
+        conflict_text = ", ".join(contenders)
+        super().__init__(
+            f"conflicting {precedence} tracked targets for {live_path}: {conflict_text}"
+        )
+
+
+@dataclass(frozen=True)
+class TrackedTargetCandidate:
+    plan_index: int
+    target_index: int
+    live_path: Path
+    precedence: int
+    precedence_name: str
+    binding_label: str
+    target_label: str
+    signature: tuple[Any, ...]
 
 
 def _copy_map(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -595,35 +619,17 @@ class DotmanEngine:
         raise ValueError(f"binding '{binding_label}' is not currently tracked")
 
     def plan_upgrade(self) -> list[BindingPlan]:
-        plans: list[BindingPlan] = []
-        for repo_config in self.config.ordered_repos:
-            repo = self.get_repo(repo_config.name)
-            for binding in self.read_bindings(repo):
-                selector_kind = "group" if binding.selector in repo.groups else "package"
-                plans.append(self._build_plan(repo, binding, selector_kind, operation="upgrade"))
-        return plans
+        return self._build_tracked_plans(operation="upgrade")
 
     def plan_push(self) -> list[BindingPlan]:
-        plans: list[BindingPlan] = []
-        for repo_config in self.config.ordered_repos:
-            repo = self.get_repo(repo_config.name)
-            for binding in self.read_bindings(repo):
-                selector_kind = "group" if binding.selector in repo.groups else "package"
-                plans.append(self._build_plan(repo, binding, selector_kind, operation="push"))
-        return plans
+        return self._build_tracked_plans(operation="push")
 
     def plan_upgrade_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
         repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
         return self._build_plan(repo, binding, selector_kind, operation="upgrade")
 
     def plan_pull(self) -> list[BindingPlan]:
-        plans: list[BindingPlan] = []
-        for repo_config in self.config.ordered_repos:
-            repo = self.get_repo(repo_config.name)
-            for binding in self.read_bindings(repo):
-                selector_kind = "group" if binding.selector in repo.groups else "package"
-                plans.append(self._build_plan(repo, binding, selector_kind, operation="pull"))
-        return plans
+        return self._build_tracked_plans(operation="pull")
 
     def list_installed_packages(self) -> list[InstalledPackageSummary]:
         installed: dict[tuple[str, str], InstalledPackageSummary] = {}
@@ -670,13 +676,14 @@ class DotmanEngine:
             details.append(self._describe_package_binding(candidate_repo, binding, selector_kind, package_id, package_ids))
 
         if not details:
-            raise ValueError(f"package '{repo.config.name}:{package_id}' is not currently installed")
+            raise ValueError(f"package '{repo.config.name}:{package_id}' is not currently tracked")
 
         return InstalledPackageDetail(
             repo=repo.config.name,
             package_id=package_id,
             description=description,
             bindings=sorted(details, key=lambda item: (item.binding.selector, item.binding.profile, item.binding.repo)),
+            effective_targets=self._describe_effective_package_targets(repo.config.name, package_id),
         )
 
     def read_bindings(self, repo: Repository) -> list[Binding]:
@@ -696,9 +703,13 @@ class DotmanEngine:
             )
         return bindings
 
-    def record_binding(self, binding: Binding) -> None:
-        repo = self.get_repo(binding.repo)
-        bindings = self.read_bindings(repo)
+    def _bindings_by_repo(self) -> dict[str, list[Binding]]:
+        return {
+            repo_config.name: self.read_bindings(self.get_repo(repo_config.name))
+            for repo_config in self.config.ordered_repos
+        }
+
+    def _normalize_recorded_bindings(self, bindings: list[Binding], binding: Binding) -> list[Binding]:
         updated = False
         normalized: list[Binding] = []
         for existing in bindings:
@@ -710,7 +721,21 @@ class DotmanEngine:
             normalized.append(existing)
         if not updated:
             normalized.append(binding)
+        return normalized
+
+    def record_binding(self, binding: Binding) -> None:
+        repo = self.get_repo(binding.repo)
+        bindings_by_repo = self._bindings_by_repo()
+        normalized = self._normalize_recorded_bindings(self.read_bindings(repo), binding)
+        bindings_by_repo[repo.config.name] = normalized
+        self._build_tracked_plans(operation="push", bindings_by_repo=bindings_by_repo)
         self.write_bindings(repo, normalized)
+
+    def validate_recorded_binding(self, binding: Binding) -> None:
+        repo = self.get_repo(binding.repo)
+        bindings_by_repo = self._bindings_by_repo()
+        bindings_by_repo[repo.config.name] = self._normalize_recorded_bindings(self.read_bindings(repo), binding)
+        self._build_tracked_plans(operation="push", bindings_by_repo=bindings_by_repo)
 
     def remove_binding(self, binding_text: str, *, operation: str = "untrack") -> Binding:
         repo, binding = self.resolve_tracked_binding(binding_text, operation=operation)
@@ -771,10 +796,13 @@ class DotmanEngine:
                 installed_bindings.append((repo, binding, selector_kind, self._resolve_package_ids(repo, binding.selector, selector_kind)))
         return installed_bindings
 
+    def _selected_package_ids(self, repo: Repository, selector: str, selector_kind: str) -> list[str]:
+        return [selector] if selector_kind == "package" else repo.expand_group(selector)
+
     def _resolve_installed_package(self, package_text: str) -> tuple[Repository, str]:
         explicit_repo, selector, profile = parse_binding_text(package_text)
         if profile is not None:
-            raise ValueError("installed show expects a package selector, not a binding")
+            raise ValueError("tracked package lookup expects a package selector, not a binding")
 
         candidate_repos = self.candidate_repos(explicit_repo)
         installed_ids = {
@@ -789,7 +817,7 @@ class DotmanEngine:
             return exact_matches[0]
         if len(exact_matches) > 1:
             candidates = ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in exact_matches)
-            raise ValueError(f"installed package '{selector}' is defined in multiple repos: {candidates}")
+            raise ValueError(f"tracked package '{selector}' is defined in multiple repos: {candidates}")
 
         partial_matches = [(repo, package_id) for (_repo_name, package_id), repo in installed_ids.items() if selector in package_id]
         unique_partials = {(repo.config.name, package_id): (repo, package_id) for repo, package_id in partial_matches}
@@ -797,8 +825,8 @@ class DotmanEngine:
             return next(iter(unique_partials.values()))
         if len(unique_partials) > 1:
             candidates = ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in unique_partials.values())
-            raise ValueError(f"installed package '{selector}' is ambiguous: {candidates}")
-        raise ValueError(f"installed package '{selector}' did not match any tracked package")
+            raise ValueError(f"tracked package '{selector}' is ambiguous: {candidates}")
+        raise ValueError(f"tracked package '{selector}' did not match any tracked package")
 
     def _describe_package_binding(
         self,
@@ -819,6 +847,7 @@ class DotmanEngine:
         package = repo.resolve_package(package_id)
         hooks = self._plan_hooks(repo, [package], context)
         targets = self._summarize_targets(repo, package, context)
+        tracked_reason = "explicit" if package_id in self._selected_package_ids(repo, binding.selector, selector_kind) else "implicit"
 
         return InstalledPackageBindingDetail(
             binding=InstalledBindingSummary(
@@ -827,6 +856,7 @@ class DotmanEngine:
                 profile=binding.profile,
                 selector_kind=selector_kind,
             ),
+            tracked_reason=tracked_reason,
             targets=targets,
             hooks=hooks,
         )
@@ -879,6 +909,50 @@ class DotmanEngine:
             )
         return target_summaries
 
+    def _installed_target_summary_from_plan(self, target: TargetPlan) -> InstalledTargetSummary:
+        return InstalledTargetSummary(
+            target_name=target.target_name,
+            repo_path=target.repo_path,
+            live_path=target.live_path,
+            target_kind=target.target_kind,
+            render_command=target.render_command,
+            capture_command=target.capture_command,
+            reconcile_command=target.reconcile_command,
+            pull_view_repo=target.pull_view_repo,
+            pull_view_live=target.pull_view_live,
+            push_ignore=target.push_ignore,
+            pull_ignore=target.pull_ignore,
+        )
+
+    def _describe_effective_package_targets(self, repo_name: str, package_id: str) -> list[InstalledEffectiveTargetDetail]:
+        effective_targets: list[InstalledEffectiveTargetDetail] = []
+        for plan in self.plan_push():
+            if plan.binding.repo != repo_name:
+                continue
+            for target in plan.target_plans:
+                if target.package_id != package_id:
+                    continue
+                effective_targets.append(
+                    InstalledEffectiveTargetDetail(
+                        binding=InstalledBindingSummary(
+                            repo=plan.binding.repo,
+                            selector=plan.binding.selector,
+                            profile=plan.binding.profile,
+                            selector_kind=plan.selector_kind,
+                        ),
+                        target=self._installed_target_summary_from_plan(target),
+                    )
+                )
+        return sorted(
+            effective_targets,
+            key=lambda item: (
+                item.target.target_name,
+                item.binding.profile,
+                item.binding.selector,
+                item.binding.repo,
+            ),
+        )
+
     def _build_plan(self, repo: Repository, binding: Binding, selector_kind: str, *, operation: str) -> BindingPlan:
         package_ids = self._resolve_package_ids(repo, binding.selector, selector_kind)
         resolved_packages = [repo.resolve_package(package_id) for package_id in package_ids]
@@ -908,8 +982,104 @@ class DotmanEngine:
             target_plans=target_plans,
         )
 
+    def _build_tracked_plans(
+        self,
+        *,
+        operation: str,
+        bindings_by_repo: dict[str, list[Binding]] | None = None,
+    ) -> list[BindingPlan]:
+        plans: list[BindingPlan] = []
+        candidates_by_live_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
+        current_bindings = bindings_by_repo or self._bindings_by_repo()
+
+        for repo_config in self.config.ordered_repos:
+            repo = self.get_repo(repo_config.name)
+            for binding in current_bindings.get(repo_config.name, []):
+                selector_kind = "group" if binding.selector in repo.groups else "package"
+                selected_packages = set(self._selected_package_ids(repo, binding.selector, selector_kind))
+                plan = self._build_plan(repo, binding, selector_kind, operation=operation)
+                plan_index = len(plans)
+                plans.append(plan)
+                for target_index, target in enumerate(plan.target_plans):
+                    precedence_name = "explicit" if target.package_id in selected_packages else "implicit"
+                    candidates_by_live_path[target.live_path].append(
+                        TrackedTargetCandidate(
+                            plan_index=plan_index,
+                            target_index=target_index,
+                            live_path=target.live_path,
+                            precedence=1 if precedence_name == "explicit" else 0,
+                            precedence_name=precedence_name,
+                            binding_label=f"{binding.repo}:{binding.selector}@{binding.profile}",
+                            target_label=f"{target.package_id}:{target.target_name}",
+                            signature=self._tracked_target_signature(target),
+                        )
+                    )
+
+        winner_indexes = self._resolve_tracked_target_winners(candidates_by_live_path)
+        filtered_plans: list[BindingPlan] = []
+        for plan_index, plan in enumerate(plans):
+            filtered_targets = [
+                target
+                for target_index, target in enumerate(plan.target_plans)
+                if (plan_index, target_index) in winner_indexes
+            ]
+            filtered_plans.append(replace(plan, target_plans=filtered_targets))
+        return filtered_plans
+
+    def _tracked_target_signature(self, target: TargetPlan) -> tuple[Any, ...]:
+        if target.target_kind == "directory":
+            return (
+                "directory",
+                tuple(
+                    (
+                        item.relative_path,
+                        item.action,
+                        str(item.repo_path),
+                    )
+                    for item in target.directory_items
+                ),
+                target.render_command,
+                target.capture_command,
+                target.reconcile_command,
+                target.push_ignore,
+                target.pull_ignore,
+            )
+        return (
+            "file",
+            target.desired_bytes,
+            target.projection_kind,
+            target.projection_error,
+            target.render_command,
+            target.capture_command,
+            target.reconcile_command,
+            target.push_ignore,
+            target.pull_ignore,
+            None if target.desired_bytes is not None else str(target.repo_path),
+        )
+
+    def _resolve_tracked_target_winners(
+        self,
+        candidates_by_live_path: dict[Path, list[TrackedTargetCandidate]],
+    ) -> set[tuple[int, int]]:
+        winner_indexes: set[tuple[int, int]] = set()
+        for live_path, candidates in candidates_by_live_path.items():
+            highest_precedence = max(candidate.precedence for candidate in candidates)
+            contenders = [candidate for candidate in candidates if candidate.precedence == highest_precedence]
+            first = contenders[0]
+            if any(candidate.signature != first.signature for candidate in contenders[1:]):
+                raise TrackedTargetConflictError(
+                    live_path=live_path,
+                    precedence=first.precedence_name,
+                    contenders=[
+                        f"{candidate.binding_label} ({candidate.target_label})"
+                        for candidate in sorted(contenders, key=lambda item: (item.binding_label, item.target_label))
+                    ],
+                )
+            winner_indexes.add((first.plan_index, first.target_index))
+        return winner_indexes
+
     def _resolve_package_ids(self, repo: Repository, selector: str, selector_kind: str) -> list[str]:
-        roots = [selector] if selector_kind == "package" else repo.expand_group(selector)
+        roots = self._selected_package_ids(repo, selector, selector_kind)
         ordered: list[str] = []
         seen: set[str] = set()
 

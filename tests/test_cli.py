@@ -42,6 +42,42 @@ def write_named_manager_config(tmp_path: Path, repos: dict[str, Path]) -> Path:
     return config_path
 
 
+def write_profile_switch_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "alpha" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "beta" / "files").mkdir(parents=True)
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "profiles" / "work.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "files" / "alpha.conf").write_text("alpha\n", encoding="utf-8")
+    (repo_root / "packages" / "beta" / "files" / "beta.conf").write_text("beta\n", encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "alpha"',
+                "",
+                "[targets.alpha]",
+                'source = "files/alpha.conf"',
+                'path = "~/.config/{{ profile }}.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "beta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "beta"',
+                "",
+                "[targets.beta]",
+                'source = "files/beta.conf"',
+                'path = "~/.config/basic.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_track_cli_emits_state_only_json(
     tmp_path: Path,
     monkeypatch,
@@ -114,6 +150,72 @@ def test_track_cli_interactively_selects_profile_when_missing(
             'repo = "example"',
             'selector = "git"',
             'profile = "basic"',
+            "",
+        ]
+    )
+
+
+def test_track_cli_interactively_switches_to_non_conflicting_profile(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    repo_root = tmp_path / "switch-repo"
+    write_profile_switch_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+
+    state_dir = tmp_path / "state" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "beta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    answers = iter(["1", ""])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "track",
+            "fixture:alpha",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select a profile for fixture:alpha:" in output
+    assert "Select a non-conflicting profile for fixture:alpha:" in output
+    assert "tracked fixture:alpha@work" in output
+    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "beta"',
+            'profile = "basic"',
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "alpha"',
+            'profile = "work"',
             "",
         ]
     )
@@ -197,6 +299,17 @@ def test_prompt_for_excluded_items_uses_archived_colored_style(
     assert "(example:git@basic)" not in output
     assert "example:git@basic \033[1;32m[create]\033[0m" not in output
     assert "Select items to exclude from push:" in output
+
+
+def test_render_tracked_binding_label_uses_selection_menu_style(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+
+    assert cli.render_binding_label(repo_name="example", selector="git", profile="basic") == (
+        "\033[2;34mexample\033[0m"
+        "\033[2m:\033[0m"
+        "\033[1mgit\033[0m"
+        "\033[2m@basic\033[0m"
+    )
 
 
 def test_filter_plans_for_interactive_selection_excludes_directory_child_pull_item(
@@ -1451,7 +1564,7 @@ def test_untrack_cli_reports_dependency_owner_for_untracked_package_selector(
     assert "cannot untrack 'example:nvim': required by tracked bindings: example:core-cli-meta@basic" in capsys.readouterr().err
 
 
-def test_list_installed_cli_lists_unique_installed_packages_with_bindings(
+def test_list_tracked_cli_lists_unique_tracked_packages(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1489,20 +1602,73 @@ def test_list_installed_cli_lists_unique_installed_packages_with_bindings(
             str(config_path),
             "--json",
             "list",
-            "installed",
+            "tracked",
         ]
     )
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["operation"] == "list-installed"
+    assert payload["operation"] == "list-tracked"
     packages = {item["package_id"]: item for item in payload["packages"]}
     assert set(packages) == {"core-cli-meta", "git", "nvim"}
     assert [binding["selector"] for binding in packages["git"]["bindings"]] == ["core-cli-meta", "git"]
     assert packages["git"]["description"] == "Base Git configuration"
 
 
-def test_info_installed_cli_emits_package_details_for_installed_package(
+def test_list_tracked_cli_emits_readable_text_output(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "list",
+            "tracked",
+        ]
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "\n".join(
+        [
+            "example/core-cli-meta",
+            "example/git",
+            "example/nvim",
+            "",
+        ]
+    )
+
+
+def test_info_tracked_cli_emits_package_details_for_tracked_package(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1540,24 +1706,102 @@ def test_info_installed_cli_emits_package_details_for_installed_package(
             str(config_path),
             "--json",
             "info",
-            "installed",
+            "tracked",
             "git",
         ]
     )
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["operation"] == "info-installed"
+    assert payload["operation"] == "info-tracked"
     package = payload["package"]
     assert package["repo"] == "example"
     assert package["package_id"] == "git"
     assert package["description"] == "Base Git configuration"
     assert [binding["selector"] for binding in package["bindings"]] == ["core-cli-meta", "git"]
+    assert [binding["tracked_reason"] for binding in package["bindings"]] == ["implicit", "explicit"]
+    assert package["effective_targets"] == [
+        {
+            "capture_command": None,
+            "live_path": str(home / ".gitconfig"),
+            "profile": "basic",
+            "pull_ignore": [],
+            "pull_view_live": "raw",
+            "pull_view_repo": "raw",
+            "push_ignore": [],
+            "reconcile_command": None,
+            "render_command": None,
+            "repo": "example",
+            "repo_path": str(EXAMPLE_REPO / "packages" / "git" / "files" / "gitconfig"),
+            "selector": "git",
+            "selector_kind": "package",
+            "target_kind": "file",
+            "target_name": "gitconfig",
+        }
+    ]
     target_names = {target["target_name"] for target in package["bindings"][0]["targets"]}
     assert target_names == {"gitconfig"}
     pre_push = package["bindings"][0]["hooks"]["pre_push"]
     assert pre_push[0]["package_id"] == "git"
     assert "git" in pre_push[0]["command"]
+
+
+def test_info_tracked_cli_emits_readable_text_output(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "info",
+            "tracked",
+            "git",
+        ]
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "\n".join(
+        [
+            "example/git",
+            "  Base Git configuration",
+            "  ::provenance",
+            "    implicit: example:core-cli-meta@basic",
+            "    explicit: example:git@basic",
+            "  ::effective targets",
+            f"    gitconfig@basic -> {home / '.gitconfig'}",
+            "",
+        ]
+    )
 
 
 def test_reconcile_editor_subcommand_invokes_editor_with_repo_live_and_additional_sources(

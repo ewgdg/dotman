@@ -171,14 +171,28 @@ class InstalledPackageSummary:
 @dataclass(frozen=True)
 class InstalledPackageBindingDetail:
     binding: InstalledBindingSummary
+    tracked_reason: str
     targets: list[InstalledTargetSummary]
     hooks: dict[str, list[HookPlan]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             **self.binding.to_dict(),
+            "tracked_reason": self.tracked_reason,
             "targets": [target.to_dict() for target in self.targets],
             "hooks": {name: [item.to_dict() for item in items] for name, items in self.hooks.items()},
+        }
+
+
+@dataclass(frozen=True)
+class InstalledEffectiveTargetDetail:
+    binding: InstalledBindingSummary
+    target: InstalledTargetSummary
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.binding.to_dict(),
+            **self.target.to_dict(),
         }
 
 
@@ -188,6 +202,7 @@ class InstalledPackageDetail:
     package_id: str
     description: str | None
     bindings: list[InstalledPackageBindingDetail]
+    effective_targets: list[InstalledEffectiveTargetDetail]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -195,6 +210,7 @@ class InstalledPackageDetail:
             "package_id": self.package_id,
             "description": self.description,
             "bindings": [binding.to_dict() for binding in self.bindings],
+            "effective_targets": [target.to_dict() for target in self.effective_targets],
         }
 
 
