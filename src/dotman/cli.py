@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence, TypeVar
 
 from dotman.diff_review import (
     ReviewItem,
@@ -15,7 +17,22 @@ from dotman.diff_review import (
     run_review_item_diff,
 )
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text
+from dotman.models import Binding
 from dotman.reconcile import run_basic_reconcile
+from dotman.resolver import (
+    ResolverOption,
+    build_binding_field_kinds,
+    build_binding_match_fields,
+    build_fzf_search_fields,
+    build_package_field_kinds,
+    build_package_match_fields,
+    build_profile_field_kinds,
+    build_profile_match_fields,
+    build_selector_field_kinds,
+    build_selector_match_fields,
+    parse_slash_qualified_query,
+    rank_resolver_option,
+)
 
 
 ANSI_RESET = "\033[0m"
@@ -26,11 +43,13 @@ MENU_PROMPT_STYLE = ("1",)
 MENU_HINT_STYLE = ("2",)
 MENU_REPO_STYLE = ("2", "34")
 INTERRUPTED_EXIT_CODE = 130
+MENU_SELECTION_OVERHEAD_LINES = 6
 MENU_ACTION_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "create": ("1", "32"),
     "update": ("1", "36"),
     "delete": ("1", "31"),
 }
+SelectableItem = TypeVar("SelectableItem")
 
 
 @dataclass(frozen=True)
@@ -64,37 +83,84 @@ def repo_name_from_binding_label(binding_label: str) -> str:
     return binding_label.split(":", 1)[0]
 
 
-def package_label_text(*, repo_name: str, package_id: str, target_name: str | None = None) -> str:
-    package_text = f"{repo_name}/{package_id}"
+def package_label_text(
+    *,
+    repo_name: str,
+    package_id: str,
+    target_name: str | None = None,
+    package_first: bool = False,
+    include_repo_context: bool = False,
+) -> str:
+    if package_first:
+        package_text = f"{repo_name}/{package_id}" if include_repo_context else package_id
+    else:
+        package_text = f"{repo_name}/{package_id}"
     if target_name is None:
         return package_text
     return f"{package_text} ({target_name})"
 
 
-def render_package_label(*, repo_name: str, package_id: str, target_name: str | None = None) -> str:
+def render_package_label(
+    *,
+    repo_name: str,
+    package_id: str,
+    target_name: str | None = None,
+    package_first: bool = False,
+    include_repo_context: bool = False,
+) -> str:
     if not colors_enabled():
-        return package_label_text(repo_name=repo_name, package_id=package_id, target_name=target_name)
-    package_label = (
-        f"{style_text(repo_name, *MENU_REPO_STYLE)}"
-        f"{style_text('/', *MENU_HINT_STYLE)}"
-        f"{style_text(package_id, '1')} "
-    )
+        return package_label_text(
+            repo_name=repo_name,
+            package_id=package_id,
+            target_name=target_name,
+            package_first=package_first,
+            include_repo_context=include_repo_context,
+        )
+    if package_first:
+        if include_repo_context:
+            package_label = (
+                f"{style_text(repo_name, *MENU_REPO_STYLE)}"
+                f"{style_text('/', *MENU_HINT_STYLE)}"
+                f"{style_text(package_id, '1')}"
+            )
+        else:
+            package_label = style_text(package_id, "1")
+    else:
+        package_label = (
+            f"{style_text(repo_name, *MENU_REPO_STYLE)}"
+            f"{style_text('/', *MENU_HINT_STYLE)}"
+            f"{style_text(package_id, '1')}"
+        )
     if target_name is None:
-        return package_label.rstrip()
-    return f"{package_label}{style_text(f'({target_name})', *MENU_HINT_STYLE)}"
+        return package_label
+    return f"{package_label} {style_text(f'({target_name})', *MENU_HINT_STYLE)}"
 
 
 def render_package_target_label(*, repo_name: str, package_id: str, target_name: str) -> str:
     return render_package_label(repo_name=repo_name, package_id=package_id, target_name=target_name)
 
 
-def binding_label_text(*, repo_name: str, selector: str, profile: str) -> str:
+def binding_label_text(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
+    if selector_first:
+        return f"{repo_name}/{selector}@{profile}"
     return f"{repo_name}:{selector}@{profile}"
 
 
-def render_binding_label(*, repo_name: str, selector: str, profile: str) -> str:
+def render_binding_label(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
     if not colors_enabled():
-        return binding_label_text(repo_name=repo_name, selector=selector, profile=profile)
+        return binding_label_text(
+            repo_name=repo_name,
+            selector=selector,
+            profile=profile,
+            selector_first=selector_first,
+        )
+    if selector_first:
+        return (
+            f"{style_text(repo_name, *MENU_REPO_STYLE)}"
+            f"{style_text('/', *MENU_HINT_STYLE)}"
+            f"{style_text(selector, '1')}"
+            f"{style_text(f'@{profile}', *MENU_HINT_STYLE)}"
+        )
     return (
         f"{style_text(repo_name, *MENU_REPO_STYLE)}"
         f"{style_text(':', *MENU_HINT_STYLE)}"
@@ -107,6 +173,18 @@ def render_tracked_reason(reason: str) -> str:
     if not colors_enabled():
         return reason
     return style_text(reason, *MENU_HINT_STYLE)
+
+
+def render_selector_match_label(*, repo_name: str, selector: str, selector_kind: str) -> str:
+    package_label = render_package_label(
+        repo_name=repo_name,
+        package_id=selector,
+        package_first=True,
+        include_repo_context=True,
+    )
+    if not colors_enabled():
+        return f"{package_label} [{selector_kind}]"
+    return f"{package_label} {style_text(f'[{selector_kind}]', *MENU_HINT_STYLE)}"
 
 
 def render_target_profile_label(*, target_name: str, profile: str) -> str:
@@ -182,9 +260,12 @@ def parse_selection_indexes(raw_answer: str, item_count: int) -> set[int]:
     return selected_indexes
 
 
-def select_menu_option(*, header_text: str, option_labels: Sequence[str]) -> int:
+def _select_menu_option_with_prompt(*, header_text: str, option_labels: Sequence[str]) -> int:
     print_selection_header(header_text)
-    for index, option_label in enumerate(option_labels, start=1):
+    indexed_labels = list(enumerate(option_labels, start=1))
+    if selection_menu_bottom_up_enabled():
+        indexed_labels.reverse()
+    for index, option_label in indexed_labels:
         print_selection_item(index, option_label)
     while True:
         try:
@@ -195,6 +276,80 @@ def select_menu_option(*, header_text: str, option_labels: Sequence[str]) -> int
             return parse_selection_index(answer, len(option_labels)) - 1
         except ValueError as exc:
             print(f"invalid selection: {exc}", file=sys.stderr)
+
+
+def _fzf_available() -> bool:
+    return shutil.which("fzf") is not None
+
+
+def selection_menu_bottom_up_enabled() -> bool:
+    raw_value = os.environ.get("DOTMAN_MENU_BOTTOM_UP")
+    if raw_value is None:
+        return True
+    return raw_value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _should_use_fzf_for_selection(option_labels: Sequence[str]) -> bool:
+    terminal_lines = shutil.get_terminal_size((80, 24)).lines
+    return len(option_labels) > max(1, terminal_lines - MENU_SELECTION_OVERHEAD_LINES)
+
+
+def _select_menu_option_with_fzf(
+    *,
+    header_text: str,
+    option_labels: Sequence[str],
+    option_search_fields: Sequence[Sequence[str]],
+) -> int:
+    field_count = max((len(fields) for fields in option_search_fields), default=1)
+    entries = [
+        "\t".join(
+            [
+                str(index),
+                *list(fields),
+                *([""] * (field_count - len(fields))),
+                label,
+            ]
+        )
+        for index, (fields, label) in enumerate(zip(option_search_fields, option_labels, strict=True), start=1)
+    ]
+    hidden_field_range = f"2..{field_count + 1}"
+    label_field_index = str(field_count + 2)
+    completed = subprocess.run(
+        [
+            "fzf",
+            "--prompt=Select> ",
+            f"--header={header_text}",
+            "--delimiter=\t",
+            f"--nth={hidden_field_range}",
+            f"--with-nth={label_field_index}",
+            "--accept-nth=1",
+            "--no-sort",
+            "--layout=reverse-list" if selection_menu_bottom_up_enabled() else "--layout=reverse",
+        ],
+        input="\n".join(entries) + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise KeyboardInterrupt
+    return parse_selection_index(completed.stdout.strip(), len(option_labels)) - 1
+
+
+def select_menu_option(
+    *,
+    header_text: str,
+    option_labels: Sequence[str],
+    option_search_fields: Sequence[Sequence[str]] | None = None,
+) -> int:
+    search_fields = option_search_fields or [(label,) for label in option_labels]
+    if _fzf_available() and _should_use_fzf_for_selection(option_labels):
+        return _select_menu_option_with_fzf(
+            header_text=header_text,
+            option_labels=option_labels,
+            option_search_fields=search_fields,
+        )
+    return _select_menu_option_with_prompt(header_text=header_text, option_labels=option_labels)
 
 
 def selection_prompt() -> str:
@@ -275,6 +430,64 @@ def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | N
     raise ValueError(f"unsupported review command: {raw_answer.strip()}")
 
 
+def resolve_candidate_match(
+    *,
+    exact_matches: Sequence[SelectableItem],
+    partial_matches: Sequence[SelectableItem],
+    query_text: str,
+    interactive: bool,
+    exact_header_text: str,
+    partial_header_text: str,
+    option_resolver: Callable[[SelectableItem], ResolverOption],
+    exact_error_text: str,
+    partial_error_text: str,
+    not_found_text: str,
+) -> SelectableItem:
+    ranked_exact_matches = sorted(
+        exact_matches,
+        key=lambda match: rank_resolver_option(
+            query=query_text,
+            option=option_resolver(match),
+        ),
+    )
+    ranked_partial_matches = sorted(
+        partial_matches,
+        key=lambda match: rank_resolver_option(
+            query=query_text,
+            option=option_resolver(match),
+        ),
+    )
+    if len(exact_matches) == 1:
+        return ranked_exact_matches[0]
+    if len(exact_matches) > 1:
+        if not interactive:
+            raise ValueError(exact_error_text)
+        selected_index = select_menu_option(
+            header_text=exact_header_text,
+            option_labels=[option_resolver(match).display_label for match in ranked_exact_matches],
+            option_search_fields=[
+                build_fzf_search_fields(match_fields=option_resolver(match).match_fields)
+                for match in ranked_exact_matches
+            ],
+        )
+        return ranked_exact_matches[selected_index]
+    if len(partial_matches) == 1:
+        return ranked_partial_matches[0]
+    if len(partial_matches) > 1:
+        if not interactive:
+            raise ValueError(partial_error_text)
+        selected_index = select_menu_option(
+            header_text=partial_header_text,
+            option_labels=[option_resolver(match).display_label for match in ranked_partial_matches],
+            option_search_fields=[
+                build_fzf_search_fields(match_fields=option_resolver(match).match_fields)
+                for match in ranked_partial_matches
+            ],
+        )
+        return ranked_partial_matches[selected_index]
+    raise ValueError(not_found_text)
+
+
 def resolve_binding_text(
     engine: DotmanEngine,
     binding_text: str,
@@ -282,51 +495,233 @@ def resolve_binding_text(
     json_output: bool,
 ) -> tuple[str, str]:
     explicit_repo, selector, selector_profile = parse_binding_text(binding_text)
-    exact_matches, partial_matches = engine.find_selector_matches(selector, explicit_repo)
+    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
+    lookup_repo, lookup_selector = parse_slash_qualified_query(
+        repo_names=repo_names,
+        explicit_repo=explicit_repo,
+        selector=selector,
+    )
+    exact_matches, partial_matches = engine.find_selector_matches(lookup_selector, lookup_repo)
     interactive = interactive_mode_enabled(json_output=json_output)
+    repo, resolved_selector, _selector_kind = resolve_candidate_match(
+        exact_matches=exact_matches,
+        partial_matches=partial_matches,
+        query_text=selector,
+        interactive=interactive,
+        exact_header_text=f"Select a repo for exact selector '{selector}':",
+        partial_header_text=f"Select a selector match for '{selector}':",
+        option_resolver=lambda match: ResolverOption(
+            display_label=render_selector_match_label(
+                repo_name=match[0].config.name,
+                selector=match[1],
+                selector_kind=match[2],
+            ),
+            match_fields=build_selector_match_fields(
+                repo_name=match[0].config.name,
+                selector=match[1],
+            ),
+            field_kinds=build_selector_field_kinds(),
+        ),
+        exact_error_text=f"selector '{selector}' is defined in multiple repos: "
+        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_matches),
+        partial_error_text=f"selector '{selector}' is ambiguous: "
+        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches),
+        not_found_text=f"selector '{selector}' did not match any package or group",
+    )
 
-    if len(exact_matches) == 1:
-        repo, resolved_selector, _selector_kind = exact_matches[0]
-    elif len(exact_matches) > 1:
-        if not interactive:
-            candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_matches)
-            raise ValueError(f"selector '{selector}' is defined in multiple repos: {candidates}")
-        selected_index = select_menu_option(
-            header_text=f"Select a repo for exact selector '{selector}':",
-            option_labels=[f"{repo.config.name}:{match} [{kind}]" for repo, match, kind in exact_matches],
-        )
-        repo, resolved_selector, _selector_kind = exact_matches[selected_index]
-    elif len(partial_matches) == 1:
-        repo, resolved_selector, _selector_kind = partial_matches[0]
-    elif len(partial_matches) > 1:
-        if not interactive:
-            candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches)
-            raise ValueError(f"selector '{selector}' is ambiguous: {candidates}")
-        selected_index = select_menu_option(
-            header_text=f"Select a selector match for '{selector}':",
-            option_labels=[f"{repo.config.name}:{match} [{kind}]" for repo, match, kind in partial_matches],
-        )
-        repo, resolved_selector, _selector_kind = partial_matches[selected_index]
-    else:
-        raise ValueError(f"selector '{selector}' did not match any package or group")
+    available_profiles = engine.list_profiles(repo.config.name)
+    if not available_profiles:
+        raise ValueError(f"repo '{repo.config.name}' does not define any profiles")
 
     resolved_profile = selector_profile
-    if not resolved_profile:
-        available_profiles = engine.list_profiles(repo.config.name)
-        if not available_profiles:
-            raise ValueError(f"repo '{repo.config.name}' does not define any profiles")
-        if len(available_profiles) == 1:
-            resolved_profile = available_profiles[0]
-        elif interactive:
-            selected_index = select_menu_option(
-                header_text=f"Select a profile for {repo.config.name}:{resolved_selector}:",
-                option_labels=list(available_profiles),
-            )
-            resolved_profile = available_profiles[selected_index]
-        else:
-            raise ValueError("profile is required in non-interactive mode")
+    if resolved_profile:
+        exact_profile_matches = [profile_name for profile_name in available_profiles if profile_name == resolved_profile]
+        partial_profile_matches = [
+            profile_name for profile_name in available_profiles if resolved_profile in profile_name
+        ]
+        profile_selection_matches = partial_profile_matches
+        profile_selection_header = (
+            f"Select a profile match for '{resolved_profile}' in {repo.config.name}:{resolved_selector}:"
+        )
+        if interactive and not exact_profile_matches and not partial_profile_matches:
+            profile_selection_matches = list(available_profiles)
+            profile_selection_header = f"Select a profile for {repo.config.name}:{resolved_selector}:"
+        resolved_profile = resolve_candidate_match(
+            exact_matches=exact_profile_matches,
+            partial_matches=profile_selection_matches,
+            query_text=resolved_profile,
+            interactive=interactive,
+            exact_header_text=f"Select a profile for {repo.config.name}:{resolved_selector}:",
+            partial_header_text=profile_selection_header,
+            option_resolver=lambda profile_name: ResolverOption(
+                display_label=profile_name,
+                match_fields=build_profile_match_fields(profile=profile_name),
+                field_kinds=build_profile_field_kinds(),
+            ),
+            exact_error_text=f"profile '{resolved_profile}' is defined multiple times in repo '{repo.config.name}'",
+            partial_error_text=f"profile '{resolved_profile}' is ambiguous in repo '{repo.config.name}': "
+            + ", ".join(partial_profile_matches),
+            not_found_text=f"profile '{resolved_profile}' did not match any profile in repo '{repo.config.name}'",
+        )
+    elif len(available_profiles) == 1:
+        resolved_profile = available_profiles[0]
+    elif interactive:
+        selected_index = select_menu_option(
+            header_text=f"Select a profile for {repo.config.name}:{resolved_selector}:",
+            option_labels=list(available_profiles),
+        )
+        resolved_profile = available_profiles[selected_index]
+    else:
+        raise ValueError("profile is required in non-interactive mode")
 
     return f"{repo.config.name}:{resolved_selector}", resolved_profile
+
+
+def resolve_tracked_binding_text(
+    engine: DotmanEngine,
+    binding_text: str,
+    *,
+    operation: str,
+    allow_package_owners: bool,
+    json_output: bool,
+) -> tuple[object, Binding]:
+    explicit_repo, selector, profile = parse_binding_text(binding_text)
+    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
+    lookup_repo, lookup_selector = parse_slash_qualified_query(
+        repo_names=repo_names,
+        explicit_repo=explicit_repo,
+        selector=selector,
+    )
+    lookup_binding_text = (
+        f"{lookup_repo}:{lookup_selector}" if lookup_repo is not None else lookup_selector
+    )
+    if profile is not None:
+        lookup_binding_text = f"{lookup_binding_text}@{profile}"
+    resolved_selector, resolved_profile, exact_matches, partial_matches, owner_bindings = (
+        engine.find_tracked_binding_matches(lookup_binding_text)
+    )
+    interactive = interactive_mode_enabled(json_output=json_output)
+    binding_label = selector if profile is None else f"{selector}@{profile}"
+    binding_resolver = lambda match: ResolverOption(
+        display_label=render_binding_label(
+            repo_name=match[0].config.name,
+            selector=match[1].selector,
+            profile=match[1].profile,
+            selector_first=True,
+        ),
+        match_fields=build_binding_match_fields(
+            repo_name=match[0].config.name,
+            selector=match[1].selector,
+            profile=match[1].profile,
+        ),
+        field_kinds=build_binding_field_kinds(),
+    )
+
+    try:
+        return resolve_candidate_match(
+            exact_matches=exact_matches,
+            partial_matches=partial_matches,
+            query_text=binding_label,
+            interactive=interactive,
+            exact_header_text=f"Select a tracked binding for '{binding_label}':",
+            partial_header_text=f"Select a tracked binding for '{binding_label}':",
+            option_resolver=binding_resolver,
+            exact_error_text=f"binding '{binding_label}' is ambiguous: "
+            + ", ".join(f"{repo.config.name}:{binding.selector}@{binding.profile}" for repo, binding in exact_matches),
+            partial_error_text=f"binding '{binding_label}' is ambiguous: "
+            + ", ".join(f"{repo.config.name}:{binding.selector}@{binding.profile}" for repo, binding in partial_matches),
+            not_found_text=f"binding '{binding_label}' is not currently tracked",
+        )
+    except ValueError as exc:
+        if allow_package_owners and owner_bindings:
+            if len(owner_bindings) == 1:
+                owner_repo, owner_binding = owner_bindings[0]
+            elif interactive:
+                owner_repo, owner_binding = resolve_candidate_match(
+                    exact_matches=[],
+                    partial_matches=owner_bindings,
+                    query_text=binding_label,
+                    interactive=interactive,
+                    exact_header_text=f"Select a tracked binding for '{binding_label}':",
+                    partial_header_text=f"Select a tracked binding for '{binding_label}':",
+                    option_resolver=binding_resolver,
+                    exact_error_text="unused",
+                    partial_error_text=f"{operation} target '{binding_label}' is ambiguous across tracked bindings: "
+                    + ", ".join(
+                        f"{repo.config.name}:{binding.selector}@{binding.profile}"
+                        for repo, binding in owner_bindings
+                    ),
+                    not_found_text="unused",
+                )
+            else:
+                candidates = ", ".join(
+                    f"{repo.config.name}:{binding.selector}@{binding.profile}"
+                    for repo, binding in owner_bindings
+                )
+                raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked bindings: {candidates}") from None
+            return owner_repo, Binding(
+                repo=owner_repo.config.name,
+                selector=resolved_selector,
+                profile=owner_binding.profile,
+            )
+        if owner_bindings and not allow_package_owners:
+            owners = ", ".join(
+                f"{repo.config.name}:{binding.selector}@{binding.profile}"
+                for repo, binding in owner_bindings
+            )
+            repo_name, _selector, _profile = parse_binding_text(binding_text)
+            required_repo = repo_name or lookup_repo or owner_bindings[0][0].config.name
+            required_ref = f"{required_repo}:{resolved_selector}"
+            raise ValueError(
+                f"cannot {operation} '{required_ref}': required by tracked bindings: {owners}"
+            ) from None
+        raise exc
+
+
+def resolve_tracked_package_text(
+    engine: DotmanEngine,
+    package_text: str,
+    *,
+    json_output: bool,
+) -> tuple[object, str]:
+    explicit_repo, selector, profile = parse_binding_text(package_text)
+    package_query = selector if profile is None else f"{selector}@{profile}"
+    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
+    lookup_repo, lookup_selector = parse_slash_qualified_query(
+        repo_names=repo_names,
+        explicit_repo=explicit_repo,
+        selector=selector,
+    )
+    lookup_package_text = f"{lookup_repo}:{lookup_selector}" if lookup_repo is not None else lookup_selector
+    selector, profile, exact_matches, partial_matches = engine.find_installed_package_matches(lookup_package_text)
+    if profile is not None:
+        raise ValueError("tracked package lookup expects a package selector, not a binding")
+    return resolve_candidate_match(
+        exact_matches=exact_matches,
+        partial_matches=partial_matches,
+        query_text=package_query,
+        interactive=interactive_mode_enabled(json_output=json_output),
+        exact_header_text=f"Select a tracked package for '{package_query}':",
+        partial_header_text=f"Select a tracked package for '{package_query}':",
+        option_resolver=lambda match: ResolverOption(
+            display_label=render_package_label(
+                repo_name=match[0].config.name,
+                package_id=match[1],
+                package_first=True,
+                include_repo_context=True,
+            ),
+            match_fields=build_package_match_fields(
+                repo_name=match[0].config.name,
+                package_id=match[1],
+            ),
+            field_kinds=build_package_field_kinds(),
+        ),
+        exact_error_text=f"tracked package '{package_query}' is defined in multiple repos: "
+        + ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in exact_matches),
+        partial_error_text=f"tracked package '{package_query}' is ambiguous: "
+        + ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in partial_matches),
+        not_found_text=f"tracked package '{package_query}' did not match any tracked package",
+    )
 
 
 def select_non_conflicting_track_profile(
@@ -873,10 +1268,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return emit_tracked_binding(binding=binding, json_output=args.json_output)
         if args.command == "push":
             if args.binding:
-                _repo, binding = engine.resolve_tracked_binding(
+                _repo, binding = resolve_tracked_binding_text(
+                    engine,
                     args.binding,
                     operation="push",
                     allow_package_owners=True,
+                    json_output=args.json_output,
                 )
                 binding_text = f"{binding.repo}:{binding.selector}"
                 plan = engine.plan_push_binding(binding_text, profile=binding.profile)
@@ -913,10 +1310,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if args.command == "pull":
             if args.binding:
-                _repo, binding = engine.resolve_tracked_binding(
+                _repo, binding = resolve_tracked_binding_text(
+                    engine,
                     args.binding,
                     operation="pull",
                     allow_package_owners=True,
+                    json_output=args.json_output,
                 )
                 binding_text = f"{binding.repo}:{binding.selector}"
                 profile = binding.profile
@@ -955,15 +1354,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 json_output=args.json_output,
             )
         if args.command in {"untrack", "forget"}:
+            _repo, binding = resolve_tracked_binding_text(
+                engine,
+                args.binding,
+                operation="untrack",
+                allow_package_owners=False,
+                json_output=args.json_output,
+            )
             return emit_forgotten_binding(
-                binding=engine.remove_binding(args.binding, operation="untrack"),
+                binding=engine.remove_binding(
+                    f"{binding.repo}:{binding.selector}@{binding.profile}",
+                    operation="untrack",
+                ),
                 json_output=args.json_output,
             )
         if args.command == "list" and args.list_command in {"tracked", "installed"}:
             return emit_tracked_packages(packages=engine.list_installed_packages(), json_output=args.json_output)
         if args.command == "info" and args.info_command in {"tracked", "installed"}:
+            _repo, package_id = resolve_tracked_package_text(
+                engine,
+                args.package,
+                json_output=args.json_output,
+            )
             return emit_tracked_package_detail(
-                package_detail=engine.describe_installed_package(args.package),
+                package_detail=engine.describe_installed_package(f"{_repo.config.name}:{package_id}"),
                 json_output=args.json_output,
             )
     except KeyboardInterrupt:

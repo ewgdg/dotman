@@ -29,6 +29,12 @@ This document captures the current command and selector direction for `dotman`.
 - If partial lookup finds multiple matches, dotman should display an interactive selection menu.
 - In non-interactive mode, partial lookup with multiple matches should fail and print the candidates.
 - If no matches are found, dotman should fail fast.
+- Interactive ambiguity menus should use the shared CLI selector flow across `track`, `push`, `pull`, `untrack`, and `info tracked`.
+- For shorter candidate lists, dotman should print a numbered menu and let the user pick.
+- Selector labels in those menus should lead with the package or binding text, and include the repo only as disambiguation context.
+- For longer candidate lists, dotman should prefer `fzf` when available instead of dumping a tall numbered menu.
+- Interactive selector menus should render bottom-up by default.
+- Bottom-up selector menus should remain user-toggleable, but the default should favor bottom-up display.
 
 ## Profiles
 
@@ -162,6 +168,7 @@ This document captures the current command and selector direction for `dotman`.
 - `dotman info tracked <package>` should show detailed information for one currently tracked package.
 - Package detail should include the owning repo, description, provenance entries with explicit or implicit reasons, effective targets with their winning profiles, and rendered hook commands for each tracked context.
 - Package lookup for `info tracked` may use the same repo-qualified and partial-selector rules as other package-oriented commands, but it should search only tracked packages.
+- When tracked package lookup is ambiguous in interactive mode, `info tracked` should use the same shared selector menu as the other package-oriented commands.
 - When tracked bindings resolve the same target path, explicit provenance should override implicit provenance.
 - Conflicting explicit candidates should fail, and conflicting implicit-only candidates should also fail.
 - In interactive `track`, dotman may offer a non-conflicting profile switch before failing.

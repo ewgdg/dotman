@@ -561,17 +561,9 @@ class DotmanEngine:
         operation: str = "untrack",
         allow_package_owners: bool = False,
     ) -> tuple[Repository, Binding]:
-        explicit_repo, selector, profile = parse_binding_text(binding_text)
-        candidate_repos = self.candidate_repos(explicit_repo)
-        tracked = [
-            (repo, binding)
-            for repo in candidate_repos
-            for binding in self.read_bindings(repo)
-            if profile is None or binding.profile == profile
-        ]
-
+        explicit_repo, _parsed_selector, _parsed_profile = parse_binding_text(binding_text)
+        selector, profile, exact_matches, partial_matches, owner_bindings = self.find_tracked_binding_matches(binding_text)
         binding_label = selector if profile is None else f"{selector}@{profile}"
-        exact_matches = [(repo, binding) for repo, binding in tracked if binding.selector == selector]
         if len(exact_matches) == 1:
             return exact_matches[0]
         if len(exact_matches) > 1:
@@ -581,7 +573,6 @@ class DotmanEngine:
             )
             raise ValueError(f"binding '{binding_label}' is ambiguous: {candidates}")
 
-        partial_matches = [(repo, binding) for repo, binding in tracked if selector in binding.selector]
         if len(partial_matches) == 1:
             return partial_matches[0]
         if len(partial_matches) > 1:
@@ -591,7 +582,6 @@ class DotmanEngine:
             )
             raise ValueError(f"binding '{binding_label}' is ambiguous: {candidates}")
 
-        owner_bindings = self._find_tracked_package_owners(candidate_repos, selector, profile)
         if owner_bindings:
             if allow_package_owners:
                 if len(owner_bindings) == 1:
@@ -617,6 +607,32 @@ class DotmanEngine:
             )
 
         raise ValueError(f"binding '{binding_label}' is not currently tracked")
+
+    def find_tracked_binding_matches(
+        self,
+        binding_text: str,
+    ) -> tuple[str, str | None, list[tuple[Repository, Binding]], list[tuple[Repository, Binding]], list[tuple[Repository, Binding]]]:
+        explicit_repo, selector, profile = parse_binding_text(binding_text)
+        candidate_repos = self.candidate_repos(explicit_repo)
+        tracked = [
+            (repo, binding)
+            for repo in candidate_repos
+            for binding in self.read_bindings(repo)
+            if profile is None or binding.profile == profile
+        ]
+
+        exact_matches = [(repo, binding) for repo, binding in tracked if binding.selector == selector]
+        partial_matches = [(repo, binding) for repo, binding in tracked if selector in binding.selector]
+        unique_partials = {
+            (repo.config.name, binding.selector, binding.profile): (repo, binding)
+            for repo, binding in partial_matches
+        }
+        owner_bindings = self._find_tracked_package_owners(candidate_repos, selector, profile)
+        unique_owners = {
+            (repo.config.name, binding.selector, binding.profile): (repo, binding)
+            for repo, binding in owner_bindings
+        }
+        return selector, profile, exact_matches, list(unique_partials.values()), list(unique_owners.values())
 
     def plan_upgrade(self) -> list[BindingPlan]:
         return self._build_tracked_plans(operation="upgrade")
@@ -800,10 +816,27 @@ class DotmanEngine:
         return [selector] if selector_kind == "package" else repo.expand_group(selector)
 
     def _resolve_installed_package(self, package_text: str) -> tuple[Repository, str]:
-        explicit_repo, selector, profile = parse_binding_text(package_text)
+        selector, profile, exact_matches, partial_matches = self.find_installed_package_matches(package_text)
         if profile is not None:
             raise ValueError("tracked package lookup expects a package selector, not a binding")
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        if len(exact_matches) > 1:
+            candidates = ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in exact_matches)
+            raise ValueError(f"tracked package '{selector}' is defined in multiple repos: {candidates}")
 
+        if len(partial_matches) == 1:
+            return partial_matches[0]
+        if len(partial_matches) > 1:
+            candidates = ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in partial_matches)
+            raise ValueError(f"tracked package '{selector}' is ambiguous: {candidates}")
+        raise ValueError(f"tracked package '{selector}' did not match any tracked package")
+
+    def find_installed_package_matches(
+        self,
+        package_text: str,
+    ) -> tuple[str, str | None, list[tuple[Repository, str]], list[tuple[Repository, str]]]:
+        explicit_repo, selector, profile = parse_binding_text(package_text)
         candidate_repos = self.candidate_repos(explicit_repo)
         installed_ids = {
             (repo.config.name, package_id): repo
@@ -811,22 +844,18 @@ class DotmanEngine:
             if repo in candidate_repos
             for package_id in package_ids
         }
-
-        exact_matches = [(repo, package_id) for (repo_name, package_id), repo in installed_ids.items() if package_id == selector and repo_name == repo.config.name]
-        if len(exact_matches) == 1:
-            return exact_matches[0]
-        if len(exact_matches) > 1:
-            candidates = ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in exact_matches)
-            raise ValueError(f"tracked package '{selector}' is defined in multiple repos: {candidates}")
-
-        partial_matches = [(repo, package_id) for (_repo_name, package_id), repo in installed_ids.items() if selector in package_id]
+        exact_matches = [
+            (repo, package_id)
+            for (repo_name, package_id), repo in installed_ids.items()
+            if package_id == selector and repo_name == repo.config.name
+        ]
+        partial_matches = [
+            (repo, package_id)
+            for (_repo_name, package_id), repo in installed_ids.items()
+            if selector in package_id
+        ]
         unique_partials = {(repo.config.name, package_id): (repo, package_id) for repo, package_id in partial_matches}
-        if len(unique_partials) == 1:
-            return next(iter(unique_partials.values()))
-        if len(unique_partials) > 1:
-            candidates = ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in unique_partials.values())
-            raise ValueError(f"tracked package '{selector}' is ambiguous: {candidates}")
-        raise ValueError(f"tracked package '{selector}' did not match any tracked package")
+        return selector, profile, exact_matches, list(unique_partials.values())
 
     def _describe_package_binding(
         self,

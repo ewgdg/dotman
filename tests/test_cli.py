@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import subprocess
 
 import dotman.cli as cli
 import pytest
@@ -312,6 +313,28 @@ def test_render_tracked_binding_label_uses_selection_menu_style(monkeypatch) -> 
     )
 
 
+def test_render_package_label_can_prioritize_package_name(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.render_package_label(
+        repo_name="example",
+        package_id="git",
+        package_first=True,
+        include_repo_context=True,
+    ) == "example/git"
+
+
+def test_render_binding_label_can_prioritize_selector_name(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.render_binding_label(
+        repo_name="example",
+        selector="git",
+        profile="basic",
+        selector_first=True,
+    ) == "example/git@basic"
+
+
 def test_filter_plans_for_interactive_selection_excludes_directory_child_pull_item(
     monkeypatch,
 ) -> None:
@@ -509,6 +532,8 @@ def test_track_cli_interactively_selects_repo_for_exact_selector_collision(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select a repo for exact selector 'sunshine':" in output
+    assert "alpha/sunshine [package]" in output
+    assert "beta/sunshine [package]" in output
     assert "tracked beta:sunshine@host/linux" in output
     assert (tmp_path / "state" / "beta" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -559,6 +584,350 @@ def test_track_cli_interactively_selects_partial_selector_match(
             "",
         ]
     )
+
+
+def test_track_cli_accepts_slash_qualified_repo_selector_lookup(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_named_manager_config(
+        tmp_path,
+        {
+            "alpha": REFERENCE_REPO,
+            "beta": REFERENCE_REPO,
+        },
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "track",
+            "beta/sunshine@host/linux",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["binding"]["repo"] == "beta"
+    assert payload["binding"]["selector"] == "sunshine"
+    assert payload["binding"]["profile"] == "host/linux"
+
+
+def test_track_cli_resolves_unique_partial_profile_in_non_interactive_mode(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "--json",
+            "track",
+            "example:git@wor",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["binding"]["repo"] == "example"
+    assert payload["binding"]["selector"] == "git"
+    assert payload["binding"]["profile"] == "work"
+
+
+def test_track_cli_interactively_selects_ambiguous_partial_profile_match(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["1", ""])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "sandbox:1password@os/",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select a profile match for 'os/' in sandbox:1password:" in output
+    assert "tracked sandbox:1password@os/mac" in output
+
+
+def test_track_cli_interactively_falls_back_to_full_profile_menu_for_unknown_profile(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["1", "2", ""])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "ss@wor",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select a selector match for 'ss':" in output
+    assert "Select a profile for sandbox:1password:" in output
+    assert "tracked sandbox:1password@host/linux" in output
+
+
+def test_select_menu_option_prefers_fzf_for_long_lists(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_should_use_fzf_for_selection", lambda _option_labels: True)
+    monkeypatch.setattr(cli, "_fzf_available", lambda: True)
+    monkeypatch.setattr(cli, "_select_menu_option_with_prompt", lambda **_kwargs: pytest.fail("prompt fallback should not run"))
+    monkeypatch.setattr(cli, "_select_menu_option_with_fzf", lambda **_kwargs: 1)
+
+    assert cli.select_menu_option(header_text="Select a package:", option_labels=["alpha", "beta"]) == 1
+
+
+def test_select_menu_option_passes_search_terms_to_fzf(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(cli, "_should_use_fzf_for_selection", lambda _option_labels: True)
+    monkeypatch.setattr(cli, "_fzf_available", lambda: True)
+    monkeypatch.setattr(cli, "_select_menu_option_with_prompt", lambda **_kwargs: pytest.fail("prompt fallback should not run"))
+
+    def fake_fzf(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(cli, "_select_menu_option_with_fzf", fake_fzf)
+
+    assert (
+        cli.select_menu_option(
+            header_text="Select a package:",
+            option_labels=["alpha/sunshine", "beta/sunshine"],
+            option_search_fields=[
+                ("sunshine", "alpha/sunshine"),
+                ("sunshine", "beta/sunshine"),
+            ],
+        )
+        == 0
+    )
+    assert captured["option_search_fields"] == [
+        ("sunshine", "alpha/sunshine"),
+        ("sunshine", "beta/sunshine"),
+    ]
+
+
+def test_resolve_candidate_match_ranks_leftmost_selector_segments_first(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_select_menu_option(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(cli, "select_menu_option", fake_select_menu_option)
+
+    selected = cli.resolve_candidate_match(
+        exact_matches=[],
+        partial_matches=[
+            ("sandbox", "host/linux-meta"),
+            ("sandbox", "sunshine"),
+        ],
+        query_text="s",
+        interactive=True,
+        exact_header_text="unused",
+        partial_header_text="Select a selector match for 's':",
+        option_resolver=lambda match: cli.ResolverOption(
+            display_label=f"{match[0]}/{match[1]}",
+            match_fields=cli.build_selector_match_fields(repo_name=match[0], selector=match[1]),
+        ),
+        exact_error_text="unused",
+        partial_error_text="unused",
+        not_found_text="unused",
+    )
+
+    assert selected == ("sandbox", "sunshine")
+    assert captured["option_labels"] == ["sandbox/sunshine", "sandbox/host/linux-meta"]
+
+
+def test_select_menu_option_with_prompt_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+    monkeypatch.setattr(cli, "selection_menu_bottom_up_enabled", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+
+    assert cli._select_menu_option_with_prompt(
+        header_text="Select a package:",
+        option_labels=["alpha", "beta", "gamma"],
+    ) == 0
+
+    output = capsys.readouterr().out
+    assert output.index("  3) gamma") < output.index("  2) beta") < output.index("  1) alpha")
+
+
+def test_select_menu_option_with_fzf_uses_hidden_match_fields(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command, *, input, text, capture_output, check):
+        captured["command"] = command
+        captured["input"] = input
+        captured["text"] = text
+        captured["capture_output"] = capture_output
+        captured["check"] = check
+        return subprocess.CompletedProcess(command, 0, stdout="2\n", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli, "selection_menu_bottom_up_enabled", lambda: True)
+
+    selected_index = cli._select_menu_option_with_fzf(
+        header_text="Select a package:",
+        option_labels=["sandbox/sunshine", "sandbox/host/linux-meta"],
+        option_search_fields=[
+            ("sunshine", "sandbox/sunshine"),
+            ("host/linux-meta", "sandbox/host/linux-meta"),
+        ],
+    )
+
+    assert selected_index == 1
+    assert "--nth=2..3" in captured["command"]
+    assert "--with-nth=4" in captured["command"]
+    assert "--layout=reverse-list" in captured["command"]
+    assert captured["input"] == (
+        "1\tsunshine\tsandbox/sunshine\tsandbox/sunshine\n"
+        "2\thost/linux-meta\tsandbox/host/linux-meta\tsandbox/host/linux-meta\n"
+    )
+
+
+def test_push_cli_interactively_selects_ambiguous_tracked_binding(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["2"])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    monkeypatch.setattr(cli, "filter_plans_for_interactive_selection", lambda *, plans, operation, json_output: list(plans))
+    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output: True)
+
+    config_path = write_named_manager_config(
+        tmp_path,
+        {
+            "alpha": REFERENCE_REPO,
+            "beta": REFERENCE_REPO,
+        },
+    )
+    for repo_name in ("alpha", "beta"):
+        state_dir = tmp_path / "state" / repo_name
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "bindings.toml").write_text(
+            "\n".join(
+                [
+                    "version = 1",
+                    "",
+                    "[[bindings]]",
+                    f'repo = "{repo_name}"',
+                    'selector = "sunshine"',
+                    'profile = "host/linux"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+            "sunshine",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select a tracked binding for 'sunshine':" in output
+    assert "alpha/sunshine@host/linux" in output
+    assert "beta/sunshine@host/linux" in output
+    assert "sunshine:selected_config -> create" in output
+
+
+def test_info_tracked_cli_interactively_selects_ambiguous_package(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers = iter(["2"])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    config_path = write_named_manager_config(
+        tmp_path,
+        {
+            "alpha": REFERENCE_REPO,
+            "beta": REFERENCE_REPO,
+        },
+    )
+    for repo_name in ("alpha", "beta"):
+        state_dir = tmp_path / "state" / repo_name
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "bindings.toml").write_text(
+            "\n".join(
+                [
+                    "version = 1",
+                    "",
+                    "[[bindings]]",
+                    f'repo = "{repo_name}"',
+                    'selector = "sunshine"',
+                    'profile = "host/linux"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "info",
+            "tracked",
+            "sunshine",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Select a tracked package for 'sunshine':" in output
+    assert "alpha/sunshine" in output
+    assert "beta/sunshine" in output
+    assert "beta/sunshine" in output
 
 
 def test_push_cli_uses_state_bindings_in_dry_run_json(
@@ -1044,6 +1413,36 @@ def test_select_menu_option_shows_help_then_accepts_selection(monkeypatch, capsy
     assert "Selection help:" in output
     assert "  <number>  choose that item" in output
     assert "Enter" not in output
+
+
+def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("DOTMAN_MENU_BOTTOM_UP", raising=False)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    selected_index = cli.select_menu_option(
+        header_text="Select a profile:",
+        option_labels=["basic", "work", "host/linux"],
+    )
+
+    output = capsys.readouterr().out
+    assert selected_index == 0
+    assert output.index("  3) host/linux") < output.index("  2) work") < output.index("  1) basic")
+
+
+def test_select_menu_option_can_disable_bottom_up_with_env(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("DOTMAN_MENU_BOTTOM_UP", "0")
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    selected_index = cli.select_menu_option(
+        header_text="Select a profile:",
+        option_labels=["basic", "work", "host/linux"],
+    )
+
+    output = capsys.readouterr().out
+    assert selected_index == 0
+    assert output.index("  1) basic") < output.index("  2) work") < output.index("  3) host/linux")
 
 
 def test_prompt_for_excluded_items_shows_help_then_returns_selection(monkeypatch, capsys) -> None:
