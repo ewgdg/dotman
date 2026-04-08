@@ -15,6 +15,7 @@ This example shows one possible repository layout for the new `dotman` design.
 
 - `git`: base Git package with hook arrays and a profile-selected install command
 - `core-cli-meta`: meta-package example that uses `depends = ["git", "nvim"]`
+- `profiled-note`: minimal `binding_mode = "multi_instance"` example with one profile-bound target path
 - `work/git`: namespaced variant that uses `extends = ["git"]` and overrides only work-specific vars
 - `nvim`: example file target with stdout-based `render`, explicit reverse-sync views, and an interactive `reconcile` step
 

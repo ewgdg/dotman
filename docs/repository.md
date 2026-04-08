@@ -12,6 +12,10 @@ This document captures the current repository structure and configuration schema
 
 - A package is the atomic install unit.
 - Packages live under `packages/`.
+- Packages may define `binding_mode = "singleton" | "multi_instance"`.
+- `binding_mode` defaults to `singleton`.
+- `singleton` means the package has one tracked identity regardless of bound profile.
+- `multi_instance` means the package definition may produce multiple independent package instances, keyed by bound profile.
 - Packages may declare `depends` for hard requirements.
 - Packages that exist only for hard dependency aggregation should use a `-meta` suffix by convention.
 - A package's target live paths are implicitly reserved.
@@ -36,12 +40,28 @@ This document captures the current repository structure and configuration schema
 
 - Package values act as defaults unless overridden.
 - Resolution order is `selection -> composed profile -> local`.
+- A binding stores the selected bound profile.
+- The composed/effective profile is runtime resolution context, not package identity.
 - Packages with no file payload may still be useful as meta packages when they only declare `depends`.
 - Any string value may contain template expressions and is rendered during resolution.
 - A package may define `extends = [...]` to inherit from one or more parent packages before profile and local values are applied.
 - Parent packages resolve in declaration order.
 - The child package is applied last.
 - The selected package is still resolved into one final package before `push` or `pull`.
+- Target and reserved-path collision rules apply across all resolved package instances, including instances that come from the same `multi_instance` package definition.
+
+## Package Binding Modes
+
+- `binding_mode` controls package identity semantics, not file rendering semantics.
+- File naming conventions such as `.tmpl` should not change package binding behavior.
+- A `singleton` package is directly trackable as one package identity.
+- A `multi_instance` package definition is not itself a tracked package identity.
+- Tracking a `multi_instance` package always produces a package instance bound to one selected profile.
+- A `multi_instance` package instance is identified by package ID plus bound profile.
+- Effective/composed profile data may be shown for resolution context, but it is not part of package instance identity.
+- A dependency on a `multi_instance` package should inherit the current bound profile unless the dependency entry explicitly requests a different bound profile.
+- `multi_instance` allows multiple instances from the same package definition to coexist as identities.
+- Coexisting identities do not bypass normal target ownership or reserved-path conflict checks.
 
 ## Package Inheritance
 

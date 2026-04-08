@@ -173,6 +173,31 @@ def write_package_override_preview_repo(repo_root: Path) -> None:
     )
 
 
+def write_multi_instance_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "profiled" / "files").mkdir(parents=True)
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "profiles" / "work.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "profiled" / "files" / "managed.conf").write_text(
+        "profile={{ profile }}\n",
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "profiled" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "profiled"',
+                'binding_mode = "multi_instance"',
+                "",
+                "[targets.managed]",
+                'source = "files/managed.conf"',
+                'path = "~/.config/profiled/{{ profile }}.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_config_validation_rejects_duplicate_repo_order(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
@@ -1101,6 +1126,40 @@ def test_record_binding_replaces_existing_selector_binding_with_new_profile(
         ("nvim", "basic"),
     ]
     assert not (state_dir / "bindings.toml").with_suffix(".tmp").exists()
+
+
+def test_record_binding_keeps_distinct_profiles_for_multi_instance_package(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_multi_instance_repo(repo_root)
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    engine = DotmanEngine.from_config_path(config_path)
+
+    engine.record_binding(engine.plan_push_binding("fixture:profiled@basic").binding)
+    engine.record_binding(engine.plan_push_binding("fixture:profiled@work").binding)
+
+    bindings = engine.read_bindings(engine.get_repo("fixture"))
+    assert [(binding.selector, binding.profile) for binding in bindings] == [
+        ("profiled", "basic"),
+        ("profiled", "work"),
+    ]
+
+    packages = engine.list_installed_packages()
+    assert [(package.package_ref, package.bound_profile) for package in packages] == [
+        ("profiled<basic>", "basic"),
+        ("profiled<work>", "work"),
+    ]
+
+    package_detail = engine.describe_installed_package("fixture:profiled<work>")
+    assert package_detail.package_ref == "profiled<work>"
+    assert package_detail.bound_profile == "work"
+    assert [binding.binding.profile for binding in package_detail.bindings] == ["work"]
 
 
 def test_remove_binding_deletes_only_the_selected_tracked_binding(

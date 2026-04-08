@@ -20,16 +20,17 @@ from dotman.models import (
     HookPlan,
     HookSpec,
     InstalledBindingSummary,
-    InstalledEffectiveTargetDetail,
     InstalledPackageBindingDetail,
     InstalledPackageDetail,
     InstalledPackageSummary,
+    InstalledOwnedTargetDetail,
     InstalledTargetSummary,
     ManagerConfig,
     PackageSpec,
     ProfileSpec,
     RepoConfig,
     RepoIgnoreDefaults,
+    package_ref_text,
     TargetPlan,
     TargetSpec,
 )
@@ -257,6 +258,11 @@ class Repository:
             package_id = payload.get("id")
             if not isinstance(package_id, str):
                 raise ValueError(f"package manifest {manifest_path} must define string id")
+            binding_mode = str(payload.get("binding_mode", "singleton"))
+            if binding_mode not in {"singleton", "multi_instance"}:
+                raise ValueError(
+                    f"package manifest {manifest_path} has unsupported binding_mode '{binding_mode}'"
+                )
             targets_payload = payload.get("targets")
             hooks_payload = payload.get("hooks")
             append_payload = payload.get("append")
@@ -298,6 +304,7 @@ class Repository:
                 id=package_id,
                 package_root=manifest_path.parent,
                 description=payload.get("description"),
+                binding_mode=binding_mode,
                 depends=normalize_string_list(payload.get("depends")),
                 extends=normalize_string_list(payload.get("extends")),
                 reserved_paths=normalize_string_list(payload.get("reserved_paths")),
@@ -384,6 +391,9 @@ class Repository:
         self._resolved_packages[package_id] = merged
         return merged
 
+    def package_binding_mode(self, package_id: str) -> str:
+        return self.resolve_package(package_id).binding_mode
+
     def expand_group(self, group_id: str) -> list[str]:
         if group_id not in self.groups:
             raise ValueError(f"unknown group '{group_id}' in repo '{self.config.name}'")
@@ -447,6 +457,7 @@ def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec
         id=override.id,
         package_root=override.package_root,
         description=override.description if override.description is not None else base.description,
+        binding_mode=override.binding_mode,
         depends=override.depends if override.depends is not None else base.depends,
         extends=None,
         reserved_paths=override.reserved_paths if override.reserved_paths is not None else base.reserved_paths,
@@ -487,6 +498,22 @@ def parse_binding_text(binding_text: str) -> tuple[str | None, str, str | None]:
     if not selector:
         raise ValueError("selector must not be empty")
     return repo_name, selector, profile or None
+
+
+def parse_package_ref_text(package_text: str) -> tuple[str | None, str, str | None]:
+    repo_name, selector, profile = parse_binding_text(package_text)
+    if profile is not None:
+        raise ValueError("tracked package lookup expects a package selector, not a binding")
+    bound_profile: str | None = None
+    if selector.endswith(">"):
+        open_index = selector.rfind("<")
+        if open_index == -1:
+            raise ValueError(f"invalid tracked package selector '{selector}'")
+        bound_profile = selector[open_index + 1 : -1]
+        selector = selector[:open_index]
+        if not selector or not bound_profile:
+            raise ValueError(f"invalid tracked package selector '{package_text}'")
+    return repo_name, selector, bound_profile
 
 
 class DotmanEngine:
@@ -666,7 +693,7 @@ class DotmanEngine:
         return self._build_tracked_plans(operation="pull")
 
     def list_installed_packages(self) -> list[InstalledPackageSummary]:
-        installed: dict[tuple[str, str], InstalledPackageSummary] = {}
+        installed: dict[tuple[str, str, str | None], InstalledPackageSummary] = {}
         for repo, binding, selector_kind, package_ids in self._iter_installed_bindings():
             binding_summary = InstalledBindingSummary(
                 repo=repo.config.name,
@@ -676,7 +703,8 @@ class DotmanEngine:
             )
             for package_id in package_ids:
                 package = repo.resolve_package(package_id)
-                key = (repo.config.name, package_id)
+                bound_profile = self._bound_profile_for_package(repo, package_id, binding.profile)
+                key = (repo.config.name, package_id, bound_profile)
                 existing = installed.get(key)
                 if existing is None:
                     installed[key] = InstalledPackageSummary(
@@ -684,6 +712,7 @@ class DotmanEngine:
                         package_id=package_id,
                         description=package.description,
                         bindings=[binding_summary],
+                        bound_profile=bound_profile,
                     )
                     continue
                 if binding_summary not in existing.bindings:
@@ -695,18 +724,32 @@ class DotmanEngine:
                 package_id=summary.package_id,
                 description=summary.description,
                 bindings=sorted(summary.bindings, key=lambda item: (item.selector, item.profile, item.repo)),
+                bound_profile=summary.bound_profile,
             )
-            for _key, summary in sorted(installed.items(), key=lambda item: item[0])
+            for _key, summary in sorted(
+                installed.items(),
+                key=lambda item: (
+                    item[0][0],
+                    item[0][1],
+                    "" if item[0][2] is None else item[0][2],
+                ),
+            )
         ]
 
     def describe_installed_package(self, package_text: str) -> InstalledPackageDetail:
-        repo, package_id = self._resolve_installed_package(package_text)
-        effective_binding_keys = self._effective_package_binding_keys(repo.config.name, package_id)
+        repo, package_id, bound_profile = self._resolve_installed_package(package_text)
+        effective_binding_keys = self._effective_package_binding_keys(
+            repo.config.name,
+            package_id,
+            bound_profile,
+        )
         details: list[InstalledPackageBindingDetail] = []
         description = repo.resolve_package(package_id).description
 
         for candidate_repo, binding, selector_kind, package_ids in self._iter_installed_bindings():
             if candidate_repo.config.name != repo.config.name or package_id not in package_ids:
+                continue
+            if self._bound_profile_for_package(candidate_repo, package_id, binding.profile) != bound_profile:
                 continue
             details.append(
                 self._describe_package_binding(
@@ -720,14 +763,20 @@ class DotmanEngine:
             )
 
         if not details:
-            raise ValueError(f"package '{repo.config.name}:{package_id}' is not currently tracked")
+            package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
+            raise ValueError(f"package '{repo.config.name}:{package_ref}' is not currently tracked")
 
         return InstalledPackageDetail(
             repo=repo.config.name,
             package_id=package_id,
             description=description,
             bindings=sorted(details, key=lambda item: (item.binding.selector, item.binding.profile, item.binding.repo)),
-            effective_targets=self._describe_effective_package_targets(repo.config.name, package_id),
+            owned_targets=self._describe_owned_package_targets(
+                repo.config.name,
+                package_id,
+                bound_profile,
+            ),
+            bound_profile=bound_profile,
         )
 
     def read_bindings(self, repo: Repository) -> list[Binding]:
@@ -753,11 +802,28 @@ class DotmanEngine:
             for repo_config in self.config.ordered_repos
         }
 
+    def _binding_scope_key(self, repo: Repository, binding: Binding) -> tuple[str, str, str | None]:
+        if binding.selector in repo.packages and repo.package_binding_mode(binding.selector) == "multi_instance":
+            return (binding.repo, binding.selector, binding.profile)
+        return (binding.repo, binding.selector, None)
+
+    def _bound_profile_for_package(
+        self,
+        repo: Repository,
+        package_id: str,
+        binding_profile: str,
+    ) -> str | None:
+        if repo.package_binding_mode(package_id) == "multi_instance":
+            return binding_profile
+        return None
+
     def _normalize_recorded_bindings(self, bindings: list[Binding], binding: Binding) -> list[Binding]:
+        repo = self.get_repo(binding.repo)
+        target_scope = self._binding_scope_key(repo, binding)
         updated = False
         normalized: list[Binding] = []
         for existing in bindings:
-            if existing.repo == binding.repo and existing.selector == binding.selector:
+            if self._binding_scope_key(repo, existing) == target_scope:
                 if not updated:
                     normalized.append(binding)
                     updated = True
@@ -856,47 +922,62 @@ class DotmanEngine:
     def _selected_package_ids(self, repo: Repository, selector: str, selector_kind: str) -> list[str]:
         return [selector] if selector_kind == "package" else repo.expand_group(selector)
 
-    def _resolve_installed_package(self, package_text: str) -> tuple[Repository, str]:
-        selector, profile, exact_matches, partial_matches = self.find_installed_package_matches(package_text)
-        if profile is not None:
-            raise ValueError("tracked package lookup expects a package selector, not a binding")
+    def _resolve_installed_package(self, package_text: str) -> tuple[Repository, str, str | None]:
+        selector, bound_profile, exact_matches, partial_matches = self.find_installed_package_matches(package_text)
         if len(exact_matches) == 1:
             return exact_matches[0]
         if len(exact_matches) > 1:
-            candidates = ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in exact_matches)
-            raise ValueError(f"tracked package '{selector}' is defined in multiple repos: {candidates}")
+            candidates = ", ".join(
+                f"{repo.config.name}:{package_ref_text(package_id=package_id, bound_profile=match_bound_profile)}"
+                for repo, package_id, match_bound_profile in exact_matches
+            )
+            if len({repo.config.name for repo, _package_id, _match_bound_profile in exact_matches}) > 1:
+                raise ValueError(f"tracked package '{selector}' is defined in multiple repos: {candidates}")
+            raise ValueError(f"tracked package '{selector}' is ambiguous: {candidates}")
 
         if len(partial_matches) == 1:
             return partial_matches[0]
         if len(partial_matches) > 1:
-            candidates = ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in partial_matches)
+            candidates = ", ".join(
+                f"{repo.config.name}:{package_ref_text(package_id=package_id, bound_profile=match_bound_profile)}"
+                for repo, package_id, match_bound_profile in partial_matches
+            )
             raise ValueError(f"tracked package '{selector}' is ambiguous: {candidates}")
         raise ValueError(f"tracked package '{selector}' did not match any tracked package")
 
     def find_installed_package_matches(
         self,
         package_text: str,
-    ) -> tuple[str, str | None, list[tuple[Repository, str]], list[tuple[Repository, str]]]:
-        explicit_repo, selector, profile = parse_binding_text(package_text)
+    ) -> tuple[str, str | None, list[tuple[Repository, str, str | None]], list[tuple[Repository, str, str | None]]]:
+        explicit_repo, selector, bound_profile = parse_package_ref_text(package_text)
         candidate_repos = self.candidate_repos(explicit_repo)
         installed_ids = {
-            (repo.config.name, package_id): repo
-            for repo, _binding, _selector_kind, package_ids in self._iter_installed_bindings()
+            (
+                repo.config.name,
+                package_id,
+                self._bound_profile_for_package(repo, package_id, binding.profile),
+            ): repo
+            for repo, binding, _selector_kind, package_ids in self._iter_installed_bindings()
             if repo in candidate_repos
             for package_id in package_ids
         }
         exact_matches = [
-            (repo, package_id)
-            for (repo_name, package_id), repo in installed_ids.items()
+            (repo, package_id, match_bound_profile)
+            for (repo_name, package_id, match_bound_profile), repo in installed_ids.items()
             if package_id == selector and repo_name == repo.config.name
+            and (bound_profile is None or match_bound_profile == bound_profile)
         ]
         partial_matches = [
-            (repo, package_id)
-            for (_repo_name, package_id), repo in installed_ids.items()
-            if selector in package_id
+            (repo, package_id, match_bound_profile)
+            for (_repo_name, package_id, match_bound_profile), repo in installed_ids.items()
+            if selector in package_ref_text(package_id=package_id, bound_profile=match_bound_profile)
+            and (bound_profile is None or match_bound_profile == bound_profile)
         ]
-        unique_partials = {(repo.config.name, package_id): (repo, package_id) for repo, package_id in partial_matches}
-        return selector, profile, exact_matches, list(unique_partials.values())
+        unique_partials = {
+            (repo.config.name, package_id, match_bound_profile): (repo, package_id, match_bound_profile)
+            for repo, package_id, match_bound_profile in partial_matches
+        }
+        return selector, bound_profile, exact_matches, list(unique_partials.values())
 
     def _describe_package_binding(
         self,
@@ -996,16 +1077,23 @@ class DotmanEngine:
             pull_ignore=target.pull_ignore,
         )
 
-    def _describe_effective_package_targets(self, repo_name: str, package_id: str) -> list[InstalledEffectiveTargetDetail]:
-        effective_targets: list[InstalledEffectiveTargetDetail] = []
+    def _describe_owned_package_targets(
+        self,
+        repo_name: str,
+        package_id: str,
+        bound_profile: str | None,
+    ) -> list[InstalledOwnedTargetDetail]:
+        owned_targets: list[InstalledOwnedTargetDetail] = []
         for plan in self.plan_push():
             if plan.binding.repo != repo_name:
+                continue
+            if bound_profile is not None and plan.binding.profile != bound_profile:
                 continue
             for target in plan.target_plans:
                 if target.package_id != package_id:
                     continue
-                effective_targets.append(
-                    InstalledEffectiveTargetDetail(
+                owned_targets.append(
+                    InstalledOwnedTargetDetail(
                         binding=InstalledBindingSummary(
                             repo=plan.binding.repo,
                             selector=plan.binding.selector,
@@ -1016,7 +1104,7 @@ class DotmanEngine:
                     )
                 )
         return sorted(
-            effective_targets,
+            owned_targets,
             key=lambda item: (
                 item.target.target_name,
                 item.binding.profile,
@@ -1025,10 +1113,17 @@ class DotmanEngine:
             ),
         )
 
-    def _effective_package_binding_keys(self, repo_name: str, package_id: str) -> set[tuple[str, str, str]]:
+    def _effective_package_binding_keys(
+        self,
+        repo_name: str,
+        package_id: str,
+        bound_profile: str | None,
+    ) -> set[tuple[str, str, str]]:
         effective_bindings: set[tuple[str, str, str]] = set()
         for plan in self.plan_push():
             if plan.binding.repo != repo_name:
+                continue
+            if bound_profile is not None and plan.binding.profile != bound_profile:
                 continue
             if not any(target.package_id == package_id and target.action != "noop" for target in plan.target_plans):
                 continue

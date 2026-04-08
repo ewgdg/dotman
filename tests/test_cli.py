@@ -197,6 +197,31 @@ def write_untrack_conflict_repo(repo_root: Path) -> None:
     )
 
 
+def write_multi_instance_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "profiled" / "files").mkdir(parents=True)
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "profiles" / "work.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "profiled" / "files" / "managed.conf").write_text(
+        "profile={{ profile }}\n",
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "profiled" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "profiled"',
+                'binding_mode = "multi_instance"',
+                "",
+                "[targets.managed]",
+                'source = "files/managed.conf"',
+                'path = "~/.config/profiled/{{ profile }}.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def write_package_override_preview_repo(repo_root: Path) -> None:
     (repo_root / "profiles").mkdir(parents=True)
     (repo_root / "groups").mkdir(parents=True)
@@ -2871,7 +2896,7 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
     assert package["description"] == "Base Git configuration"
     assert [binding["selector"] for binding in package["bindings"]] == ["core-cli-meta", "git"]
     assert [binding["tracked_reason"] for binding in package["bindings"]] == ["implicit", "explicit"]
-    assert package["effective_targets"] == [
+    assert package["owned_targets"] == [
         {
             "capture_command": None,
             "live_path": str(home / ".gitconfig"),
@@ -2949,11 +2974,183 @@ def test_info_tracked_cli_emits_readable_text_output(
             "  ::provenance",
             "    implicit: example:core-cli-meta@basic",
             "    explicit: example:git@basic",
-            "  ::effective targets",
-            f"    gitconfig@basic -> {home / '.gitconfig'}",
+            "  ::owned targets",
+            f"    gitconfig -> {home / '.gitconfig'}",
             "",
         ]
     )
+
+
+def test_list_tracked_cli_lists_multi_instance_packages_per_bound_profile(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_multi_instance_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    state_dir = tmp_path / "state" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "profiled"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "profiled"',
+                'profile = "work"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "list",
+            "tracked",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [package["package_ref"] for package in payload["packages"]] == [
+        "profiled<basic>",
+        "profiled<work>",
+    ]
+    assert [package["bound_profile"] for package in payload["packages"]] == ["basic", "work"]
+
+
+def test_info_tracked_cli_requires_specific_multi_instance_package_identity_in_non_interactive_mode(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_multi_instance_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    state_dir = tmp_path / "state" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "profiled"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "profiled"',
+                'profile = "work"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "info",
+            "tracked",
+            "profiled",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "ambiguous" in capsys.readouterr().err
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "info",
+            "tracked",
+            "profiled<work>",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["package"]["package_ref"] == "profiled<work>"
+    assert payload["package"]["bound_profile"] == "work"
+    assert [binding["profile"] for binding in payload["package"]["bindings"]] == ["work"]
+
+
+def test_info_tracked_cli_uses_resolver_for_ambiguous_multi_instance_identity_in_interactive_mode(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+    monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: True)
+    monkeypatch.setattr(cli, "select_menu_option", lambda **_kwargs: 1)
+
+    repo_root = tmp_path / "repo"
+    write_multi_instance_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    state_dir = tmp_path / "state" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "profiled"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "profiled"',
+                'profile = "work"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "info",
+            "tracked",
+            "profiled",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert output.startswith("fixture:profiled<work>\n")
+    assert f"managed -> {home / '.config' / 'profiled' / 'work.conf'}" in output
 
 
 def test_reconcile_editor_subcommand_invokes_editor_with_repo_live_and_additional_sources(

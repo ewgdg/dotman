@@ -1,0 +1,1 @@
+This package exists only to show a minimal multi_instance definition.

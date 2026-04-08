@@ -16,8 +16,8 @@ from dotman.diff_review import (
     diff_status as review_diff_status,
     run_review_item_diff,
 )
-from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text
-from dotman.models import Binding, filter_hook_plans_for_targets
+from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text, parse_package_ref_text
+from dotman.models import Binding, filter_hook_plans_for_targets, package_ref_text
 from dotman.reconcile import run_basic_reconcile
 from dotman.resolver import (
     ResolverOption,
@@ -91,14 +91,20 @@ def package_label_text(
     *,
     repo_name: str,
     package_id: str,
+    bound_profile: str | None = None,
     target_name: str | None = None,
     package_first: bool = False,
     include_repo_context: bool = False,
 ) -> str:
+    package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
     if package_first:
-        package_text = repo_qualified_selector_text(repo_name=repo_name, selector=package_id) if include_repo_context else package_id
+        package_text = (
+            repo_qualified_selector_text(repo_name=repo_name, selector=package_ref)
+            if include_repo_context
+            else package_ref
+        )
     else:
-        package_text = repo_qualified_selector_text(repo_name=repo_name, selector=package_id)
+        package_text = repo_qualified_selector_text(repo_name=repo_name, selector=package_ref)
     if target_name is None:
         return package_text
     return f"{package_text} ({target_name})"
@@ -108,14 +114,17 @@ def render_package_label(
     *,
     repo_name: str,
     package_id: str,
+    bound_profile: str | None = None,
     target_name: str | None = None,
     package_first: bool = False,
     include_repo_context: bool = False,
 ) -> str:
+    package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
     if not colors_enabled():
         return package_label_text(
             repo_name=repo_name,
             package_id=package_id,
+            bound_profile=bound_profile,
             target_name=target_name,
             package_first=package_first,
             include_repo_context=include_repo_context,
@@ -125,15 +134,15 @@ def render_package_label(
             package_label = (
                 f"{style_text(repo_name, *MENU_REPO_STYLE)}"
                 f"{style_text(':', *MENU_HINT_STYLE)}"
-                f"{style_text(package_id, '1')}"
+                f"{style_text(package_ref, '1')}"
             )
         else:
-            package_label = style_text(package_id, "1")
+            package_label = style_text(package_ref, "1")
     else:
         package_label = (
             f"{style_text(repo_name, *MENU_REPO_STYLE)}"
             f"{style_text(':', *MENU_HINT_STYLE)}"
-            f"{style_text(package_id, '1')}"
+            f"{style_text(package_ref, '1')}"
         )
     if target_name is None:
         return package_label
@@ -176,6 +185,8 @@ def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: 
     repo = engine.get_repo(binding.repo)
     if binding.selector not in repo.packages:
         return None
+    if repo.resolve_package(binding.selector).binding_mode == "multi_instance":
+        return None
     try:
         return engine.describe_installed_package(f"{binding.repo}:{binding.selector}")
     except ValueError:
@@ -198,12 +209,6 @@ def render_selector_match_label(*, repo_name: str, selector: str, selector_kind:
     if not colors_enabled():
         return f"{package_label} [{selector_kind}]"
     return f"{package_label} {style_text(f'[{selector_kind}]', *MENU_HINT_STYLE)}"
-
-
-def render_target_profile_label(*, target_name: str, profile: str) -> str:
-    if not colors_enabled():
-        return f"{target_name}@{profile}"
-    return f"{style_text(target_name, '1')}{style_text(f'@{profile}', *MENU_HINT_STYLE)}"
 
 
 def print_selection_header(header_text: str) -> None:
@@ -439,10 +444,30 @@ def interactive_mode_enabled(*, json_output: bool) -> bool:
     return not json_output and sys.stdin.isatty()
 
 
-def find_recorded_binding_for_selector(engine: DotmanEngine, binding: Binding) -> Binding | None:
+def binding_replacement_scope(engine: DotmanEngine, binding: Binding) -> tuple[str, str, str | None]:
+    repo = engine.get_repo(binding.repo)
+    if binding.selector in repo.packages and repo.resolve_package(binding.selector).binding_mode == "multi_instance":
+        return (binding.repo, binding.selector, binding.profile)
+    return (binding.repo, binding.selector, None)
+
+
+def find_recorded_binding_for_scope(engine: DotmanEngine, binding: Binding) -> Binding | None:
+    repo = engine.get_repo(binding.repo)
+    target_scope = binding_replacement_scope(engine, binding)
+    for existing in engine.read_bindings(repo):
+        if binding_replacement_scope(engine, existing) == target_scope:
+            return existing
+    return None
+
+
+def find_recorded_binding_exact(engine: DotmanEngine, binding: Binding) -> Binding | None:
     repo = engine.get_repo(binding.repo)
     for existing in engine.read_bindings(repo):
-        if existing.repo == binding.repo and existing.selector == binding.selector:
+        if (
+            existing.repo == binding.repo
+            and existing.selector == binding.selector
+            and existing.profile == binding.profile
+        ):
             return existing
     return None
 
@@ -485,7 +510,7 @@ def ensure_track_binding_replacement_confirmed(
     binding: Binding,
     json_output: bool,
 ) -> bool:
-    existing_binding = find_recorded_binding_for_selector(engine, binding)
+    existing_binding = find_recorded_binding_for_scope(engine, binding)
     if existing_binding is None or existing_binding.profile == binding.profile:
         return True
     if not interactive_mode_enabled(json_output=json_output):
@@ -845,19 +870,18 @@ def resolve_tracked_package_text(
     package_text: str,
     *,
     json_output: bool,
-) -> tuple[object, str]:
-    explicit_repo, selector, profile = parse_binding_text(package_text)
-    package_query = selector if profile is None else f"{selector}@{profile}"
+) -> tuple[object, str, str | None]:
+    explicit_repo, selector, bound_profile = parse_package_ref_text(package_text)
+    package_query = package_ref_text(package_id=selector, bound_profile=bound_profile)
     repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
     lookup_repo, lookup_selector = parse_slash_qualified_query(
         repo_names=repo_names,
         explicit_repo=explicit_repo,
         selector=selector,
     )
-    lookup_package_text = f"{lookup_repo}:{lookup_selector}" if lookup_repo is not None else lookup_selector
-    selector, profile, exact_matches, partial_matches = engine.find_installed_package_matches(lookup_package_text)
-    if profile is not None:
-        raise ValueError("tracked package lookup expects a package selector, not a binding")
+    lookup_package_ref = package_ref_text(package_id=lookup_selector, bound_profile=bound_profile)
+    lookup_package_text = f"{lookup_repo}:{lookup_package_ref}" if lookup_repo is not None else lookup_package_ref
+    selector, bound_profile, exact_matches, partial_matches = engine.find_installed_package_matches(lookup_package_text)
     return resolve_candidate_match(
         exact_matches=exact_matches,
         partial_matches=partial_matches,
@@ -869,19 +893,33 @@ def resolve_tracked_package_text(
             display_label=render_package_label(
                 repo_name=match[0].config.name,
                 package_id=match[1],
+                bound_profile=match[2],
                 package_first=True,
                 include_repo_context=True,
             ),
             match_fields=build_package_match_fields(
                 repo_name=match[0].config.name,
                 package_id=match[1],
+                bound_profile=match[2],
             ),
-            field_kinds=build_package_field_kinds(),
+            field_kinds=build_package_field_kinds(has_bound_profile=match[2] is not None),
         ),
-        exact_error_text=f"tracked package '{package_query}' is defined in multiple repos: "
-        + ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in exact_matches),
+        exact_error_text=(
+            (
+                f"tracked package '{package_query}' is defined in multiple repos: "
+                if len({repo.config.name for repo, _package_id, _match_bound_profile in exact_matches}) > 1
+                else f"tracked package '{package_query}' is ambiguous: "
+            )
+            + ", ".join(
+                f"{repo.config.name}:{package_ref_text(package_id=package_id, bound_profile=match_bound_profile)}"
+                for repo, package_id, match_bound_profile in exact_matches
+            )
+        ),
         partial_error_text=f"tracked package '{package_query}' is ambiguous: "
-        + ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in partial_matches),
+        + ", ".join(
+            f"{repo.config.name}:{package_ref_text(package_id=package_id, bound_profile=match_bound_profile)}"
+            for repo, package_id, match_bound_profile in partial_matches
+        ),
         not_found_text=f"tracked package '{package_query}' did not match any tracked package",
     )
 
@@ -1444,7 +1482,13 @@ def emit_tracked_packages(*, packages: Sequence, json_output: bool) -> int:
         return 0
 
     for package in packages:
-        print(render_package_label(repo_name=package.repo, package_id=package.package_id))
+        print(
+            render_package_label(
+                repo_name=package.repo,
+                package_id=package.package_id,
+                bound_profile=package.bound_profile,
+            )
+        )
     return 0
 
 
@@ -1477,7 +1521,7 @@ def emit_forgotten_binding(*, binding, still_tracked_package, json_output: bool)
     print(f"untracked {render_binding_reference(binding)}")
     if still_tracked_package is not None:
         print(
-            f"{render_package_label(repo_name=still_tracked_package.repo, package_id=still_tracked_package.package_id)} "
+            f"{render_package_label(repo_name=still_tracked_package.repo, package_id=still_tracked_package.package_id, bound_profile=still_tracked_package.bound_profile)} "
             "remains tracked via:"
         )
         for binding_detail in still_tracked_package.bindings:
@@ -1558,7 +1602,13 @@ def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(render_package_label(repo_name=package_detail.repo, package_id=package_detail.package_id))
+    print(
+        render_package_label(
+            repo_name=package_detail.repo,
+            package_id=package_detail.package_id,
+            bound_profile=package_detail.bound_profile,
+        )
+    )
     if package_detail.description:
         print(f"  {package_detail.description}")
     if package_detail.bindings:
@@ -1570,12 +1620,12 @@ def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
             profile=binding.binding.profile,
         )
         print(f"    {render_tracked_reason(binding.tracked_reason)}: {binding_label}")
-    if package_detail.effective_targets:
-        print("  ::effective targets")
-    for target in package_detail.effective_targets:
+    if package_detail.owned_targets:
+        print("  ::owned targets")
+    for target in package_detail.owned_targets:
         print(
             "    "
-            + f"{render_target_profile_label(target_name=target.target.target_name, profile=target.binding.profile)} "
+            + f"{style_text(target.target.target_name, '1') if colors_enabled() else target.target.target_name} "
             + f"-> {target.target.live_path}"
         )
     return 0
@@ -1603,7 +1653,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     binding=binding,
                     json_output=args.json_output,
                 ):
-                    existing_binding = find_recorded_binding_for_selector(engine, binding)
+                    existing_binding = find_recorded_binding_for_scope(engine, binding)
                     if existing_binding is None:
                         raise ValueError("missing existing tracked binding during replacement confirmation")
                     return emit_kept_binding(binding=existing_binding, json_output=args.json_output)
@@ -1634,8 +1684,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     binding=binding,
                     json_output=args.json_output,
                 ):
-                    existing_binding = find_recorded_binding_for_selector(engine, binding)
-                    if existing_binding is not None and existing_binding.profile != binding.profile:
+                    existing_binding = find_recorded_binding_exact(engine, binding)
+                    if existing_binding is not None:
                         return emit_kept_binding(binding=existing_binding, json_output=args.json_output)
                     return emit_skipped_tracking(binding=binding, json_output=args.json_output)
                 engine.record_binding(binding)
@@ -1747,13 +1797,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "list" and args.list_command in {"tracked", "installed"}:
             return emit_tracked_packages(packages=engine.list_installed_packages(), json_output=args.json_output)
         if args.command == "info" and args.info_command in {"tracked", "installed"}:
-            _repo, package_id = resolve_tracked_package_text(
+            _repo, package_id, bound_profile = resolve_tracked_package_text(
                 engine,
                 args.package,
                 json_output=args.json_output,
             )
+            package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
             return emit_tracked_package_detail(
-                package_detail=engine.describe_installed_package(f"{_repo.config.name}:{package_id}"),
+                package_detail=engine.describe_installed_package(f"{_repo.config.name}:{package_ref}"),
                 json_output=args.json_output,
             )
     except KeyboardInterrupt:

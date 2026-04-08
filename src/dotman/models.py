@@ -5,6 +5,12 @@ from pathlib import Path
 from typing import Any
 
 
+def package_ref_text(*, package_id: str, bound_profile: str | None = None) -> str:
+    if bound_profile is None:
+        return package_id
+    return f"{package_id}<{bound_profile}>"
+
+
 @dataclass(frozen=True)
 class RepoConfig:
     name: str
@@ -52,6 +58,7 @@ class PackageSpec:
     id: str
     package_root: Path
     description: str | None = None
+    binding_mode: str = "singleton"
     depends: tuple[str, ...] | None = None
     extends: tuple[str, ...] | None = None
     reserved_paths: tuple[str, ...] | None = None
@@ -158,11 +165,18 @@ class InstalledPackageSummary:
     package_id: str
     description: str | None
     bindings: list[InstalledBindingSummary]
+    bound_profile: str | None = None
+
+    @property
+    def package_ref(self) -> str:
+        return package_ref_text(package_id=self.package_id, bound_profile=self.bound_profile)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "repo": self.repo,
             "package_id": self.package_id,
+            "package_ref": self.package_ref,
+            "bound_profile": self.bound_profile,
             "description": self.description,
             "bindings": [binding.to_dict() for binding in self.bindings],
         }
@@ -185,7 +199,7 @@ class InstalledPackageBindingDetail:
 
 
 @dataclass(frozen=True)
-class InstalledEffectiveTargetDetail:
+class InstalledOwnedTargetDetail:
     binding: InstalledBindingSummary
     target: InstalledTargetSummary
 
@@ -202,15 +216,22 @@ class InstalledPackageDetail:
     package_id: str
     description: str | None
     bindings: list[InstalledPackageBindingDetail]
-    effective_targets: list[InstalledEffectiveTargetDetail]
+    owned_targets: list[InstalledOwnedTargetDetail]
+    bound_profile: str | None = None
+
+    @property
+    def package_ref(self) -> str:
+        return package_ref_text(package_id=self.package_id, bound_profile=self.bound_profile)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "repo": self.repo,
             "package_id": self.package_id,
+            "package_ref": self.package_ref,
+            "bound_profile": self.bound_profile,
             "description": self.description,
             "bindings": [binding.to_dict() for binding in self.bindings],
-            "effective_targets": [target.to_dict() for target in self.effective_targets],
+            "owned_targets": [target.to_dict() for target in self.owned_targets],
         }
 
 
