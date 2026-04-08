@@ -156,6 +156,8 @@ This document captures the current command and selector direction for `dotman`.
 - `untrack` should accept either `selector` or `selector@profile`.
 - If the profile is omitted, dotman should untrack the unique tracked binding that matches the selector.
 - If the selector only names a package that is present through another tracked binding, dotman should explain which tracked bindings currently include it instead of just saying "not tracked".
+- `untrack` should validate the resulting tracked binding set before writing state.
+- If removing one binding would expose a tracked-target conflict among the remaining bindings, `untrack` should fail and keep state unchanged.
 - `forget` may remain as a compatibility alias for `untrack` during transition, but `untrack` is the primary name.
 - Repo qualification may still be omitted when the tracked binding is unique across configured repos.
 - Examples:

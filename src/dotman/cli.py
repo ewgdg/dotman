@@ -169,6 +169,24 @@ def render_binding_label(*, repo_name: str, selector: str, profile: str, selecto
     )
 
 
+def render_binding_reference(binding: Binding) -> str:
+    return render_binding_label(
+        repo_name=binding.repo,
+        selector=binding.selector,
+        profile=binding.profile,
+    )
+
+
+def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: Binding):
+    repo = engine.get_repo(binding.repo)
+    if binding.selector not in repo.packages:
+        return None
+    try:
+        return engine.describe_installed_package(f"{binding.repo}:{binding.selector}")
+    except ValueError:
+        return None
+
+
 def render_tracked_reason(reason: str) -> str:
     if not colors_enabled():
         return reason
@@ -1317,7 +1335,7 @@ def emit_tracked_packages(*, packages: Sequence, json_output: bool) -> int:
     return 0
 
 
-def emit_forgotten_binding(*, binding, json_output: bool) -> int:
+def emit_forgotten_binding(*, binding, still_tracked_package, json_output: bool) -> int:
     payload = {
         "mode": "state-only",
         "operation": "untrack",
@@ -1327,11 +1345,37 @@ def emit_forgotten_binding(*, binding, json_output: bool) -> int:
             "profile": binding.profile,
         },
     }
+    if still_tracked_package is not None:
+        payload["still_tracked_package"] = {
+            "repo": still_tracked_package.repo,
+            "package_id": still_tracked_package.package_id,
+            "bindings": [
+                {
+                    **binding_detail.binding.to_dict(),
+                    "tracked_reason": binding_detail.tracked_reason,
+                }
+                for binding_detail in still_tracked_package.bindings
+            ],
+        }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"untracked {binding.repo}:{binding.selector}@{binding.profile}")
+    print(f"untracked {render_binding_reference(binding)}")
+    if still_tracked_package is not None:
+        print(
+            f"{render_package_label(repo_name=still_tracked_package.repo, package_id=still_tracked_package.package_id)} "
+            "remains tracked via:"
+        )
+        for binding_detail in still_tracked_package.bindings:
+            print(
+                f"  {render_tracked_reason(binding_detail.tracked_reason)}: "
+                + render_binding_label(
+                    repo_name=binding_detail.binding.repo,
+                    selector=binding_detail.binding.selector,
+                    profile=binding_detail.binding.profile,
+                )
+            )
     return 0
 
 
@@ -1349,7 +1393,7 @@ def emit_tracked_binding(*, binding, json_output: bool) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"tracked {binding.repo}:{binding.selector}@{binding.profile}")
+    print(f"tracked {render_binding_reference(binding)}")
     return 0
 
 
@@ -1368,7 +1412,7 @@ def emit_kept_binding(*, binding, json_output: bool) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"kept existing tracked binding {binding.repo}:{binding.selector}@{binding.profile}")
+    print(f"kept existing tracked binding {render_binding_reference(binding)}")
     return 0
 
 
@@ -1387,7 +1431,7 @@ def emit_skipped_tracking(*, binding, json_output: bool) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"skipped tracking {binding.repo}:{binding.selector}@{binding.profile}")
+    print(f"skipped tracking {render_binding_reference(binding)}")
     return 0
 
 
@@ -1578,11 +1622,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 allow_package_owners=False,
                 json_output=args.json_output,
             )
+            removed_binding = engine.remove_binding(
+                f"{binding.repo}:{binding.selector}@{binding.profile}",
+                operation="untrack",
+            )
             return emit_forgotten_binding(
-                binding=engine.remove_binding(
-                    f"{binding.repo}:{binding.selector}@{binding.profile}",
-                    operation="untrack",
-                ),
+                binding=removed_binding,
+                still_tracked_package=find_remaining_tracked_package_after_untrack(engine, removed_binding),
                 json_output=args.json_output,
             )
         if args.command == "list" and args.list_command in {"tracked", "installed"}:

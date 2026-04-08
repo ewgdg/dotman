@@ -35,6 +35,71 @@ def write_manager_config(tmp_path: Path) -> Path:
     return config_path
 
 
+def write_single_repo_config(tmp_path: Path, *, repo_name: str, repo_path: Path) -> Path:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                f"[repos.{repo_name}]",
+                f'path = "{repo_path}"',
+                "order = 10",
+                f'state_path = "{tmp_path / "state" / repo_name}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def write_untrack_conflict_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "shared" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "stack-a").mkdir(parents=True)
+    (repo_root / "packages" / "stack-b").mkdir(parents=True)
+
+    for profile_name in ("direct", "work", "personal"):
+        (repo_root / "profiles" / f"{profile_name}.toml").write_text("", encoding="utf-8")
+
+    (repo_root / "packages" / "shared" / "files" / "shared.conf").write_text(
+        "profile={{ profile }}\n",
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shared" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shared"',
+                "",
+                "[targets.shared]",
+                'source = "files/shared.conf"',
+                'path = "~/.config/shared.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "stack-a" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "stack-a"',
+                'depends = ["shared"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "stack-b" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "stack-b"',
+                'depends = ["shared"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_config_validation_rejects_duplicate_repo_order(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
@@ -964,3 +1029,54 @@ def test_remove_binding_reports_tracked_owner_when_selector_is_only_a_dependency
         match=r"cannot untrack 'example:nvim': required by tracked bindings: example:core-cli-meta@basic",
     ):
         engine.remove_binding("nvim@basic")
+
+
+def test_remove_binding_rejects_removal_that_exposes_implicit_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    write_untrack_conflict_repo(repo_root)
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    state_dir = tmp_path / "state" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    original_state = "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "shared"',
+            'profile = "direct"',
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "stack-a"',
+            'profile = "work"',
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "stack-b"',
+            'profile = "personal"',
+            "",
+        ]
+    )
+    (state_dir / "bindings.toml").write_text(original_state, encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"cannot untrack 'fixture:shared@direct': removing this binding would expose "
+            r"conflicting implicit tracked targets for .+shared\.conf: "
+            r"fixture:stack-a@work \(shared:shared\), fixture:stack-b@personal \(shared:shared\)"
+        ),
+    ):
+        engine.remove_binding("fixture:shared@direct")
+
+    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == original_state

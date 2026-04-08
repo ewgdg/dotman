@@ -757,19 +757,23 @@ class DotmanEngine:
             normalized.append(binding)
         return normalized
 
+    def _validate_tracked_bindings(self, bindings_by_repo: dict[str, list[Binding]]) -> None:
+        # Tracked-state validity is defined by the resolved push winner set for live targets.
+        self._build_tracked_plans(operation="push", bindings_by_repo=bindings_by_repo)
+
     def record_binding(self, binding: Binding) -> None:
         repo = self.get_repo(binding.repo)
         bindings_by_repo = self._bindings_by_repo()
         normalized = self._normalize_recorded_bindings(self.read_bindings(repo), binding)
         bindings_by_repo[repo.config.name] = normalized
-        self._build_tracked_plans(operation="push", bindings_by_repo=bindings_by_repo)
+        self._validate_tracked_bindings(bindings_by_repo)
         self.write_bindings(repo, normalized)
 
     def validate_recorded_binding(self, binding: Binding) -> None:
         repo = self.get_repo(binding.repo)
         bindings_by_repo = self._bindings_by_repo()
         bindings_by_repo[repo.config.name] = self._normalize_recorded_bindings(self.read_bindings(repo), binding)
-        self._build_tracked_plans(operation="push", bindings_by_repo=bindings_by_repo)
+        self._validate_tracked_bindings(bindings_by_repo)
 
     def remove_binding(self, binding_text: str, *, operation: str = "untrack") -> Binding:
         repo, binding = self.resolve_tracked_binding(binding_text, operation=operation)
@@ -782,6 +786,15 @@ class DotmanEngine:
                 and existing.profile == binding.profile
             )
         ]
+        bindings_by_repo = self._bindings_by_repo()
+        bindings_by_repo[repo.config.name] = remaining
+        try:
+            self._validate_tracked_bindings(bindings_by_repo)
+        except TrackedTargetConflictError as exc:
+            binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
+            raise ValueError(
+                f"cannot {operation} '{binding_label}': removing this binding would expose {exc}"
+            ) from None
         self.write_bindings(repo, remaining)
         return binding
 
