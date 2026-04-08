@@ -8,7 +8,7 @@ import subprocess
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, BindingPlan, DirectoryPlanItem, TargetPlan
+from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -190,6 +190,79 @@ def write_untrack_conflict_repo(repo_root: Path) -> None:
             [
                 'id = "stack-b"',
                 'depends = ["shared"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_package_override_preview_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "groups").mkdir(parents=True)
+    (repo_root / "packages" / "alpha" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "beta" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "alpha-meta").mkdir(parents=True)
+    (repo_root / "packages" / "beta-meta").mkdir(parents=True)
+
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "groups" / "alpha-stack.toml").write_text('members = ["alpha-meta"]\n', encoding="utf-8")
+    (repo_root / "groups" / "beta-stack.toml").write_text('members = ["beta-meta"]\n', encoding="utf-8")
+
+    (repo_root / "packages" / "alpha" / "files" / "shared.conf").write_text("alpha shared\n", encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "files" / "extra.conf").write_text("alpha extra\n", encoding="utf-8")
+    (repo_root / "packages" / "beta" / "files" / "shared.conf").write_text("beta shared\n", encoding="utf-8")
+    (repo_root / "packages" / "beta" / "files" / "extra.conf").write_text("beta extra\n", encoding="utf-8")
+
+    (repo_root / "packages" / "alpha" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "alpha"',
+                "",
+                "[targets.shared]",
+                'source = "files/shared.conf"',
+                'path = "~/.config/shared.conf"',
+                "",
+                "[targets.extra]",
+                'source = "files/extra.conf"',
+                'path = "~/.config/extra.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "beta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "beta"',
+                "",
+                "[targets.shared]",
+                'source = "files/shared.conf"',
+                'path = "~/.config/shared.conf"',
+                "",
+                "[targets.extra]",
+                'source = "files/extra.conf"',
+                'path = "~/.config/extra.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "alpha-meta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "alpha-meta"',
+                'depends = ["alpha"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "beta-meta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "beta-meta"',
+                'depends = ["beta"]',
                 "",
             ]
         ),
@@ -535,6 +608,53 @@ def test_collect_pending_selection_items_for_pull_uses_live_to_repo_paths() -> N
     assert [(item.action, item.source_path, item.destination_path) for item in selection_items] == [
         ("update", "/home/bin/alpha.sh", "/repo/bin/alpha.sh"),
     ]
+
+
+def test_filter_plans_for_interactive_selection_recomputes_hooks_from_remaining_targets(monkeypatch) -> None:
+    alpha_target = TargetPlan(
+        package_id="alpha",
+        target_name="config",
+        repo_path=Path("/repo/alpha.conf"),
+        live_path=Path("/home/alpha.conf"),
+        action="update",
+        target_kind="file",
+        projection_kind="file",
+    )
+    beta_target = TargetPlan(
+        package_id="beta",
+        target_name="config",
+        repo_path=Path("/repo/beta.conf"),
+        live_path=Path("/home/beta.conf"),
+        action="update",
+        target_kind="file",
+        projection_kind="file",
+    )
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="sandbox", selector="stack", profile="default"),
+        selector_kind="group",
+        package_ids=["alpha", "beta"],
+        variables={},
+        hooks={
+            "pre_push": [
+                HookPlan(package_id="alpha", hook_name="pre_push", command="echo alpha", cwd=Path("/repo/alpha")),
+                HookPlan(package_id="beta", hook_name="pre_push", command="echo beta", cwd=Path("/repo/beta")),
+            ]
+        },
+        target_plans=[alpha_target, beta_target],
+    )
+
+    monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: True)
+    monkeypatch.setattr(cli, "prompt_for_excluded_items", lambda selection_items, *, operation: {1})
+
+    filtered_plan = cli.filter_plans_for_interactive_selection(
+        plans=[plan],
+        operation="push",
+        json_output=False,
+    )[0]
+
+    assert [target.package_id for target in filtered_plan.target_plans] == ["beta"]
+    assert [hook.package_id for hook in filtered_plan.hooks["pre_push"]] == ["beta"]
 
 
 def test_collect_pending_selection_items_for_push_uses_repo_to_live_paths() -> None:
@@ -1909,7 +2029,7 @@ def test_track_cli_confirms_before_overriding_implicit_targets(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Confirm explicit override for example:work/git@work:" in output
-    assert "implicit: example:os/arch@basic (git:gitconfig)" in output
+    assert "implicit: example:os/arch@basic (git)" in output
     assert "tracked example:work/git@work" in output
 
 
@@ -2003,7 +2123,7 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
     assert "Resolve implicit conflict for fixture:alpha-stack@basic:" in output
     assert "promote:   fixture:alpha@basic" in output
     assert "Confirm explicit override for fixture:alpha@basic:" in output
-    assert "implicit: fixture:beta-stack@basic (beta:shared)" in output
+    assert "implicit: fixture:beta-stack@basic (beta)" in output
     assert "tracked fixture:alpha@basic" in output
     assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -2021,6 +2141,54 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
             "",
         ]
     )
+
+
+def test_track_cli_lists_package_override_once_for_multi_target_package(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "y")
+
+    repo_root = tmp_path / "override-preview-repo"
+    write_package_override_preview_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+
+    state_dir = tmp_path / "state" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "beta-stack"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "track",
+            "fixture:alpha@basic",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert output.count("implicit: fixture:beta-stack@basic (beta)") == 1
+    assert "~/.config/shared.conf" not in output
+    assert "~/.config/extra.conf" not in output
 
 
 def test_pull_cli_emits_dry_run_json(
@@ -2724,7 +2892,8 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
     ]
     target_names = {target["target_name"] for target in package["bindings"][0]["targets"]}
     assert target_names == {"gitconfig"}
-    pre_push = package["bindings"][0]["hooks"]["pre_push"]
+    assert package["bindings"][0]["hooks"] == {}
+    pre_push = package["bindings"][1]["hooks"]["pre_push"]
     assert pre_push[0]["package_id"] == "git"
     assert "git" in pre_push[0]["command"]
 

@@ -100,6 +100,79 @@ def write_untrack_conflict_repo(repo_root: Path) -> None:
     )
 
 
+def write_package_override_preview_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "groups").mkdir(parents=True)
+    (repo_root / "packages" / "alpha" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "beta" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "alpha-meta").mkdir(parents=True)
+    (repo_root / "packages" / "beta-meta").mkdir(parents=True)
+
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "groups" / "alpha-stack.toml").write_text('members = ["alpha-meta"]\n', encoding="utf-8")
+    (repo_root / "groups" / "beta-stack.toml").write_text('members = ["beta-meta"]\n', encoding="utf-8")
+
+    (repo_root / "packages" / "alpha" / "files" / "shared.conf").write_text("alpha shared\n", encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "files" / "extra.conf").write_text("alpha extra\n", encoding="utf-8")
+    (repo_root / "packages" / "beta" / "files" / "shared.conf").write_text("beta shared\n", encoding="utf-8")
+    (repo_root / "packages" / "beta" / "files" / "extra.conf").write_text("beta extra\n", encoding="utf-8")
+
+    (repo_root / "packages" / "alpha" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "alpha"',
+                "",
+                "[targets.shared]",
+                'source = "files/shared.conf"',
+                'path = "~/.config/shared.conf"',
+                "",
+                "[targets.extra]",
+                'source = "files/extra.conf"',
+                'path = "~/.config/extra.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "beta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "beta"',
+                "",
+                "[targets.shared]",
+                'source = "files/shared.conf"',
+                'path = "~/.config/shared.conf"',
+                "",
+                "[targets.extra]",
+                'source = "files/extra.conf"',
+                'path = "~/.config/extra.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "alpha-meta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "alpha-meta"',
+                'depends = ["alpha"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "beta-meta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "beta-meta"',
+                'depends = ["beta"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_config_validation_rejects_duplicate_repo_order(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
@@ -176,6 +249,52 @@ def test_example_group_push_plan_expands_depends_and_render_target(
     assert nvim_target.desired_text == 'vim.g.mapleader = " "\nvim.cmd.colorscheme("industry")\n'
 
 
+def test_tracked_push_plan_drops_hooks_for_packages_without_winning_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "os/arch"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "work/git"',
+                'profile = "work"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plans_by_selector = {plan.binding.selector: plan for plan in engine.plan_push()}
+
+    os_arch_plan = plans_by_selector["os/arch"]
+    assert {target.package_id for target in os_arch_plan.target_plans} == {"nvim"}
+    assert set(os_arch_plan.hooks) == {"check"}
+    assert {hook.package_id for hook in os_arch_plan.hooks["check"]} == {"nvim"}
+
+    work_git_plan = plans_by_selector["work/git"]
+    assert {target.package_id for target in work_git_plan.target_plans} == {"work/git"}
+    assert set(work_git_plan.hooks) == {"check", "pre_push", "post_push"}
+    assert {hook.package_id for hook in work_git_plan.hooks["pre_push"]} == {"work/git"}
+
+
 def test_group_selected_package_is_marked_explicit_in_tracked_detail(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -207,6 +326,46 @@ def test_group_selected_package_is_marked_explicit_in_tracked_detail(
     package_detail = engine.describe_installed_package("example:core-cli-meta")
 
     assert [binding.tracked_reason for binding in package_detail.bindings] == ["explicit"]
+
+
+def test_info_tracked_drops_hooks_for_non_effective_provenance_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    package_detail = engine.describe_installed_package("example:git")
+
+    assert [binding.binding.selector for binding in package_detail.bindings] == ["core-cli-meta", "git"]
+    assert package_detail.bindings[0].hooks == {}
+    assert set(package_detail.bindings[1].hooks) == {"check", "pre_push", "post_push"}
 
 
 def test_example_extends_preserves_child_values_after_local_merge(
@@ -844,6 +1003,31 @@ def test_record_binding_rejects_conflicting_explicit_targets(
         match=r"conflicting explicit tracked targets for .+\.gitconfig: example:git@basic \(git:gitconfig\), example:work/git@work \(work/git:gitconfig\)",
     ):
         engine.record_binding(engine.resolve_binding("example:work/git@work")[1])
+
+
+def test_preview_binding_implicit_overrides_returns_unique_packages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "override-preview-repo"
+    write_package_override_preview_repo(repo_root)
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    engine = DotmanEngine.from_config_path(config_path)
+
+    engine.record_binding(engine.resolve_binding("fixture:beta-stack@basic")[1])
+
+    overrides = engine.preview_binding_implicit_overrides(engine.resolve_binding("fixture:alpha@basic")[1])
+
+    assert len(overrides) == 1
+    override = overrides[0]
+    assert override.winner.binding_label == "fixture:alpha@basic"
+    assert override.winner.package_id == "alpha"
+    assert [contender.binding_label for contender in override.overridden] == ["fixture:beta-stack@basic"]
+    assert [contender.package_id for contender in override.overridden] == ["beta"]
 
 
 def test_record_binding_writes_resolved_binding_state(

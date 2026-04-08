@@ -17,7 +17,7 @@ from dotman.diff_review import (
     run_review_item_diff,
 )
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text
-from dotman.models import Binding
+from dotman.models import Binding, filter_hook_plans_for_targets
 from dotman.reconcile import run_basic_reconcile
 from dotman.resolver import (
     ResolverOption,
@@ -503,12 +503,11 @@ def ensure_track_binding_replacement_confirmed(
 def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Sequence) -> bool:
     binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
     print_selection_header(f"Confirm explicit override for {binding_label}:")
-    print("  this explicit binding will replace implicitly tracked target owners:")
+    print("  this explicit binding will replace implicitly tracked package owners:")
     for override in overrides:
-        print(f"    {override.live_path}")
-        print(f"      new: {override.winner.binding_label} ({override.winner.target_label})")
+        print(f"    new: {override.winner.binding_label} ({override.winner.package_id})")
         for contender in override.overridden:
-            print(f"      implicit: {contender.binding_label} ({contender.target_label})")
+            print(f"      implicit: {contender.binding_label} ({contender.package_id})")
     while True:
         answer = prompt(confirmation_prompt()).strip().lower()
         if answer in {"", "n", "no"}:
@@ -1100,7 +1099,13 @@ def filter_plans_for_interactive_selection(*, plans: Sequence, operation: str, j
                 live_path=target.live_path,
             ) not in excluded_targets:
                 filtered_targets.append(target)
-        filtered_plans.append(replace(plan, target_plans=filtered_targets))
+        filtered_plans.append(
+            replace(
+                plan,
+                hooks=filter_hook_plans_for_targets(plan.hooks, filtered_targets),
+                target_plans=filtered_targets,
+            )
+        )
     return filtered_plans
 
 

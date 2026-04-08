@@ -260,6 +260,27 @@ class TargetPlan:
         }
 
 
+def filter_hook_plans_for_targets(
+    hooks: dict[str, list[HookPlan]],
+    target_plans: list[TargetPlan],
+) -> dict[str, list[HookPlan]]:
+    executable_package_ids = {
+        target.package_id
+        for target in target_plans
+        if target.action != "noop"
+    }
+    filtered_hooks: dict[str, list[HookPlan]] = {}
+    for hook_name, hook_plans in hooks.items():
+        matching_hooks = [
+            hook_plan
+            for hook_plan in hook_plans
+            if hook_plan.package_id in executable_package_ids
+        ]
+        if matching_hooks:
+            filtered_hooks[hook_name] = matching_hooks
+    return filtered_hooks
+
+
 @dataclass(frozen=True)
 class BindingPlan:
     operation: str

@@ -15,6 +15,7 @@ from dotman.models import (
     Binding,
     BindingPlan,
     DirectoryPlanItem,
+    filter_hook_plans_for_targets,
     GroupSpec,
     HookPlan,
     HookSpec,
@@ -72,7 +73,6 @@ class TrackedTargetCandidate:
 
 @dataclass(frozen=True)
 class TrackedTargetOverride:
-    live_path: Path
     winner: TrackedTargetCandidate
     overridden: tuple[TrackedTargetCandidate, ...]
 
@@ -701,13 +701,23 @@ class DotmanEngine:
 
     def describe_installed_package(self, package_text: str) -> InstalledPackageDetail:
         repo, package_id = self._resolve_installed_package(package_text)
+        effective_binding_keys = self._effective_package_binding_keys(repo.config.name, package_id)
         details: list[InstalledPackageBindingDetail] = []
         description = repo.resolve_package(package_id).description
 
         for candidate_repo, binding, selector_kind, package_ids in self._iter_installed_bindings():
             if candidate_repo.config.name != repo.config.name or package_id not in package_ids:
                 continue
-            details.append(self._describe_package_binding(candidate_repo, binding, selector_kind, package_id, package_ids))
+            details.append(
+                self._describe_package_binding(
+                    candidate_repo,
+                    binding,
+                    selector_kind,
+                    package_id,
+                    package_ids,
+                    executable=(binding.repo, binding.selector, binding.profile) in effective_binding_keys,
+                )
+            )
 
         if not details:
             raise ValueError(f"package '{repo.config.name}:{package_id}' is not currently tracked")
@@ -895,6 +905,8 @@ class DotmanEngine:
         selector_kind: str,
         package_id: str,
         package_ids: list[str],
+        *,
+        executable: bool,
     ) -> InstalledPackageBindingDetail:
         resolved_packages = [repo.resolve_package(candidate_id) for candidate_id in package_ids]
         profile_vars, lineage = repo.compose_profile(binding.profile)
@@ -905,7 +917,7 @@ class DotmanEngine:
         inferred_os = infer_profile_os(binding.profile, lineage, variables)
         context = build_template_context(variables, profile=binding.profile, inferred_os=inferred_os)
         package = repo.resolve_package(package_id)
-        hooks = self._plan_hooks(repo, [package], context)
+        hooks = self._plan_hooks(repo, [package], context) if executable else {}
         targets = self._summarize_targets(repo, package, context)
         tracked_reason = "explicit" if package_id in self._selected_package_ids(repo, binding.selector, selector_kind) else "implicit"
 
@@ -1013,6 +1025,16 @@ class DotmanEngine:
             ),
         )
 
+    def _effective_package_binding_keys(self, repo_name: str, package_id: str) -> set[tuple[str, str, str]]:
+        effective_bindings: set[tuple[str, str, str]] = set()
+        for plan in self.plan_push():
+            if plan.binding.repo != repo_name:
+                continue
+            if not any(target.package_id == package_id and target.action != "noop" for target in plan.target_plans):
+                continue
+            effective_bindings.add((plan.binding.repo, plan.binding.selector, plan.binding.profile))
+        return effective_bindings
+
     def _build_plan(self, repo: Repository, binding: Binding, selector_kind: str, *, operation: str) -> BindingPlan:
         package_ids = self._resolve_package_ids(repo, binding.selector, selector_kind)
         resolved_packages = [repo.resolve_package(package_id) for package_id in package_ids]
@@ -1032,6 +1054,7 @@ class DotmanEngine:
             operation=operation,
             inferred_os=inferred_os,
         )
+        hooks = filter_hook_plans_for_targets(hooks, target_plans)
         return BindingPlan(
             operation=operation,
             binding=binding,
@@ -1060,7 +1083,13 @@ class DotmanEngine:
                 for target_index, target in enumerate(plan.target_plans)
                 if (plan_index, target_index) in winner_indexes
             ]
-            filtered_plans.append(replace(plan, target_plans=filtered_targets))
+            filtered_plans.append(
+                replace(
+                    plan,
+                    hooks=filter_hook_plans_for_targets(plan.hooks, filtered_targets),
+                    target_plans=filtered_targets,
+                )
+            )
         return filtered_plans
 
     def _collect_tracked_candidates(
@@ -1109,7 +1138,11 @@ class DotmanEngine:
             bindings_by_repo=bindings_by_repo,
         )
 
-        overrides: list[TrackedTargetOverride] = []
+        overrides_by_package: dict[
+            tuple[str, str, str, str],
+            dict[tuple[str, str, str, str], TrackedTargetCandidate],
+        ] = {}
+        winners_by_package: dict[tuple[str, str, str, str], TrackedTargetCandidate] = {}
         for live_path, candidates in candidates_by_live_path.items():
             highest_precedence = max(candidate.precedence for candidate in candidates)
             winning_candidates = [candidate for candidate in candidates if candidate.precedence == highest_precedence]
@@ -1123,37 +1156,55 @@ class DotmanEngine:
             )
             if winner is None:
                 continue
-            overridden = tuple(
-                sorted(
-                    [
-                        candidate
-                        for candidate in candidates
-                        if candidate.binding != binding and candidate.precedence_name == "implicit"
-                    ],
-                    key=lambda item: (
-                        item.binding.repo,
-                        item.binding.selector,
-                        item.binding.profile,
-                        item.package_id,
-                        item.target_name,
-                    ),
-                )
-            )
+            overridden = [
+                candidate
+                for candidate in candidates
+                if candidate.binding != binding and candidate.precedence_name == "implicit"
+            ]
             if not overridden:
                 continue
-            overrides.append(
-                TrackedTargetOverride(
-                    live_path=live_path,
-                    winner=winner,
-                    overridden=overridden,
-                )
+
+            # Collapse override previews to package ownership because target-level collisions
+            # are already rejected elsewhere; the user only needs to see which packages lose ownership.
+            winner_key = (
+                winner.binding.repo,
+                winner.binding.selector,
+                winner.binding.profile,
+                winner.package_id,
             )
+            winners_by_package[winner_key] = winner
+            package_overrides = overrides_by_package.setdefault(winner_key, {})
+            for candidate in overridden:
+                contender_key = (
+                    candidate.binding.repo,
+                    candidate.binding.selector,
+                    candidate.binding.profile,
+                    candidate.package_id,
+                )
+                package_overrides.setdefault(contender_key, candidate)
         return sorted(
-            overrides,
+            [
+                TrackedTargetOverride(
+                    winner=winners_by_package[winner_key],
+                    overridden=tuple(
+                        sorted(
+                            contenders.values(),
+                            key=lambda item: (
+                                item.binding.repo,
+                                item.binding.selector,
+                                item.binding.profile,
+                                item.package_id,
+                            ),
+                        )
+                    ),
+                )
+                for winner_key, contenders in overrides_by_package.items()
+            ],
             key=lambda item: (
-                str(item.live_path),
                 item.winner.package_id,
-                item.winner.target_name,
+                item.winner.binding.repo,
+                item.winner.binding.selector,
+                item.winner.binding.profile,
             ),
         )
 

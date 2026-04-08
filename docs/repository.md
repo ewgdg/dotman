@@ -130,6 +130,8 @@ pull = ["*.dotdropbak"]
 
 - Hook entries may be a single item or an ordered list.
 - Hook lists run in declaration order and stop on first failure.
+- Package hooks are executable only when the package still owns at least one non-noop effective target after tracked-target winner resolution and any interactive target exclusion.
+- Provenance alone should not cause hooks to execute.
 - Repo-wide helper scripts live under `scripts/`.
 - Package-specific scripts live inside the package, for example `hooks/`.
 - Prefer explicit runner commands such as `sh hooks/push.sh`, `python3 hooks/render.py`, or `uv run hooks/render.py` instead of relying on executable bits.

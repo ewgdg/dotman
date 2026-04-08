@@ -95,6 +95,8 @@ This document captures the current command and selector direction for `dotman`.
 - If group membership or package `depends` change in the repo, `push` should pick up newly introduced managed packages and files.
 - `push` should only touch files within the current managed selection.
 - In interactive mode, `push` should present one combined selection menu for pending non-noop target actions so the user can exclude specific items before execution.
+- Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
+- A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks.
 - After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.
@@ -119,6 +121,8 @@ This document captures the current command and selector direction for `dotman`.
 - If the requested selector is not currently tracked, `pull` should fail instead of implicitly creating state. The user should use `track` first.
 - `pull` should first build a reverse-sync plan before changing any sources.
 - In interactive mode, `pull` should present one combined selection menu for pending non-noop target actions so the user can exclude specific items before execution.
+- Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
+- A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks.
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
 - The interactive diff review stage should stay inspection-only in v1.
@@ -181,7 +185,7 @@ This document captures the current command and selector direction for `dotman`.
 - `list tracked` should not run push/pull planning or execute render/capture commands.
 - `dotman list tracked` should list unique tracked packages and the bindings that currently include them.
 - `dotman info tracked <package>` should show detailed information for one currently tracked package.
-- Package detail should include the owning repo, description, provenance entries with explicit or implicit reasons, effective targets with their winning profiles, and rendered hook commands for each tracked context.
+- Package detail should include the owning repo, description, provenance entries with explicit or implicit reasons, effective targets with their winning profiles, and executable hook commands only for bindings that still own non-noop effective targets for that package.
 - Package lookup for `info tracked` may use the same repo-qualified and partial-selector rules as other package-oriented commands, but it should search only tracked packages.
 - When tracked package lookup is ambiguous in interactive mode, `info tracked` should use the same shared selector menu as the other package-oriented commands.
 - When tracked bindings resolve the same target path, explicit provenance should override implicit provenance.
