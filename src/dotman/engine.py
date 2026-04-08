@@ -37,10 +37,18 @@ from dotman.templates import build_template_context, render_template_file, rende
 
 
 class TrackedTargetConflictError(ValueError):
-    def __init__(self, *, live_path: Path, precedence: str, contenders: list[str]) -> None:
+    def __init__(
+        self,
+        *,
+        live_path: Path,
+        precedence: str,
+        contenders: list[str],
+        candidates: list["TrackedTargetCandidate"],
+    ) -> None:
         self.live_path = live_path
         self.precedence = precedence
         self.contenders = tuple(contenders)
+        self.candidates = tuple(candidates)
         conflict_text = ", ".join(contenders)
         super().__init__(
             f"conflicting {precedence} tracked targets for {live_path}: {conflict_text}"
@@ -54,9 +62,19 @@ class TrackedTargetCandidate:
     live_path: Path
     precedence: int
     precedence_name: str
+    binding: Binding
     binding_label: str
+    package_id: str
+    target_name: str
     target_label: str
     signature: tuple[Any, ...]
+
+
+@dataclass(frozen=True)
+class TrackedTargetOverride:
+    live_path: Path
+    winner: TrackedTargetCandidate
+    overridden: tuple[TrackedTargetCandidate, ...]
 
 
 def _copy_map(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -1017,6 +1035,27 @@ class DotmanEngine:
         operation: str,
         bindings_by_repo: dict[str, list[Binding]] | None = None,
     ) -> list[BindingPlan]:
+        plans, candidates_by_live_path = self._collect_tracked_candidates(
+            operation=operation,
+            bindings_by_repo=bindings_by_repo,
+        )
+        winner_indexes = self._resolve_tracked_target_winners(candidates_by_live_path)
+        filtered_plans: list[BindingPlan] = []
+        for plan_index, plan in enumerate(plans):
+            filtered_targets = [
+                target
+                for target_index, target in enumerate(plan.target_plans)
+                if (plan_index, target_index) in winner_indexes
+            ]
+            filtered_plans.append(replace(plan, target_plans=filtered_targets))
+        return filtered_plans
+
+    def _collect_tracked_candidates(
+        self,
+        *,
+        operation: str,
+        bindings_by_repo: dict[str, list[Binding]] | None = None,
+    ) -> tuple[list[BindingPlan], dict[Path, list[TrackedTargetCandidate]]]:
         plans: list[BindingPlan] = []
         candidates_by_live_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
         current_bindings = bindings_by_repo or self._bindings_by_repo()
@@ -1038,22 +1077,72 @@ class DotmanEngine:
                             live_path=target.live_path,
                             precedence=1 if precedence_name == "explicit" else 0,
                             precedence_name=precedence_name,
+                            binding=binding,
                             binding_label=f"{binding.repo}:{binding.selector}@{binding.profile}",
+                            package_id=target.package_id,
+                            target_name=target.target_name,
                             target_label=f"{target.package_id}:{target.target_name}",
                             signature=self._tracked_target_signature(target),
                         )
                     )
+        return plans, candidates_by_live_path
 
-        winner_indexes = self._resolve_tracked_target_winners(candidates_by_live_path)
-        filtered_plans: list[BindingPlan] = []
-        for plan_index, plan in enumerate(plans):
-            filtered_targets = [
-                target
-                for target_index, target in enumerate(plan.target_plans)
-                if (plan_index, target_index) in winner_indexes
-            ]
-            filtered_plans.append(replace(plan, target_plans=filtered_targets))
-        return filtered_plans
+    def preview_binding_implicit_overrides(self, binding: Binding) -> list[TrackedTargetOverride]:
+        repo = self.get_repo(binding.repo)
+        bindings_by_repo = self._bindings_by_repo()
+        bindings_by_repo[repo.config.name] = self._normalize_recorded_bindings(self.read_bindings(repo), binding)
+        _plans, candidates_by_live_path = self._collect_tracked_candidates(
+            operation="push",
+            bindings_by_repo=bindings_by_repo,
+        )
+
+        overrides: list[TrackedTargetOverride] = []
+        for live_path, candidates in candidates_by_live_path.items():
+            highest_precedence = max(candidate.precedence for candidate in candidates)
+            winning_candidates = [candidate for candidate in candidates if candidate.precedence == highest_precedence]
+            winner = next(
+                (
+                    candidate
+                    for candidate in winning_candidates
+                    if candidate.binding == binding and candidate.precedence_name == "explicit"
+                ),
+                None,
+            )
+            if winner is None:
+                continue
+            overridden = tuple(
+                sorted(
+                    [
+                        candidate
+                        for candidate in candidates
+                        if candidate.binding != binding and candidate.precedence_name == "implicit"
+                    ],
+                    key=lambda item: (
+                        item.binding.repo,
+                        item.binding.selector,
+                        item.binding.profile,
+                        item.package_id,
+                        item.target_name,
+                    ),
+                )
+            )
+            if not overridden:
+                continue
+            overrides.append(
+                TrackedTargetOverride(
+                    live_path=live_path,
+                    winner=winner,
+                    overridden=overridden,
+                )
+            )
+        return sorted(
+            overrides,
+            key=lambda item: (
+                str(item.live_path),
+                item.winner.package_id,
+                item.winner.target_name,
+            ),
+        )
 
     def _tracked_target_signature(self, target: TargetPlan) -> tuple[Any, ...]:
         if target.target_kind == "directory":
@@ -1103,6 +1192,13 @@ class DotmanEngine:
                         f"{candidate.binding_label} ({candidate.target_label})"
                         for candidate in sorted(contenders, key=lambda item: (item.binding_label, item.target_label))
                     ],
+                    candidates=sorted(
+                        contenders,
+                        key=lambda item: (
+                            item.binding_label,
+                            item.target_label,
+                        ),
+                    ),
                 )
             winner_indexes.add((first.plan_index, first.target_index))
         return winner_indexes

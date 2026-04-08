@@ -67,6 +67,10 @@ This document captures the current command and selector direction for `dotman`.
 
 - `track <binding>` should resolve the binding, prompt for a profile when needed, and persist the selected root binding into repo state.
 - Re-tracking the same root selector in the same repo should update that tracked binding instead of appending a duplicate entry.
+- If `track` would replace an existing tracked selector with a different profile, interactive mode should ask for confirmation before writing state.
+- In non-interactive mode, profile-replacing `track` should fail instead of silently overwriting the tracked binding.
+- If `track` would make a new explicit binding override existing implicit targets, interactive mode should ask for confirmation before writing state.
+- In non-interactive mode, `track` should fail instead of silently overriding implicit tracked targets.
 - `track` is state-only in v1. It should not run repo-to-live work by itself.
 - Examples:
   - `dotman track main:git@default`
@@ -172,6 +176,7 @@ This document captures the current command and selector direction for `dotman`.
 - When tracked bindings resolve the same target path, explicit provenance should override implicit provenance.
 - Conflicting explicit candidates should fail, and conflicting implicit-only candidates should also fail.
 - In interactive `track`, dotman may offer a non-conflicting profile switch before failing.
+- In interactive `track`, an implicit-only conflict may also offer promotion of a conflicting package from the requested binding into an explicit tracked binding.
 
 ## State
 

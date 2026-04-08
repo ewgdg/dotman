@@ -79,6 +79,66 @@ def write_profile_switch_repo(repo_root: Path) -> None:
     )
 
 
+def write_implicit_conflict_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "groups").mkdir(parents=True)
+    (repo_root / "packages" / "alpha" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "beta" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "alpha-meta").mkdir(parents=True)
+    (repo_root / "packages" / "beta-meta").mkdir(parents=True)
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "groups" / "alpha-stack.toml").write_text('members = ["alpha-meta"]\n', encoding="utf-8")
+    (repo_root / "groups" / "beta-stack.toml").write_text('members = ["beta-meta"]\n', encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "files" / "shared.conf").write_text("alpha\n", encoding="utf-8")
+    (repo_root / "packages" / "beta" / "files" / "shared.conf").write_text("beta\n", encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "alpha"',
+                "",
+                "[targets.shared]",
+                'source = "files/shared.conf"',
+                'path = "~/.config/shared.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "beta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "beta"',
+                "",
+                "[targets.shared]",
+                'source = "files/shared.conf"',
+                'path = "~/.config/shared.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "alpha-meta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "alpha-meta"',
+                'depends = ["alpha"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "beta-meta" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "beta-meta"',
+                'depends = ["beta"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_track_cli_emits_state_only_json(
     tmp_path: Path,
     monkeypatch,
@@ -1541,7 +1601,7 @@ def test_push_cli_skips_diff_review_for_json_output(
     assert exit_code == 0
 
 
-def test_track_cli_updates_existing_binding_when_profile_selection_changes(
+def test_track_cli_confirms_before_updating_existing_binding_profile(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1550,7 +1610,7 @@ def test_track_cli_updates_existing_binding_when_profile_selection_changes(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    answers = iter(["2"])
+    answers = iter(["2", "y"])
     monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
 
     state_dir = tmp_path / "state" / "example"
@@ -1582,6 +1642,7 @@ def test_track_cli_updates_existing_binding_when_profile_selection_changes(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select a profile for example:git:" in output
+    assert "Confirm tracked binding replacement for example:git:" in output
     assert "tracked example:git@work" in output
     assert (tmp_path / "state" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -1591,6 +1652,267 @@ def test_track_cli_updates_existing_binding_when_profile_selection_changes(
             'repo = "example"',
             'selector = "git"',
             'profile = "work"',
+            "",
+        ]
+    )
+
+
+def test_track_cli_keeps_existing_binding_when_profile_replacement_is_declined(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "n")
+
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "example:git@work",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Confirm tracked binding replacement for example:git:" in output
+    assert "kept existing tracked binding example:git@basic" in output
+    assert (tmp_path / "state" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "example"',
+            'selector = "git"',
+            'profile = "basic"',
+            "",
+        ]
+    )
+
+
+def test_track_cli_refuses_silent_profile_replacement_in_non_interactive_mode(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "example:git@work",
+        ]
+    )
+
+    assert exit_code == 2
+    assert (
+        "refusing to replace tracked binding 'example:git@basic' with 'example:git@work' in non-interactive mode"
+        in capsys.readouterr().err
+    )
+    assert (tmp_path / "state" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "example"',
+            'selector = "git"',
+            'profile = "basic"',
+            "",
+        ]
+    )
+
+
+def test_track_cli_confirms_before_overriding_implicit_targets(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "y")
+
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "os/arch"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "example:work/git@work",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Confirm explicit override for example:work/git@work:" in output
+    assert "implicit: example:os/arch@basic (git:gitconfig)" in output
+    assert "tracked example:work/git@work" in output
+
+
+def test_track_cli_refuses_implicit_override_in_non_interactive_mode(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "os/arch"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "example:work/git@work",
+        ]
+    )
+
+    assert exit_code == 2
+    assert (
+        "refusing to let 'example:work/git@work' explicitly override implicitly tracked targets in non-interactive mode"
+        in capsys.readouterr().err
+    )
+
+
+def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    repo_root = tmp_path / "implicit-conflict-repo"
+    write_implicit_conflict_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+
+    state_dir = tmp_path / "state" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "beta-stack"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    answers = iter(["y", "y"])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "track",
+            "fixture:alpha-stack@basic",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Resolve implicit conflict for fixture:alpha-stack@basic:" in output
+    assert "promote:   fixture:alpha@basic" in output
+    assert "Confirm explicit override for fixture:alpha@basic:" in output
+    assert "implicit: fixture:beta-stack@basic (beta:shared)" in output
+    assert "tracked fixture:alpha@basic" in output
+    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "beta-stack"',
+            'profile = "basic"',
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "alpha"',
+            'profile = "basic"',
             "",
         ]
     )

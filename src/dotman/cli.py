@@ -388,6 +388,18 @@ def review_menu_prompt() -> str:
     )
 
 
+def confirmation_prompt() -> str:
+    prompt_text = "Confirm replacement"
+    hint_text = '("y" to confirm; default: no)'
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text}: "
+    return (
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+    )
+
+
 def print_selection_help() -> None:
     print("Selection help:")
     print("  <number>  choose that item")
@@ -412,6 +424,144 @@ def print_review_command_help() -> None:
 
 def interactive_mode_enabled(*, json_output: bool) -> bool:
     return not json_output and sys.stdin.isatty()
+
+
+def find_recorded_binding_for_selector(engine: DotmanEngine, binding: Binding) -> Binding | None:
+    repo = engine.get_repo(binding.repo)
+    for existing in engine.read_bindings(repo):
+        if existing.repo == binding.repo and existing.selector == binding.selector:
+            return existing
+    return None
+
+
+def confirm_tracked_binding_replacement(
+    *,
+    existing_binding: Binding,
+    replacement_binding: Binding,
+) -> bool:
+    binding_scope = f"{replacement_binding.repo}:{replacement_binding.selector}"
+    print_selection_header(f"Confirm tracked binding replacement for {binding_scope}:")
+    print(
+        "  existing: "
+        + render_binding_label(
+            repo_name=existing_binding.repo,
+            selector=existing_binding.selector,
+            profile=existing_binding.profile,
+        )
+    )
+    print(
+        "  new:      "
+        + render_binding_label(
+            repo_name=replacement_binding.repo,
+            selector=replacement_binding.selector,
+            profile=replacement_binding.profile,
+        )
+    )
+    while True:
+        answer = prompt(confirmation_prompt()).strip().lower()
+        if answer in {"", "n", "no"}:
+            return False
+        if answer in {"y", "yes"}:
+            return True
+        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+
+
+def ensure_track_binding_replacement_confirmed(
+    engine: DotmanEngine,
+    *,
+    binding: Binding,
+    json_output: bool,
+) -> bool:
+    existing_binding = find_recorded_binding_for_selector(engine, binding)
+    if existing_binding is None or existing_binding.profile == binding.profile:
+        return True
+    if not interactive_mode_enabled(json_output=json_output):
+        raise ValueError(
+            f"refusing to replace tracked binding '{existing_binding.repo}:{existing_binding.selector}@"
+            f"{existing_binding.profile}' with '{binding.repo}:{binding.selector}@{binding.profile}' "
+            "in non-interactive mode"
+        )
+    return confirm_tracked_binding_replacement(
+        existing_binding=existing_binding,
+        replacement_binding=binding,
+    )
+
+
+def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Sequence) -> bool:
+    binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
+    print_selection_header(f"Confirm explicit override for {binding_label}:")
+    print("  this explicit binding will replace implicitly tracked target owners:")
+    for override in overrides:
+        print(f"    {override.live_path}")
+        print(f"      new: {override.winner.binding_label} ({override.winner.target_label})")
+        for contender in override.overridden:
+            print(f"      implicit: {contender.binding_label} ({contender.target_label})")
+    while True:
+        answer = prompt(confirmation_prompt()).strip().lower()
+        if answer in {"", "n", "no"}:
+            return False
+        if answer in {"y", "yes"}:
+            return True
+        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+
+
+def ensure_track_binding_implicit_overrides_confirmed(
+    engine: DotmanEngine,
+    *,
+    binding: Binding,
+    json_output: bool,
+) -> bool:
+    overrides = engine.preview_binding_implicit_overrides(binding)
+    if not overrides:
+        return True
+    if not interactive_mode_enabled(json_output=json_output):
+        raise ValueError(
+            f"refusing to let '{binding.repo}:{binding.selector}@{binding.profile}' explicitly override implicitly tracked targets "
+            "in non-interactive mode"
+        )
+    return confirm_track_binding_implicit_overrides(binding=binding, overrides=overrides)
+
+
+def prompt_for_conflicting_package_binding(
+    *,
+    binding: Binding,
+    conflict: TrackedTargetConflictError,
+    json_output: bool,
+) -> Binding | None:
+    if conflict.precedence != "implicit" or not interactive_mode_enabled(json_output=json_output):
+        return None
+    package_ids = sorted(
+        {
+            candidate.package_id
+            for candidate in conflict.candidates
+            if candidate.binding == binding
+        }
+    )
+    if not package_ids:
+        return None
+    binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
+    if len(package_ids) == 1:
+        package_id = package_ids[0]
+        promoted_binding = Binding(repo=binding.repo, selector=package_id, profile=binding.profile)
+        print_selection_header(f"Resolve implicit conflict for {binding_label}:")
+        print(f"  target path: {conflict.live_path}")
+        print(f"  requested: {binding_label}")
+        print(f"  promote:   {promoted_binding.repo}:{promoted_binding.selector}@{promoted_binding.profile}")
+        print("  explicit tracking can break the implicit tie for this package.")
+        while True:
+            answer = prompt(confirmation_prompt()).strip().lower()
+            if answer in {"", "n", "no"}:
+                return None
+            if answer in {"y", "yes"}:
+                return promoted_binding
+            print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+
+    selected_index = select_menu_option(
+        header_text=f"Select a conflicting package to track explicitly for {binding_label}:",
+        option_labels=package_ids,
+        option_search_fields=[(package_id,) for package_id in package_ids],
+    )
+    return Binding(repo=binding.repo, selector=package_ids[selected_index], profile=binding.profile)
 
 
 def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | None]:
@@ -1203,6 +1353,44 @@ def emit_tracked_binding(*, binding, json_output: bool) -> int:
     return 0
 
 
+def emit_kept_binding(*, binding, json_output: bool) -> int:
+    payload = {
+        "mode": "state-only",
+        "operation": "track",
+        "binding": {
+            "repo": binding.repo,
+            "selector": binding.selector,
+            "profile": binding.profile,
+        },
+        "recorded": False,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"kept existing tracked binding {binding.repo}:{binding.selector}@{binding.profile}")
+    return 0
+
+
+def emit_skipped_tracking(*, binding, json_output: bool) -> int:
+    payload = {
+        "mode": "state-only",
+        "operation": "track",
+        "binding": {
+            "repo": binding.repo,
+            "selector": binding.selector,
+            "profile": binding.profile,
+        },
+        "recorded": False,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"skipped tracking {binding.repo}:{binding.selector}@{binding.profile}")
+    return 0
+
+
 def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
     payload = {
         "mode": "dry-run",
@@ -1252,20 +1440,49 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "track":
             binding_text, profile = resolve_binding_text(engine, args.binding, json_output=args.json_output)
             _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=profile)
-            try:
-                engine.record_binding(binding)
-            except TrackedTargetConflictError:
-                alternative_profile = select_non_conflicting_track_profile(
+            while True:
+                if not ensure_track_binding_replacement_confirmed(
                     engine,
-                    binding_text=binding_text,
-                    current_profile=binding.profile,
+                    binding=binding,
                     json_output=args.json_output,
-                )
-                if alternative_profile is None:
-                    raise
-                _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=alternative_profile)
+                ):
+                    existing_binding = find_recorded_binding_for_selector(engine, binding)
+                    if existing_binding is None:
+                        raise ValueError("missing existing tracked binding during replacement confirmation")
+                    return emit_kept_binding(binding=existing_binding, json_output=args.json_output)
+                try:
+                    engine.validate_recorded_binding(binding)
+                except TrackedTargetConflictError as exc:
+                    promoted_binding = prompt_for_conflicting_package_binding(
+                        binding=binding,
+                        conflict=exc,
+                        json_output=args.json_output,
+                    )
+                    if promoted_binding is not None:
+                        binding = promoted_binding
+                        binding_text = f"{binding.repo}:{binding.selector}"
+                        continue
+                    alternative_profile = select_non_conflicting_track_profile(
+                        engine,
+                        binding_text=binding_text,
+                        current_profile=binding.profile,
+                        json_output=args.json_output,
+                    )
+                    if alternative_profile is None:
+                        raise
+                    _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=alternative_profile)
+                    continue
+                if not ensure_track_binding_implicit_overrides_confirmed(
+                    engine,
+                    binding=binding,
+                    json_output=args.json_output,
+                ):
+                    existing_binding = find_recorded_binding_for_selector(engine, binding)
+                    if existing_binding is not None and existing_binding.profile != binding.profile:
+                        return emit_kept_binding(binding=existing_binding, json_output=args.json_output)
+                    return emit_skipped_tracking(binding=binding, json_output=args.json_output)
                 engine.record_binding(binding)
-            return emit_tracked_binding(binding=binding, json_output=args.json_output)
+                return emit_tracked_binding(binding=binding, json_output=args.json_output)
         if args.command == "push":
             if args.binding:
                 _repo, binding = resolve_tracked_binding_text(
