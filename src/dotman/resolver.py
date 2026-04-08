@@ -35,8 +35,11 @@ def normalize_field_kinds(*field_kinds: str) -> tuple[str, ...]:
 
 
 def build_selector_match_fields(*, repo_name: str, selector: str) -> tuple[str, ...]:
+    # `repo:selector` is the canonical displayed form. Keep `repo/selector` as a
+    # lookup alias so existing slash-qualified input still resolves.
     return normalize_match_fields(
         selector,
+        f"{repo_name}:{selector}",
         f"{repo_name}/{selector}",
     )
 
@@ -45,14 +48,17 @@ def build_selector_field_kinds() -> tuple[str, ...]:
     return normalize_field_kinds(
         "selector",
         "selector",
+        "selector",
     )
 
 
 def build_binding_match_fields(*, repo_name: str, selector: str, profile: str) -> tuple[str, ...]:
     return normalize_match_fields(
         selector,
+        f"{repo_name}:{selector}",
         f"{repo_name}/{selector}",
         f"{selector}@{profile}",
+        f"{repo_name}:{selector}@{profile}",
         f"{repo_name}/{selector}@{profile}",
     )
 
@@ -61,6 +67,8 @@ def build_binding_field_kinds() -> tuple[str, ...]:
     return normalize_field_kinds(
         "selector",
         "selector",
+        "selector",
+        "profile",
         "profile",
         "profile",
     )
@@ -69,12 +77,14 @@ def build_binding_field_kinds() -> tuple[str, ...]:
 def build_package_match_fields(*, repo_name: str, package_id: str) -> tuple[str, ...]:
     return normalize_match_fields(
         package_id,
+        f"{repo_name}:{package_id}",
         f"{repo_name}/{package_id}",
     )
 
 
 def build_package_field_kinds() -> tuple[str, ...]:
     return normalize_field_kinds(
+        "selector",
         "selector",
         "selector",
     )

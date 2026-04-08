@@ -10,6 +10,15 @@ This document captures the current command and selector direction for `dotman`.
 - A user may omit the repo name in normal CLI usage and let dotman search across repos.
 - An explicit repo-qualified form should still be allowed when needed for disambiguation, for example `test:git@default`.
 
+## Identifier Syntax
+
+- The canonical repo-qualified selector form is `repo:selector`.
+- The canonical repo-qualified binding form is `repo:selector@profile`.
+- `/` belongs inside selector IDs for namespacing, for example `work/git` or `os/arch`.
+- When a menu, confirmation, diff banner, list output, or info view includes repo context, it should print the canonical colon-qualified form.
+- Slash-qualified repo input such as `repo/selector@profile` may remain accepted as a lookup alias for convenience, but dotman should normalize displays back to `repo:selector@profile`.
+- `\` is not a valid selector separator or menu-display form.
+
 ## Selectors
 
 - Normal CLI usage should accept a type-less selector.
@@ -31,7 +40,7 @@ This document captures the current command and selector direction for `dotman`.
 - If no matches are found, dotman should fail fast.
 - Interactive ambiguity menus should use the shared CLI selector flow across `track`, `push`, `pull`, `untrack`, and `info tracked`.
 - For shorter candidate lists, dotman should print a numbered menu and let the user pick.
-- Selector labels in those menus should lead with the package or binding text, and include the repo only as disambiguation context.
+- Selector labels in those menus should use canonical selector text, and include the repo only as disambiguation context.
 - For longer candidate lists, dotman should prefer `fzf` when available instead of dumping a tall numbered menu.
 - Interactive selector menus should render bottom-up by default.
 - Bottom-up selector menus should remain user-toggleable, but the default should favor bottom-up display.

@@ -411,7 +411,7 @@ def test_prompt_for_excluded_items_uses_archived_colored_style(
     assert "\033[1;36m 1)\033[0m" in output
     assert "\033[1;32m[create]\033[0m" in output
     assert "\033[2;34mexample\033[0m" in output
-    assert "\033[2m/\033[0m" in output
+    assert "\033[2m:\033[0m" in output
     assert "\033[1mgit\033[0m" in output
     assert "\033[2m(gitconfig)\033[0m" in output
     assert "\033[2m->\033[0m" in output
@@ -439,7 +439,7 @@ def test_render_package_label_can_prioritize_package_name(monkeypatch) -> None:
         package_id="git",
         package_first=True,
         include_repo_context=True,
-    ) == "example/git"
+    ) == "example:git"
 
 
 def test_render_binding_label_can_prioritize_selector_name(monkeypatch) -> None:
@@ -450,7 +450,7 @@ def test_render_binding_label_can_prioritize_selector_name(monkeypatch) -> None:
         selector="git",
         profile="basic",
         selector_first=True,
-    ) == "example/git@basic"
+    ) == "example:git@basic"
 
 
 def test_filter_plans_for_interactive_selection_excludes_directory_child_pull_item(
@@ -650,8 +650,8 @@ def test_track_cli_interactively_selects_repo_for_exact_selector_collision(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select a repo for exact selector 'sunshine':" in output
-    assert "alpha/sunshine [package]" in output
-    assert "beta/sunshine [package]" in output
+    assert "alpha:sunshine [package]" in output
+    assert "beta:sunshine [package]" in output
     assert "tracked beta:sunshine@host/linux" in output
     assert (tmp_path / "state" / "beta" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -878,7 +878,7 @@ def test_resolve_candidate_match_ranks_leftmost_selector_segments_first(monkeypa
         exact_header_text="unused",
         partial_header_text="Select a selector match for 's':",
         option_resolver=lambda match: cli.ResolverOption(
-            display_label=f"{match[0]}/{match[1]}",
+            display_label=f"{match[0]}:{match[1]}",
             match_fields=cli.build_selector_match_fields(repo_name=match[0], selector=match[1]),
         ),
         exact_error_text="unused",
@@ -887,7 +887,7 @@ def test_resolve_candidate_match_ranks_leftmost_selector_segments_first(monkeypa
     )
 
     assert selected == ("sandbox", "sunshine")
-    assert captured["option_labels"] == ["sandbox/sunshine", "sandbox/host/linux-meta"]
+    assert captured["option_labels"] == ["sandbox:sunshine", "sandbox:host/linux-meta"]
 
 
 def test_select_menu_option_with_prompt_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
@@ -988,8 +988,8 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select a tracked binding for 'sunshine':" in output
-    assert "alpha/sunshine@host/linux" in output
-    assert "beta/sunshine@host/linux" in output
+    assert "alpha:sunshine@host/linux" in output
+    assert "beta:sunshine@host/linux" in output
     assert "sunshine:selected_config -> create" in output
 
 
@@ -1043,9 +1043,9 @@ def test_info_tracked_cli_interactively_selects_ambiguous_package(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select a tracked package for 'sunshine':" in output
-    assert "alpha/sunshine" in output
-    assert "beta/sunshine" in output
-    assert "beta/sunshine" in output
+    assert "alpha:sunshine" in output
+    assert "beta:sunshine" in output
+    assert "beta:sunshine" in output
 
 
 def test_push_cli_uses_state_bindings_in_dry_run_json(
@@ -1453,9 +1453,9 @@ def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(
 
     output = capsys.readouterr().out
     assert inspected == ["gitconfig", "zshrc"]
-    assert "----- Diff 1/2: example/git (gitconfig) [update] -----" in output
+    assert "----- Diff 1/2: example:git (gitconfig) [update] -----" in output
     assert "----- End Diff 1/2 -----" in output
-    assert "----- Diff 2/2: example/zsh (zshrc) [update] -----" in output
+    assert "----- Diff 2/2: example:zsh (zshrc) [update] -----" in output
     assert "----- End Diff 2/2 -----" in output
 
 
@@ -1485,7 +1485,7 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
     assert cli.run_diff_review_menu([review_item], operation="push") is True
 
     output = capsys.readouterr().out
-    assert "----- Diff 1/1: example/git (gitconfig) [update] -----" in output
+    assert "----- Diff 1/1: example:git (gitconfig) [update] -----" in output
     assert "----- End Diff 1/1 -----" in output
 
 
@@ -2543,7 +2543,7 @@ def test_untrack_cli_reports_remaining_package_tracking_after_success(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "untracked example:git@basic" in output
-    assert "example/git remains tracked via:" in output
+    assert "example:git remains tracked via:" in output
     assert "implicit: example:core-cli-meta@basic" in output
 
 
@@ -2643,9 +2643,9 @@ def test_list_tracked_cli_emits_readable_text_output(
     assert exit_code == 0
     assert capsys.readouterr().out == "\n".join(
         [
-            "example/core-cli-meta",
-            "example/git",
-            "example/nvim",
+            "example:core-cli-meta",
+            "example:git",
+            "example:nvim",
             "",
         ]
     )
@@ -2775,7 +2775,7 @@ def test_info_tracked_cli_emits_readable_text_output(
     assert exit_code == 0
     assert capsys.readouterr().out == "\n".join(
         [
-            "example/git",
+            "example:git",
             "  Base Git configuration",
             "  ::provenance",
             "    implicit: example:core-cli-meta@basic",

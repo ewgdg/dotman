@@ -20,6 +20,9 @@ This document captures the current repository structure and configuration schema
 - Namespaced packages stay explicit, for example `work/git`.
 - Groups live under `groups/` and are used for package selection and composition.
 - Group IDs may be namespaced, for example `os/arch`.
+- `/` is reserved for namespacing inside package and group IDs.
+- Repo qualification stays outside the selector with `repo:selector`, not `repo/selector`.
+- `\` is not a valid selector separator.
 - Groups should use a single `members` list for both package selectors and nested group selectors.
 - Profiles provide variable values only.
 - Profiles may define `includes = [...]` to compose other profiles.

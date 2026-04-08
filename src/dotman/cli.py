@@ -83,6 +83,10 @@ def repo_name_from_binding_label(binding_label: str) -> str:
     return binding_label.split(":", 1)[0]
 
 
+def repo_qualified_selector_text(*, repo_name: str, selector: str) -> str:
+    return f"{repo_name}:{selector}"
+
+
 def package_label_text(
     *,
     repo_name: str,
@@ -92,9 +96,9 @@ def package_label_text(
     include_repo_context: bool = False,
 ) -> str:
     if package_first:
-        package_text = f"{repo_name}/{package_id}" if include_repo_context else package_id
+        package_text = repo_qualified_selector_text(repo_name=repo_name, selector=package_id) if include_repo_context else package_id
     else:
-        package_text = f"{repo_name}/{package_id}"
+        package_text = repo_qualified_selector_text(repo_name=repo_name, selector=package_id)
     if target_name is None:
         return package_text
     return f"{package_text} ({target_name})"
@@ -120,7 +124,7 @@ def render_package_label(
         if include_repo_context:
             package_label = (
                 f"{style_text(repo_name, *MENU_REPO_STYLE)}"
-                f"{style_text('/', *MENU_HINT_STYLE)}"
+                f"{style_text(':', *MENU_HINT_STYLE)}"
                 f"{style_text(package_id, '1')}"
             )
         else:
@@ -128,7 +132,7 @@ def render_package_label(
     else:
         package_label = (
             f"{style_text(repo_name, *MENU_REPO_STYLE)}"
-            f"{style_text('/', *MENU_HINT_STYLE)}"
+            f"{style_text(':', *MENU_HINT_STYLE)}"
             f"{style_text(package_id, '1')}"
         )
     if target_name is None:
@@ -141,9 +145,7 @@ def render_package_target_label(*, repo_name: str, package_id: str, target_name:
 
 
 def binding_label_text(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
-    if selector_first:
-        return f"{repo_name}/{selector}@{profile}"
-    return f"{repo_name}:{selector}@{profile}"
+    return f"{repo_qualified_selector_text(repo_name=repo_name, selector=selector)}@{profile}"
 
 
 def render_binding_label(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
@@ -153,13 +155,6 @@ def render_binding_label(*, repo_name: str, selector: str, profile: str, selecto
             selector=selector,
             profile=profile,
             selector_first=selector_first,
-        )
-    if selector_first:
-        return (
-            f"{style_text(repo_name, *MENU_REPO_STYLE)}"
-            f"{style_text('/', *MENU_HINT_STYLE)}"
-            f"{style_text(selector, '1')}"
-            f"{style_text(f'@{profile}', *MENU_HINT_STYLE)}"
         )
     return (
         f"{style_text(repo_name, *MENU_REPO_STYLE)}"
