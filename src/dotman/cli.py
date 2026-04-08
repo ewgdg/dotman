@@ -1251,50 +1251,163 @@ def emit_interrupt_notice() -> None:
     sys.stderr.write("\ninterrupted\n")
 
 
+def add_binding_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:
+    parser.add_argument(
+        "binding",
+        nargs=None if required else "?",
+        metavar="<binding>",
+        help="Binding argument in the form <repo>:<selector>[@<profile>]",
+    )
+
+
+def add_package_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "package",
+        metavar="<package>",
+        help="Tracked package argument in the form <repo>:<package> or <package>",
+    )
+
+
+def hide_subparser_from_help(subparsers, name: str) -> None:
+    # Argparse has no public API for parseable-but-hidden subcommands.
+    subparsers._choices_actions = [
+        action for action in subparsers._choices_actions if getattr(action, "dest", None) != name
+    ]
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="dotman CLI")
-    parser.add_argument("--config", help="Path to dotman config.toml")
+    parser = argparse.ArgumentParser(prog="dotman", description="dotman CLI")
+    parser.add_argument("--config", metavar="<config-path>", help="Path to dotman config.toml")
     parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=True, title="commands", metavar="<command>")
 
-    track_parser = subparsers.add_parser("track")
-    track_parser.add_argument("binding")
+    track_parser = subparsers.add_parser(
+        "track",
+        help="Track a binding in manager state",
+        description="Track a binding in manager state",
+    )
+    add_binding_argument(track_parser)
 
-    push_parser = subparsers.add_parser("push")
-    push_parser.add_argument("binding", nargs="?")
+    push_parser = subparsers.add_parser(
+        "push",
+        help="Push tracked changes from repo to live paths",
+        description="Push tracked changes from repo to live paths",
+    )
+    add_binding_argument(push_parser, required=False)
 
-    pull_parser = subparsers.add_parser("pull")
-    pull_parser.add_argument("binding", nargs="?")
+    pull_parser = subparsers.add_parser(
+        "pull",
+        help="Pull live changes back into the repo",
+        description="Pull live changes back into the repo",
+    )
+    add_binding_argument(pull_parser, required=False)
 
-    untrack_parser = subparsers.add_parser("untrack")
-    untrack_parser.add_argument("binding")
+    untrack_parser = subparsers.add_parser(
+        "untrack",
+        help="Remove a tracked binding from manager state",
+        description="Remove a tracked binding from manager state",
+    )
+    add_binding_argument(untrack_parser)
 
-    forget_parser = subparsers.add_parser("forget")
-    forget_parser.add_argument("binding")
+    forget_parser = subparsers.add_parser(
+        "forget",
+        help="Alias for untrack",
+        description="Alias for untrack",
+    )
+    add_binding_argument(forget_parser)
 
-    list_parser = subparsers.add_parser("list")
-    list_subparsers = list_parser.add_subparsers(dest="list_command", required=True)
-    list_subparsers.add_parser("tracked")
+    list_parser = subparsers.add_parser(
+        "list",
+        help="List tracked or installed items",
+        description="List tracked or installed items",
+    )
+    list_subparsers = list_parser.add_subparsers(
+        dest="list_command",
+        required=True,
+        title="list commands",
+        metavar="<list-command>",
+    )
+    list_subparsers.add_parser(
+        "tracked",
+        help="List tracked packages",
+        description="List tracked packages",
+    )
     list_subparsers.add_parser("installed", help=argparse.SUPPRESS)
+    hide_subparser_from_help(list_subparsers, "installed")
 
-    info_parser = subparsers.add_parser("info")
-    info_subparsers = info_parser.add_subparsers(dest="info_command", required=True)
-    info_tracked_parser = info_subparsers.add_parser("tracked")
-    info_tracked_parser.add_argument("package")
+    info_parser = subparsers.add_parser(
+        "info",
+        help="Show detailed information about tracked or installed items",
+        description="Show detailed information about tracked or installed items",
+    )
+    info_subparsers = info_parser.add_subparsers(
+        dest="info_command",
+        required=True,
+        title="info commands",
+        metavar="<info-command>",
+    )
+    info_tracked_parser = info_subparsers.add_parser(
+        "tracked",
+        help="Show tracked package details",
+        description="Show tracked package details",
+    )
+    add_package_argument(info_tracked_parser)
     info_installed_parser = info_subparsers.add_parser("installed", help=argparse.SUPPRESS)
-    info_installed_parser.add_argument("package")
+    add_package_argument(info_installed_parser)
+    hide_subparser_from_help(info_subparsers, "installed")
 
-    reconcile_parser = subparsers.add_parser("reconcile")
-    reconcile_subparsers = reconcile_parser.add_subparsers(dest="reconcile_command", required=True)
+    reconcile_parser = subparsers.add_parser(
+        "reconcile",
+        help="Re-run a reconcile helper subcommand",
+        description="Re-run a reconcile helper subcommand",
+    )
+    reconcile_subparsers = reconcile_parser.add_subparsers(
+        dest="reconcile_command",
+        required=True,
+        title="reconcile commands",
+        metavar="<reconcile-command>",
+    )
 
-    reconcile_editor_parser = reconcile_subparsers.add_parser("editor")
-    reconcile_editor_parser.add_argument("--repo-path", required=True)
-    reconcile_editor_parser.add_argument("--live-path", required=True)
-    reconcile_editor_parser.add_argument("--review-repo-path")
-    reconcile_editor_parser.add_argument("--review-live-path")
-    reconcile_editor_parser.add_argument("--additional-source", action="append", default=[])
-    reconcile_editor_parser.add_argument("--editor")
+    reconcile_editor_parser = reconcile_subparsers.add_parser(
+        "editor",
+        help="Open repo and live files in an editor for reconcile review",
+        description="Open repo and live files in an editor for reconcile review",
+    )
+    reconcile_editor_parser.add_argument(
+        "--repo-path",
+        required=True,
+        metavar="<repo-path>",
+        help="Path to the repo copy of the target file",
+    )
+    reconcile_editor_parser.add_argument(
+        "--live-path",
+        required=True,
+        metavar="<live-path>",
+        help="Path to the live copy of the target file",
+    )
+    reconcile_editor_parser.add_argument(
+        "--review-repo-path",
+        metavar="<review-repo-path>",
+        help="Optional prepared repo-side review file path",
+    )
+    reconcile_editor_parser.add_argument(
+        "--review-live-path",
+        metavar="<review-live-path>",
+        help="Optional prepared live-side review file path",
+    )
+    reconcile_editor_parser.add_argument(
+        "--additional-source",
+        action="append",
+        default=[],
+        metavar="<source-path>",
+        help="Additional read-only source file to open during reconcile review",
+    )
+    reconcile_editor_parser.add_argument(
+        "--editor",
+        metavar="<editor-command>",
+        help="Editor command to run instead of the default editor",
+    )
     return parser
 
 

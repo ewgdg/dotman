@@ -16,6 +16,16 @@ EXAMPLE_REPO = PROJECT_ROOT / "examples" / "repo"
 REFERENCE_REPO = PROJECT_ROOT / "tests" / "fixtures" / "reference_repo"
 
 
+def capture_parser_help(capsys: pytest.CaptureFixture[str], *args: str) -> str:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args([*args, "--help"])
+
+    assert exc_info.value.code == 0
+    return capsys.readouterr().out
+
+
 def write_manager_config(tmp_path: Path) -> Path:
     return write_named_manager_config(
         tmp_path,
@@ -1477,6 +1487,53 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
     output = capsys.readouterr().out
     assert "----- Diff 1/1: example/git (gitconfig) [update] -----" in output
     assert "----- End Diff 1/1 -----" in output
+
+
+def test_track_help_uses_explicit_binding_placeholder(capsys) -> None:
+    output = capture_parser_help(capsys, "track")
+    assert "usage: dotman track [-h] <binding>" in output
+    assert "positional arguments:" in output
+    assert "<binding>" in output
+
+
+def test_push_help_marks_binding_as_optional_argument(capsys) -> None:
+    output = capture_parser_help(capsys, "push")
+    assert "usage: dotman push [-h] [<binding>]" in output
+    assert "[<binding>]" in output
+
+
+def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
+    output = capture_parser_help(capsys)
+    assert "usage: dotman [-h] [--config <config-path>] [--json] <command> ..." in output
+    assert "commands:" in output
+    assert "Track a binding in manager state" in output
+    assert "Re-run a reconcile helper subcommand" in output
+
+
+def test_info_help_uses_nested_command_placeholder_and_summaries(capsys) -> None:
+    output = capture_parser_help(capsys, "info")
+    assert "usage: dotman info [-h] <info-command> ..." in output
+    assert "info commands:" in output
+    assert "Show tracked package details" in output
+    assert "==SUPPRESS==" not in output
+
+
+def test_list_help_hides_hidden_installed_subcommand(capsys) -> None:
+    output = capture_parser_help(capsys, "list")
+    assert "usage: dotman list [-h] <list-command> ..." in output
+    assert "list commands:" in output
+    assert "List tracked packages" in output
+    assert "==SUPPRESS==" not in output
+
+
+def test_reconcile_editor_help_uses_explicit_option_placeholders(capsys) -> None:
+    output = capture_parser_help(capsys, "reconcile", "editor")
+    assert "--repo-path <repo-path>" in output
+    assert "--live-path <live-path>" in output
+    assert "--review-repo-path <review-repo-path>" in output
+    assert "--review-live-path <review-live-path>" in output
+    assert "--additional-source <source-path>" in output
+    assert "--editor <editor-command>" in output
 
 
 def test_print_selection_header_prepends_blank_line(monkeypatch, capsys) -> None:
