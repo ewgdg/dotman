@@ -16,7 +16,7 @@ class DotmanUndefined(Undefined):
         return ""
 
 
-def _standard_environment(base_dir: Path) -> Environment:
+def _base_environment(base_dir: Path) -> Environment:
     return Environment(
         autoescape=False,
         loader=FileSystemLoader(str(base_dir)),
@@ -25,10 +25,27 @@ def _standard_environment(base_dir: Path) -> Environment:
     )
 
 
+def _string_environment(base_dir: Path) -> Environment:
+    return _base_environment(base_dir)
+
+
+def _file_environment(base_dir: Path) -> Environment:
+    return Environment(
+        autoescape=False,
+        loader=FileSystemLoader(str(base_dir)),
+        undefined=DotmanUndefined,
+        keep_trailing_newline=True,
+        # File templates are line-oriented config text, so standalone control
+        # lines should not leave extra blank lines in rendered output.
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+
+
 def _resolve_node(value: Any, context: dict[str, Any]) -> Any:
     """Recursively resolve Jinja2 references in a var value using the given context."""
     if isinstance(value, str) and ("{{" in value or "{%" in value):
-        env = _standard_environment(Path("."))
+        env = _string_environment(Path("."))
         return env.from_string(value).render(context)
     if isinstance(value, dict):
         return {k: _resolve_node(v, context) for k, v in value.items()}
@@ -65,7 +82,7 @@ def build_template_context(
 
 
 def render_template_string(value: str, context: dict[str, Any], *, base_dir: Path) -> str:
-    env = _standard_environment(base_dir)
+    env = _string_environment(base_dir)
     return env.from_string(value).render(context)
 
 
@@ -78,7 +95,7 @@ def render_template_file(path: Path, context: dict[str, Any]) -> tuple[bytes, st
     if "{{" not in source_text and "{%" not in source_text and "{#" not in source_text:
         return source_text.encode("utf-8"), "raw"
 
-    env = _standard_environment(path.parent)
+    env = _file_environment(path.parent)
     try:
         template = env.from_string(source_text)
     except TemplateSyntaxError:
