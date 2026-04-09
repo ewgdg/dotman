@@ -1,0 +1,349 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
+
+import dotman.cli as cli
+import pytest
+from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+
+from test_support import (
+    EXAMPLE_REPO,
+    REFERENCE_REPO,
+    capture_parser_help,
+    write_implicit_conflict_repo,
+    write_manager_config,
+    write_multi_instance_repo,
+    write_named_manager_config,
+    write_package_override_preview_repo,
+    write_profile_switch_repo,
+    write_untrack_conflict_repo,
+)
+
+
+def test_untrack_cli_updates_state(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "untrack",
+            "example:git@basic",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "state-only"
+    assert payload["operation"] == "untrack"
+    assert payload["binding"] == {
+        "repo": "example",
+        "selector": "git",
+        "profile": "basic",
+    }
+    assert payload["still_tracked_package"] == {
+        "repo": "example",
+        "package_id": "git",
+        "bindings": [
+            {
+                "repo": "example",
+                "selector": "core-cli-meta",
+                "profile": "basic",
+                "selector_kind": "package",
+                "tracked_reason": "implicit",
+            }
+        ],
+    }
+    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "example"',
+            'selector = "core-cli-meta"',
+            'profile = "basic"',
+            "",
+        ]
+    )
+
+def test_untrack_cli_allows_selector_only_when_unique(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "untrack",
+            "example:git",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["binding"] == {
+        "repo": "example",
+        "selector": "git",
+        "profile": "basic",
+    }
+
+def test_untrack_cli_errors_for_untracked_binding(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "untrack",
+            "example:git@basic",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "is not currently tracked" in capsys.readouterr().err
+
+def test_untrack_cli_reports_dependency_owner_for_untracked_package_selector(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "untrack",
+            "nvim@basic",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "cannot untrack 'example:nvim': required by tracked bindings: example:core-cli-meta@basic" in capsys.readouterr().err
+
+def test_untrack_cli_rejects_removal_that_would_expose_implicit_conflict(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    write_untrack_conflict_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+
+    state_dir = tmp_path / "state" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    original_state = "\n".join(
+        [
+            "version = 1",
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "shared"',
+            'profile = "direct"',
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "stack-a"',
+            'profile = "work"',
+            "",
+            "[[bindings]]",
+            'repo = "fixture"',
+            'selector = "stack-b"',
+            'profile = "personal"',
+            "",
+        ]
+    )
+    (state_dir / "bindings.toml").write_text(original_state, encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "untrack",
+            "fixture:shared@direct",
+        ]
+    )
+
+    assert exit_code == 2
+    error_output = capsys.readouterr().err
+    assert "cannot untrack 'fixture:shared@direct': removing this binding would expose conflicting implicit tracked targets" in error_output
+    assert "fixture:stack-a@work (shared:shared)" in error_output
+    assert "fixture:stack-b@personal (shared:shared)" in error_output
+    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == original_state
+
+def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "untrack",
+            "example:git@basic",
+        ]
+    )
+
+    assert exit_code == 0
+    assert f"untracked {cli.render_binding_label(repo_name='example', selector='git', profile='basic')}" in capsys.readouterr().out
+
+def test_untrack_cli_reports_remaining_package_tracking_after_success(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "untrack",
+            "example:git@basic",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "untracked example:git@basic" in output
+    assert "example:git remains tracked via:" in output
+    assert "implicit: example:core-cli-meta@basic" in output
