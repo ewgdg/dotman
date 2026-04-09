@@ -1,5 +1,5 @@
 [vars]
-INSTALL = "brew install"
+INSTALL = "printf 'install %s\\n'"
 
 [vars.git]
 user_email = "local@example.test"

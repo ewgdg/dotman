@@ -12,8 +12,9 @@ render = "sh hooks/render.sh"
 pull_view_repo = "render"
 pull_view_live = "raw"
 reconcile = "sh hooks/reconcile.sh"
+reconcile_io = "tty"
 
 [hooks]
-check = '''
+guard_pull = '''
 command -v nvim >/dev/null 2>&1
 '''

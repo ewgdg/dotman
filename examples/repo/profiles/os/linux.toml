@@ -1,2 +1,2 @@
 [vars]
-INSTALL = "sudo -A pacman -S --needed"
+INSTALL = "printf 'install %s\\n'"

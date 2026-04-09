@@ -1,2 +1,2 @@
 [vars]
-INSTALL = "brew install"
+INSTALL = "printf 'install %s\\n'"

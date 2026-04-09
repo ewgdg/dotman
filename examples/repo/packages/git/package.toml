@@ -11,13 +11,13 @@ path = "~/.gitconfig"
 chmod = "600"
 
 [hooks]
-check = '''
+guard_push = '''
 command -v git >/dev/null 2>&1
 '''
 pre_push = [
   "{{ INSTALL }} git",
   '''
-  "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"
+  sh "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"
   ''',
 ]
 post_push = "sh hooks/post-push.sh"
