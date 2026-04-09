@@ -17,6 +17,18 @@ This document captures the user-level dotman manager configuration.
 - Repo `order` values should be unique; ties should fail config validation.
 - If `state_path` is omitted, dotman may default it from the repo name under `$XDG_STATE_HOME/dotman/`.
 
+## Snapshots
+
+- Snapshot config is manager-level and applies to real `push` execution across the whole dotman run, even when that run spans multiple repos.
+- Snapshot settings should be declared under `[snapshots]`.
+- `enabled` is optional and defaults to `true`.
+- `path` is optional and overrides the snapshot storage root.
+- If `path` is omitted, dotman should default snapshot storage to `$XDG_DATA_HOME/dotman/snapshots/`.
+- If `XDG_DATA_HOME` is unset, dotman should fall back to `~/.local/share/dotman/snapshots/`.
+- `max_generations` is optional, must be a positive integer, and defaults to `10`.
+- `max_generations` is count-based retention. Dotman should prune the oldest snapshots when the retained snapshot count exceeds that limit.
+- Snapshot storage is distinct from repo binding state. Snapshots belong under data home, while tracked binding state stays under state home.
+
 Example:
 
 ```toml
@@ -27,4 +39,8 @@ order = 10
 [repos.test]
 path = "~/sandbox/dotfiles"
 order = 20
+
+[snapshots]
+enabled = true
+max_generations = 10
 ```

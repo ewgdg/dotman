@@ -4,7 +4,7 @@ import os
 import tomllib
 from pathlib import Path
 
-from dotman.models import ManagerConfig, RepoConfig
+from dotman.models import ManagerConfig, RepoConfig, SnapshotConfig
 
 
 def default_config_path() -> Path:
@@ -15,6 +15,11 @@ def default_config_path() -> Path:
 def default_state_root() -> Path:
     state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
     return state_home / "dotman"
+
+
+def default_snapshot_root() -> Path:
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return data_home / "dotman" / "snapshots"
 
 
 def expand_path(value: str, *, base_dir: Path | None = None) -> Path:
@@ -61,4 +66,28 @@ def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
             state_path=state_path,
         )
 
-    return ManagerConfig(config_path=resolved_path, repos=repos)
+    snapshots_payload = payload.get("snapshots", {})
+    if not isinstance(snapshots_payload, dict):
+        raise ValueError("config [snapshots] must be a table")
+    enabled_value = snapshots_payload.get("enabled", True)
+    if not isinstance(enabled_value, bool):
+        raise ValueError("config snapshots.enabled must be a boolean")
+    snapshot_path_value = snapshots_payload.get("path")
+    snapshot_path = (
+        expand_path(snapshot_path_value, base_dir=resolved_path.parent)
+        if isinstance(snapshot_path_value, str)
+        else default_snapshot_root().resolve()
+    )
+    max_generations_value = snapshots_payload.get("max_generations", 10)
+    if not isinstance(max_generations_value, int) or max_generations_value <= 0:
+        raise ValueError("config snapshots.max_generations must be a positive integer")
+
+    return ManagerConfig(
+        config_path=resolved_path,
+        repos=repos,
+        snapshots=SnapshotConfig(
+            enabled=enabled_value,
+            path=snapshot_path,
+            max_generations=max_generations_value,
+        ),
+    )

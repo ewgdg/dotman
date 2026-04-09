@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Sequence, TypeVar
 
@@ -21,6 +22,18 @@ from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_bindin
 from dotman.execution import ExecutionSession, ExecutionStep, ExecutionStepResult, PackageExecutionResult, build_execution_session, execute_session
 from dotman.models import Binding, HookPlan, filter_hook_plans_for_targets, package_ref_text
 from dotman.reconcile import run_basic_reconcile
+from dotman.snapshot import (
+    RollbackAction,
+    SnapshotRecord,
+    build_rollback_actions,
+    create_push_snapshot,
+    execute_rollback,
+    find_snapshot_matches,
+    list_snapshots,
+    mark_snapshot_status,
+    prune_snapshots,
+    record_snapshot_restore,
+)
 from dotman.resolver import (
     ResolverOption,
     build_binding_field_kinds,
@@ -55,6 +68,11 @@ EXECUTION_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "ok": ("1", "32"),
     "failed": ("1", "31"),
     "skipped": ("1", "33"),
+}
+SNAPSHOT_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
+    "prepared": ("1", "33"),
+    "applied": ("1", "32"),
+    "failed": ("1", "31"),
 }
 SelectableItem = TypeVar("SelectableItem")
 
@@ -237,6 +255,56 @@ def render_info_section_header(label: str) -> str:
         f"  {style_text('::', *MENU_HEADER_MARKER_STYLE)} "
         f"{style_text(label, '1')}"
     )
+
+
+def format_snapshot_timestamp(timestamp: str | None) -> str:
+    if timestamp is None:
+        return "never"
+    try:
+        instant = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return timestamp
+    return instant.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def render_snapshot_status(status: str) -> str:
+    if not colors_enabled():
+        return status
+    return style_text(status, *SNAPSHOT_STATUS_STYLE_BY_NAME.get(status, ("1",)))
+
+
+def render_snapshot_ref(snapshot_id: str) -> str:
+    if not colors_enabled():
+        return snapshot_id
+    return style_text(snapshot_id, "1")
+
+
+def render_snapshot_metadata_label(label: str) -> str:
+    if not colors_enabled():
+        return label
+    return style_text(label, *MENU_HINT_STYLE)
+
+
+def render_snapshot_provenance(*, repo_name: str | None, package_id: str | None, target_name: str | None, binding_label: str | None) -> str | None:
+    if repo_name is None or package_id is None or target_name is None:
+        return binding_label
+    profile = None
+    if binding_label is not None:
+        binding_repo, _binding_selector, binding_profile = parse_binding_text(binding_label)
+        if binding_repo is not None:
+            repo_name = binding_repo
+        profile = binding_profile
+    if profile is not None:
+        return render_package_profile_label(repo_name=repo_name, package_id=package_id, profile=profile) + (
+            f" {style_text(f'({target_name})', *MENU_HINT_STYLE)}" if colors_enabled() else f" ({target_name})"
+        )
+    return render_package_target_label(repo_name=repo_name, package_id=package_id, target_name=target_name)
+
+
+def render_snapshot_reason(action: str) -> str:
+    if not colors_enabled():
+        return f"before {action} (push)"
+    return f"before {render_payload_action(action)} {style_text('(push)', *MENU_HINT_STYLE)}"
 
 
 def render_selector_match_label(*, repo_name: str, selector: str, selector_kind: str) -> str:
@@ -1376,6 +1444,15 @@ def add_package_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_snapshot_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:
+    parser.add_argument(
+        "snapshot",
+        nargs=None if required else "?",
+        metavar="<snapshot>",
+        help="Snapshot ID, unique leading snapshot prefix, or 'latest'",
+    )
+
+
 def add_dry_run_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "-d",
@@ -1433,6 +1510,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_full_path_argument(pull_parser)
     add_binding_argument(pull_parser, required=False)
 
+    rollback_parser = subparsers.add_parser(
+        "rollback",
+        help="Restore managed live paths from a recorded snapshot",
+        description="Restore managed live paths from a recorded snapshot",
+    )
+    add_dry_run_argument(rollback_parser)
+    add_full_path_argument(rollback_parser)
+    add_snapshot_argument(rollback_parser, required=False)
+
     untrack_parser = subparsers.add_parser(
         "untrack",
         help="Remove a tracked binding from manager state",
@@ -1463,6 +1549,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="List tracked packages",
         description="List tracked packages",
     )
+    list_subparsers.add_parser(
+        "snapshots",
+        help="List available snapshots",
+        description="List available snapshots",
+    )
     list_subparsers.add_parser("installed", help=argparse.SUPPRESS)
     hide_subparser_from_help(list_subparsers, "installed")
 
@@ -1483,6 +1574,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Show tracked package details",
     )
     add_package_argument(info_tracked_parser)
+    info_snapshot_parser = info_subparsers.add_parser(
+        "snapshot",
+        help="Show snapshot details",
+        description="Show snapshot details",
+    )
+    add_full_path_argument(info_snapshot_parser)
+    add_snapshot_argument(info_snapshot_parser)
     info_installed_parser = info_subparsers.add_parser("installed", help=argparse.SUPPRESS)
     add_package_argument(info_installed_parser)
     hide_subparser_from_help(info_subparsers, "installed")
@@ -1807,17 +1905,14 @@ def emit_execution_result(*, result, json_output: bool) -> int:
     return result.exit_code
 
 
-def run_execution(*, operation: str, plans: Sequence, json_output: bool, full_paths: bool = False) -> int:
+def execute_plans(*, operation: str, plans: Sequence, json_output: bool, full_paths: bool = False):
     session = build_execution_session(plans, operation=operation)
     if json_output:
-        return emit_execution_result(
-            result=execute_session(session, stream_output=False),
-            json_output=True,
-        )
+        return execute_session(session, stream_output=False)
     print_execution_header(session=session)
     if not session.packages:
-        return 0
-    result = execute_session(
+        return execute_session(session, stream_output=True)
+    return execute_session(
         session,
         stream_output=True,
         on_package_start=print_execution_package_start,
@@ -1831,7 +1926,18 @@ def run_execution(*, operation: str, plans: Sequence, json_output: bool, full_pa
         on_step_finish=print_execution_step_finish,
         on_package_finish=print_execution_package_finish,
     )
-    return result.exit_code
+
+
+def run_execution(*, operation: str, plans: Sequence, json_output: bool, full_paths: bool = False) -> int:
+    return emit_execution_result(
+        result=execute_plans(
+            operation=operation,
+            plans=plans,
+            json_output=json_output,
+            full_paths=full_paths,
+        ),
+        json_output=json_output,
+    )
 
 
 def emit_tracked_packages(*, packages: Sequence, json_output: bool) -> int:
@@ -2030,6 +2136,252 @@ def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
     return 0
 
 
+def resolve_snapshot_record(snapshot_root: Path, snapshot_ref: str | None, *, json_output: bool) -> SnapshotRecord:
+    matches = find_snapshot_matches(snapshot_root, snapshot_ref)
+    if not matches:
+        if snapshot_ref is None or snapshot_ref == "latest":
+            raise ValueError("no snapshots are available")
+        raise ValueError(f"snapshot '{snapshot_ref}' did not match any available snapshot")
+    if len(matches) == 1:
+        return matches[0]
+    if not interactive_mode_enabled(json_output=json_output):
+        raise ValueError(
+            f"snapshot '{snapshot_ref}' is ambiguous: " + ", ".join(snapshot.snapshot_id for snapshot in matches)
+        )
+    selected_index = select_menu_option(
+        header_text=f"Select a snapshot for '{snapshot_ref}':",
+        option_labels=[
+            f"{snapshot.snapshot_id} [{snapshot.status}] ({snapshot.entry_count} path{'s' if snapshot.entry_count != 1 else ''})"
+            for snapshot in matches
+        ],
+    )
+    return matches[selected_index]
+
+
+def visible_rollback_actions(actions: Sequence[RollbackAction]) -> list[RollbackAction]:
+    return [action for action in actions if action.action != "noop"]
+
+
+def build_rollback_review_items(snapshot: SnapshotRecord, actions: Sequence[RollbackAction]) -> list[ReviewItem]:
+    review_items: list[ReviewItem] = []
+    for action in actions:
+        if action.action == "noop":
+            continue
+        review_items.append(
+            ReviewItem(
+                binding_label=f"snapshot:{snapshot.snapshot_id}",
+                package_id="snapshot",
+                target_name=str(action.live_path),
+                action=action.action,
+                operation="rollback",
+                repo_path=action.snapshot_path,
+                live_path=action.live_path,
+                source_path=str(action.snapshot_path),
+                destination_path=str(action.live_path),
+                before_bytes=action.before_bytes,
+                after_bytes=action.after_bytes,
+            )
+        )
+    return review_items
+
+
+def review_rollback_actions_for_interactive_diffs(
+    *,
+    snapshot: SnapshotRecord,
+    actions: Sequence[RollbackAction],
+    json_output: bool,
+    full_paths: bool = False,
+) -> bool:
+    if not interactive_mode_enabled(json_output=json_output):
+        return True
+    review_items = build_rollback_review_items(snapshot, actions)
+    if not review_items:
+        return True
+    return run_diff_review_menu(review_items, operation="rollback", full_paths=full_paths)
+
+
+def emit_snapshot_list(
+    *,
+    snapshots: Sequence[SnapshotRecord],
+    json_output: bool,
+    max_generations: int | None = None,
+) -> int:
+    payload = {
+        "mode": "dry-run",
+        "operation": "list-snapshots",
+        "snapshots": [snapshot.to_dict() for snapshot in snapshots],
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print_payload_header("snapshots")
+    if max_generations is not None:
+        print(
+            "  "
+            + " · ".join(
+                [
+                    render_summary_stat(label="retained", value=len(snapshots)),
+                    render_summary_stat(label="limit", value=max_generations),
+                ]
+            )
+        )
+    else:
+        print(f"  {render_summary_stat(label='snapshots', value=len(snapshots))}")
+
+    if not snapshots:
+        print()
+        print(f"  {render_payload_section_label('no snapshots')}")
+        return 0
+
+    for index, snapshot in enumerate(snapshots, start=1):
+        print()
+        title = format_snapshot_timestamp(snapshot.created_at)
+        if colors_enabled():
+            title = style_text(title, "1")
+        print(f"  {style_text(f'{index})', *MENU_INDEX_STYLE) if colors_enabled() else f'{index})'} {title}")
+        print(f"     {render_snapshot_metadata_label('ref:')}          {render_snapshot_ref(snapshot.snapshot_id)}")
+        print(f"     {render_snapshot_metadata_label('status:')}       {render_snapshot_status(snapshot.status)}")
+        print(f"     {render_snapshot_metadata_label('paths:')}        {snapshot.entry_count}")
+        if snapshot.restore_count > 0:
+            restore_summary = f"{snapshot.restore_count}x"
+            if snapshot.last_restored_at is not None:
+                restore_summary += f" · {format_snapshot_timestamp(snapshot.last_restored_at)}"
+            print(f"     {render_snapshot_metadata_label('restored:')}     {restore_summary}")
+    return 0
+
+
+def emit_snapshot_detail(*, snapshot: SnapshotRecord, json_output: bool, full_paths: bool = False) -> int:
+    payload = {
+        "mode": "dry-run",
+        "operation": "info-snapshot",
+        "snapshot": snapshot.to_dict(),
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    header_text = f"snapshot {snapshot.snapshot_id}"
+    if colors_enabled():
+        print(style_text(header_text, "1"))
+    else:
+        print(header_text)
+    print(f"  {render_snapshot_metadata_label('created:')}       {format_snapshot_timestamp(snapshot.created_at)}")
+    print(f"  {render_snapshot_metadata_label('status:')}        {render_snapshot_status(snapshot.status)}")
+    print(f"  {render_snapshot_metadata_label('paths:')}         {snapshot.entry_count}")
+    print(f"  {render_snapshot_metadata_label('restore count:')} {snapshot.restore_count}")
+    if snapshot.last_restored_at is not None:
+        print(
+            f"  {render_snapshot_metadata_label('last restored:')} "
+            f"{format_snapshot_timestamp(snapshot.last_restored_at)}"
+        )
+
+    if snapshot.entries:
+        print()
+        print(render_info_section_header("paths"))
+    for entry in snapshot.entries:
+        path_text = display_cli_path(entry.live_path, full_paths=full_paths)
+        print(f"    {path_text}")
+        print(f"      {render_snapshot_metadata_label('reason:')} {render_snapshot_reason(entry.push_action)}")
+        provenance = render_snapshot_provenance(
+            repo_name=entry.repo_name,
+            package_id=entry.package_id,
+            target_name=entry.target_name,
+            binding_label=entry.binding_label,
+        )
+        if provenance is not None:
+            print(f"      {render_snapshot_metadata_label('provenance:')} {provenance}")
+    return 0
+
+
+def emit_rollback_payload(
+    *,
+    snapshot: SnapshotRecord,
+    actions: Sequence[RollbackAction],
+    json_output: bool,
+    mode: str,
+    full_paths: bool = False,
+) -> int:
+    visible_actions = visible_rollback_actions(actions)
+    payload = {
+        "mode": mode,
+        "operation": "rollback",
+        "snapshot": snapshot.to_dict(),
+        "actions": [action.to_dict() for action in visible_actions],
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print_payload_header(f"{mode} rollback")
+    print(f"  snapshot: {snapshot.snapshot_id}")
+    print(f"  created:  {snapshot.created_at}")
+    print(f"  status:   {snapshot.status}")
+    print(f"  {render_summary_stat(label='paths', value=len(visible_actions))}")
+    if not visible_actions:
+        print()
+        print(f"  {render_payload_section_label('no pending target actions')}")
+        return 0
+    for action in visible_actions:
+        print(
+            f"  [{render_payload_action(action.action)}] "
+            f"{display_cli_path(action.snapshot_path, full_paths=full_paths)} -> "
+            f"{display_cli_path(action.live_path, full_paths=full_paths)}"
+        )
+    return 0
+
+
+def print_rollback_execution_header(*, snapshot: SnapshotRecord, action_count: int) -> None:
+    print_payload_header("executing rollback")
+    print(f"  snapshot: {snapshot.snapshot_id}")
+    print(f"  created:  {snapshot.created_at}")
+    print(f"  status:   {snapshot.status}")
+    print(f"  {render_summary_stat(label='paths', value=action_count)}")
+    if action_count == 0:
+        print()
+        print(f"  {render_payload_section_label('no pending target actions')}")
+
+
+def print_rollback_execution_step(index: int, total: int, action: RollbackAction, *, full_paths: bool) -> None:
+    print(
+        f"    [{index}/{total}] {render_execution_action(action.action):<11} "
+        f"{display_cli_path(action.live_path, full_paths=full_paths)}"
+    )
+
+
+def emit_rollback_result(*, result, json_output: bool) -> int:
+    if json_output:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return result.exit_code
+
+
+def run_rollback_execution(
+    *,
+    snapshot: SnapshotRecord,
+    actions: Sequence[RollbackAction],
+    json_output: bool,
+    full_paths: bool = False,
+) -> int:
+    visible_actions = visible_rollback_actions(actions)
+    if not json_output:
+        print_rollback_execution_header(snapshot=snapshot, action_count=len(visible_actions))
+    if not visible_actions:
+        return 0
+    for index, action in enumerate(visible_actions, start=1):
+        if not json_output:
+            print_rollback_execution_step(index, len(visible_actions), action, full_paths=full_paths)
+    result = execute_rollback(snapshot, visible_actions)
+    if not json_output:
+        for action_result in result.actions:
+            if action_result.status == "ok":
+                print(f"      {render_execution_status('ok')}")
+                continue
+            if action_result.error:
+                print(f"      {action_result.error}")
+            print(f"      {render_execution_status(action_result.status)}")
+    return emit_rollback_result(result=result, json_output=json_output)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(list(argv) if argv is not None else None)
@@ -2129,12 +2481,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                     mode=effective_execution_mode(dry_run_requested=True),
                     full_paths=args.full_path,
                 )
-            return run_execution(
-                operation="push",
-                plans=plans,
-                json_output=args.json_output,
-                full_paths=args.full_path,
-            )
+            snapshot = create_push_snapshot(plans, engine.config.snapshots)
+            try:
+                execution_result = execute_plans(
+                    operation="push",
+                    plans=plans,
+                    json_output=args.json_output,
+                    full_paths=args.full_path,
+                )
+            except Exception:
+                if snapshot is not None:
+                    mark_snapshot_status(snapshot, "failed")
+                    prune_snapshots(
+                        engine.config.snapshots.path,
+                        max_generations=engine.config.snapshots.max_generations,
+                    )
+                raise
+            if snapshot is not None:
+                snapshot = mark_snapshot_status(snapshot, "applied" if execution_result.exit_code == 0 else "failed")
+                prune_snapshots(
+                    engine.config.snapshots.path,
+                    max_generations=engine.config.snapshots.max_generations,
+                )
+            return emit_execution_result(result=execution_result, json_output=args.json_output)
         if args.command == "pull":
             if args.binding:
                 _repo, binding = resolve_tracked_binding_text(
@@ -2181,6 +2550,38 @@ def main(argv: Sequence[str] | None = None) -> int:
                 json_output=args.json_output,
                 full_paths=args.full_path,
             )
+        if args.command == "rollback":
+            snapshot = resolve_snapshot_record(
+                engine.config.snapshots.path,
+                args.snapshot,
+                json_output=args.json_output,
+            )
+            rollback_actions = build_rollback_actions(snapshot)
+            if not review_rollback_actions_for_interactive_diffs(
+                snapshot=snapshot,
+                actions=rollback_actions,
+                json_output=args.json_output,
+                full_paths=args.full_path,
+            ):
+                emit_interrupt_notice()
+                return INTERRUPTED_EXIT_CODE
+            if args.dry_run:
+                return emit_rollback_payload(
+                    snapshot=snapshot,
+                    actions=rollback_actions,
+                    json_output=args.json_output,
+                    mode=effective_execution_mode(dry_run_requested=True),
+                    full_paths=args.full_path,
+                )
+            exit_code = run_rollback_execution(
+                snapshot=snapshot,
+                actions=rollback_actions,
+                json_output=args.json_output,
+                full_paths=args.full_path,
+            )
+            if exit_code == 0:
+                record_snapshot_restore(snapshot)
+            return exit_code
         if args.command in {"untrack", "forget"}:
             _repo, binding = resolve_tracked_binding_text(
                 engine,
@@ -2200,6 +2601,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if args.command == "list" and args.list_command in {"tracked", "installed"}:
             return emit_tracked_packages(packages=engine.list_installed_packages(), json_output=args.json_output)
+        if args.command == "list" and args.list_command == "snapshots":
+            return emit_snapshot_list(
+                snapshots=list_snapshots(engine.config.snapshots.path),
+                json_output=args.json_output,
+                max_generations=engine.config.snapshots.max_generations,
+            )
         if args.command == "info" and args.info_command in {"tracked", "installed"}:
             _repo, package_id, bound_profile = resolve_tracked_package_text(
                 engine,
@@ -2210,6 +2617,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return emit_tracked_package_detail(
                 package_detail=engine.describe_installed_package(f"{_repo.config.name}:{package_ref}"),
                 json_output=args.json_output,
+            )
+        if args.command == "info" and args.info_command == "snapshot":
+            return emit_snapshot_detail(
+                snapshot=resolve_snapshot_record(
+                    engine.config.snapshots.path,
+                    args.snapshot,
+                    json_output=args.json_output,
+                ),
+                json_output=args.json_output,
+                full_paths=args.full_path,
             )
     except KeyboardInterrupt:
         emit_interrupt_notice()

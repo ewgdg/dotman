@@ -478,7 +478,7 @@ def _pull_desired_bytes(target_plan: TargetPlan) -> bytes:
     return stdout.encode("utf-8")
 
 
-def _write_bytes(path: Path, content: bytes) -> None:
+def write_bytes_atomic(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temp_file:
         temp_file.write(content)
@@ -486,7 +486,7 @@ def _write_bytes(path: Path, content: bytes) -> None:
     temp_path.replace(path)
 
 
-def _delete_file(path: Path, *, root: Path) -> None:
+def delete_path_and_prune_empty_parents(path: Path, *, root: Path) -> None:
     if path.exists():
         path.unlink()
     prune_root = root if root.is_dir() else root.parent
@@ -497,6 +497,14 @@ def _delete_file(path: Path, *, root: Path) -> None:
         except OSError:
             break
         current = current.parent
+
+
+def _write_bytes(path: Path, content: bytes) -> None:
+    write_bytes_atomic(path, content)
+
+
+def _delete_file(path: Path, *, root: Path) -> None:
+    delete_path_and_prune_empty_parents(path, root=root)
 
 
 def _restore_repo_path_access_for_invoking_user(path: Path, *, repo_root: Path | None) -> None:

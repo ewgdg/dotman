@@ -111,6 +111,10 @@ This document captures the current command and selector direction for `dotman`.
 - A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks.
 - After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `push` should execute immediately in one package-oriented timeline.
+- Before the first live mutation of a real `push`, dotman should create one manager-level snapshot for the finalized selected plan.
+- That snapshot should capture the pre-push live state only for paths that the finalized plan will mutate.
+- `push --dry-run` should not create a snapshot.
+- If a real `push` fails after snapshot creation, dotman should keep that snapshot so the user can inspect it or roll back manually.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.
 - Diff review should use `git diff --no-index --color=auto`.
@@ -179,6 +183,44 @@ This document captures the current command and selector direction for `dotman`.
   - `dotman pull main:git@default`
   - `dotman pull`
 
+## Rollback
+
+- `rollback` should restore managed live paths from a previously recorded snapshot.
+- `rollback` should not resolve current repo manifests, tracked bindings, or profile state.
+- `rollback` with no snapshot reference should target the latest restorable snapshot.
+- `rollback <snapshot>` should accept either `latest`, an exact snapshot ID, or a unique leading prefix such as a date or timestamp fragment.
+- If a snapshot reference matches multiple snapshots, interactive mode should prompt for one snapshot and non-interactive mode should fail with the candidates.
+- `rollback` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
+- `rollback` should accept `--full-path` to disable human-output path compaction for preview, review menus, and human execution output.
+- Plain `rollback` should perform real execution after planning and inspection-only diff review.
+- `rollback` should compare the current live state against the selected snapshot state without consulting the current repo contents.
+- `rollback` should restore only the live paths recorded by the selected snapshot.
+- `rollback` should not run package hooks.
+- `rollback` should fail fast if the selected snapshot is missing required stored content or has an invalid manifest.
+- Examples:
+  - `dotman rollback`
+  - `dotman rollback latest`
+  - `dotman rollback 2026-04-09`
+  - `dotman rollback 2026-04-09T14-22`
+  - `dotman rollback --dry-run`
+
+## Snapshot History
+
+- `list snapshots` should list available snapshots in newest-first order.
+- `list snapshots` should not require current repo resolution or tracked bindings.
+- `list snapshots` should stay overview-oriented by default. It should show summary metadata, not dump every recorded path.
+- Each listed snapshot should include a human-readable creation time, a copyable snapshot ref, status, and a compact count of recorded path entries.
+- If a snapshot has been restored before, list output should also surface restore metadata such as restore count and most recent restore time.
+- Snapshot list output should make it easy to copy a date or timestamp prefix into `rollback <snapshot>`.
+- `info snapshot <snapshot>` should show detailed information for one snapshot, including recorded path entries.
+- `info snapshot` should accept `latest` as a snapshot reference alias for the newest available snapshot.
+- `info snapshot` should accept `--full-path` to disable path compaction in human-readable path output.
+- Examples:
+  - `dotman list snapshots`
+  - `dotman info snapshot latest`
+  - `dotman info snapshot 2026-04-09`
+  - `dotman info snapshot --full-path 2026-04-09`
+
 ## Add
 
 - `add` is reserved for future unmanaged-to-managed adoption.
@@ -205,6 +247,9 @@ This document captures the current command and selector direction for `dotman`.
   - `dotman untrack git`
 
 ## Tracked State
+
+- Snapshot history is separate from tracked binding state.
+- `list snapshots` and `rollback` should operate from snapshot manifests under the snapshot storage root, not from tracked binding state.
 
 - `list tracked` should report the packages currently tracked by persisted bindings.
 - `list tracked` should resolve the current binding state against the current repo manifests.

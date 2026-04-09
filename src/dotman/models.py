@@ -20,9 +20,17 @@ class RepoConfig:
 
 
 @dataclass(frozen=True)
+class SnapshotConfig:
+    enabled: bool
+    path: Path
+    max_generations: int
+
+
+@dataclass(frozen=True)
 class ManagerConfig:
     config_path: Path
     repos: dict[str, RepoConfig]
+    snapshots: SnapshotConfig
 
     @property
     def ordered_repos(self) -> list[RepoConfig]:
