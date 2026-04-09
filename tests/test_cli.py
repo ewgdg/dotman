@@ -2996,14 +2996,76 @@ def test_info_tracked_cli_emits_readable_text_output(
         [
             "example:git",
             "  Base Git configuration",
-            "  ::provenance",
+            "",
+            "  :: provenance",
             "    implicit: example:core-cli-meta@basic",
             "    explicit: example:git@basic",
-            "  ::owned targets",
+            "",
+            "  :: hooks",
+            "    [check]",
+            "      command -v git >/dev/null 2>&1",
+            "    [pre_push]",
+            "      [1] brew install git",
+            '      [2] "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"',
+            "    [post_push]",
+            "      sh hooks/post-push.sh",
+            "",
+            "  :: owned targets",
             f"    gitconfig -> {home / '.gitconfig'}",
             "",
         ]
     )
+
+
+def test_info_tracked_cli_emits_hooks_even_when_package_targets_are_noop(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = cli.DotmanEngine.from_config_path(config_path)
+    plan = engine.plan_push_binding("example:git@basic")
+    (home / ".gitconfig").write_text(plan.target_plans[0].desired_text or "", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "info",
+            "tracked",
+            "git",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "  :: hooks" in output
+    assert "    [pre_push]" in output
+    assert "      [1] brew install git" in output
+    assert "  :: owned targets" in output
+
 
 
 def test_list_tracked_cli_lists_multi_instance_packages_per_bound_profile(

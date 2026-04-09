@@ -201,7 +201,8 @@ This document captures the current command and selector direction for `dotman`.
 - `multi_instance` packages should be listed once per bound instance using `package<bound-profile>`.
 - `dotman info tracked <package>` should show detailed information for one currently tracked package identity.
 - `dotman info tracked package<bound-profile>` should address one tracked `multi_instance` package instance.
-- Package detail should include the owning repo, description, provenance entries with explicit or implicit reasons, owned targets after tracked-target winner resolution, the bound profile for `multi_instance` instances, and executable hook commands only for bindings that still own non-noop targets for that package identity.
+- Package detail should include the owning repo, description, provenance entries with explicit or implicit reasons, owned targets after tracked-target winner resolution, the bound profile for `multi_instance` instances, and the effective hook commands for that package instance, even when the current push plan would be all-noop.
+- Human-readable `info tracked` hook output should stay package-centric. Do not repeat a provenance binding header under `::hooks`; the package instance already implies the single bound profile/effective hook-bearing binding.
 - Package lookup for `info tracked` may use the same repo-qualified and partial-selector rules as other package-oriented commands, but it should search only tracked packages.
 - When tracked package lookup is ambiguous in interactive mode, `info tracked` should use the same shared selector menu as the other package-oriented commands.
 - When a `multi_instance` package name matches multiple tracked instances, `info tracked` should require or select a specific `package<bound-profile>` instance instead of silently collapsing them.

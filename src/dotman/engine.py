@@ -1125,7 +1125,9 @@ class DotmanEngine:
                 continue
             if bound_profile is not None and plan.binding.profile != bound_profile:
                 continue
-            if not any(target.package_id == package_id and target.action != "noop" for target in plan.target_plans):
+            # `info tracked` should report hooks for the binding that currently owns the package's
+            # winning targets, even when the live files already match and push would be all-noop.
+            if not any(target.package_id == package_id for target in plan.target_plans):
                 continue
             effective_bindings.add((plan.binding.repo, plan.binding.selector, plan.binding.profile))
         return effective_bindings

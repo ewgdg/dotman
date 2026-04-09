@@ -200,6 +200,15 @@ def render_tracked_reason(reason: str) -> str:
     return style_text(reason, *MENU_HINT_STYLE)
 
 
+def render_info_section_header(label: str) -> str:
+    if not colors_enabled():
+        return f"  :: {label}"
+    return (
+        f"  {style_text('::', *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(label, '1')}"
+    )
+
+
 def render_selector_match_label(*, repo_name: str, selector: str, selector_kind: str) -> str:
     package_label = render_package_label(
         repo_name=repo_name,
@@ -1597,6 +1606,18 @@ def emit_skipped_tracking(*, binding, json_output: bool) -> int:
     return 0
 
 
+def render_hook_command_lines(command: str, *, command_count: int, index: int) -> list[str]:
+    command_lines = command.splitlines() or [""]
+    # Number multi-command hooks so users can tell distinct commands apart without cluttering single-command hooks.
+    first_prefix = f"      [{index}] " if command_count > 1 else "      "
+    continuation_prefix = " " * len(first_prefix)
+    return [
+        f"{first_prefix}{command_lines[0]}",
+        *[f"{continuation_prefix}{line}" for line in command_lines[1:]],
+    ]
+
+
+
 def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
     payload = {
         "mode": "dry-run",
@@ -1617,7 +1638,8 @@ def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
     if package_detail.description:
         print(f"  {package_detail.description}")
     if package_detail.bindings:
-        print("  ::provenance")
+        print()
+        print(render_info_section_header("provenance"))
     for binding in package_detail.bindings:
         binding_label = render_binding_label(
             repo_name=binding.binding.repo,
@@ -1625,8 +1647,31 @@ def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
             profile=binding.binding.profile,
         )
         print(f"    {render_tracked_reason(binding.tracked_reason)}: {binding_label}")
+
+    bindings_with_hooks = [binding for binding in package_detail.bindings if binding.hooks]
+    if bindings_with_hooks:
+        print()
+        print(render_info_section_header("hooks"))
+    # Hook output stays package-centric here. Under the current tracked-winner model,
+    # a package instance has one effective hook-bearing binding, so repeating the
+    # provenance binding under ::hooks only adds noise.
+    for binding in bindings_with_hooks:
+        for hook_name, hook_plans in binding.hooks.items():
+            hook_label = f"[{hook_name}]"
+            if colors_enabled():
+                hook_label = style_text(hook_label, *MENU_HINT_STYLE)
+            print(f"    {hook_label}")
+            for index, hook_plan in enumerate(hook_plans, start=1):
+                for line in render_hook_command_lines(
+                    hook_plan.command,
+                    command_count=len(hook_plans),
+                    index=index,
+                ):
+                    print(line)
+
     if package_detail.owned_targets:
-        print("  ::owned targets")
+        print()
+        print(render_info_section_header("owned targets"))
     for target in package_detail.owned_targets:
         print(
             "    "
