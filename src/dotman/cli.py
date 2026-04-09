@@ -51,6 +51,11 @@ MENU_ACTION_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "update": ("1", "36"),
     "delete": ("1", "31"),
 }
+EXECUTION_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
+    "ok": ("1", "32"),
+    "failed": ("1", "31"),
+    "skipped": ("1", "33"),
+}
 SelectableItem = TypeVar("SelectableItem")
 
 
@@ -1771,6 +1776,12 @@ def print_execution_step_start(
     )
 
 
+def render_execution_status(status: str) -> str:
+    if not colors_enabled():
+        return status
+    return style_text(status, *EXECUTION_STATUS_STYLE_BY_NAME.get(status, ("1",)))
+
+
 def print_execution_step_finish(
     _package,
     step_result: ExecutionStepResult,
@@ -1778,21 +1789,16 @@ def print_execution_step_finish(
     _total: int,
 ) -> None:
     if step_result.status == "ok":
-        print("      ok")
+        print(f"      {render_execution_status('ok')}")
         return
     if step_result.error:
         print(f"      {step_result.error}")
-    print(f"      {step_result.status}")
+    print(f"      {render_execution_status(step_result.status)}")
 
 
 def print_execution_package_finish(package_result: PackageExecutionResult) -> None:
-    if package_result.status == "ok":
-        print("    done")
-        return
     if package_result.status == "skipped":
-        print("    skipped")
-        return
-    print("    failed")
+        print(f"    {render_execution_status('skipped')}")
 
 
 def emit_execution_result(*, result, json_output: bool) -> int:

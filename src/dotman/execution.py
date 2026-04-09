@@ -5,10 +5,11 @@ import stat
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
-from typing import Sequence
+from typing import Iterator, Sequence
 
 from dotman.engine import HOOK_NAMES_BY_OPERATION
 from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
@@ -366,21 +367,23 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool) -> ExecutionStepR
             )
         if step.kind == "reconcile":
             target_plan = _require_target_plan(step)
-            if target_plan.reconcile_io == "tty":
-                _require_interactive_terminal_for_reconcile()
-                exit_code, stdout, stderr = _run_command_with_terminal(
-                    command=target_plan.reconcile_command or "",
-                    cwd=target_plan.command_cwd,
-                    env=_build_target_env(target_plan),
-                )
-            else:
-                exit_code, stdout, stderr = _run_command(
-                    command=target_plan.reconcile_command or "",
-                    cwd=target_plan.command_cwd,
-                    env=_build_target_env(target_plan),
-                    stream_output=stream_output,
-                    interactive=False,
-                )
+            with _materialize_reconcile_review_env(target_plan) as review_env:
+                command_env = {**_build_target_env(target_plan), **review_env}
+                if target_plan.reconcile_io == "tty":
+                    _require_interactive_terminal_for_reconcile()
+                    exit_code, stdout, stderr = _run_command_with_terminal(
+                        command=target_plan.reconcile_command or "",
+                        cwd=target_plan.command_cwd,
+                        env=command_env,
+                    )
+                else:
+                    exit_code, stdout, stderr = _run_command(
+                        command=target_plan.reconcile_command or "",
+                        cwd=target_plan.command_cwd,
+                        env=command_env,
+                        stream_output=stream_output,
+                        interactive=False,
+                    )
             return ExecutionStepResult(
                 step=step,
                 status="ok" if exit_code == 0 else "failed",
@@ -638,6 +641,32 @@ def _build_hook_env(step: ExecutionStep) -> dict[str, str]:
 
 def _build_target_env(target_plan: TargetPlan) -> dict[str, str]:
     return target_plan.command_env or {}
+
+
+@contextmanager
+def _materialize_reconcile_review_env(target_plan: TargetPlan) -> Iterator[dict[str, str]]:
+    if target_plan.review_before_bytes is None or target_plan.review_after_bytes is None:
+        yield {}
+        return
+
+    # Reconcile helpers, especially `dotman reconcile editor`, should review the
+    # same projected pull views the user selected from, not the raw repo/live files.
+    with tempfile.TemporaryDirectory(prefix="dotman-reconcile-review-") as temp_dir:
+        temp_root = Path(temp_dir)
+        review_repo_path = temp_root / f"review-repo-{target_plan.repo_path.name}"
+        review_live_path = temp_root / f"review-live-{target_plan.live_path.name}"
+        _write_readonly_review_file(review_repo_path, target_plan.review_before_bytes)
+        _write_readonly_review_file(review_live_path, target_plan.review_after_bytes)
+        yield {
+            "DOTMAN_REVIEW_REPO_PATH": str(review_repo_path),
+            "DOTMAN_REVIEW_LIVE_PATH": str(review_live_path),
+        }
+
+
+def _write_readonly_review_file(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    path.chmod(0o444)
 
 
 def _flatten_vars(output: dict[str, str], *, prefix: str, value: object) -> None:
