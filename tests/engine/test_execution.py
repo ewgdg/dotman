@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
+import dotman.execution as execution
 from dotman.models import Binding, BindingPlan, HookPlan, TargetPlan
 from dotman.execution import build_execution_session, execute_session
 
@@ -206,6 +208,93 @@ def test_execute_session_fails_tty_reconcile_without_terminal(
     assert result.status == "failed"
     assert result.packages[0].steps[0].status == "failed"
     assert result.packages[0].steps[0].error == "reconcile_io 'tty' requires an interactive terminal"
+
+
+def test_execute_session_restores_repo_path_access_for_pull_updates_run_via_sudo(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_path = repo_root / "packages" / "app" / "config.txt"
+    repo_path.parent.mkdir(parents=True)
+    live_path = tmp_path / "live.txt"
+    live_path.write_text("live\n", encoding="utf-8")
+
+    plan = BindingPlan(
+        operation="pull",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        repo_root=repo_root,
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path,
+                live_path=live_path,
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="pull")
+
+    recorded_chown_calls: list[tuple[Path, int, int]] = []
+    monkeypatch.setattr("dotman.execution.os.geteuid", lambda: 0)
+    monkeypatch.setenv("SUDO_UID", "1234")
+    monkeypatch.setenv("SUDO_GID", "5678")
+    monkeypatch.setattr(
+        "dotman.execution.os.chown",
+        lambda path, uid, gid: recorded_chown_calls.append((Path(path), uid, gid)),
+    )
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert repo_path.read_text(encoding="utf-8") == "live\n"
+    assert recorded_chown_calls == [
+        (repo_path, 1234, 5678),
+        (repo_path.parent, 1234, 5678),
+        (repo_path.parent.parent, 1234, 5678),
+        (repo_root, 1234, 5678),
+    ]
+
+
+
+def test_restore_repo_path_access_adds_owner_write_bits_for_repo_files_and_dirs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_path = repo_root / "packages" / "app" / "config.txt"
+    repo_path.parent.mkdir(parents=True)
+    repo_path.write_text("repo\n", encoding="utf-8")
+    repo_path.chmod(0o400)
+    repo_path.parent.chmod(0o500)
+
+    recorded_chown_calls: list[tuple[Path, int, int]] = []
+    monkeypatch.setattr("dotman.execution.os.geteuid", lambda: 0)
+    monkeypatch.setenv("SUDO_UID", "1234")
+    monkeypatch.setenv("SUDO_GID", "5678")
+    monkeypatch.setattr(
+        "dotman.execution.os.chown",
+        lambda path, uid, gid: recorded_chown_calls.append((Path(path), uid, gid)),
+    )
+
+    execution._restore_repo_path_access_for_invoking_user(repo_path, repo_root=repo_root)
+
+    assert stat.S_IMODE(repo_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(repo_path.parent.stat().st_mode) == 0o700
+    assert recorded_chown_calls == [
+        (repo_path, 1234, 5678),
+        (repo_path.parent, 1234, 5678),
+        (repo_path.parent.parent, 1234, 5678),
+        (repo_root, 1234, 5678),
+    ]
+
 
 
 def test_execute_session_keeps_batch_reconcile_on_piped_command_path(

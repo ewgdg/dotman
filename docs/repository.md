@@ -192,6 +192,7 @@ pull = ["*.dotdropbak"]
 - `reconcile` should run only after the target has already been selected for pull work.
 - If both `capture` and `reconcile` are defined, dotman should use `capture` for pull planning and `reconcile` for the actual selected pull step.
 - If a transformed file target has no `reconcile`, dotman may still pull by writing repo-side content from `capture`, but `reconcile` is preferred when interactive or custom logic is needed.
+- When `pull` writes repo-side files while dotman is running under `sudo`, dotman should restore ownership of the written repo path back to the invoking user so the repo does not get stranded as root-owned.
 - Live file mode checks should compare against target `chmod` after both `push` and `pull`.
 
 ## V1 Bias
