@@ -125,7 +125,11 @@ def test_filter_plans_for_interactive_selection_excludes_directory_child_pull_it
     )
 
     monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: True)
-    monkeypatch.setattr(cli, "prompt_for_excluded_items", lambda selection_items, *, operation: {1})
+    monkeypatch.setattr(
+        cli,
+        "prompt_for_excluded_items",
+        lambda selection_items, *, operation, full_paths=False: {1},
+    )
 
     filtered_plans = cli.filter_plans_for_interactive_selection(
         plans=[plan],
@@ -205,7 +209,11 @@ def test_filter_plans_for_interactive_selection_recomputes_hooks_from_remaining_
     )
 
     monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: True)
-    monkeypatch.setattr(cli, "prompt_for_excluded_items", lambda selection_items, *, operation: {1})
+    monkeypatch.setattr(
+        cli,
+        "prompt_for_excluded_items",
+        lambda selection_items, *, operation, full_paths=False: {1},
+    )
 
     filtered_plan = cli.filter_plans_for_interactive_selection(
         plans=[plan],

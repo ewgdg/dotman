@@ -99,8 +99,16 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     answers = iter(["2"])
     monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
-    monkeypatch.setattr(cli, "filter_plans_for_interactive_selection", lambda *, plans, operation, json_output: list(plans))
-    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output: True)
+    monkeypatch.setattr(
+        cli,
+        "filter_plans_for_interactive_selection",
+        lambda *, plans, operation, json_output, full_paths=False: list(plans),
+    )
+    monkeypatch.setattr(
+        cli,
+        "review_plans_for_interactive_diffs",
+        lambda *, plans, operation, json_output, full_paths=False: True,
+    )
 
     config_path = write_named_manager_config(
         tmp_path,
@@ -143,6 +151,51 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
     assert "beta:sunshine@host/linux" in output
     assert "sunshine:selected_config -> create" in output
 
+def test_push_cli_accepts_short_dry_run_flag(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "push",
+            "-d",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "dry-run"
+    assert payload["operation"] == "push"
+    assert payload["bindings"][0]["selector"] == "git"
+    assert payload["bindings"][0]["profile"] == "basic"
+
+
 def test_push_cli_uses_state_bindings_in_dry_run_json(
     tmp_path: Path,
     monkeypatch,
@@ -184,6 +237,144 @@ def test_push_cli_uses_state_bindings_in_dry_run_json(
     assert payload["operation"] == "push"
     assert payload["bindings"][0]["selector"] == "git"
     assert payload["bindings"][0]["profile"] == "basic"
+
+
+def test_push_cli_human_dry_run_output_includes_context_and_hooks(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "\n:: dry-run push\n" in output
+    assert "preview only; no files or hooks will be changed" in output
+    assert "packages: 1" in output
+    assert "target actions: 1" in output
+    assert "hook commands: 4" in output
+    assert ":: example:git@basic" in output
+    assert "hooks:" in output
+    assert "[check]" in output
+    assert "[pre_push]" in output
+    assert "[post_push]" in output
+    assert "targets:" in output
+    assert "git:gitconfig -> create" in output
+    assert output.index("targets:") < output.index("hooks:")
+
+
+def test_push_cli_human_dry_run_output_uses_full_path_when_requested(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+            "--full-path",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert str(EXAMPLE_REPO / "packages" / "git" / "files" / "gitconfig") in output
+    assert str(home / ".gitconfig") in output
+    assert "home/.../files/gitconfig" not in output
+    assert "~/.gitconfig" not in output
+
+
+def test_push_cli_human_dry_run_output_highlights_leaf_packages_not_root_binding(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert ":: example:core-cli-meta@basic" not in output
+    assert ":: example:git@basic" in output
+    assert ":: example:nvim@basic" in output
 
 def test_push_cli_combined_selection_menu_excludes_selected_targets_across_tracked_bindings(
     tmp_path: Path,
@@ -231,9 +422,9 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select items to exclude from push:" in output
-    assert "example:git@basic\n" not in output
+    assert ":: example:git@basic" not in output
     assert "git:gitconfig -> add" not in output
-    assert "example:nvim@basic\n" not in output
+    assert ":: example:nvim@basic" in output
     assert "nvim:init_lua -> create" in output
 
 def test_push_cli_enters_diff_review_menu_after_selection(
@@ -247,9 +438,10 @@ def test_push_cli_enters_diff_review_menu_after_selection(
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
     recorded: dict[str, object] = {}
 
-    def fake_run_diff_review_menu(review_items, *, operation: str) -> bool:
+    def fake_run_diff_review_menu(review_items, *, operation: str, full_paths: bool = False) -> bool:
         recorded["operation"] = operation
         recorded["item_count"] = len(review_items)
+        recorded["full_paths"] = full_paths
         return True
 
     monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
@@ -284,6 +476,7 @@ def test_push_cli_enters_diff_review_menu_after_selection(
     assert recorded == {
         "operation": "push",
         "item_count": 1,
+        "full_paths": False,
     }
 
 def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
@@ -297,10 +490,11 @@ def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
     recorded: dict[str, object] = {}
 
-    def fake_run_diff_review_menu(review_items, *, operation: str) -> bool:
+    def fake_run_diff_review_menu(review_items, *, operation: str, full_paths: bool = False) -> bool:
         recorded["operation"] = operation
         recorded["item_count"] = len(review_items)
         recorded["first_action"] = review_items[0].action
+        recorded["full_paths"] = full_paths
         return True
 
     monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
@@ -336,6 +530,7 @@ def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
         "operation": "push",
         "item_count": 1,
         "first_action": "create",
+        "full_paths": False,
     }
 
 def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
@@ -388,10 +583,11 @@ def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select items to exclude from push:" in output
-    assert "example:git@basic\n" not in output
-    assert "example:nvim@basic\n" not in output
+    assert ":: example:git@basic" not in output
+    assert ":: example:nvim@basic" not in output
     assert "git:gitconfig -> create" not in output
     assert "nvim:init_lua -> noop" not in output
+    assert "no pending target actions" in output
 
 def test_push_cli_skips_diff_review_for_json_output(
     tmp_path: Path,

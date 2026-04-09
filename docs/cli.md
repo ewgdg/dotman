@@ -97,6 +97,9 @@ This document captures the current command and selector direction for `dotman`.
 
 - `push` is the repo-to-live command.
 - `push` should operate only on tracked state.
+- `push` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
+- In v1, dry-run is the only supported `push` execution mode, so omitting the flag should still behave as dry-run.
+- `push` should accept `--full-path` to disable human-output path compaction for preview, selection, and review menus.
 - `push <selector>` should resolve only within tracked state and reuse the tracked profile instead of prompting for a fresh profile.
 - `push <package>` should also work when that package is currently included through a tracked higher-level binding; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
@@ -118,6 +121,9 @@ This document captures the current command and selector direction for `dotman`.
 - If the requested selector is not currently tracked, `push` should fail instead of implicitly creating or retargeting state. The user should use `track` for that.
 - Group composition should let a user keep a stable entrypoint such as `host/arch-niri` without manually listing every lower-level group.
 - Examples:
+  - `dotman push --dry-run git`
+  - `dotman push -d`
+  - `dotman push --full-path git`
   - `dotman push git`
   - `dotman push`
 
@@ -125,6 +131,9 @@ This document captures the current command and selector direction for `dotman`.
 
 - `pull` is the live-to-repo command for already modeled targets.
 - `pull` should operate only on tracked state.
+- `pull` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
+- In v1, dry-run is the only supported `pull` execution mode, so omitting the flag should still behave as dry-run.
+- `pull` should accept `--full-path` to disable human-output path compaction for preview, selection, and review menus.
 - `pull <binding>` should resolve against tracked bindings and reuse the tracked profile/local context instead of prompting for a fresh profile choice.
 - `pull <package>` should also work when that package is currently included through a tracked higher-level binding; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
@@ -162,6 +171,9 @@ This document captures the current command and selector direction for `dotman`.
 - If a transformed target has no `reconcile`, dotman may still pull by writing repo-side content from `capture`, but `reconcile` is preferred when manual or custom merge logic is needed.
 - `pull` should only touch sources owned by the current managed selection.
 - Examples:
+  - `dotman pull --dry-run main:git@default`
+  - `dotman pull -d`
+  - `dotman pull --full-path main:git@default`
   - `dotman pull main:git@default`
   - `dotman pull`
 

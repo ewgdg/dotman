@@ -269,8 +269,11 @@ def _write_review_file(*, root: Path, side: str, reference_path: Path, content: 
     return output_path
 
 
-def display_review_path(reference_path: Path | str) -> str:
-    return str(_review_display_path(Path(reference_path)))
+def display_review_path(reference_path: Path | str, *, compact: bool = True) -> str:
+    path = Path(reference_path)
+    if not compact:
+        return str(path)
+    return str(_review_display_path(path))
 
 
 def _review_display_path(reference_path: Path) -> Path:

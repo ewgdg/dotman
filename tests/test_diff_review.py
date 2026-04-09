@@ -10,6 +10,7 @@ from dotman.diff_review import (
     _review_display_path,
     _select_review_pager_command,
     build_review_items,
+    display_review_path,
     edit_status,
     run_review_item_diff,
     run_review_item_edit,
@@ -184,6 +185,12 @@ def test_review_display_path_keeps_absolute_path_without_root_prefix() -> None:
 
 def test_review_display_path_compacts_long_absolute_path() -> None:
     assert _review_display_path(Path("/etc/xdg/nvim/init.lua")) == Path("etc/.../nvim/init.lua")
+
+
+def test_display_review_path_can_disable_compaction_and_home_collapse() -> None:
+    full_path = Path.home() / ".config" / "nvim" / "init.lua"
+
+    assert display_review_path(full_path, compact=False) == str(full_path)
 
 
 def test_select_review_pager_command_prefers_less_when_pager_env_is_cat(monkeypatch) -> None:

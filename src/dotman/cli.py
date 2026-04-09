@@ -18,7 +18,7 @@ from dotman.diff_review import (
     run_review_item_diff,
 )
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text, parse_package_ref_text
-from dotman.models import Binding, filter_hook_plans_for_targets, package_ref_text
+from dotman.models import Binding, HookPlan, filter_hook_plans_for_targets, package_ref_text
 from dotman.reconcile import run_basic_reconcile
 from dotman.resolver import (
     ResolverOption,
@@ -61,6 +61,15 @@ class PendingSelectionItem:
     action: str
     source_path: str
     destination_path: str
+
+
+@dataclass
+class PayloadPackageSection:
+    repo_name: str
+    package_id: str
+    profile: str
+    hooks: dict[str, list[HookPlan]]
+    targets: list[PendingSelectionItem]
 
 
 def prompt(message: str) -> str:
@@ -152,6 +161,21 @@ def render_package_label(
 
 def render_package_target_label(*, repo_name: str, package_id: str, target_name: str) -> str:
     return render_package_label(repo_name=repo_name, package_id=package_id, target_name=target_name)
+
+
+def package_profile_label_text(*, repo_name: str, package_id: str, profile: str) -> str:
+    return f"{repo_qualified_selector_text(repo_name=repo_name, selector=package_id)}@{profile}"
+
+
+def render_package_profile_label(*, repo_name: str, package_id: str, profile: str) -> str:
+    if not colors_enabled():
+        return package_profile_label_text(repo_name=repo_name, package_id=package_id, profile=profile)
+    return (
+        f"{style_text(repo_name, *MENU_REPO_STYLE)}"
+        f"{style_text(':', *MENU_HINT_STYLE)}"
+        f"{style_text(package_id, '1')}"
+        f"{style_text(f'@{profile}', *MENU_HINT_STYLE)}"
+    )
 
 
 def binding_label_text(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
@@ -1047,15 +1071,15 @@ def collect_pending_selection_items_for_operation(plans: Sequence, *, operation:
     return selection_items
 
 
-def print_pending_selection_item(index: int, item: PendingSelectionItem) -> None:
+def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full_paths: bool = False) -> None:
     repo_name = repo_name_from_binding_label(item.binding_label)
     package_target = package_label_text(
         repo_name=repo_name,
         package_id=item.package_id,
         target_name=item.target_name,
     )
-    source_path = display_review_path(item.source_path)
-    destination_path = display_review_path(item.destination_path)
+    source_path = display_cli_path(item.source_path, full_paths=full_paths)
+    destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
     if not colors_enabled():
         item_text = (
             f"[{item.action}] {package_target}: "
@@ -1078,10 +1102,15 @@ def print_pending_selection_item(index: int, item: PendingSelectionItem) -> None
     )
 
 
-def prompt_for_excluded_items(selection_items: Sequence[PendingSelectionItem], *, operation: str) -> set[int]:
+def prompt_for_excluded_items(
+    selection_items: Sequence[PendingSelectionItem],
+    *,
+    operation: str,
+    full_paths: bool = False,
+) -> set[int]:
     print_selection_header(f"Select items to exclude from {operation}:")
     for index, item in enumerate(selection_items, start=1):
-        print_pending_selection_item(index, item)
+        print_pending_selection_item(index, item, full_paths=full_paths)
     while True:
         try:
             answer = prompt(pending_selection_prompt())
@@ -1093,13 +1122,23 @@ def prompt_for_excluded_items(selection_items: Sequence[PendingSelectionItem], *
             print(f"invalid selection: {exc}", file=sys.stderr)
 
 
-def filter_plans_for_interactive_selection(*, plans: Sequence, operation: str, json_output: bool) -> list:
+def filter_plans_for_interactive_selection(
+    *,
+    plans: Sequence,
+    operation: str,
+    json_output: bool,
+    full_paths: bool = False,
+) -> list:
     if not interactive_mode_enabled(json_output=json_output):
         return list(plans)
     selection_items = collect_pending_selection_items_for_operation(plans, operation=operation)
     if not selection_items:
         return list(plans)
-    excluded_indexes = prompt_for_excluded_items(selection_items, operation=operation)
+    excluded_indexes = prompt_for_excluded_items(
+        selection_items,
+        operation=operation,
+        full_paths=full_paths,
+    )
     if not excluded_indexes:
         return list(plans)
 
@@ -1159,7 +1198,7 @@ def filter_plans_for_interactive_selection(*, plans: Sequence, operation: str, j
     return filtered_plans
 
 
-def print_review_item(index: int, item: ReviewItem) -> None:
+def print_review_item(index: int, item: ReviewItem, *, full_paths: bool = False) -> None:
     repo_name = repo_name_from_binding_label(item.binding_label)
     package_target = package_label_text(
         repo_name=repo_name,
@@ -1167,8 +1206,8 @@ def print_review_item(index: int, item: ReviewItem) -> None:
         target_name=item.target_name,
     )
     diff_text = review_diff_status(item)
-    source_path = display_review_path(item.source_path)
-    destination_path = display_review_path(item.destination_path)
+    source_path = display_cli_path(item.source_path, full_paths=full_paths)
+    destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
     if not colors_enabled():
         item_text = (
             f"[{item.action}] {package_target} "
@@ -1245,10 +1284,15 @@ def print_review_diff_footer(*, index: int, total: int) -> None:
     )
 
 
-def run_diff_review_menu(review_items: Sequence[ReviewItem], *, operation: str) -> bool:
+def run_diff_review_menu(
+    review_items: Sequence[ReviewItem],
+    *,
+    operation: str,
+    full_paths: bool = False,
+) -> bool:
     print_selection_header(f"Review pending diffs for {operation}:")
     for index, item in enumerate(review_items, start=1):
-        print_review_item(index, item)
+        print_review_item(index, item, full_paths=full_paths)
     while True:
         try:
             command_name, selected_index = parse_review_command(prompt(review_menu_prompt()), len(review_items))
@@ -1290,13 +1334,19 @@ def run_diff_review_menu(review_items: Sequence[ReviewItem], *, operation: str) 
     return True
 
 
-def review_plans_for_interactive_diffs(*, plans: Sequence, operation: str, json_output: bool) -> bool:
+def review_plans_for_interactive_diffs(
+    *,
+    plans: Sequence,
+    operation: str,
+    json_output: bool,
+    full_paths: bool = False,
+) -> bool:
     if not interactive_mode_enabled(json_output=json_output):
         return True
     review_items = build_review_items(plans, operation=operation)
     if not review_items:
         return True
-    return run_diff_review_menu(review_items, operation=operation)
+    return run_diff_review_menu(review_items, operation=operation, full_paths=full_paths)
 
 
 def emit_interrupt_notice() -> None:
@@ -1317,6 +1367,24 @@ def add_package_argument(parser: argparse.ArgumentParser) -> None:
         "package",
         metavar="<package>",
         help="Tracked package argument in the form <repo>:<package> or <package>",
+    )
+
+
+def add_dry_run_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-d",
+        "--dry-run",
+        action="store_true",
+        help="Preview only; currently the only supported execution mode",
+    )
+
+
+def add_full_path_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--full-path",
+        action="store_true",
+        dest="full_path",
+        help="Show unabridged absolute paths in human-readable push/pull output",
     )
 
 
@@ -1346,6 +1414,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Push tracked changes from repo to live paths",
         description="Push tracked changes from repo to live paths",
     )
+    add_dry_run_argument(push_parser)
+    add_full_path_argument(push_parser)
     add_binding_argument(push_parser, required=False)
 
     pull_parser = subparsers.add_parser(
@@ -1353,6 +1423,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pull live changes back into the repo",
         description="Pull live changes back into the repo",
     )
+    add_dry_run_argument(pull_parser)
+    add_full_path_argument(pull_parser)
     add_binding_argument(pull_parser, required=False)
 
     untrack_parser = subparsers.add_parser(
@@ -1463,7 +1535,111 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def emit_payload(*, operation: str, plans: Sequence, json_output: bool) -> int:
+def effective_execution_mode(*, dry_run_requested: bool) -> str:
+    # Push and pull only have preview behavior today. Keep the explicit flag now so
+    # the UX can settle before real execution mode is implemented.
+    return "dry-run"
+
+
+def count_hook_commands(plans: Sequence) -> int:
+    return sum(len(hook_plans) for plan in plans for hook_plans in plan.hooks.values())
+
+
+def render_summary_stat(*, label: str, value: int) -> str:
+    if not colors_enabled():
+        return f"{label}: {value}"
+    return f"{style_text(f'{label}:', *MENU_HINT_STYLE)} {style_text(str(value), '1')}"
+
+
+def display_cli_path(reference_path: Path | str, *, full_paths: bool) -> str:
+    return display_review_path(reference_path, compact=not full_paths)
+
+
+def render_payload_section_label(label: str) -> str:
+    if not colors_enabled():
+        return label
+    return style_text(label, *MENU_HINT_STYLE)
+
+
+def print_payload_header(header_text: str) -> None:
+    print()
+    if not colors_enabled():
+        print(f"{MENU_HEADER_MARKER} {header_text}")
+        return
+    print(
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(header_text, '1')}"
+    )
+
+
+def print_payload_package_header(*, repo_name: str, package_id: str, profile: str) -> None:
+    if not colors_enabled():
+        print(f"  {MENU_HEADER_MARKER} {package_profile_label_text(repo_name=repo_name, package_id=package_id, profile=profile)}")
+        return
+    print(
+        f"  {style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{render_package_profile_label(repo_name=repo_name, package_id=package_id, profile=profile)}"
+    )
+
+
+def render_payload_hook_label(hook_name: str) -> str:
+    hook_label = f"[{hook_name}]"
+    if not colors_enabled():
+        return hook_label
+    return style_text(hook_label, *MENU_HINT_STYLE)
+
+
+def render_payload_action(action: str) -> str:
+    if not colors_enabled():
+        return action
+    return style_text(action, *MENU_ACTION_STYLE_BY_NAME.get(action, ("1",)))
+
+
+def print_payload_target_item(item: PendingSelectionItem, *, full_paths: bool = False) -> None:
+    source_path = display_cli_path(item.source_path, full_paths=full_paths)
+    destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
+    arrow_text = style_text("->", *MENU_HINT_STYLE) if colors_enabled() else "->"
+    print(f"      {item.package_id}:{item.target_name} -> {render_payload_action(item.action)}")
+    print(f"        {source_path} {arrow_text} {destination_path}")
+
+
+def collect_payload_package_sections(plans: Sequence, *, operation: str) -> list[PayloadPackageSection]:
+    package_sections: dict[tuple[str, str, str], PayloadPackageSection] = {}
+
+    for plan in plans:
+        targets_by_package: dict[str, list[PendingSelectionItem]] = {}
+        for item in collect_pending_selection_items_for_operation([plan], operation=operation):
+            targets_by_package.setdefault(item.package_id, []).append(item)
+
+        hooks_by_package: dict[str, dict[str, list[HookPlan]]] = {}
+        for hook_name, hook_plans in plan.hooks.items():
+            for hook_plan in hook_plans:
+                hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
+
+        for package_id in plan.package_ids:
+            package_targets = targets_by_package.get(package_id, [])
+            package_hooks = hooks_by_package.get(package_id, {})
+            if not package_targets and not package_hooks:
+                continue
+            section_key = (plan.binding.repo, package_id, plan.binding.profile)
+            section = package_sections.get(section_key)
+            if section is None:
+                section = PayloadPackageSection(
+                    repo_name=plan.binding.repo,
+                    package_id=package_id,
+                    profile=plan.binding.profile,
+                    hooks={},
+                    targets=[],
+                )
+                package_sections[section_key] = section
+            for hook_name, hook_plans in package_hooks.items():
+                section.hooks.setdefault(hook_name, []).extend(hook_plans)
+            section.targets.extend(package_targets)
+
+    return list(package_sections.values())
+
+
+def emit_payload(*, operation: str, plans: Sequence, json_output: bool, mode: str, full_paths: bool = False) -> int:
     visible_plans = []
     for plan in plans:
         visible_targets = [target for target in plan.target_plans if target.action != "noop"]
@@ -1471,7 +1647,7 @@ def emit_payload(*, operation: str, plans: Sequence, json_output: bool) -> int:
             continue
         visible_plans.append(replace(plan, target_plans=visible_targets))
     payload = {
-        "mode": "dry-run",
+        "mode": mode,
         "operation": operation,
         "bindings": [plan.to_dict() for plan in visible_plans],
     }
@@ -1479,9 +1655,49 @@ def emit_payload(*, operation: str, plans: Sequence, json_output: bool) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    for plan in visible_plans:
-        for target in plan.target_plans:
-            print(f"{target.package_id}:{target.target_name} -> {target.action}")
+    package_sections = collect_payload_package_sections(visible_plans, operation=operation)
+    target_items = [item for section in package_sections for item in section.targets]
+    print_payload_header(f"{mode} {operation}")
+    print(f"  {render_payload_section_label('preview only; no files or hooks will be changed')}")
+    print(
+        "  "
+        + " · ".join(
+            [
+                render_summary_stat(label="packages", value=len(package_sections)),
+                render_summary_stat(label="target actions", value=len(target_items)),
+                render_summary_stat(label="hook commands", value=count_hook_commands(visible_plans)),
+            ]
+        )
+    )
+
+    if not package_sections:
+        print()
+        print(f"  {render_payload_section_label('no pending target actions')}")
+        return 0
+
+    for section in package_sections:
+        print()
+        print_payload_package_header(
+            repo_name=section.repo_name,
+            package_id=section.package_id,
+            profile=section.profile,
+        )
+
+        print(f"    {render_payload_section_label('targets:')}")
+        for item in section.targets:
+            print_payload_target_item(item, full_paths=full_paths)
+
+        if section.hooks:
+            print(f"    {render_payload_section_label('hooks:')}")
+            for hook_name, hook_plans in section.hooks.items():
+                print(f"      {render_payload_hook_label(hook_name)}")
+                for index, hook_plan in enumerate(hook_plans, start=1):
+                    for line in render_hook_command_lines(
+                        hook_plan.command,
+                        command_count=len(hook_plans),
+                        index=index,
+                    ):
+                        print(f"  {line}")
     return 0
 
 
@@ -1755,25 +1971,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                     plans=[plan],
                     operation="push",
                     json_output=args.json_output,
+                    full_paths=args.full_path,
                 )
                 if not review_plans_for_interactive_diffs(
                     plans=filtered_plans,
                     operation="push",
                     json_output=args.json_output,
+                    full_paths=args.full_path,
                 ):
                     emit_interrupt_notice()
                     return INTERRUPTED_EXIT_CODE
                 plan = filtered_plans[0]
-                return emit_payload(operation="push", plans=[plan], json_output=args.json_output)
+                return emit_payload(
+                    operation="push",
+                    plans=[plan],
+                    json_output=args.json_output,
+                    mode=effective_execution_mode(dry_run_requested=args.dry_run),
+                    full_paths=args.full_path,
+                )
             plans = filter_plans_for_interactive_selection(
                 plans=engine.plan_push(),
                 operation="push",
                 json_output=args.json_output,
+                full_paths=args.full_path,
             )
             if not review_plans_for_interactive_diffs(
                 plans=plans,
                 operation="push",
                 json_output=args.json_output,
+                full_paths=args.full_path,
             ):
                 emit_interrupt_notice()
                 return INTERRUPTED_EXIT_CODE
@@ -1781,6 +2007,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 operation="push",
                 plans=plans,
                 json_output=args.json_output,
+                mode=effective_execution_mode(dry_run_requested=args.dry_run),
+                full_paths=args.full_path,
             )
         if args.command == "pull":
             if args.binding:
@@ -1797,11 +2025,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     plans=[engine.plan_pull_binding(binding_text, profile=profile)],
                     operation="pull",
                     json_output=args.json_output,
+                    full_paths=args.full_path,
                 )
                 if not review_plans_for_interactive_diffs(
                     plans=plans,
                     operation="pull",
                     json_output=args.json_output,
+                    full_paths=args.full_path,
                 ):
                     emit_interrupt_notice()
                     return INTERRUPTED_EXIT_CODE
@@ -1809,16 +2039,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                     operation="pull",
                     plans=plans,
                     json_output=args.json_output,
+                    mode=effective_execution_mode(dry_run_requested=args.dry_run),
+                    full_paths=args.full_path,
                 )
             plans = filter_plans_for_interactive_selection(
                 plans=engine.plan_pull(),
                 operation="pull",
                 json_output=args.json_output,
+                full_paths=args.full_path,
             )
             if not review_plans_for_interactive_diffs(
                 plans=plans,
                 operation="pull",
                 json_output=args.json_output,
+                full_paths=args.full_path,
             ):
                 emit_interrupt_notice()
                 return INTERRUPTED_EXIT_CODE
@@ -1826,6 +2060,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 operation="pull",
                 plans=plans,
                 json_output=args.json_output,
+                mode=effective_execution_mode(dry_run_requested=args.dry_run),
+                full_paths=args.full_path,
             )
         if args.command in {"untrack", "forget"}:
             _repo, binding = resolve_tracked_binding_text(

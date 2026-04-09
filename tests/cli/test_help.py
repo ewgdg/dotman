@@ -30,10 +30,19 @@ def test_track_help_uses_explicit_binding_placeholder(capsys) -> None:
     assert "positional arguments:" in output
     assert "<binding>" in output
 
-def test_push_help_marks_binding_as_optional_argument(capsys) -> None:
+def test_push_help_lists_dry_run_and_full_path_flags(capsys) -> None:
     output = capture_parser_help(capsys, "push")
-    assert "usage: dotman push [-h] [<binding>]" in output
+    assert "usage: dotman push [-h] [-d] [--full-path] [<binding>]" in output
     assert "[<binding>]" in output
+    assert "-d, --dry-run" in output
+    assert "--full-path" in output
+
+
+def test_pull_help_lists_dry_run_and_full_path_flags(capsys) -> None:
+    output = capture_parser_help(capsys, "pull")
+    assert "usage: dotman pull [-h] [-d] [--full-path] [<binding>]" in output
+    assert "-d, --dry-run" in output
+    assert "--full-path" in output
 
 def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     output = capture_parser_help(capsys)
@@ -112,6 +121,30 @@ def test_prompt_for_excluded_items_shows_help_then_returns_selection(monkeypatch
     assert "  ^<selection>   keep only the selected items" in output
     assert "Enter" not in output
 
+def test_prompt_for_excluded_items_uses_full_paths_when_requested(monkeypatch, capsys) -> None:
+    prompts = iter([""])
+    items = [
+        cli.PendingSelectionItem(
+            binding_label="example:git@basic",
+            package_id="git",
+            target_name="gitconfig",
+            action="update",
+            source_path="/repo/very/long/path/gitconfig",
+            destination_path="/live/very/long/path/gitconfig",
+        )
+    ]
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    excluded = cli.prompt_for_excluded_items(items, operation="push", full_paths=True)
+
+    output = capsys.readouterr().out
+    assert excluded == set()
+    assert "/repo/very/long/path/gitconfig -> /live/very/long/path/gitconfig" in output
+    assert "repo/.../path/gitconfig" not in output
+
+
 def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> None:
     review_item = cli.ReviewItem(
         binding_label="example:git@basic",
@@ -137,6 +170,32 @@ def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> 
     assert "Review commands:" in output
     assert "  a          inspect all diffs" in output
     assert '  "?"        show this help' in output
+
+
+def test_run_diff_review_menu_uses_full_paths_when_requested(monkeypatch, capsys) -> None:
+    review_item = cli.ReviewItem(
+        binding_label="example:git@basic",
+        package_id="git",
+        target_name="gitconfig",
+        action="update",
+        operation="push",
+        repo_path=Path("/repo/very/long/path/gitconfig"),
+        live_path=Path("/live/very/long/path/gitconfig"),
+        source_path="/repo/very/long/path/gitconfig",
+        destination_path="/live/very/long/path/gitconfig",
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+    prompts = iter(["c"])
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.run_diff_review_menu([review_item], operation="push", full_paths=True) is True
+
+    output = capsys.readouterr().out
+    assert "/repo/very/long/path/gitconfig -> /live/very/long/path/gitconfig" in output
+    assert "repo/.../path/gitconfig" not in output
 
 @pytest.mark.parametrize("command", ["apply", "upgrade", "import", "remove"])
 def test_legacy_top_level_cli_commands_are_not_available(command: str) -> None:
