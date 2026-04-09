@@ -133,6 +133,7 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
     assert package["owned_targets"] == [
         {
             "capture_command": None,
+            "chmod": "600",
             "live_path": str(home / ".gitconfig"),
             "profile": "basic",
             "pull_ignore": [],
@@ -140,6 +141,7 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
             "pull_view_repo": "raw",
             "push_ignore": [],
             "reconcile_command": None,
+            "reconcile_io": None,
             "render_command": None,
             "repo": "example",
             "repo_path": str(EXAMPLE_REPO / "packages" / "git" / "files" / "gitconfig"),
@@ -210,11 +212,11 @@ def test_info_tracked_cli_emits_readable_text_output(
             "    explicit: example:git@basic",
             "",
             "  :: hooks",
-            "    [check]",
+            "    [guard_push]",
             "      command -v git >/dev/null 2>&1",
             "    [pre_push]",
-            "      [1] brew install git",
-            '      [2] "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"',
+            "      [1] printf 'install %s\\n' git",
+            '      [2] sh "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"',
             "    [post_push]",
             "      sh hooks/post-push.sh",
             "",
@@ -270,7 +272,7 @@ def test_info_tracked_cli_emits_hooks_even_when_package_targets_are_noop(
     output = capsys.readouterr().out
     assert "  :: hooks" in output
     assert "    [pre_push]" in output
-    assert "      [1] brew install git" in output
+    assert "      [1] printf 'install %s\\n' git" in output
     assert "  :: owned targets" in output
 
 def test_info_tracked_cli_requires_specific_multi_instance_package_identity_in_non_interactive_mode(

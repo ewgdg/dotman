@@ -61,6 +61,7 @@ def test_pull_cli_accepts_explicit_binding_and_does_not_write_state(
             str(config_path),
             "--json",
             "pull",
+            "--dry-run",
             "example:nvim@basic",
         ]
     )
@@ -127,6 +128,7 @@ def test_pull_cli_returns_130_when_diff_review_aborts(
             "--config",
             str(write_manager_config(tmp_path)),
             "pull",
+            "--dry-run",
         ]
     )
 
@@ -217,6 +219,7 @@ def test_pull_cli_emits_dry_run_json(
             str(write_manager_config(tmp_path)),
             "--json",
             "pull",
+            "--dry-run",
             "example:nvim@basic",
         ]
     )
@@ -264,6 +267,7 @@ def test_pull_cli_human_dry_run_output_includes_header_and_context(
             "--config",
             str(write_manager_config(tmp_path)),
             "pull",
+            "--dry-run",
             "example:nvim@basic",
         ]
     )
@@ -312,6 +316,7 @@ def test_pull_cli_uses_tracked_binding_profile_without_prompting(
             str(config_path),
             "--json",
             "pull",
+            "--dry-run",
             "git",
         ]
     )
@@ -356,6 +361,7 @@ def test_pull_cli_allows_package_selected_through_tracked_owner_binding(
             str(config_path),
             "--json",
             "pull",
+            "--dry-run",
             "nvim@basic",
         ]
     )

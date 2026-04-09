@@ -38,6 +38,22 @@ from dotman.profiles import compute_profile_heights, rank_profiles
 from dotman.templates import build_template_context, render_template_file, render_template_string
 
 
+VALID_HOOK_NAMES = (
+    "guard_push",
+    "pre_push",
+    "post_push",
+    "guard_pull",
+    "pre_pull",
+    "post_pull",
+)
+VALID_RECONCILE_IO_VALUES = ("pipe", "tty")
+HOOK_NAMES_BY_OPERATION = {
+    "push": ("guard_push", "pre_push", "post_push"),
+    "pull": ("guard_pull", "pre_pull", "post_pull"),
+    "upgrade": ("guard_push", "pre_push", "post_push"),
+}
+
+
 class TrackedTargetConflictError(ValueError):
     def __init__(
         self,
@@ -153,6 +169,17 @@ def normalize_string_list(value: Any) -> tuple[str, ...] | None:
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return tuple(value)
     raise ValueError(f"expected string or list[str], got {type(value).__name__}")
+
+
+def normalize_optional_string_enum(value: Any, *, key: str, allowed: tuple[str, ...]) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"expected string for '{key}', got {type(value).__name__}")
+    if value not in allowed:
+        allowed_text = ", ".join(allowed)
+        raise ValueError(f"unsupported {key} '{value}'; expected one of: {allowed_text}")
+    return value
 
 
 def read_schema_alias(payload: dict[str, Any], primary_key: str, legacy_key: str) -> Any:
@@ -277,6 +304,11 @@ class Repository:
                         render=target_payload.get("render"),
                         capture=target_payload.get("capture"),
                         reconcile=target_payload.get("reconcile"),
+                        reconcile_io=normalize_optional_string_enum(
+                            target_payload.get("reconcile_io"),
+                            key="reconcile_io",
+                            allowed=VALID_RECONCILE_IO_VALUES,
+                        ),
                         pull_view_repo=read_schema_alias(target_payload, "pull_view_repo", "import_view_repo"),
                         pull_view_live=read_schema_alias(target_payload, "pull_view_live", "import_view_live"),
                         push_ignore=normalize_string_list(read_schema_alias(target_payload, "push_ignore", "apply_ignore")),
@@ -288,8 +320,15 @@ class Repository:
                 if isinstance(targets_payload, dict)
                 else None
             )
-            hooks = (
-                {
+            hooks = None
+            if isinstance(hooks_payload, dict):
+                unknown_hook_names = [hook_name for hook_name in hooks_payload if hook_name not in VALID_HOOK_NAMES]
+                if unknown_hook_names:
+                    unknown_text = ", ".join(sorted(unknown_hook_names))
+                    raise ValueError(
+                        f"package manifest {manifest_path} uses unsupported hook names: {unknown_text}"
+                    )
+                hooks = {
                     hook_name: HookSpec(
                         name=hook_name,
                         commands=normalize_string_list(hook_value) or (),
@@ -297,9 +336,6 @@ class Repository:
                     )
                     for hook_name, hook_value in hooks_payload.items()
                 }
-                if isinstance(hooks_payload, dict)
-                else None
-            )
             packages[package_id] = PackageSpec(
                 id=package_id,
                 package_root=manifest_path.parent,
@@ -437,6 +473,7 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         render=override.render if override.render is not None else base.render,
         capture=override.capture if override.capture is not None else base.capture,
         reconcile=override.reconcile if override.reconcile is not None else base.reconcile,
+        reconcile_io=override.reconcile_io if override.reconcile_io is not None else base.reconcile_io,
         pull_view_repo=override.pull_view_repo if override.pull_view_repo is not None else base.pull_view_repo,
         pull_view_live=override.pull_view_live if override.pull_view_live is not None else base.pull_view_live,
         push_ignore=override.push_ignore if override.push_ignore is not None else base.push_ignore,
@@ -1054,10 +1091,12 @@ class DotmanEngine:
                     render_command=render_command,
                     capture_command=capture_command,
                     reconcile_command=reconcile_command,
+                    reconcile_io=target.reconcile_io,
                     pull_view_repo=target.pull_view_repo or "raw",
                     pull_view_live=target.pull_view_live or ("capture" if capture_command else "raw"),
                     push_ignore=merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ()),
                     pull_ignore=merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ()),
+                    chmod=target.chmod,
                 )
             )
         return target_summaries
@@ -1071,10 +1110,12 @@ class DotmanEngine:
             render_command=target.render_command,
             capture_command=target.capture_command,
             reconcile_command=target.reconcile_command,
+            reconcile_io=target.reconcile_io,
             pull_view_repo=target.pull_view_repo,
             pull_view_live=target.pull_view_live,
             push_ignore=target.push_ignore,
             pull_ignore=target.pull_ignore,
+            chmod=target.chmod,
         )
 
     def _describe_owned_package_targets(
@@ -1142,7 +1183,7 @@ class DotmanEngine:
         variables = deep_merge(deep_merge(package_vars, profile_vars), repo.local_vars)
         inferred_os = infer_profile_os(binding.profile, lineage, variables)
         context = build_template_context(variables, profile=binding.profile, inferred_os=inferred_os)
-        hooks = self._plan_hooks(repo, resolved_packages, context)
+        hooks = self._plan_hooks(repo, resolved_packages, context, operation=operation)
         target_plans = self._plan_targets(
             repo=repo,
             packages=resolved_packages,
@@ -1160,6 +1201,9 @@ class DotmanEngine:
             variables=variables,
             hooks=hooks,
             target_plans=target_plans,
+            repo_root=repo.root,
+            state_path=repo.config.state_path,
+            inferred_os=inferred_os,
         )
 
     def _build_tracked_plans(
@@ -1386,10 +1430,16 @@ class DotmanEngine:
         repo: Repository,
         packages: list[PackageSpec],
         context: dict[str, Any],
+        operation: str | None = None,
     ) -> dict[str, list[HookPlan]]:
+        hook_names = HOOK_NAMES_BY_OPERATION.get(operation, VALID_HOOK_NAMES)
         hooks: dict[str, list[HookPlan]] = defaultdict(list)
         for package in packages:
-            for hook_name, hook_spec in (package.hooks or {}).items():
+            package_hooks = package.hooks or {}
+            for hook_name in hook_names:
+                hook_spec = package_hooks.get(hook_name)
+                if hook_spec is None:
+                    continue
                 for command in hook_spec.commands:
                     hooks[hook_name].append(
                         HookPlan(
@@ -1484,10 +1534,12 @@ class DotmanEngine:
                         render_command=render_command,
                         capture_command=capture_command,
                         reconcile_command=reconcile_command,
+                        reconcile_io=target.reconcile_io,
                         pull_view_repo=target.pull_view_repo or "raw",
                         pull_view_live=target.pull_view_live or ("capture" if capture_command else "raw"),
                         push_ignore=push_ignore,
                         pull_ignore=pull_ignore,
+                        chmod=target.chmod,
                         command_cwd=target.declared_in,
                         command_env=command_env,
                         directory_items=directory_items,
@@ -1570,11 +1622,13 @@ class DotmanEngine:
                     render_command=render_command,
                     capture_command=capture_command,
                     reconcile_command=reconcile_command,
+                    reconcile_io=target.reconcile_io,
                     projection_error=projection_error,
                     pull_view_repo=pull_view_repo,
                     pull_view_live=pull_view_live,
                     push_ignore=push_ignore,
                     pull_ignore=pull_ignore,
+                    chmod=target.chmod,
                     command_cwd=target.declared_in,
                     command_env=command_env,
                     desired_bytes=desired_bytes,

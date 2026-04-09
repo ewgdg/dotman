@@ -54,12 +54,11 @@ def test_tracked_push_plan_drops_hooks_for_packages_without_winning_targets(
 
     os_arch_plan = plans_by_selector["os/arch"]
     assert {target.package_id for target in os_arch_plan.target_plans} == {"nvim"}
-    assert set(os_arch_plan.hooks) == {"check"}
-    assert {hook.package_id for hook in os_arch_plan.hooks["check"]} == {"nvim"}
+    assert os_arch_plan.hooks == {}
 
     work_git_plan = plans_by_selector["work/git"]
     assert {target.package_id for target in work_git_plan.target_plans} == {"work/git"}
-    assert set(work_git_plan.hooks) == {"check", "pre_push", "post_push"}
+    assert set(work_git_plan.hooks) == {"guard_push", "pre_push", "post_push"}
     assert {hook.package_id for hook in work_git_plan.hooks["pre_push"]} == {"work/git"}
 
 def test_group_selected_package_is_marked_explicit_in_tracked_detail(
@@ -131,7 +130,7 @@ def test_info_tracked_drops_hooks_for_non_effective_provenance_binding(
 
     assert [binding.binding.selector for binding in package_detail.bindings] == ["core-cli-meta", "git"]
     assert package_detail.bindings[0].hooks == {}
-    assert set(package_detail.bindings[1].hooks) == {"check", "pre_push", "post_push"}
+    assert set(package_detail.bindings[1].hooks) == {"guard_push", "pre_push", "post_push"}
 
 def test_upgrade_uses_persisted_bindings_without_writing_new_state(
     tmp_path: Path,

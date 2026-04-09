@@ -18,6 +18,7 @@ from dotman.diff_review import (
     run_review_item_diff,
 )
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text, parse_package_ref_text
+from dotman.execution import ExecutionSession, ExecutionStep, ExecutionStepResult, PackageExecutionResult, build_execution_session, execute_session
 from dotman.models import Binding, HookPlan, filter_hook_plans_for_targets, package_ref_text
 from dotman.reconcile import run_basic_reconcile
 from dotman.resolver import (
@@ -1375,7 +1376,7 @@ def add_dry_run_argument(parser: argparse.ArgumentParser) -> None:
         "-d",
         "--dry-run",
         action="store_true",
-        help="Preview only; currently the only supported execution mode",
+        help="Preview only; skip execution after planning and diff review",
     )
 
 
@@ -1536,9 +1537,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def effective_execution_mode(*, dry_run_requested: bool) -> str:
-    # Push and pull only have preview behavior today. Keep the explicit flag now so
-    # the UX can settle before real execution mode is implemented.
-    return "dry-run"
+    return "dry-run" if dry_run_requested else "execute"
 
 
 def count_hook_commands(plans: Sequence) -> int:
@@ -1699,6 +1698,134 @@ def emit_payload(*, operation: str, plans: Sequence, json_output: bool, mode: st
                     ):
                         print(f"  {line}")
     return 0
+
+
+def execution_step_display(step: ExecutionStep, *, full_paths: bool) -> str:
+    if step.hook_plan is not None:
+        return step.hook_plan.command
+    target = step.target_plan
+    if target is None:
+        return ""
+    if step.kind == "chmod":
+        reference_path = target.live_path if step.binding_plan.operation == "push" else target.repo_path
+        chmod_mode = target.chmod or "?"
+        return f"{chmod_mode} {display_cli_path(reference_path, full_paths=full_paths)}"
+    if step.action == "reconcile":
+        return display_cli_path(target.live_path, full_paths=full_paths)
+    if step.directory_item is not None:
+        reference_path = (
+            step.directory_item.live_path
+            if step.binding_plan.operation == "push"
+            else step.directory_item.repo_path
+        )
+        return display_cli_path(reference_path, full_paths=full_paths)
+    reference_path = target.live_path if step.binding_plan.operation == "push" else target.repo_path
+    return display_cli_path(reference_path, full_paths=full_paths)
+
+
+def render_execution_action(action: str) -> str:
+    display_action = action.replace("_repo", " repo") if action.endswith("_repo") else action
+    if not colors_enabled():
+        return display_action
+    style_key = action.removesuffix("_repo")
+    return style_text(display_action, *MENU_ACTION_STYLE_BY_NAME.get(style_key, ("1",)))
+
+
+def print_execution_header(*, session: ExecutionSession) -> None:
+    step_count = sum(len(package.steps) for package in session.packages)
+    print_payload_header(f"executing {session.operation}")
+    print(
+        "  "
+        + " · ".join(
+            [
+                render_summary_stat(label="packages", value=len(session.packages)),
+                render_summary_stat(label="steps", value=step_count),
+            ]
+        )
+    )
+    if not session.packages:
+        print()
+        print(f"  {render_payload_section_label('no pending target actions')}")
+
+
+def print_execution_package_start(package) -> None:
+    print()
+    print_payload_package_header(
+        repo_name=package.repo_name,
+        package_id=package.package_id,
+        profile=package.profile,
+    )
+
+
+def print_execution_step_start(
+    _package,
+    step: ExecutionStep,
+    index: int,
+    total: int,
+    *,
+    full_paths: bool,
+) -> None:
+    print(
+        f"    [{index}/{total}] {render_execution_action(step.action):<11} "
+        f"{execution_step_display(step, full_paths=full_paths)}"
+    )
+
+
+def print_execution_step_finish(
+    _package,
+    step_result: ExecutionStepResult,
+    _index: int,
+    _total: int,
+) -> None:
+    if step_result.status == "ok":
+        print("      ok")
+        return
+    if step_result.error:
+        print(f"      {step_result.error}")
+    print(f"      {step_result.status}")
+
+
+def print_execution_package_finish(package_result: PackageExecutionResult) -> None:
+    if package_result.status == "ok":
+        print("    done")
+        return
+    if package_result.status == "skipped":
+        print("    skipped")
+        return
+    print("    failed")
+
+
+def emit_execution_result(*, result, json_output: bool) -> int:
+    if json_output:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return result.exit_code
+
+
+def run_execution(*, operation: str, plans: Sequence, json_output: bool, full_paths: bool = False) -> int:
+    session = build_execution_session(plans, operation=operation)
+    if json_output:
+        return emit_execution_result(
+            result=execute_session(session, stream_output=False),
+            json_output=True,
+        )
+    print_execution_header(session=session)
+    if not session.packages:
+        return 0
+    result = execute_session(
+        session,
+        stream_output=True,
+        on_package_start=print_execution_package_start,
+        on_step_start=lambda package, step, index, total: print_execution_step_start(
+            package,
+            step,
+            index,
+            total,
+            full_paths=full_paths,
+        ),
+        on_step_finish=print_execution_step_finish,
+        on_package_finish=print_execution_package_finish,
+    )
+    return result.exit_code
 
 
 def emit_tracked_packages(*, packages: Sequence, json_output: bool) -> int:
@@ -1967,34 +2094,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 binding_text = f"{binding.repo}:{binding.selector}"
                 plan = engine.plan_push_binding(binding_text, profile=binding.profile)
-                filtered_plans = filter_plans_for_interactive_selection(
+                plans = filter_plans_for_interactive_selection(
                     plans=[plan],
                     operation="push",
                     json_output=args.json_output,
                     full_paths=args.full_path,
                 )
-                if not review_plans_for_interactive_diffs(
-                    plans=filtered_plans,
+            else:
+                plans = filter_plans_for_interactive_selection(
+                    plans=engine.plan_push(),
                     operation="push",
                     json_output=args.json_output,
-                    full_paths=args.full_path,
-                ):
-                    emit_interrupt_notice()
-                    return INTERRUPTED_EXIT_CODE
-                plan = filtered_plans[0]
-                return emit_payload(
-                    operation="push",
-                    plans=[plan],
-                    json_output=args.json_output,
-                    mode=effective_execution_mode(dry_run_requested=args.dry_run),
                     full_paths=args.full_path,
                 )
-            plans = filter_plans_for_interactive_selection(
-                plans=engine.plan_push(),
-                operation="push",
-                json_output=args.json_output,
-                full_paths=args.full_path,
-            )
             if not review_plans_for_interactive_diffs(
                 plans=plans,
                 operation="push",
@@ -2003,11 +2115,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             ):
                 emit_interrupt_notice()
                 return INTERRUPTED_EXIT_CODE
-            return emit_payload(
+            if args.dry_run:
+                return emit_payload(
+                    operation="push",
+                    plans=plans,
+                    json_output=args.json_output,
+                    mode=effective_execution_mode(dry_run_requested=True),
+                    full_paths=args.full_path,
+                )
+            return run_execution(
                 operation="push",
                 plans=plans,
                 json_output=args.json_output,
-                mode=effective_execution_mode(dry_run_requested=args.dry_run),
                 full_paths=args.full_path,
             )
         if args.command == "pull":
@@ -2027,27 +2146,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     json_output=args.json_output,
                     full_paths=args.full_path,
                 )
-                if not review_plans_for_interactive_diffs(
-                    plans=plans,
+            else:
+                plans = filter_plans_for_interactive_selection(
+                    plans=engine.plan_pull(),
                     operation="pull",
                     json_output=args.json_output,
-                    full_paths=args.full_path,
-                ):
-                    emit_interrupt_notice()
-                    return INTERRUPTED_EXIT_CODE
-                return emit_payload(
-                    operation="pull",
-                    plans=plans,
-                    json_output=args.json_output,
-                    mode=effective_execution_mode(dry_run_requested=args.dry_run),
                     full_paths=args.full_path,
                 )
-            plans = filter_plans_for_interactive_selection(
-                plans=engine.plan_pull(),
-                operation="pull",
-                json_output=args.json_output,
-                full_paths=args.full_path,
-            )
             if not review_plans_for_interactive_diffs(
                 plans=plans,
                 operation="pull",
@@ -2056,11 +2161,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             ):
                 emit_interrupt_notice()
                 return INTERRUPTED_EXIT_CODE
-            return emit_payload(
+            if args.dry_run:
+                return emit_payload(
+                    operation="pull",
+                    plans=plans,
+                    json_output=args.json_output,
+                    mode=effective_execution_mode(dry_run_requested=True),
+                    full_paths=args.full_path,
+                )
+            return run_execution(
                 operation="pull",
                 plans=plans,
                 json_output=args.json_output,
-                mode=effective_execution_mode(dry_run_requested=args.dry_run),
                 full_paths=args.full_path,
             )
         if args.command in {"untrack", "forget"}:

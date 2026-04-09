@@ -57,6 +57,7 @@ def test_push_cli_uses_tracked_binding_profile_without_prompting(
             str(config_path),
             "--json",
             "push",
+            "--dry-run",
             "git",
         ]
     )
@@ -140,6 +141,7 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
             "--config",
             str(config_path),
             "push",
+            "--dry-run",
             "sunshine",
         ]
     )
@@ -229,6 +231,7 @@ def test_push_cli_uses_state_bindings_in_dry_run_json(
             str(config_path),
             "--json",
             "push",
+            "--dry-run",
         ]
     )
 
@@ -271,6 +274,7 @@ def test_push_cli_human_dry_run_output_includes_context_and_hooks(
             "--config",
             str(config_path),
             "push",
+            "--dry-run",
         ]
     )
 
@@ -283,7 +287,7 @@ def test_push_cli_human_dry_run_output_includes_context_and_hooks(
     assert "hook commands: 4" in output
     assert ":: example:git@basic" in output
     assert "hooks:" in output
-    assert "[check]" in output
+    assert "[guard_push]" in output
     assert "[pre_push]" in output
     assert "[post_push]" in output
     assert "targets:" in output
@@ -323,6 +327,7 @@ def test_push_cli_human_dry_run_output_uses_full_path_when_requested(
             "--config",
             str(config_path),
             "push",
+            "--dry-run",
             "--full-path",
         ]
     )
@@ -367,6 +372,7 @@ def test_push_cli_human_dry_run_output_highlights_leaf_packages_not_root_binding
             "--config",
             str(config_path),
             "push",
+            "--dry-run",
         ]
     )
 
@@ -416,6 +422,7 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
             "--config",
             str(config_path),
             "push",
+            "--dry-run",
         ]
     )
 
@@ -469,6 +476,7 @@ def test_push_cli_enters_diff_review_menu_after_selection(
             "--config",
             str(config_path),
             "push",
+            "--dry-run",
         ]
     )
 
@@ -522,6 +530,7 @@ def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
             "--config",
             str(config_path),
             "push",
+            "--dry-run",
         ]
     )
 
@@ -577,6 +586,7 @@ def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
             "--config",
             str(config_path),
             "push",
+            "--dry-run",
         ]
     )
 
@@ -626,6 +636,7 @@ def test_push_cli_skips_diff_review_for_json_output(
             str(config_path),
             "--json",
             "push",
+            "--dry-run",
         ]
     )
 
@@ -664,6 +675,7 @@ def test_push_cli_allows_package_selected_through_tracked_owner_binding(
             str(config_path),
             "--json",
             "push",
+            "--dry-run",
             "nvim",
         ]
     )

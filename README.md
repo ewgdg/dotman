@@ -1,8 +1,8 @@
 # dotman
 
-Scratch workspace for the new `dotman` design.
+Scratch workspace for the new `dotman` design and implementation.
 
 The previous forked `dotdrop` codebase was moved to `../dotman.archived/`.
 
-This directory currently contains example configuration layouts for the new
-package-oriented model under `examples/`.
+This directory contains the package-oriented `dotman` prototype, tests, and
+example configuration layouts under `examples/`.

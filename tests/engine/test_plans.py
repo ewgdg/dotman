@@ -34,8 +34,8 @@ def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
     assert plan.binding.profile == "basic"
     assert plan.package_ids == ["git"]
     assert [hook.command for hook in plan.hooks["pre_push"]] == [
-        "brew install git",
-        '"$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"',
+        "printf 'install %s\\n' git",
+        'sh "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"',
     ]
 
     target = plan.target_plans[0]
@@ -108,6 +108,7 @@ def test_pull_plan_uses_declared_repo_and_live_views_for_rendered_targets(
     assert target.pull_view_live == "raw"
     assert target.action == "noop"
     assert target.reconcile_command == "sh hooks/reconcile.sh"
+    assert target.reconcile_io == "tty"
 
 def test_template_file_render_supports_relative_include(
     tmp_path: Path,

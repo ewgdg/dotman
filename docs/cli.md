@@ -98,8 +98,8 @@ This document captures the current command and selector direction for `dotman`.
 - `push` is the repo-to-live command.
 - `push` should operate only on tracked state.
 - `push` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
-- In v1, dry-run is the only supported `push` execution mode, so omitting the flag should still behave as dry-run.
-- `push` should accept `--full-path` to disable human-output path compaction for preview, selection, and review menus.
+- Plain `push` should perform real execution after planning, interactive exclusion, and diff review.
+- `push` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
 - `push <selector>` should resolve only within tracked state and reuse the tracked profile instead of prompting for a fresh profile.
 - `push <package>` should also work when that package is currently included through a tracked higher-level binding; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
@@ -110,6 +110,7 @@ This document captures the current command and selector direction for `dotman`.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
 - A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks.
 - After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
+- After diff review accepts, `push` should execute immediately in one package-oriented timeline.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.
 - Diff review should use `git diff --no-index --color=auto`.
@@ -132,8 +133,8 @@ This document captures the current command and selector direction for `dotman`.
 - `pull` is the live-to-repo command for already modeled targets.
 - `pull` should operate only on tracked state.
 - `pull` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
-- In v1, dry-run is the only supported `pull` execution mode, so omitting the flag should still behave as dry-run.
-- `pull` should accept `--full-path` to disable human-output path compaction for preview, selection, and review menus.
+- Plain `pull` should perform real execution after planning, interactive exclusion, and diff review.
+- `pull` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
 - `pull <binding>` should resolve against tracked bindings and reuse the tracked profile/local context instead of prompting for a fresh profile choice.
 - `pull <package>` should also work when that package is currently included through a tracked higher-level binding; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
@@ -144,6 +145,7 @@ This document captures the current command and selector direction for `dotman`.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
 - A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks.
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
+- After diff review accepts, `pull` should execute immediately in one package-oriented timeline.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.

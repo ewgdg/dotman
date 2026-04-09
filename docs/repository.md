@@ -148,8 +148,13 @@ pull = ["*.dotdropbak"]
 
 ## Hooks And Commands
 
+- Supported hook names are `guard_push`, `pre_push`, `post_push`, `guard_pull`, `pre_pull`, and `post_pull`.
+- `check` is removed; there is no backward-compatibility alias.
 - Hook entries may be a single item or an ordered list.
 - Hook lists run in declaration order and stop on first failure.
+- `guard_*` runs before package target work for that operation.
+- `pre_*` runs immediately before the package's selected target steps.
+- `post_*` runs only when the package still owns at least one selected target execution step and all selected target steps succeed.
 - Package hooks are executable only when the package still owns at least one non-noop effective target after tracked-target winner resolution and any interactive target exclusion.
 - Provenance alone should not cause hooks to execute.
 - Repo-wide helper scripts live under `scripts/`.
@@ -174,6 +179,10 @@ pull = ["*.dotdropbak"]
   - default live-side view: `capture` if available, otherwise `raw`
 - `pull_view_repo` and `pull_view_live` must stay non-interactive and side-effect free.
 - `reconcile` is the explicit reverse workflow. A `reconcile` command may open an editor or otherwise guide manual source reconciliation.
+- `reconcile_io` controls how the selected reconcile step is executed.
+  - `pipe`: default behavior; dotman captures stdout/stderr like other command-backed steps.
+  - `tty`: run attached to the current terminal and require an interactive tty.
+- Use `reconcile_io = "tty"` for full-screen editors or other terminal-native tools that would break if dotman piped and prefixed their output.
 - Dotman may provide helper commands for package-authored `reconcile` workflows; for example, `dotman reconcile editor` can accept repeated `--additional-source` args for multi-source reconcile workflows.
 - For `dotman reconcile editor`, `--repo-path` is the primary repo-side target source and repeated `--additional-source` args are for extra repo files that should be opened alongside it during reconciliation.
 - `dotman reconcile editor` may receive separate review paths, so the review content can use planning projections while the editable buffers still point at real repo-side source files.

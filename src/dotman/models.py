@@ -39,6 +39,7 @@ class TargetSpec:
     render: str | None = None
     capture: str | None = None
     reconcile: str | None = None
+    reconcile_io: str | None = None
     pull_view_repo: str | None = None
     pull_view_live: str | None = None
     push_ignore: tuple[str, ...] | None = None
@@ -138,10 +139,12 @@ class InstalledTargetSummary:
     render_command: str | None = None
     capture_command: str | None = None
     reconcile_command: str | None = None
+    reconcile_io: str | None = None
     pull_view_repo: str = "raw"
     pull_view_live: str = "raw"
     push_ignore: tuple[str, ...] = ()
     pull_ignore: tuple[str, ...] = ()
+    chmod: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,10 +155,12 @@ class InstalledTargetSummary:
             "render_command": self.render_command,
             "capture_command": self.capture_command,
             "reconcile_command": self.reconcile_command,
+            "reconcile_io": self.reconcile_io,
             "pull_view_repo": self.pull_view_repo,
             "pull_view_live": self.pull_view_live,
             "push_ignore": list(self.push_ignore),
             "pull_ignore": list(self.pull_ignore),
+            "chmod": self.chmod,
         }
 
 
@@ -248,11 +253,13 @@ class TargetPlan:
     render_command: str | None = None
     capture_command: str | None = None
     reconcile_command: str | None = None
+    reconcile_io: str | None = None
     projection_error: str | None = None
     pull_view_repo: str = "raw"
     pull_view_live: str = "raw"
     push_ignore: tuple[str, ...] = ()
     pull_ignore: tuple[str, ...] = ()
+    chmod: str | None = None
     command_cwd: Path | None = None
     command_env: dict[str, str] | None = field(default=None, repr=False)
     desired_bytes: bytes | None = field(default=None, repr=False)
@@ -272,11 +279,13 @@ class TargetPlan:
             "render_command": self.render_command,
             "capture_command": self.capture_command,
             "reconcile_command": self.reconcile_command,
+            "reconcile_io": self.reconcile_io,
             "projection_error": self.projection_error,
             "pull_view_repo": self.pull_view_repo,
             "pull_view_live": self.pull_view_live,
             "push_ignore": list(self.push_ignore),
             "pull_ignore": list(self.pull_ignore),
+            "chmod": self.chmod,
             "directory_items": [item.to_dict() for item in self.directory_items],
         }
 
@@ -311,6 +320,9 @@ class BindingPlan:
     variables: dict[str, Any]
     hooks: dict[str, list[HookPlan]]
     target_plans: list[TargetPlan]
+    repo_root: Path | None = None
+    state_path: Path | None = None
+    inferred_os: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
