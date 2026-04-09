@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from dotman.diff_review import (
     DEFAULT_REVIEW_PAGER,
     ReviewItem,
+    _review_display_path,
     _select_review_pager_command,
     build_review_items,
     edit_status,
@@ -53,15 +54,17 @@ def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) ->
     assert review_items[0].destination_path == str(repo_path)
 
 
-def test_run_review_item_diff_invokes_git_diff(monkeypatch, tmp_path: Path) -> None:
+def test_run_review_item_diff_invokes_git_diff(monkeypatch) -> None:
+    repo_path = Path.home() / ".config" / "repo-file"
+    live_path = Path.home() / ".local" / "share" / "live-file"
     review_item = ReviewItem(
         binding_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
         operation="push",
-        repo_path=tmp_path / "repo-file",
-        live_path=tmp_path / "live-file",
+        repo_path=repo_path,
+        live_path=live_path,
         source_path="/repo-file",
         destination_path="/live-file",
         before_bytes=b"before\n",
@@ -78,8 +81,8 @@ def test_run_review_item_diff_invokes_git_diff(monkeypatch, tmp_path: Path) -> N
         recorded["env"] = env
         recorded["cwd"] = cwd
         assert cwd is not None
-        assert Path(cwd, "live", "live-file").read_text(encoding="utf-8") == "before\n"
-        assert Path(cwd, "repo", "repo-file").read_text(encoding="utf-8") == "after\n"
+        assert Path(cwd, "live", "~", "...", "share", "live-file").read_text(encoding="utf-8") == "before\n"
+        assert Path(cwd, "repo", "~", ".config", "repo-file").read_text(encoding="utf-8") == "after\n"
         return SimpleNamespace(returncode=1)
 
     monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
@@ -89,18 +92,20 @@ def test_run_review_item_diff_invokes_git_diff(monkeypatch, tmp_path: Path) -> N
     assert recorded["check"] is False
     assert recorded["env"] is None
     assert recorded["command"][:5] == ["git", "diff", "--no-index", "--color=auto", "--"]
-    assert recorded["command"][5:] == ["live/live-file", "repo/repo-file"]
+    assert recorded["command"][5:] == ["live/~/.../share/live-file", "repo/~/.config/repo-file"]
 
 
-def test_run_review_item_diff_uses_repo_and_live_labels_for_pull(monkeypatch, tmp_path: Path) -> None:
+def test_run_review_item_diff_uses_repo_and_live_labels_for_pull(monkeypatch) -> None:
+    repo_path = Path.home() / ".gitconfig"
+    live_path = Path.home() / ".config" / "git" / "config"
     review_item = ReviewItem(
         binding_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
         operation="pull",
-        repo_path=tmp_path / ".gitconfig",
-        live_path=tmp_path / ".configrc",
+        repo_path=repo_path,
+        live_path=live_path,
         source_path="/live-file",
         destination_path="/repo-file",
         before_bytes=b"repo\n",
@@ -115,26 +120,28 @@ def test_run_review_item_diff_uses_repo_and_live_labels_for_pull(monkeypatch, tm
         recorded["command"] = command
         recorded["cwd"] = cwd
         assert cwd is not None
-        assert Path(cwd, "repo", ".gitconfig").read_text(encoding="utf-8") == "repo\n"
-        assert Path(cwd, "live", ".configrc").read_text(encoding="utf-8") == "live\n"
+        assert Path(cwd, "repo", "~", ".gitconfig").read_text(encoding="utf-8") == "repo\n"
+        assert Path(cwd, "live", "~", "...", "git", "config").read_text(encoding="utf-8") == "live\n"
         return SimpleNamespace(returncode=1)
 
     monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
 
     run_review_item_diff(review_item)
 
-    assert recorded["command"][5:] == ["repo/.gitconfig", "live/.configrc"]
+    assert recorded["command"][5:] == ["repo/~/.gitconfig", "live/~/.../git/config"]
 
 
-def test_run_review_item_diff_uses_explicit_pager_when_stdout_is_tty(monkeypatch, tmp_path: Path) -> None:
+def test_run_review_item_diff_uses_explicit_pager_when_stdout_is_tty(monkeypatch) -> None:
+    repo_path = Path.home() / ".config" / "repo-file"
+    live_path = Path.home() / ".local" / "share" / "live-file"
     review_item = ReviewItem(
         binding_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
         operation="push",
-        repo_path=tmp_path / "repo-file",
-        live_path=tmp_path / "live-file",
+        repo_path=repo_path,
+        live_path=live_path,
         source_path="/repo-file",
         destination_path="/live-file",
         before_bytes=b"before\n",
@@ -158,9 +165,25 @@ def test_run_review_item_diff_uses_explicit_pager_when_stdout_is_tty(monkeypatch
 
     assert recorded["check"] is False
     assert recorded["command"][:6] == ["git", "--paginate", "diff", "--no-index", "--color=auto", "--"]
-    assert recorded["command"][6:] == ["live/live-file", "repo/repo-file"]
+    assert recorded["command"][6:] == ["live/~/.../share/live-file", "repo/~/.config/repo-file"]
     assert recorded["env"] is not None
     assert recorded["env"]["GIT_PAGER"] == DEFAULT_REVIEW_PAGER
+
+
+def test_review_display_path_uses_tilde_for_home_prefix() -> None:
+    assert _review_display_path(Path.home() / ".config" / "nvim" / "init.lua") == Path("~/.../nvim/init.lua")
+
+
+def test_review_display_path_compacts_long_home_relative_path() -> None:
+    assert _review_display_path(Path.home() / ".local" / "share" / "nvim" / "init.lua") == Path("~/.../nvim/init.lua")
+
+
+def test_review_display_path_keeps_absolute_path_without_root_prefix() -> None:
+    assert _review_display_path(Path("/etc/gitconfig")) == Path("etc/gitconfig")
+
+
+def test_review_display_path_compacts_long_absolute_path() -> None:
+    assert _review_display_path(Path("/etc/xdg/nvim/init.lua")) == Path("etc/.../nvim/init.lua")
 
 
 def test_select_review_pager_command_prefers_less_when_pager_env_is_cat(monkeypatch) -> None:

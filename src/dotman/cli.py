@@ -13,6 +13,7 @@ from typing import Callable, Sequence, TypeVar
 from dotman.diff_review import (
     ReviewItem,
     build_review_items,
+    display_review_path,
     diff_status as review_diff_status,
     run_review_item_diff,
 )
@@ -1044,10 +1045,12 @@ def print_pending_selection_item(index: int, item: PendingSelectionItem) -> None
         package_id=item.package_id,
         target_name=item.target_name,
     )
+    source_path = display_review_path(item.source_path)
+    destination_path = display_review_path(item.destination_path)
     if not colors_enabled():
         item_text = (
             f"[{item.action}] {package_target}: "
-            f"{item.source_path} -> {item.destination_path}"
+            f"{source_path} -> {destination_path}"
         )
         print(f"  {index:>2}) {item_text}")
         return
@@ -1062,7 +1065,7 @@ def print_pending_selection_item(index: int, item: PendingSelectionItem) -> None
     arrow_text = style_text("->", *MENU_HINT_STYLE)
     print(
         f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
-        f"{action_text} {package_label}: {item.source_path} {arrow_text} {item.destination_path}"
+        f"{action_text} {package_label}: {source_path} {arrow_text} {destination_path}"
     )
 
 
@@ -1155,10 +1158,12 @@ def print_review_item(index: int, item: ReviewItem) -> None:
         target_name=item.target_name,
     )
     diff_text = review_diff_status(item)
+    source_path = display_review_path(item.source_path)
+    destination_path = display_review_path(item.destination_path)
     if not colors_enabled():
         item_text = (
             f"[{item.action}] {package_target} "
-            f"[{diff_text}]: {item.source_path} -> {item.destination_path}"
+            f"[{diff_text}]: {source_path} -> {destination_path}"
         )
         print(f"  {index:>2}) {item_text}")
         return
@@ -1175,7 +1180,7 @@ def print_review_item(index: int, item: ReviewItem) -> None:
     print(
         f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
         f"{action_text} {package_label} {status_label}: "
-        f"{item.source_path} {arrow_text} {item.destination_path}"
+        f"{source_path} {arrow_text} {destination_path}"
     )
 
 

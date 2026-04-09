@@ -15,6 +15,8 @@ from dotman.reconcile import run_basic_reconcile
 
 
 DEFAULT_REVIEW_PAGER = "less -FRX -R"
+MAX_UNCOMPACTED_REVIEW_PATH_PARTS = 3
+REVIEW_PATH_TAIL_PARTS = 2
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,7 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
         try:
             pager_command = _select_review_pager_command() if sys.stdout.isatty() else None
             diff_command = _build_review_diff_command(
+                root=temp_root,
                 left_path=left_path,
                 right_path=right_path,
                 paginate=pager_command is not None,
@@ -259,15 +262,45 @@ def _review_edit_reference_paths(*, review_item: ReviewItem) -> tuple[Path, Path
 
 
 def _write_review_file(*, root: Path, side: str, reference_path: Path, content: bytes) -> Path:
-    file_name = reference_path.name or "content"
-    output_path = root / side / file_name
+    output_path = root / side / _review_display_path(reference_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(content)
     output_path.chmod(0o444)
     return output_path
 
 
-def _build_review_diff_command(*, left_path: Path, right_path: Path, paginate: bool) -> list[str]:
+def display_review_path(reference_path: Path | str) -> str:
+    return str(_review_display_path(Path(reference_path)))
+
+
+def _review_display_path(reference_path: Path) -> Path:
+    normalized_path = _normalize_review_display_path(reference_path)
+    return _compact_review_display_path(normalized_path)
+
+
+def _normalize_review_display_path(reference_path: Path) -> Path:
+    # Keep diff labels readable and machine-independent by collapsing the
+    # current home directory to `~` instead of embedding an absolute prefix.
+    try:
+        home_relative_path = reference_path.relative_to(Path.home())
+    except ValueError:
+        if reference_path.is_absolute():
+            relative_parts = reference_path.parts[1:]
+            return Path(*relative_parts) if relative_parts else Path("content")
+        return reference_path if reference_path.parts else Path("content")
+    return Path("~") / home_relative_path if home_relative_path.parts else Path("~")
+
+
+def _compact_review_display_path(display_path: Path) -> Path:
+    parts = display_path.parts
+    if len(parts) <= MAX_UNCOMPACTED_REVIEW_PATH_PARTS:
+        return display_path
+    # Keep the anchor and tail so long review labels stay short without
+    # dropping the most useful disambiguating path context.
+    return Path(parts[0], "...", *parts[-REVIEW_PATH_TAIL_PARTS:])
+
+
+def _build_review_diff_command(*, root: Path, left_path: Path, right_path: Path, paginate: bool) -> list[str]:
     command = ["git"]
     if paginate:
         command.append("--paginate")
@@ -277,8 +310,8 @@ def _build_review_diff_command(*, left_path: Path, right_path: Path, paginate: b
             "--no-index",
             "--color=auto",
             "--",
-            str(left_path.relative_to(left_path.parents[1])),
-            str(right_path.relative_to(right_path.parents[1])),
+            str(left_path.relative_to(root)),
+            str(right_path.relative_to(root)),
         ]
     )
     return command

@@ -1808,6 +1808,31 @@ def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> 
     assert '  "?"        show this help' in output
 
 
+def test_print_review_item_compacts_long_paths(monkeypatch, capsys) -> None:
+    review_item = cli.ReviewItem(
+        binding_label="example:git@basic",
+        package_id="git",
+        target_name="gitconfig",
+        action="update",
+        operation="push",
+        repo_path=Path.home() / ".config" / "git" / "config",
+        live_path=Path.home() / ".local" / "share" / "git" / "config",
+        source_path=str(Path.home() / ".config" / "git" / "config"),
+        destination_path=str(Path.home() / ".local" / "share" / "git" / "config"),
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    cli.print_review_item(1, review_item)
+
+    output = capsys.readouterr().out
+    assert "  1) [update] example:git (gitconfig) [diff]:" in output
+    assert "~/.../git/config -> ~/.../git/config" in output
+    assert str(Path.home()) not in output
+
+
 def test_push_cli_skips_diff_review_for_json_output(
     tmp_path: Path,
     monkeypatch,

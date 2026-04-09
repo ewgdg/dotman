@@ -111,6 +111,7 @@ This document captures the current command and selector direction for `dotman`.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `live/...` and `repo/...` paths instead of opaque `before-*` or `after-*` temp names.
+- Diff review headers should compact long compared paths for readability, and should additionally collapse the current home directory to `~` instead of a machine-specific absolute prefix.
 - Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
 - In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
 - Review commands should support inspecting one item, inspecting all items, opening an editor for supported items, continuing, or aborting.
@@ -139,6 +140,7 @@ This document captures the current command and selector direction for `dotman`.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `repo/...` and `live/...` paths instead of opaque `before-*` or `after-*` temp names.
+- Use the same diff-review path compaction rule described in the `push` section above.
 - Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
 - In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
 - Review commands should support inspecting one item, inspecting all items, opening target reconcile or an editor for supported items, continuing, or aborting.
