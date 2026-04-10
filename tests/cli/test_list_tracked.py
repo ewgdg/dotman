@@ -10,7 +10,7 @@ import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
 from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
 
-from test_support import (
+from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
     capture_parser_help,

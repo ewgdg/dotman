@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dotman.cli import main
 from dotman.snapshot import list_snapshots
-from test_support import capture_parser_help, write_named_manager_config
+from tests.helpers import capture_parser_help, write_named_manager_config
 
 
 def _write_snapshot_execution_repo(repo_root: Path, *, package_id: str = "app") -> None:

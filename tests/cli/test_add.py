@@ -10,7 +10,7 @@ import dotman.cli as cli
 from dotman.add import AddOperationResult, AddReviewResult, review_add_manifest
 from dotman.cli import main
 
-from test_support import capture_parser_help, write_named_manager_config
+from tests.helpers import capture_parser_help, write_named_manager_config
 
 
 def _write_repo(repo_root: Path, packages: dict[str, str] | None = None) -> None:

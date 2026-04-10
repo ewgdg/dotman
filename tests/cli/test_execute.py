@@ -6,7 +6,7 @@ from pathlib import Path
 
 import dotman.cli as cli
 from dotman.cli import main
-from test_support import write_named_manager_config
+from tests.helpers import write_named_manager_config
 
 
 def _write_basic_execution_repo(

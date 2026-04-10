@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
-from test_support import (
+from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
     write_manager_config,
