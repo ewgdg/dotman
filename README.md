@@ -62,7 +62,7 @@ dotman push --dry-run
 dotman push
 ```
 
-For a larger real-world example repo, see `https://github.com/ewgdg/dotfiles`.
+For a larger real-world example repo, see [ewgdg/dotfiles](https://github.com/ewgdg/dotfiles).
 
 ## Features
 
