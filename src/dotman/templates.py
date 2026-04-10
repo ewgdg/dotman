@@ -4,7 +4,7 @@ import copy
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, TemplateSyntaxError, Undefined
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound, TemplateSyntaxError, Undefined, UndefinedError, meta
 
 
 class DotmanUndefined(Undefined):
@@ -86,21 +86,58 @@ def render_template_string(value: str, context: dict[str, Any], *, base_dir: Pat
     return env.from_string(value).render(context)
 
 
+def discover_template_file_dependencies(path: Path) -> tuple[Path, ...]:
+    env = _file_environment(path.parent)
+    loader = env.loader
+    if not isinstance(loader, FileSystemLoader):  # pragma: no cover - guarded by _file_environment.
+        raise ValueError("jinja dependency discovery requires a filesystem loader")
+
+    source_name = path.name
+    visited_names: set[str] = set()
+    discovered_paths: list[Path] = []
+
+    def visit(template_name: str) -> None:
+        if template_name in visited_names:
+            return
+        visited_names.add(template_name)
+        try:
+            source_text, filename, _uptodate = loader.get_source(env, template_name)
+        except TemplateNotFound as exc:
+            raise ValueError(f"jinja template dependency not found from {path}: {template_name}") from exc
+
+        resolved_path = Path(filename).resolve()
+        if resolved_path != path.resolve():
+            discovered_paths.append(resolved_path)
+
+        try:
+            parsed = env.parse(source_text)
+        except TemplateSyntaxError as exc:
+            raise ValueError(f"jinja template dependency parse failed for {filename}: {exc}") from exc
+
+        for reference in meta.find_referenced_templates(parsed):
+            if reference is None:
+                # Built-in Jinja reconcile must know the full editable source set
+                # before launching the editor, so dynamic template references are
+                # intentionally rejected instead of guessed.
+                raise ValueError(
+                    f"jinja reconcile requires static template references: {filename} contains a dynamic reference"
+                )
+            visit(reference)
+
+    visit(source_name)
+    return tuple(discovered_paths)
+
+
+
 def render_template_file(path: Path, context: dict[str, Any]) -> tuple[bytes, str]:
     try:
         source_text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return path.read_bytes(), "raw"
-
-    if "{{" not in source_text and "{%" not in source_text and "{#" not in source_text:
-        return source_text.encode("utf-8"), "raw"
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"jinja render requires a utf-8 text file: {path}") from exc
 
     env = _file_environment(path.parent)
     try:
         template = env.from_string(source_text)
-    except TemplateSyntaxError:
-        return source_text.encode("utf-8"), "raw"
-    try:
         return template.render(context).encode("utf-8"), "template"
-    except (TemplateSyntaxError, ValueError):
-        return source_text.encode("utf-8"), "raw"
+    except (TemplateSyntaxError, UndefinedError, ValueError) as exc:
+        raise ValueError(f"jinja render failed for {path}: {exc}") from exc

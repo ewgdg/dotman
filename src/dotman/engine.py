@@ -1570,6 +1570,8 @@ class DotmanEngine:
                     inferred_os=inferred_os,
                 )
             except ValueError as exc:
+                if render_command == "jinja":
+                    raise
                 if operation in {"upgrade", "push"} and not live_path.exists():
                     projection_error = str(exc)
                     projection_kind = "command"
@@ -1727,6 +1729,8 @@ class DotmanEngine:
         operation: str,
         inferred_os: str,
     ) -> tuple[bytes, str]:
+        if render_command == "jinja":
+            return render_template_file(repo_path, context)
         if render_command:
             return (
                 self._run_command_projection(
@@ -1743,7 +1747,7 @@ class DotmanEngine:
                 ),
                 "command",
             )
-        return render_template_file(repo_path, context)
+        return repo_path.read_bytes(), "raw"
 
     def _plan_directory_action(
         self,
@@ -1783,7 +1787,7 @@ class DotmanEngine:
             for relative_path in sorted(desired_rel_paths & live_rel_paths):
                 source_path = desired_files[relative_path]
                 live_file = live_files[relative_path]
-                desired_bytes, _projection_kind = render_template_file(source_path, {})
+                desired_bytes = source_path.read_bytes()
                 if desired_bytes != live_file.read_bytes():
                     directory_items.append(
                         DirectoryPlanItem(
@@ -1819,7 +1823,7 @@ class DotmanEngine:
         for relative_path in sorted(desired_rel_paths & live_rel_paths):
             source_path = desired_files[relative_path]
             live_file = live_files[relative_path]
-            desired_bytes, _projection_kind = render_template_file(source_path, {})
+            desired_bytes = source_path.read_bytes()
             if desired_bytes != live_file.read_bytes():
                 directory_items.append(
                     DirectoryPlanItem(

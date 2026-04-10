@@ -50,6 +50,7 @@ def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     assert "commands:" in output
     assert "Track a binding in manager state" in output
     assert "Re-run a reconcile helper subcommand" in output
+    assert "Render built-in template helpers" in output
 
 def test_info_help_uses_nested_command_placeholder_and_summaries(capsys) -> None:
     output = capture_parser_help(capsys, "info")
@@ -73,6 +74,43 @@ def test_reconcile_editor_help_uses_explicit_option_placeholders(capsys) -> None
     assert "--review-live-path <review-live-path>" in output
     assert "--additional-source <source-path>" in output
     assert "--editor <editor-command>" in output
+
+
+def test_reconcile_help_lists_jinja_shortcut(capsys) -> None:
+    output = capture_parser_help(capsys, "reconcile")
+    assert "usage: dotman reconcile [-h] <reconcile-command> ..." in output
+    assert "reconcile commands:" in output
+    assert "editor" in output
+    assert "Open repo and live files in an editor" in output
+    assert "jinja" in output
+    assert "Reconcile a Jinja source with its recursive template" in output
+
+
+
+def test_reconcile_jinja_help_uses_explicit_option_placeholders(capsys) -> None:
+    output = capture_parser_help(capsys, "reconcile", "jinja")
+    assert "usage: dotman reconcile jinja [-h] --repo-path <repo-path>" in output
+    assert "--live-path <live-path>" in output
+    assert "--review-repo-path <review-repo-path>" in output
+    assert "--review-live-path <review-live-path>" in output
+    assert "--editor <editor-command>" in output
+
+
+def test_render_help_uses_nested_command_placeholder_and_summaries(capsys) -> None:
+    output = capture_parser_help(capsys, "render")
+    assert "usage: dotman render [-h] <render-command> ..." in output
+    assert "render commands:" in output
+    assert "Render a file with the built-in Jinja renderer" in output
+
+
+def test_render_jinja_help_uses_explicit_placeholders(capsys) -> None:
+    output = capture_parser_help(capsys, "render", "jinja")
+    assert "usage: dotman render jinja [-h] [--profile <profile>] [--os <os>]" in output
+    assert "[--var <key=value>]" in output
+    assert "<source-path>" in output
+    assert "--profile <profile>" in output
+    assert "--os <os>" in output
+    assert "--var <key=value>" in output
 
 def test_selection_prompt_mentions_help(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)

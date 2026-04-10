@@ -261,6 +261,62 @@ def test_run_review_item_edit_prefers_pull_reconcile_command(monkeypatch, tmp_pa
     assert recorded["env"]["PATH"] == os.environ["PATH"]
 
 
+def test_run_review_item_edit_runs_builtin_jinja_reconcile(monkeypatch, tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("{% include 'shared.txt' %}\n", encoding="utf-8")
+    live_path.write_text("raw live\n", encoding="utf-8")
+    (tmp_path / "shared.txt").write_text("shared\n", encoding="utf-8")
+    review_item = ReviewItem(
+        binding_label="example:nvim@basic",
+        package_id="nvim",
+        target_name="init_lua",
+        action="update",
+        operation="pull",
+        repo_path=repo_path,
+        live_path=live_path,
+        source_path="/live-file",
+        destination_path="/repo-file",
+        before_bytes=b"repo planning view\n",
+        after_bytes=b"capture live planning view\n",
+        reconcile_command="jinja",
+        command_env={
+            "DOTMAN_REPO_PATH": str(repo_path),
+            "DOTMAN_LIVE_PATH": str(live_path),
+        },
+    )
+    recorded: dict[str, object] = {}
+
+    def fake_run_jinja_reconcile(
+        *,
+        repo_path: str,
+        live_path: str,
+        review_repo_path: str | None = None,
+        review_live_path: str | None = None,
+        editor: str | None = None,
+    ) -> int:
+        recorded["repo_path"] = repo_path
+        recorded["live_path"] = live_path
+        recorded["review_repo_path"] = review_repo_path
+        recorded["review_live_path"] = review_live_path
+        recorded["editor"] = editor
+        assert review_repo_path is not None
+        assert review_live_path is not None
+        assert Path(review_repo_path).read_text(encoding="utf-8") == "repo planning view\n"
+        assert Path(review_live_path).read_text(encoding="utf-8") == "capture live planning view\n"
+        return 0
+
+    monkeypatch.setattr("dotman.diff_review.run_jinja_reconcile", fake_run_jinja_reconcile)
+
+    exit_code = run_review_item_edit(review_item)
+
+    assert exit_code == 0
+    assert recorded["repo_path"] == str(repo_path)
+    assert recorded["live_path"] == str(live_path)
+    assert recorded["editor"] is None
+
+
+
 def test_run_review_item_edit_uses_planning_views_for_plain_pull_editor(monkeypatch, tmp_path: Path) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"

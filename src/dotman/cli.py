@@ -29,6 +29,8 @@ from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_bindin
 from dotman.execution import ExecutionSession, ExecutionStep, ExecutionStepResult, PackageExecutionResult, build_execution_session, execute_session
 from dotman.models import Binding, HookPlan, filter_hook_plans_for_targets, package_ref_text
 from dotman.reconcile import run_basic_reconcile
+from dotman.reconcile_helpers import run_jinja_reconcile
+from dotman.templates import build_template_context, render_template_file
 from dotman.snapshot import (
     RollbackAction,
     SnapshotRecord,
@@ -1752,6 +1754,61 @@ def hide_subparser_from_help(subparsers, name: str) -> None:
     ]
 
 
+def _assign_nested_value(target: dict[str, object], key_parts: Sequence[str], value: str) -> None:
+    current = target
+    for key in key_parts[:-1]:
+        nested = current.get(key)
+        if not isinstance(nested, dict):
+            nested = {}
+            current[key] = nested
+        current = nested
+    current[key_parts[-1]] = value
+
+
+
+def _template_vars_from_dotman_env(environ: dict[str, str]) -> dict[str, object]:
+    variables: dict[str, object] = {}
+    for key, value in environ.items():
+        if not key.startswith("DOTMAN_VAR_"):
+            continue
+        path_parts = [part for part in key.removeprefix("DOTMAN_VAR_").split("__") if part]
+        if not path_parts:
+            continue
+        _assign_nested_value(variables, path_parts, value)
+    return variables
+
+
+
+def _apply_template_var_assignments(variables: dict[str, object], assignments: Sequence[str]) -> dict[str, object]:
+    for assignment in assignments:
+        if "=" not in assignment:
+            raise ValueError(f"invalid --var assignment '{assignment}'; expected <key=value>")
+        dotted_key, value = assignment.split("=", 1)
+        key_parts = [part for part in dotted_key.split(".") if part]
+        if not key_parts:
+            raise ValueError(f"invalid --var assignment '{assignment}'; expected <key=value>")
+        _assign_nested_value(variables, key_parts, value)
+    return variables
+
+
+
+def run_jinja_render(*, source_path: str, profile: str | None, inferred_os: str | None, var_assignments: Sequence[str]) -> int:
+    path = Path(source_path)
+    variables = _template_vars_from_dotman_env(dict(os.environ))
+    _apply_template_var_assignments(variables, var_assignments)
+    if not path.exists():
+        raise ValueError(f"jinja render failed for {path}: source path does not exist")
+    context = build_template_context(
+        variables,
+        profile=profile or os.environ.get("DOTMAN_PROFILE") or "default",
+        inferred_os=inferred_os or os.environ.get("DOTMAN_OS") or sys.platform,
+    )
+    rendered, _projection_kind = render_template_file(path, context)
+    sys.stdout.write(rendered.decode("utf-8"))
+    return 0
+
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dotman", description="dotman CLI")
     parser.add_argument("--config", metavar="<config-path>", help="Path to dotman config.toml")
@@ -1917,6 +1974,79 @@ def build_parser() -> argparse.ArgumentParser:
         "--editor",
         metavar="<editor-command>",
         help="Editor command to run instead of the default editor",
+    )
+
+    reconcile_jinja_parser = reconcile_subparsers.add_parser(
+        "jinja",
+        help="Reconcile a Jinja source with its recursive template dependencies",
+        description="Reconcile a Jinja source with its recursive template dependencies",
+    )
+    reconcile_jinja_parser.add_argument(
+        "--repo-path",
+        required=True,
+        metavar="<repo-path>",
+        help="Path to the repo copy of the target file",
+    )
+    reconcile_jinja_parser.add_argument(
+        "--live-path",
+        required=True,
+        metavar="<live-path>",
+        help="Path to the live copy of the target file",
+    )
+    reconcile_jinja_parser.add_argument(
+        "--review-repo-path",
+        metavar="<review-repo-path>",
+        help="Optional prepared repo-side review file path",
+    )
+    reconcile_jinja_parser.add_argument(
+        "--review-live-path",
+        metavar="<review-live-path>",
+        help="Optional prepared live-side review file path",
+    )
+    reconcile_jinja_parser.add_argument(
+        "--editor",
+        metavar="<editor-command>",
+        help="Editor command to run instead of the default editor",
+    )
+
+    render_parser = subparsers.add_parser(
+        "render",
+        help="Render built-in template helpers",
+        description="Render built-in template helpers",
+    )
+    render_subparsers = render_parser.add_subparsers(
+        dest="render_command",
+        required=True,
+        title="render commands",
+        metavar="<render-command>",
+    )
+    render_jinja_parser = render_subparsers.add_parser(
+        "jinja",
+        help="Render a file with the built-in Jinja renderer",
+        description="Render a file with the built-in Jinja renderer",
+    )
+    render_jinja_parser.add_argument(
+        "source_path",
+        metavar="<source-path>",
+        help="Path to the Jinja source file",
+    )
+    render_jinja_parser.add_argument(
+        "--profile",
+        metavar="<profile>",
+        help="Profile value to expose in template context",
+    )
+    render_jinja_parser.add_argument(
+        "--os",
+        dest="template_os",
+        metavar="<os>",
+        help="OS value to expose in template context",
+    )
+    render_jinja_parser.add_argument(
+        "--var",
+        action="append",
+        default=[],
+        metavar="<key=value>",
+        help="Additional template var assignment using dotted keys",
     )
     return parser
 
@@ -2730,6 +2860,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 review_repo_path=args.review_repo_path,
                 review_live_path=args.review_live_path,
                 editor=args.editor,
+            )
+        if args.command == "reconcile" and args.reconcile_command == "jinja":
+            return run_jinja_reconcile(
+                repo_path=args.repo_path,
+                live_path=args.live_path,
+                review_repo_path=args.review_repo_path,
+                review_live_path=args.review_live_path,
+                editor=args.editor,
+            )
+        if args.command == "render" and args.render_command == "jinja":
+            return run_jinja_render(
+                source_path=args.source_path,
+                profile=args.profile,
+                inferred_os=args.template_os,
+                var_assignments=args.var,
             )
         engine = DotmanEngine.from_config_path(args.config)
         if args.command == "track":

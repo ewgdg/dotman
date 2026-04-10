@@ -117,11 +117,13 @@ chmod = "600"
 - Targets may define `chmod` when the installed root path needs an explicit mode.
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
 - Targets may define `render` as a forward transform used during `push`.
-- `render` should be a non-interactive stdout producer.
+- `render` may be a built-in renderer such as `jinja`, or a non-interactive stdout-producing command string.
+- Built-in renderers are just shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` is equivalent to `dotman render jinja "$DOTMAN_SOURCE"`.
 - Targets may define `capture` as a non-interactive live-to-repo projection used during pull planning.
 - `capture` should be a non-interactive stdout producer.
 - Targets may define `reconcile` as the actual reverse-sync action used during `pull`.
 - `reconcile` may be interactive and should receive both repo and live paths.
+- Built-in reconcile helpers are also available; for example, `reconcile = "jinja"` uses dotman's Jinja-aware editor reconcile flow for static template dependency trees.
 - Targets may define `pull_view_repo` to control how repo-side content is projected during pull planning.
 - Targets may define `pull_view_live` to control how live-side content is projected during pull planning.
 - `pull_view_repo` and `pull_view_live` may use built-in values such as `raw`, `render`, and `capture`, or an explicit script/command string when needed.
@@ -131,6 +133,7 @@ chmod = "600"
 - A template-style forward-managed target should typically set:
   - `pull_view_repo = "render"`
   - `pull_view_live = "raw"`
+- See [`templates.md`](./templates.md) for a concrete package-manifest setup, including reconcile configuration for template sources with includes.
 - A live-dump-style target should typically keep:
   - `pull_view_repo = "raw"`
   - `pull_view_live = "capture"`

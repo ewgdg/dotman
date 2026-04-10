@@ -110,6 +110,122 @@ def test_pull_plan_uses_declared_repo_and_live_views_for_rendered_targets(
     assert target.reconcile_command == "sh hooks/reconcile.sh"
     assert target.reconcile_io == "tty"
 
+def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'render = "jinja"',
+                'pull_view_repo = "render"',
+                'pull_view_live = "raw"',
+                'reconcile = "jinja"',
+                'reconcile_io = "tty"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
+        "{% include 'env.core.sh' %}\n",
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "env.core.sh").write_text(
+        "export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n",
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (home / ".profile").write_text("export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n", encoding="utf-8")
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.fixture]",
+                f'path = "{repo_root}"',
+                "order = 10",
+                f'state_path = "{tmp_path / "state"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = engine.plan_pull_binding("fixture:shell@default")
+
+    target = plan.target_plans[0]
+    assert target.reconcile_command == "jinja"
+    assert target.reconcile_io == "tty"
+
+
+
+def test_plain_file_with_jinja_markers_requires_explicit_render(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
+        "profile={{ profile }}\n",
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.fixture]",
+                f'path = "{repo_root}"',
+                "order = 10",
+                f'state_path = "{tmp_path / "state" / "fixture"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = engine.plan_push_binding("fixture:shell@default")
+
+    assert plan.target_plans[0].projection_kind == "raw"
+    assert plan.target_plans[0].desired_text == "profile={{ profile }}\n"
+
+
 def test_template_file_render_supports_relative_include(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -129,6 +245,7 @@ def test_template_file_render_supports_relative_include(
                 "[targets.profile]",
                 'source = "files/profile"',
                 'path = "~/.profile"',
+                'render = "jinja"',
                 "",
             ]
         ),

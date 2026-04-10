@@ -163,6 +163,76 @@ def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
     assert recorded["kwargs"]["env"]["DOTMAN_LIVE_PATH"] == str(live_path)
 
 
+def test_execute_session_runs_builtin_jinja_reconcile_helper(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+    live_path.write_text("live\n", encoding="utf-8")
+
+    plan = BindingPlan(
+        operation="pull",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path,
+                live_path=live_path,
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+                reconcile_command="jinja",
+                reconcile_io="tty",
+                review_before_bytes=b"repo planning view\n",
+                review_after_bytes=b"live planning view\n",
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="pull")
+
+    recorded: dict[str, object] = {}
+
+    def fake_run_jinja_reconcile(
+        *,
+        repo_path: str,
+        live_path: str,
+        review_repo_path: str | None = None,
+        review_live_path: str | None = None,
+        editor: str | None = None,
+    ) -> int:
+        recorded["repo_path"] = repo_path
+        recorded["live_path"] = live_path
+        recorded["review_repo_path"] = review_repo_path
+        recorded["review_live_path"] = review_live_path
+        recorded["editor"] = editor
+        assert review_repo_path is not None
+        assert review_live_path is not None
+        assert Path(review_repo_path).read_text(encoding="utf-8") == "repo planning view\n"
+        assert Path(review_live_path).read_text(encoding="utf-8") == "live planning view\n"
+        return 0
+
+    monkeypatch.setattr("dotman.execution.run_jinja_reconcile", fake_run_jinja_reconcile)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr("sys.stderr.isatty", lambda: True)
+
+    result = execute_session(session, stream_output=True)
+
+    assert result.status == "ok"
+    assert result.packages[0].steps[0].step.action == "reconcile"
+    assert recorded["repo_path"] == str(repo_path)
+    assert recorded["live_path"] == str(live_path)
+    assert recorded["editor"] is None
+
+
+
 def test_execute_session_fails_tty_reconcile_without_terminal(
     tmp_path: Path,
     monkeypatch,

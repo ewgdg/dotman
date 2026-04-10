@@ -142,7 +142,7 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
             "push_ignore": [],
             "reconcile_command": None,
             "reconcile_io": None,
-            "render_command": None,
+            "render_command": "jinja",
             "repo": "example",
             "repo_path": str(EXAMPLE_REPO / "packages" / "git" / "files" / "gitconfig"),
             "selector": "git",

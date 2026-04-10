@@ -180,6 +180,7 @@ def write_untrack_conflict_repo(repo_root: Path) -> None:
                 "[targets.shared]",
                 'source = "files/shared.conf"',
                 'path = "~/.config/shared.conf"',
+                'render = "jinja"',
                 "",
             ]
         ),
@@ -225,6 +226,7 @@ def write_multi_instance_repo(repo_root: Path) -> None:
                 "[targets.managed]",
                 'source = "files/managed.conf"',
                 'path = "~/.config/profiled/{{ profile }}.conf"',
+                'render = "jinja"',
                 "",
             ]
         ),

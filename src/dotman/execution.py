@@ -13,6 +13,7 @@ from typing import Iterator, Sequence
 
 from dotman.engine import HOOK_NAMES_BY_OPERATION
 from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 
 
 @dataclass(frozen=True)
@@ -371,6 +372,18 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool) -> ExecutionStepR
                 command_env = {**_build_target_env(target_plan), **review_env}
                 if target_plan.reconcile_io == "tty":
                     _require_interactive_terminal_for_reconcile()
+                if target_plan.reconcile_command == BUILTIN_JINJA_RECONCILE:
+                    # Keep built-in reconcile values declarative in plans/info
+                    # while still reusing the same helper as the CLI subcommand.
+                    exit_code = run_jinja_reconcile(
+                        repo_path=str(target_plan.repo_path),
+                        live_path=str(target_plan.live_path),
+                        review_repo_path=command_env.get("DOTMAN_REVIEW_REPO_PATH"),
+                        review_live_path=command_env.get("DOTMAN_REVIEW_LIVE_PATH"),
+                    )
+                    stdout = ""
+                    stderr = ""
+                elif target_plan.reconcile_io == "tty":
                     exit_code, stdout, stderr = _run_command_with_terminal(
                         command=target_plan.reconcile_command or "",
                         cwd=target_plan.command_cwd,

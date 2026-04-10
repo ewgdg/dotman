@@ -48,5 +48,6 @@ Design rules and current semantics live in:
 
 - `../../docs/config.md`
 - `../../docs/repository.md`
+- `../../docs/templates.md`
 - `../../docs/cli.md`
 - `../../docs/snapshot.md`

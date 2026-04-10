@@ -12,6 +12,7 @@ from typing import Sequence
 
 from dotman.models import BindingPlan
 from dotman.reconcile import run_basic_reconcile
+from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 
 
 DEFAULT_REVIEW_PAGER = "less -FRX -R"
@@ -170,6 +171,13 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
                         "DOTMAN_REVIEW_REPO_PATH": str(review_repo_path),
                         "DOTMAN_REVIEW_LIVE_PATH": str(review_live_path),
                     }
+                )
+            if review_item.reconcile_command == BUILTIN_JINJA_RECONCILE:
+                return run_jinja_reconcile(
+                    repo_path=str(review_item.repo_path),
+                    live_path=str(review_item.live_path),
+                    review_repo_path=review_env.get("DOTMAN_REVIEW_REPO_PATH"),
+                    review_live_path=review_env.get("DOTMAN_REVIEW_LIVE_PATH"),
                 )
             completed = subprocess.run(
                 review_item.reconcile_command,
