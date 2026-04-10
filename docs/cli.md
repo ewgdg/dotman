@@ -116,7 +116,7 @@ This document captures the current command and selector direction for `dotman`.
 - `push --dry-run` should not create a snapshot.
 - If a real `push` fails after snapshot creation, dotman should keep that snapshot so the user can inspect it or roll back manually.
 - The interactive diff review stage should stay inspection-only in v1.
-- Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.
+- Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `live/...` and `repo/...` paths instead of opaque `before-*` or `after-*` temp names.
 - Diff review headers should compact long compared paths for readability, and should additionally collapse the current home directory to `~` instead of a machine-specific absolute prefix.
@@ -152,7 +152,7 @@ This document captures the current command and selector direction for `dotman`.
 - After diff review accepts, `pull` should execute immediately in one package-oriented timeline.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
 - The interactive diff review stage should stay inspection-only in v1.
-- Future edit-mode work belongs in [`docs/edit-mode-v2.md`](/home/xian/projects/dotman/docs/edit-mode-v2.md), not in the v1 review contract.
+- Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `repo/...` and `live/...` paths instead of opaque `before-*` or `after-*` temp names.
 - Use the same diff-review path compaction rule described in the `push` section above.
