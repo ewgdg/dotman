@@ -465,6 +465,16 @@ def test_pending_selection_prompt_prepends_blank_line(monkeypatch) -> None:
 
     assert cli.pending_selection_prompt() == '\nExclude by number or range ("?"; e.g. "1 2 4-6" or "^3"; default: none): '
 
+
+def test_write_manifest_confirmation_prompt_uses_bracket_style(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert (
+        cli.write_manifest_confirmation_prompt(repo_name="fixture", package_id="git")
+        == 'Write package config changes for fixture:git? [y/N] '
+    )
+
+
 def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
     monkeypatch.delenv("DOTMAN_MENU_BOTTOM_UP", raising=False)
     monkeypatch.setattr(cli, "prompt", lambda _message: "")

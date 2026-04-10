@@ -172,6 +172,7 @@ This document captures the current command and selector direction for `dotman`.
 - Only targets with detected drift should appear in the pull selection menu.
 - `pull_view_repo` and `pull_view_live` must stay non-interactive and side-effect free.
 - A `reconcile` command may be interactive, for example by opening an editor to reconcile repo source files against the current live output.
+- For editor-backed reconcile helpers, dotman should prefer transactional editing: review scratch files stay readonly, editable buffers should be temporary copies, and dotman should ask for confirmation before writing those edits back to repo sources.
 - `reconcile` should only run after the user selects a changed target for pull.
 - If both `capture` and `reconcile` are defined, `capture` should drive planning and `reconcile` should handle the actual selected pull step.
 - If a transformed target has no `reconcile`, dotman may still pull by writing repo-side content from `capture`, but `reconcile` is preferred when manual or custom merge logic is needed.

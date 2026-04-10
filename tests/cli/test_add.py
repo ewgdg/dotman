@@ -338,6 +338,56 @@ def test_review_add_manifest_uses_dedicated_add_review_wording(
     assert recorded["command"][0] == "nvim"
 
 
+def test_add_cli_reports_no_effective_package_config_changes_after_editor_review(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    live_path = home / ".config" / "foo.conf"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("value\n", encoding="utf-8")
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    manifest_path = repo_root / "packages" / "git" / "package.toml"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text('id = "git"\n', encoding="utf-8")
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+
+    monkeypatch.setattr(cli, "add_editor_available", lambda: True)
+
+    def fake_review(result: AddOperationResult) -> AddReviewResult:
+        return AddReviewResult(exit_code=0, manifest_text=result.before_text)
+
+    monkeypatch.setattr(cli, "review_add_manifest", fake_review)
+    prompt_messages: list[str] = []
+    monkeypatch.setattr(
+        cli,
+        "prompt",
+        lambda message: prompt_messages.append(message) or "",
+    )
+
+    exit_code = main([
+        "--config",
+        str(config_path),
+        "add",
+        str(live_path),
+        "fixture:git",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert prompt_messages == []
+    assert "No package config changes." in output
+    assert manifest_path.read_text(encoding="utf-8") == 'id = "git"\n'
+
+
+
 def test_add_cli_keeps_manifest_unchanged_when_editor_review_is_declined(
     tmp_path: Path,
     monkeypatch,
@@ -362,7 +412,12 @@ def test_add_cli_keeps_manifest_unchanged_when_editor_review_is_declined(
         "review_add_manifest",
         lambda result: AddReviewResult(exit_code=0, manifest_text=result.after_text),
     )
-    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    prompt_messages: list[str] = []
+    monkeypatch.setattr(
+        cli,
+        "prompt",
+        lambda message: prompt_messages.append(message) or "",
+    )
 
     exit_code = main([
         "--config",
@@ -374,6 +429,6 @@ def test_add_cli_keeps_manifest_unchanged_when_editor_review_is_declined(
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Confirm package config write for fixture:newpkg:" in output
+    assert prompt_messages[-1] == "Write package config changes for fixture:newpkg? [y/N] "
     assert "kept package config unchanged fixture:newpkg" in output
     assert not (repo_root / "packages" / "newpkg" / "package.toml").exists()

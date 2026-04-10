@@ -191,10 +191,11 @@ pull = ["*.dotdropbak"]
 - Use `reconcile_io = "tty"` for full-screen editors or other terminal-native tools that would break if dotman piped and prefixed their output.
 - Dotman may provide helper commands for package-authored `reconcile` workflows; for example, `dotman reconcile editor` can accept repeated `--additional-source` args for multi-source reconcile workflows.
 - For `dotman reconcile editor`, `--repo-path` is the primary repo-side target source and repeated `--additional-source` args are for extra repo files that should be opened alongside it during reconciliation.
-- `dotman reconcile editor` may receive separate review paths, so the review content can use planning projections while the editable buffers still point at real repo-side source files.
+- `dotman reconcile editor` may receive separate review paths, so the review content can use planning projections while the editor buffers point at temporary transactional copies of the repo-side source files.
 - The preferred contract for reconcile helpers is review-side projections via `DOTMAN_REVIEW_REPO_PATH` and `DOTMAN_REVIEW_LIVE_PATH`.
 - Temporary review artifacts should be readonly, since they are inspection-only scratch files.
-- `dotman reconcile editor` should open the review diff first, and then open the actual repo-side source files for editing.
+- `dotman reconcile editor` should open the review diff first, and then open temporary editable copies of the repo-side source files.
+- `dotman reconcile editor` should only write those edited copies back to the repo after the editor exits and the user confirms the write.
 - `reconcile` should run only after the target has already been selected for pull work.
 - If both `capture` and `reconcile` are defined, dotman should use `capture` for pull planning and `reconcile` for the actual selected pull step.
 - If a transformed file target has no `reconcile`, dotman may still pull by writing repo-side content from `capture`, but `reconcile` is preferred when interactive or custom logic is needed.

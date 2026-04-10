@@ -533,15 +533,15 @@ def confirmation_prompt() -> str:
     )
 
 
-def write_manifest_confirmation_prompt() -> str:
-    prompt_text = "Write package config changes"
-    hint_text = '("y" to confirm; default: no)'
+def write_manifest_confirmation_prompt(*, repo_name: str, package_id: str) -> str:
+    prompt_text = f"Write package config changes for {repo_name}:{package_id}?"
+    hint_text = "[y/N]"
     if not colors_enabled():
-        return f"{prompt_text} {hint_text}: "
+        return f"{prompt_text} {hint_text} "
     return (
         f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
         f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
-        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
     )
 
 
@@ -687,11 +687,10 @@ def ensure_track_binding_implicit_overrides_confirmed(
 
 
 def confirm_add_manifest_write(*, repo_name: str, package_id: str) -> bool:
-    print_selection_header(
-        f"Confirm package config write for {repo_name}:{package_id}:"
-    )
     while True:
-        answer = prompt(write_manifest_confirmation_prompt()).strip().lower()
+        answer = prompt(
+            write_manifest_confirmation_prompt(repo_name=repo_name, package_id=package_id)
+        ).strip().lower()
         if answer in {"", "n", "no"}:
             return False
         if answer in {"y", "yes"}:
@@ -1912,7 +1911,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="<source-path>",
-        help="Additional read-only source file to open during reconcile review",
+        help="Additional repo source file to include in transactional reconcile editing",
     )
     reconcile_editor_parser.add_argument(
         "--editor",
@@ -2344,6 +2343,20 @@ def emit_kept_add_result(*, repo_name: str, package_id: str, json_output: bool) 
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     print(f"kept package config unchanged {render_package_label(repo_name=repo_name, package_id=package_id, package_first=True, include_repo_context=True)}")
+    return 0
+
+
+def emit_noop_add_result(*, json_output: bool) -> int:
+    payload = {
+        "mode": "config-only",
+        "operation": "add",
+        "written": False,
+        "changed": False,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print("No package config changes.")
     return 0
 
 
@@ -2788,6 +2801,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raise ValueError("add review expected an editor, but none is configured")
                 if review_result.exit_code != 0:
                     return review_result.exit_code
+                if review_result.manifest_text == result.before_text:
+                    return emit_noop_add_result(json_output=args.json_output)
                 if not confirm_add_manifest_write(repo_name=repo_name, package_id=package_id):
                     return emit_kept_add_result(
                         repo_name=repo_name,
