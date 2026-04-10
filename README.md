@@ -4,7 +4,7 @@ Package-oriented dotfile manager with planning, diff review, and two-way sync.
 
 ## Inspiration
 
-`dotman` is inspired by tools like `pacman` and `yay`, especially in its CLI ergonomics, selection flows, and review-oriented workflow.
+`dotman` is inspired by tools like [`pacman`](https://wiki.archlinux.org/title/Pacman) and [`yay`](https://github.com/jguer/yay), especially in its CLI ergonomics, selection flows, and review-oriented workflow.
 
 ## Why
 
