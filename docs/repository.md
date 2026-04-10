@@ -12,6 +12,8 @@ This document captures the current repository structure and configuration schema
 
 - A package is the atomic install unit.
 - Packages live under `packages/`.
+- A package manifest lives at `packages/<package-id>/package.toml`.
+- Namespaced package IDs map to nested directories under `packages/`, for example `work/git` -> `packages/work/git/package.toml`.
 - Packages may define `binding_mode = "singleton" | "multi_instance"`.
 - `binding_mode` defaults to `singleton`.
 - `singleton` means the package has one tracked identity regardless of bound profile.
@@ -102,7 +104,11 @@ chmod = "600"
 ## Targets
 
 - Targets may define `path` for the live destination.
+- Target keys are arbitrary manifest identifiers.
+- Tools may still generate deterministic path-derived target keys for convenience, but that naming is a convention rather than a schema rule.
+- `path` may use `~/...` for home-relative destinations or an absolute path otherwise.
 - Targets may define `chmod` when the installed root path needs an explicit mode.
+- `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
 - Targets may define `render` as a forward transform used during `push`.
 - `render` should be a non-interactive stdout producer.
 - Targets may define `capture` as a non-interactive live-to-repo projection used during pull planning.

@@ -1,0 +1,358 @@
+from __future__ import annotations
+
+import difflib
+import json
+import os
+import shlex
+import stat
+import subprocess
+import tempfile
+import tomllib
+from dataclasses import dataclass, replace
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class LivePathSpec:
+    raw_input: str
+    resolved_path: Path
+    target_kind: str
+    target_name_base: str
+    source_path: str
+    config_path: str
+    chmod: str | None
+
+
+@dataclass(frozen=True)
+class AddOperationResult:
+    repo_name: str
+    package_id: str
+    manifest_path: Path
+    target_name: str
+    target_kind: str
+    source_path: str
+    config_path: str
+    chmod: str | None
+    created_package: bool
+    before_text: str
+    after_text: str
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "mode": "config-only",
+            "operation": "add",
+            "repo": self.repo_name,
+            "package_id": self.package_id,
+            "manifest_path": str(self.manifest_path),
+            "target": {
+                "name": self.target_name,
+                "kind": self.target_kind,
+                "source": self.source_path,
+                "path": self.config_path,
+            },
+            "created_package": self.created_package,
+        }
+        if self.chmod is not None:
+            payload["target"]["chmod"] = self.chmod
+        return payload
+
+
+@dataclass(frozen=True)
+class AddReviewResult:
+    exit_code: int
+    manifest_text: str
+
+
+def resolve_live_path_spec(live_path_text: str, *, cwd: Path | None = None, home: Path | None = None) -> LivePathSpec:
+    current_dir = (cwd or Path.cwd()).resolve()
+    home_dir = (home or Path.home()).resolve()
+    candidate_path = Path(os.path.expanduser(live_path_text))
+    if not candidate_path.is_absolute():
+        candidate_path = current_dir / candidate_path
+    if not candidate_path.exists() and not candidate_path.is_symlink():
+        raise ValueError(f"live path does not exist: {candidate_path.resolve(strict=False)}")
+    if candidate_path.is_symlink():
+        raise ValueError(f"live path symlinks are not supported in v1: {candidate_path.resolve(strict=False)}")
+    resolved_path = candidate_path.resolve()
+    file_mode = stat.S_IMODE(resolved_path.stat().st_mode)
+    if resolved_path.is_file():
+        target_kind = "file"
+        chmod = None if file_mode == 0o644 else f"{file_mode:o}"
+    elif resolved_path.is_dir():
+        target_kind = "directory"
+        chmod = None if file_mode == 0o755 else f"{file_mode:o}"
+    else:
+        raise ValueError(f"unsupported live path type for add: {resolved_path}")
+    config_path = _config_path_text(resolved_path, home_dir=home_dir)
+    return LivePathSpec(
+        raw_input=live_path_text,
+        resolved_path=resolved_path,
+        target_kind=target_kind,
+        target_name_base=build_target_name(config_path=config_path, target_kind=target_kind),
+        source_path=build_source_path(resolved_path=resolved_path, home_dir=home_dir),
+        config_path=config_path,
+        chmod=chmod,
+    )
+
+
+def build_target_name(*, config_path: str, target_kind: str) -> str:
+    if target_kind not in {"file", "directory"}:
+        raise ValueError(f"unsupported target kind '{target_kind}'")
+    normalized_path = config_path
+    if normalized_path.startswith("~/"):
+        normalized_path = normalized_path[2:]
+    elif normalized_path.startswith("/"):
+        normalized_path = normalized_path[1:]
+    key_body: list[str] = []
+    previous_was_separator = False
+    for character in normalized_path.lower():
+        if character.isalnum():
+            key_body.append(character)
+            previous_was_separator = False
+            continue
+        if previous_was_separator:
+            continue
+        key_body.append("_")
+        previous_was_separator = True
+    collapsed = "".join(key_body).strip("_")
+    prefix = "f" if target_kind == "file" else "d"
+    return f"{prefix}_{collapsed}" if collapsed else prefix
+
+
+def build_source_path(*, resolved_path: Path, home_dir: Path) -> str:
+    relative_parts: tuple[str, ...]
+    try:
+        relative_parts = resolved_path.relative_to(home_dir).parts
+    except ValueError:
+        relative_parts = tuple(part for part in resolved_path.parts if part != "/")
+    normalized_parts = [_strip_component_leading_dots(part) for part in relative_parts]
+    kept_parts = [part for part in normalized_parts if part]
+    if not kept_parts:
+        return "files"
+    return "files/" + "/".join(kept_parts)
+
+
+def package_manifest_path(*, repo_root: Path, package_id: str) -> Path:
+    validate_package_id(package_id)
+    return repo_root / "packages" / Path(*package_id.split("/")) / "package.toml"
+
+
+def validate_package_id(package_id: str) -> None:
+    if not package_id.strip():
+        raise ValueError("package id must not be empty")
+    if package_id.startswith("/") or package_id.endswith("/"):
+        raise ValueError(f"invalid package id '{package_id}'")
+    if any(character in package_id for character in ("\\", ":", "@", "<", ">")):
+        raise ValueError(f"invalid package id '{package_id}'")
+    parts = package_id.split("/")
+    if any(not part or part in {".", ".."} or any(character.isspace() for character in part) for part in parts):
+        raise ValueError(f"invalid package id '{package_id}'")
+
+
+def prepare_add_to_package(*, repo_root: Path, repo_name: str, package_id: str, live_path_text: str) -> AddOperationResult:
+    live_spec = resolve_live_path_spec(live_path_text)
+    manifest_path = package_manifest_path(repo_root=repo_root, package_id=package_id)
+    before_text = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else ""
+    existing_target_names, existing_target_paths = read_existing_target_metadata(before_text)
+    if live_spec.config_path in existing_target_paths:
+        raise ValueError(
+            f"package '{repo_name}:{package_id}' already declares target path '{live_spec.config_path}'"
+        )
+    target_name = next_available_target_name(live_spec.target_name_base, existing_target_names)
+    target_block = render_target_block(
+        target_name=target_name,
+        source_path=live_spec.source_path,
+        config_path=live_spec.config_path,
+        chmod=live_spec.chmod,
+    )
+    created_package = not manifest_path.exists()
+    after_text = (
+        render_new_manifest(package_id=package_id, target_block=target_block)
+        if created_package
+        else append_target_block(before_text=before_text, target_block=target_block)
+    )
+    return AddOperationResult(
+        repo_name=repo_name,
+        package_id=package_id,
+        manifest_path=manifest_path,
+        target_name=target_name,
+        target_kind=live_spec.target_kind,
+        source_path=live_spec.source_path,
+        config_path=live_spec.config_path,
+        chmod=live_spec.chmod,
+        created_package=created_package,
+        before_text=before_text,
+        after_text=after_text,
+    )
+
+
+def write_add_result(result: AddOperationResult, *, manifest_text: str | None = None) -> AddOperationResult:
+    final_manifest_text = manifest_text if manifest_text is not None else result.after_text
+    validate_manifest_text(final_manifest_text, package_id=result.package_id)
+    result.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = result.manifest_path.with_suffix(".tmp")
+    temp_path.write_text(final_manifest_text, encoding="utf-8")
+    temp_path.replace(result.manifest_path)
+    return replace(result, after_text=final_manifest_text)
+
+
+def validate_manifest_text(manifest_text: str, *, package_id: str) -> None:
+    payload = tomllib.loads(manifest_text)
+    manifest_id = payload.get("id")
+    if not isinstance(manifest_id, str):
+        raise ValueError("edited package manifest must define string id")
+    if manifest_id != package_id:
+        raise ValueError(
+            f"edited package manifest id must stay '{package_id}', got '{manifest_id}'"
+        )
+
+
+def read_existing_target_metadata(manifest_text: str) -> tuple[set[str], set[str]]:
+    if not manifest_text.strip():
+        return set(), set()
+    payload = tomllib.loads(manifest_text)
+    targets_payload = payload.get("targets")
+    if not isinstance(targets_payload, dict):
+        return set(), set()
+    target_names = set(targets_payload)
+    target_paths = {
+        target_payload["path"]
+        for target_payload in targets_payload.values()
+        if isinstance(target_payload, dict) and isinstance(target_payload.get("path"), str)
+    }
+    return target_names, target_paths
+
+
+def next_available_target_name(base_name: str, existing_names: set[str]) -> str:
+    if base_name not in existing_names:
+        return base_name
+    suffix = 2
+    while f"{base_name}_{suffix}" in existing_names:
+        suffix += 1
+    return f"{base_name}_{suffix}"
+
+
+def render_target_block(*, target_name: str, source_path: str, config_path: str, chmod: str | None) -> str:
+    lines = [
+        f"[targets.{target_name}]",
+        f"source = {json.dumps(source_path)}",
+        f"path = {json.dumps(config_path)}",
+    ]
+    if chmod is not None:
+        lines.append(f"chmod = {json.dumps(chmod)}")
+    return "\n".join(lines) + "\n"
+
+
+def render_new_manifest(*, package_id: str, target_block: str) -> str:
+    return f'id = {json.dumps(package_id)}\n\n{target_block}'
+
+
+def append_target_block(*, before_text: str, target_block: str) -> str:
+    stripped = before_text.rstrip()
+    if not stripped:
+        return target_block
+    return f"{stripped}\n\n{target_block}"
+
+
+def add_editor_available() -> bool:
+    return bool(os.environ.get("VISUAL") or os.environ.get("EDITOR"))
+
+
+def review_add_manifest(result: AddOperationResult) -> AddReviewResult | None:
+    if not add_editor_available():
+        return None
+    editor_command = _normalize_editor_command(_resolve_editor_command())
+    with tempfile.TemporaryDirectory(prefix="dotman-add-review-") as temp_dir:
+        temp_root = Path(temp_dir)
+        before_path = temp_root / "package-before.toml"
+        after_path = temp_root / "package-after.toml"
+        editable_path = temp_root / "package.toml"
+        review_path = temp_root / "add-review.md"
+
+        before_path.write_text(result.before_text, encoding="utf-8")
+        after_path.write_text(result.after_text, encoding="utf-8")
+        editable_path.write_text(result.after_text, encoding="utf-8")
+        before_path.chmod(0o444)
+        after_path.chmod(0o444)
+        review_path.write_text(
+            _build_add_review_content(
+                result=result,
+                manifest_path=result.manifest_path,
+                before_path=before_path,
+                after_path=after_path,
+                editable_path=editable_path,
+            ),
+            encoding="utf-8",
+        )
+        review_path.chmod(0o444)
+
+        completed = subprocess.run(
+            [*editor_command, str(review_path), str(editable_path)],
+            check=False,
+        )
+        return AddReviewResult(
+            exit_code=completed.returncode,
+            manifest_text=editable_path.read_text(encoding="utf-8"),
+        )
+
+
+def _resolve_editor_command() -> list[str]:
+    editor_value = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if not editor_value:
+        raise ValueError("add review requires $VISUAL or $EDITOR")
+    return shlex.split(editor_value)
+
+
+def _normalize_editor_command(editor_command: list[str]) -> list[str]:
+    return [argument for argument in editor_command if argument != "-d"]
+
+
+def _build_add_review_content(*, result: AddOperationResult, manifest_path: Path, before_path: Path, after_path: Path, editable_path: Path) -> str:
+    current_manifest_label = f"current {manifest_path.name}"
+    proposed_manifest_label = f"proposed {manifest_path.name}"
+    diff_lines = list(
+        difflib.unified_diff(
+            before_path.read_text(encoding="utf-8", errors="replace").splitlines(),
+            after_path.read_text(encoding="utf-8", errors="replace").splitlines(),
+            fromfile=current_manifest_label,
+            tofile=proposed_manifest_label,
+            lineterm="",
+        )
+    )
+    diff_body = "No differences detected.\n" if not diff_lines else "\n".join(diff_lines) + "\n"
+    action_text = "create package manifest" if result.created_package else "update package manifest"
+    current_manifest_text = str(manifest_path) if manifest_path.exists() else "(new package; no current manifest yet)"
+    return (
+        "# Dotman Add Review\n\n"
+        "Review only. Do not edit this file.\n"
+        "Inspect the proposed package manifest diff below, then edit the temporary package.toml copy if needed.\n"
+        "Nothing is written back to the repo until dotman asks for confirmation after the editor exits.\n"
+        "\n"
+        "## Summary\n\n"
+        f"- action: {action_text}\n"
+        f"- package: {result.repo_name}:{result.package_id}\n"
+        "\n"
+        "## Review Inputs\n\n"
+        f"- package manifest path: {manifest_path}\n"
+        f"- current manifest: {current_manifest_text}\n"
+        f"- proposed manifest: {proposed_manifest_label}\n"
+        f"- editable manifest copy: {editable_path}\n\n"
+        "## Diff\n\n"
+        "```diff\n"
+        f"{diff_body}"
+        "```\n"
+    )
+
+
+def _config_path_text(resolved_path: Path, *, home_dir: Path) -> str:
+    try:
+        relative_path = resolved_path.relative_to(home_dir)
+    except ValueError:
+        return resolved_path.as_posix()
+    if not relative_path.parts:
+        return "~"
+    return f"~/{relative_path.as_posix()}"
+
+
+def _strip_component_leading_dots(component: str) -> str:
+    return component.lstrip(".")

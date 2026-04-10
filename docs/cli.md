@@ -223,10 +223,55 @@ This document captures the current command and selector direction for `dotman`.
 
 ## Add
 
-- `add` is reserved for future unmanaged-to-managed adoption.
-- `add` should mean taking a live dotfile or directory that is not yet modeled in dotman and adding it to an existing package or a new package.
-- `add` is not implemented yet.
-- `import` should stay unused as a top-level command while this area is still unsettled.
+- `add` is the unmanaged-to-managed adoption command for creating or updating repository package config from an existing live path.
+- `add` should accept `dotman add <live-path> [<repo>:]<package-query>`.
+- The live path must be the first positional argument so relative paths such as `.config/nvim/init.lua` do not collide with namespaced package IDs such as `work/git`.
+- `live-path` may be relative, `~`-prefixed, or absolute.
+- Relative `live-path` input should resolve against the current working directory.
+- `add` should fail fast if the resolved live path does not exist.
+- `add` should fail fast on symlinks in v1.
+- `add` should auto-detect whether the live path is a file or directory.
+- If the optional package query is provided, dotman should resolve it against package IDs across configured repos using the same repo-aware exact and partial lookup model used elsewhere.
+- Package queries may be package-only such as `git`, repo-qualified such as `main:git`, or partial forms such as `ma:gi` for interactive resolution.
+- Interactive package resolution for `add` should include a synthetic create option as the first menu entry.
+- If the package query is omitted, `add` should be interactive-only and should present a package picker across all repos, with `create a new package` as the first option.
+- In non-interactive mode, omitting the package query should be an error instead of a hidden guess.
+- Selecting create should always end with an explicit final repo and explicit final package ID before writing any files.
+- Partial package text may help find an existing package, but dotman should not silently create a package from an unresolved partial query.
+- If the selected package does not exist yet, `add` should create `packages/<package-id>/package.toml`, including namespaced package paths such as `packages/work/git/package.toml`.
+- If the selected package already exists, `add` should update only that package's `package.toml`.
+- `add` should not modify tracked binding state.
+- `add` should not run `push`, `pull`, hooks, or any repo-to-live or live-to-repo execution.
+- `add` should not copy the live file or directory into the repo in v1; this phase is manifest-only.
+- `add` should derive a deterministic target key from the live destination path.
+- Generated target keys should use `f_` for file targets and `d_` for directory targets.
+- The rest of the generated key should be lowercase path-derived snake_case text with punctuation normalized to underscores.
+- If the generated target key already exists in the same package, `add` should append a numeric suffix such as `_2`, `_3`, and so on until the key is unique.
+- If the same live `path` is already declared by another target in the same package, `add` should fail instead of silently replacing it.
+- `add` should store the target `path` as `~/<...>` when the live path is under `$HOME`.
+- `add` should store the target `path` as an absolute path when the live path is outside `$HOME`.
+- `add` should derive the repo `source` path by mirroring the live path under `files/`.
+- For source derivation, dotman should drop the home directory prefix when the live path is under `$HOME`; otherwise it should drop only the leading `/`.
+- For every mirrored source path component, dotman should remove any leading `.` character, including for paths outside `$HOME`.
+- Examples:
+  - `~/.gitconfig` -> `files/gitconfig`
+  - `~/.config/nvim/init.lua` -> `files/config/nvim/init.lua`
+  - `/etc/.ssh/ssh_config` -> `files/etc/ssh/ssh_config`
+- `add` should inspect the actual live file mode and include `chmod` only when the mode is unusual.
+- For v1, the usual default modes are:
+  - regular file: `644`
+  - directory: `755`
+- If the live mode differs from the usual default for that target kind, `add` should write the actual mode into `chmod`, for example `600` or `700`.
+- In interactive mode, `add` should open an editor review when an editor is available.
+- That editor review should open a diff view of the old and generated `package.toml` content, and also open an editable temporary `package.toml` copy.
+- `add` should not write the edited manifest back to the repo until the editor exits and the user confirms the write.
+- The editor review for `add` should not open the live path itself.
+- Examples:
+  - `dotman add ~/.gitconfig git`
+  - `dotman add .config/nvim/init.lua main:nvim`
+  - `dotman add ~/.config/gtk-3.0/settings.ini desktop/gtk`
+  - `dotman add ~/.config/foo.conf`
+- `import` should stay unused as a top-level command.
 
 ## Untrack
 

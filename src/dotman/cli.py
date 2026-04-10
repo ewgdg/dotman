@@ -11,6 +11,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Sequence, TypeVar
 
+from dotman.add import (
+    add_editor_available,
+    prepare_add_to_package,
+    review_add_manifest,
+    validate_package_id,
+    write_add_result,
+)
 from dotman.diff_review import (
     ReviewItem,
     build_review_items,
@@ -526,6 +533,18 @@ def confirmation_prompt() -> str:
     )
 
 
+def write_manifest_confirmation_prompt() -> str:
+    prompt_text = "Write package config changes"
+    hint_text = '("y" to confirm; default: no)'
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text}: "
+    return (
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+    )
+
+
 def print_selection_help() -> None:
     print("Selection help:")
     print("  <number>  choose that item")
@@ -665,6 +684,19 @@ def ensure_track_binding_implicit_overrides_confirmed(
             "in non-interactive mode"
         )
     return confirm_track_binding_implicit_overrides(binding=binding, overrides=overrides)
+
+
+def confirm_add_manifest_write(*, repo_name: str, package_id: str) -> bool:
+    print_selection_header(
+        f"Confirm package config write for {repo_name}:{package_id}:"
+    )
+    while True:
+        answer = prompt(write_manifest_confirmation_prompt()).strip().lower()
+        if answer in {"", "n", "no"}:
+            return False
+        if answer in {"y", "yes"}:
+            return True
+        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
 def prompt_for_conflicting_package_binding(
@@ -1030,6 +1062,232 @@ def resolve_tracked_package_text(
         ),
         not_found_text=f"tracked package '{package_query}' did not match any tracked package",
     )
+
+
+def parse_add_package_query(
+    engine: DotmanEngine,
+    package_query: str,
+) -> tuple[str | None, str]:
+    explicit_repo, selector, profile = parse_binding_text(package_query)
+    if profile is not None:
+        raise ValueError("add package query expects a package selector, not a binding")
+    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
+    lookup_repo, lookup_selector = parse_slash_qualified_query(
+        repo_names=repo_names,
+        explicit_repo=explicit_repo,
+        selector=selector,
+    )
+    return lookup_repo, lookup_selector
+
+
+def _query_fragment_rank(query: str | None, text: str) -> tuple[int, int, int]:
+    if query is None or not query.strip():
+        return (0, 0, len(text))
+    normalized_query = query.strip().lower()
+    normalized_text = text.lower()
+    if normalized_text == normalized_query:
+        return (0, 0, len(normalized_text))
+    if normalized_text.startswith(normalized_query):
+        return (1, 0, len(normalized_text))
+    match_index = normalized_text.find(normalized_query)
+    if match_index == -1:
+        return (9, 999, len(normalized_text))
+    return (2, match_index, len(normalized_text))
+
+
+def rank_add_package_candidate(match: tuple[object, str], *, repo_query: str | None, package_query: str | None) -> tuple[int, int, int, int, int, int, str, str]:
+    repo, package_id = match
+    repo_rank = _query_fragment_rank(repo_query, repo.config.name)
+    package_rank = _query_fragment_rank(package_query, package_id)
+    return (*repo_rank, *package_rank, repo.config.name.lower(), package_id.lower())
+
+
+def find_add_package_matches(
+    engine: DotmanEngine,
+    package_query: str,
+) -> tuple[str | None, str, list[tuple[object, str]], list[tuple[object, str]]]:
+    repo_query, package_fragment = parse_add_package_query(engine, package_query)
+    exact_matches: list[tuple[object, str]] = []
+    partial_matches: list[tuple[object, str]] = []
+    normalized_repo_query = None if repo_query is None else repo_query.lower()
+    normalized_package_query = package_fragment.lower()
+
+    for repo_config in engine.config.ordered_repos:
+        repo = engine.get_repo(repo_config.name)
+        repo_name = repo.config.name
+        repo_matches_exact = repo_query is None or repo_name == repo_query
+        repo_matches_partial = repo_query is None or normalized_repo_query in repo_name.lower()
+        if not repo_matches_partial:
+            continue
+        for package_id in repo.packages:
+            normalized_package_id = package_id.lower()
+            if repo_matches_exact and package_id == package_fragment:
+                exact_matches.append((repo, package_id))
+                continue
+            if normalized_package_query in normalized_package_id:
+                partial_matches.append((repo, package_id))
+
+    unique_partials = {
+        (repo.config.name, package_id): (repo, package_id)
+        for repo, package_id in partial_matches
+        if (repo, package_id) not in exact_matches
+    }
+    return repo_query, package_fragment, exact_matches, list(unique_partials.values())
+
+
+def create_add_option_label(package_query: str | None) -> str:
+    return "create a new package"
+
+
+def prompt_for_new_package_id(*, default_package_id: str | None) -> str:
+    while True:
+        prompt_text = "Package ID"
+        if default_package_id:
+            prompt_text += f" [{default_package_id}]"
+        package_id = prompt(f"{prompt_text}: ").strip()
+        if not package_id:
+            package_id = default_package_id or ""
+        try:
+            validate_package_id(package_id)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            continue
+        return package_id
+
+
+def prompt_for_add_repo_name(engine: DotmanEngine, *, repo_query: str | None) -> str:
+    if repo_query is not None and repo_query in engine.config.repos:
+        return repo_query
+    matching_repos = [
+        repo_config.name
+        for repo_config in engine.config.ordered_repos
+        if repo_query is None or repo_query.lower() in repo_config.name.lower()
+    ]
+    repo_names = matching_repos or [repo_config.name for repo_config in engine.config.ordered_repos]
+    selected_index = select_menu_option(
+        header_text="Select a repo for the new package:",
+        option_labels=repo_names,
+        option_search_fields=[(repo_name,) for repo_name in repo_names],
+    )
+    return repo_names[selected_index]
+
+
+def resolve_add_package_text(
+    engine: DotmanEngine,
+    package_query: str | None,
+    *,
+    json_output: bool,
+) -> tuple[str, str]:
+    interactive = interactive_mode_enabled(json_output=json_output)
+    if package_query is None:
+        if not interactive:
+            raise ValueError("package query is required in non-interactive mode")
+        package_matches = [
+            (engine.get_repo(repo_config.name), package_id)
+            for repo_config in engine.config.ordered_repos
+            for package_id in sorted(engine.get_repo(repo_config.name).packages)
+        ]
+        option_labels = [create_add_option_label(None)] + [
+            render_package_label(
+                repo_name=repo.config.name,
+                package_id=package_id,
+                package_first=True,
+                include_repo_context=True,
+            )
+            for repo, package_id in package_matches
+        ]
+        option_search_fields = [("create", "new", "package")] + [
+            build_fzf_search_fields(
+                match_fields=build_package_match_fields(
+                    repo_name=repo.config.name,
+                    package_id=package_id,
+                )
+            )
+            for repo, package_id in package_matches
+        ]
+        selected_index = select_menu_option(
+            header_text="Select a package for add:",
+            option_labels=option_labels,
+            option_search_fields=option_search_fields,
+        )
+        if selected_index == 0:
+            return (
+                prompt_for_add_repo_name(engine, repo_query=None),
+                prompt_for_new_package_id(default_package_id=None),
+            )
+        selected_repo, selected_package = package_matches[selected_index - 1]
+        return selected_repo.config.name, selected_package
+
+    repo_query, package_fragment, exact_matches, partial_matches = find_add_package_matches(engine, package_query)
+    ranked_exact_matches = sorted(
+        exact_matches,
+        key=lambda match: rank_add_package_candidate(match, repo_query=repo_query, package_query=package_fragment),
+    )
+    ranked_partial_matches = sorted(
+        partial_matches,
+        key=lambda match: rank_add_package_candidate(match, repo_query=repo_query, package_query=package_fragment),
+    )
+
+    if len(ranked_exact_matches) == 1:
+        selected_repo, selected_package = ranked_exact_matches[0]
+        return selected_repo.config.name, selected_package
+
+    if interactive:
+        menu_matches = ranked_exact_matches or ranked_partial_matches
+        option_labels = [create_add_option_label(package_query)] + [
+            render_package_label(
+                repo_name=repo.config.name,
+                package_id=package_id,
+                package_first=True,
+                include_repo_context=True,
+            )
+            for repo, package_id in menu_matches
+        ]
+        option_search_fields = [("create", package_query)] + [
+            build_fzf_search_fields(
+                match_fields=build_package_match_fields(
+                    repo_name=repo.config.name,
+                    package_id=package_id,
+                )
+            )
+            for repo, package_id in menu_matches
+        ]
+        selected_index = select_menu_option(
+            header_text=f"Select a package for '{package_query}':",
+            option_labels=option_labels,
+            option_search_fields=option_search_fields,
+        )
+        if selected_index == 0:
+            return (
+                prompt_for_add_repo_name(engine, repo_query=repo_query),
+                prompt_for_new_package_id(default_package_id=package_fragment),
+            )
+        selected_repo, selected_package = menu_matches[selected_index - 1]
+        return selected_repo.config.name, selected_package
+
+    if len(ranked_exact_matches) > 1:
+        raise ValueError(
+            f"package '{package_query}' is ambiguous: "
+            + ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in ranked_exact_matches)
+        )
+    if len(ranked_partial_matches) == 1:
+        selected_repo, selected_package = ranked_partial_matches[0]
+        return selected_repo.config.name, selected_package
+    if len(ranked_partial_matches) > 1:
+        raise ValueError(
+            f"package '{package_query}' is ambiguous: "
+            + ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in ranked_partial_matches)
+        )
+    if repo_query is None:
+        raise ValueError(
+            f"package '{package_query}' did not match any package; use an explicit repo-qualified query to create one in non-interactive mode"
+        )
+    if repo_query not in engine.config.repos:
+        raise ValueError(
+            f"package '{package_query}' did not match any package and cannot create non-interactively without an exact repo"
+        )
+    validate_package_id(package_fragment)
+    return repo_query, package_fragment
 
 
 def select_non_conflicting_track_profile(
@@ -1444,6 +1702,23 @@ def add_package_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_live_path_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "live_path",
+        metavar="<live-path>",
+        help="Live file or directory path to adopt into package config",
+    )
+
+
+def add_package_query_argument(parser: argparse.ArgumentParser, *, required: bool = False) -> None:
+    parser.add_argument(
+        "package_query",
+        nargs=None if required else "?",
+        metavar="<package-query>",
+        help="Package query in the form [<repo>:]<package>",
+    )
+
+
 def add_snapshot_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:
     parser.add_argument(
         "snapshot",
@@ -1491,6 +1766,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Track a binding in manager state",
     )
     add_binding_argument(track_parser)
+
+    add_parser = subparsers.add_parser(
+        "add",
+        help="Create or update package config from a live path",
+        description="Create or update package config from a live path",
+    )
+    add_live_path_argument(add_parser)
+    add_package_query_argument(add_parser, required=False)
 
     push_parser = subparsers.add_parser(
         "push",
@@ -2023,6 +2306,47 @@ def emit_tracked_binding(*, binding, json_output: bool) -> int:
     return 0
 
 
+def emit_add_result(*, result, json_output: bool) -> int:
+    if json_output:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return 0
+
+    package_label = render_package_label(
+        repo_name=result.repo_name,
+        package_id=result.package_id,
+        package_first=True,
+        include_repo_context=True,
+    )
+    action = "created" if result.created_package else "updated"
+    print(f"{action} package config {package_label}")
+    print(f"  manifest: {result.manifest_path}")
+    print(f"  target:   {result.target_name} [{result.target_kind}]")
+    print(f"  source:   {result.source_path}")
+    print(f"  path:     {result.config_path}")
+    if result.chmod is not None:
+        print(f"  chmod:    {result.chmod}")
+    manifest_only_note = "manifest only; repo source files were not copied"
+    if colors_enabled():
+        manifest_only_note = style_text(manifest_only_note, *MENU_HINT_STYLE)
+    print(f"  {manifest_only_note}")
+    return 0
+
+
+def emit_kept_add_result(*, repo_name: str, package_id: str, json_output: bool) -> int:
+    payload = {
+        "mode": "config-only",
+        "operation": "add",
+        "repo": repo_name,
+        "package_id": package_id,
+        "written": False,
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"kept package config unchanged {render_package_label(repo_name=repo_name, package_id=package_id, package_first=True, include_repo_context=True)}")
+    return 0
+
+
 def emit_kept_binding(*, binding, json_output: bool) -> int:
     payload = {
         "mode": "state-only",
@@ -2441,6 +2765,38 @@ def main(argv: Sequence[str] | None = None) -> int:
                     return emit_skipped_tracking(binding=binding, json_output=args.json_output)
                 engine.record_binding(binding)
                 return emit_tracked_binding(binding=binding, json_output=args.json_output)
+        if args.command == "add":
+            repo_name, package_id = resolve_add_package_text(
+                engine,
+                args.package_query,
+                json_output=args.json_output,
+            )
+            result = prepare_add_to_package(
+                repo_root=engine.get_repo(repo_name).root,
+                repo_name=repo_name,
+                package_id=package_id,
+                live_path_text=args.live_path,
+            )
+            if args.json_output or not interactive_mode_enabled(json_output=args.json_output):
+                return emit_add_result(
+                    result=write_add_result(result),
+                    json_output=args.json_output,
+                )
+            if add_editor_available():
+                review_result = review_add_manifest(result)
+                if review_result is None:
+                    raise ValueError("add review expected an editor, but none is configured")
+                if review_result.exit_code != 0:
+                    return review_result.exit_code
+                if not confirm_add_manifest_write(repo_name=repo_name, package_id=package_id):
+                    return emit_kept_add_result(
+                        repo_name=repo_name,
+                        package_id=package_id,
+                        json_output=args.json_output,
+                    )
+                result = write_add_result(result, manifest_text=review_result.manifest_text)
+                return emit_add_result(result=result, json_output=args.json_output)
+            return emit_add_result(result=write_add_result(result), json_output=args.json_output)
         if args.command == "push":
             if args.binding:
                 _repo, binding = resolve_tracked_binding_text(
