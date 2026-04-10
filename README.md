@@ -1,6 +1,6 @@
 # dotman
 
-Manage dotfiles and system files as packages.
+Package-oriented dotfile manager with planning, diff review, and two-way sync.
 
 ## Inspiration
 
@@ -42,7 +42,7 @@ uv tool install git+https://github.com/ewgdg/dotman.git
 
 ## Quick start
 
-Clone the repo so you can use the bundled example repo under `examples/repo/`:
+The install command above installs the CLI. Clone the repo separately if you want to use the bundled example repo under `examples/repo/`:
 
 ```sh
 git clone https://github.com/ewgdg/dotman.git ~/projects/dotman
@@ -63,6 +63,12 @@ dotman push
 ```
 
 For a larger real-world example repo, see [ewgdg/dotfiles](https://github.com/ewgdg/dotfiles).
+
+## Documentation
+
+- CLI behavior: [`docs/cli.md`](docs/cli.md)
+- User config: [`docs/config.md`](docs/config.md)
+- Repository layout: [`docs/repository.md`](docs/repository.md)
 
 ## Features
 
