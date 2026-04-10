@@ -24,16 +24,21 @@ It is currently intended for POSIX-like systems and is not designed for native W
 
 ## Install
 
-Required:
+### Required
 
 - `uv` for installation
 - `git` for diff review
 
-Install with:
+### Install command
 
 ```sh
 uv tool install git+https://github.com/ewgdg/dotman.git
 ```
+
+### Optional dependencies
+
+- `fzf` for long interactive selector lists
+- `nvim` for review and reconciliation flows; set `VISUAL=nvim` or `EDITOR=nvim` to use it
 
 ## Quick start
 
@@ -126,7 +131,3 @@ Support editor-backed reconciliation during pull flows.
 
 Manage not only user dotfiles, but also system files when run with appropriate permissions.
 
-## Optional dependencies
-
-- `fzf` for long interactive selector lists
-- `nvim` for review and reconciliation flows; set `VISUAL=nvim` or `EDITOR=nvim` to use it
