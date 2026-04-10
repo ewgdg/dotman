@@ -8,14 +8,15 @@ This example shows one possible repository layout for the new `dotman` design.
 - `groups/`: composable package selectors
 - `profiles/`: variable sets used during resolution
 - `scripts/`: repo-wide helper scripts shared by packages
-- `local.toml`: machine-local or private overrides
+- `local.example.toml`: example machine-local vars; real machine-local overrides live under XDG config, not in the repo
 - package source trees can use `.gitignore` to exclude files from install
 
 ## Example Packages
 
+- `note`: minimal single-file package example for quick starts
 - `git`: base Git package with ordered push hooks and a profile-selected simulated install command
 - `core-cli-meta`: meta-package example that uses `depends = ["git", "nvim"]`
-- `profiled-note`: minimal `binding_mode = "multi_instance"` example with one profile-bound target path
+- `profile-note`: minimal `binding_mode = "multi_instance"` example with one profile-bound target path
 - `work/git`: namespaced variant that uses `extends = ["git"]` and overrides only work-specific vars
 - `nvim`: example file target with stdout-based `render`, explicit reverse-sync views, and an interactive tty-backed `reconcile` step
 
@@ -28,13 +29,20 @@ This example shows one possible repository layout for the new `dotman` design.
 
 - `profiles/os/linux.toml`: base Linux install context
 - `profiles/os/mac.toml`: base macOS install context
-- `profiles/basic.toml`: includes `os/linux` and adds repo-level vars
-- `profiles/work.toml`: includes `os/mac` and adds work-oriented vars
+- `profiles/basic.toml`: includes `os/linux` and adds shared profile vars
+- `profiles/work.toml`: includes `os/mac` and adds work-oriented profile vars
 
 Command strings in the example use explicit runners like `sh ...` rather than
 relying on executable bits. The example `INSTALL` commands are intentionally
 safe `printf` stubs so plain `push` can execute without trying to install real
 system packages.
+
+For a configured repo named `example`, the real machine-local override path is:
+
+- `$XDG_CONFIG_HOME/dotman/repos/example/local.toml`
+- fallback: `~/.config/dotman/repos/example/local.toml`
+
+In v1, that local file is limited to `[vars]` overrides.
 
 Design rules and current semantics live in:
 

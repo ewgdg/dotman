@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="455" viewBox="0 0 1500 455" role="img" aria-labelledby="title desc">
+  <title id="title">dotman interactive selection UI</title>
+  <desc id="desc">A terminal-style mockup matching the current dotman exclusion selection UI, with multiple items, compact paths, and an inline cursor at the prompt.</desc>
+  <defs>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      .bg { fill: #2b2b2b; }
+      .fg { fill: #e5c79a; }
+      .cyan { fill: #89ddff; }
+      .green { fill: #a6e3a1; }
+      .update { fill: #a6e3a1; }
+      .create { fill: #d9d06f; }
+      .red { fill: #ff6b68; }
+      .gold { fill: #e5c79a; font-weight: 700; }
+      .muted { fill: #9a8b6f; }
+      .prompt { fill: #d7ba7d; }
+      .cursor { fill: #d7ba7d; }
+      .line { font-size: 26px; }
+      .cmd { font-size: 28px; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1500" height="455" rx="8"/>
+
+  <text x="20" y="38" class="mono cmd">
+    <tspan class="prompt">❯</tspan>
+    <tspan dx="14" class="green">dotman</tspan>
+    <tspan class="fg"> push</tspan>
+  </text>
+
+  <text x="6" y="104" class="mono line">
+    <tspan class="cyan">::</tspan>
+    <tspan dx="14" class="gold">Select items to exclude from push:</tspan>
+  </text>
+
+  <text x="62" y="146" class="mono line">
+    <tspan class="green">1)</tspan>
+    <tspan dx="14" class="update">[update]</tspan>
+    <tspan dx="14" class="cyan">sandbox</tspan><tspan class="fg">:</tspan><tspan class="gold">agents</tspan>
+    <tspan class="muted"> (d_agents)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="fg">~/.../agents/AGENTS.md</tspan>
+    <tspan class="muted"> -&gt; </tspan>
+    <tspan class="fg">~/.agents/AGENTS.md</tspan>
+  </text>
+
+  <text x="62" y="190" class="mono line">
+    <tspan class="green">2)</tspan>
+    <tspan dx="14" class="update">[update]</tspan>
+    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">git</tspan>
+    <tspan class="muted"> (gitconfig)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="fg">~/.../gitconfig</tspan>
+    <tspan class="muted"> -&gt; </tspan>
+    <tspan class="fg">~/.gitconfig</tspan>
+  </text>
+
+  <text x="62" y="234" class="mono line">
+    <tspan class="green">3)</tspan>
+    <tspan dx="14" class="create">[create]</tspan>
+    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">nvim</tspan>
+    <tspan class="muted"> (init_lua)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="fg">~/.../nvim/init.lua</tspan>
+    <tspan class="muted"> -&gt; </tspan>
+    <tspan class="fg">~/.config/nvim/init.lua</tspan>
+  </text>
+
+  <text x="62" y="278" class="mono line">
+    <tspan class="green">4)</tspan>
+    <tspan dx="14" class="red">[delete]</tspan>
+    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">ssh</tspan>
+    <tspan class="muted"> (legacy)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="fg">~/.../ssh/legacy.conf</tspan>
+    <tspan class="muted"> -&gt; </tspan>
+    <tspan class="fg">/etc/ssh/legacy.conf</tspan>
+  </text>
+
+  <text x="62" y="322" class="mono line">
+    <tspan class="green">5)</tspan>
+    <tspan dx="14" class="update">[update]</tspan>
+    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">zsh</tspan>
+    <tspan class="muted"> (zshrc)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="fg">~/.../zshrc</tspan>
+    <tspan class="muted"> -&gt; </tspan>
+    <tspan class="fg">~/.zshrc</tspan>
+  </text>
+
+  <text x="6" y="404" class="mono line">
+    <tspan class="cyan">::</tspan>
+    <tspan dx="14" class="gold">Exclude by number or range</tspan>
+    <tspan class="muted"> (&quot;?&quot;; e.g. &quot;1 2 4-6&quot; or &quot;^3&quot;; default: none):</tspan>
+  </text>
+
+  <rect x="1200" y="380" width="18" height="32" class="cursor" rx="2"/>
+</svg>

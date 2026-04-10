@@ -1,18 +1,11 @@
 # AGENTS.md
 
-This repo is a scratch workspace for designing a new `dotman`.
+## Project structure
 
-- The previous forked `dotdrop` codebase was moved to `../dotman.archived/`.
-- The main working area right now is `examples/repo/`.
+- Core package code lives in `src/dotman/`.
+- CLI and engine coverage lives in `tests/`.
+- Example repo layouts and sample config live in `examples/repo/`.
+- Historical `dotdrop` reference code lives in `../dotman.archived/`.
 - Keep repo-orientation notes here.
-- Put design details and evolving decisions under `docs/`.
-
-Key places:
-
-- `README.md`
-- `examples/README.md`
-- `examples/repo/README.md`
-- `docs/design.md`
-- `docs/config.md`
-- `docs/repository.md`
-- `docs/cli.md`
+- Put design and feature documentation under `docs/`.
+- Put implementation plans under `plans/`.

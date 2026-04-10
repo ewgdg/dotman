@@ -1,0 +1,6 @@
+id = "note"
+description = "Minimal single-file package example"
+
+[targets.note]
+source = "files/config/dotman-example/note.txt"
+path = "~/.config/dotman-example/note.txt"

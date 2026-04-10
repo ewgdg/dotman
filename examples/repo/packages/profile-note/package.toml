@@ -1,0 +1,7 @@
+id = "profile-note"
+description = "Minimal multi-instance example"
+binding_mode = "multi_instance"
+
+[targets.note]
+source = "files/config/profile-note/note.txt"
+path = "~/.config/profile-note/{{ profile }}.txt"
