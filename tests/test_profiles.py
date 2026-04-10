@@ -4,6 +4,7 @@ from pathlib import Path
 
 from dotman.engine import DotmanEngine
 from dotman.profiles import compute_profile_heights, rank_profiles
+from tests.helpers import write_example_local_override
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,7 @@ REFERENCE_REPO = PROJECT_ROOT / "tests" / "fixtures" / "reference_repo"
 
 def write_manager_config(tmp_path: Path) -> Path:
     config_path = tmp_path / "config.toml"
+    write_example_local_override(tmp_path, repo_name="example", repo_path=EXAMPLE_REPO)
     config_path.write_text(
         "\n".join(
             [

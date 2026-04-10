@@ -6,6 +6,15 @@ import dotman.cli as cli
 import pytest
 
 
+def write_example_local_override(tmp_path: Path, *, repo_name: str, repo_path: Path) -> None:
+    example_local_path = repo_path / "local.example.toml"
+    if not example_local_path.exists():
+        return
+    local_path = tmp_path / "xdg-config" / "dotman" / "repos" / repo_name / "local.toml"
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_text(example_local_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+
 # Shared repo builders live here so split test modules reuse identical setup code.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_REPO = PROJECT_ROOT / "examples" / "repo"
@@ -35,6 +44,7 @@ def write_named_manager_config(tmp_path: Path, repos: dict[str, Path]) -> Path:
                 "",
             ]
         )
+        write_example_local_override(tmp_path, repo_name=repo_name, repo_path=repo_path)
     config_path.write_text("\n".join(lines), encoding="utf-8")
     return config_path
 

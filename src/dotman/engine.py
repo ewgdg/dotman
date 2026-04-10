@@ -384,12 +384,18 @@ class Repository:
         return profiles
 
     def _load_local_vars(self) -> dict[str, Any]:
-        local_path = self.root / "local.toml"
+        local_path = self.config.local_override_path
         if not local_path.exists():
             return {}
         payload = tomllib.loads(local_path.read_text(encoding="utf-8"))
-        vars_payload = payload.get("vars")
-        return _copy_map(vars_payload) if isinstance(vars_payload, dict) else {}
+        unknown_top_level_keys = sorted(key for key in payload if key != "vars")
+        if unknown_top_level_keys:
+            unknown_text = ", ".join(unknown_top_level_keys)
+            raise ValueError(f"local override {local_path} has unknown top-level keys: {unknown_text}")
+        vars_payload = payload.get("vars", {})
+        if not isinstance(vars_payload, dict):
+            raise ValueError(f"local override {local_path} [vars] must be a table")
+        return _copy_map(vars_payload)
 
     def compose_profile(self, profile_id: str) -> tuple[dict[str, Any], list[str]]:
         if profile_id not in self.profiles:

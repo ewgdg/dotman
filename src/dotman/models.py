@@ -17,6 +17,7 @@ class RepoConfig:
     path: Path
     order: int
     state_path: Path
+    local_override_path: Path
 
 
 @dataclass(frozen=True)

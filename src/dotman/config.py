@@ -7,9 +7,13 @@ from pathlib import Path
 from dotman.models import ManagerConfig, RepoConfig, SnapshotConfig
 
 
-def default_config_path() -> Path:
+def default_config_root() -> Path:
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return config_home / "dotman" / "config.toml"
+    return config_home / "dotman"
+
+
+def default_config_path() -> Path:
+    return default_config_root() / "config.toml"
 
 
 def default_state_root() -> Path:
@@ -27,6 +31,10 @@ def expand_path(value: str, *, base_dir: Path | None = None) -> Path:
     if not expanded.is_absolute() and base_dir is not None:
         expanded = base_dir / expanded
     return expanded.resolve()
+
+
+def default_local_override_path(repo_name: str) -> Path:
+    return default_config_root() / "repos" / repo_name / "local.toml"
 
 
 def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
@@ -64,6 +72,7 @@ def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
             path=expand_path(repo_path_value, base_dir=resolved_path.parent),
             order=order_value,
             state_path=state_path,
+            local_override_path=default_local_override_path(repo_name).resolve(),
         )
 
     snapshots_payload = payload.get("snapshots", {})

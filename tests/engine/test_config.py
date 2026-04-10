@@ -7,7 +7,7 @@ import pytest
 
 from dotman.engine import DotmanEngine
 from dotman.snapshot import default_snapshot_root
-from test_support import (
+from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
     write_manager_config,
@@ -95,4 +95,53 @@ def test_config_rejects_non_positive_snapshot_retention(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="max_generations"):
+        DotmanEngine.from_config_path(config_path)
+
+
+def test_config_defaults_local_override_path_from_xdg_config_home(tmp_path: Path) -> None:
+    config_path = write_single_repo_config(tmp_path, repo_name="example", repo_path=EXAMPLE_REPO)
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    assert engine.config.repos["example"].local_override_path == (
+        tmp_path / "xdg-config" / "dotman" / "repos" / "example" / "local.toml"
+    ).resolve()
+
+
+def test_repository_loads_local_overrides_from_xdg_config(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "local.toml").write_text('[vars]\nsource = "repo-root"\n', encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    local_override_path = tmp_path / "xdg-config" / "dotman" / "repos" / "fixture" / "local.toml"
+    local_override_path.parent.mkdir(parents=True, exist_ok=True)
+    local_override_path.write_text('[vars]\nsource = "xdg"\n', encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    assert engine.get_repo("fixture").local_vars == {"source": "xdg"}
+
+
+def test_repository_rejects_unknown_local_override_top_level_keys(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    local_override_path = tmp_path / "xdg-config" / "dotman" / "repos" / "fixture" / "local.toml"
+    local_override_path.parent.mkdir(parents=True, exist_ok=True)
+    local_override_path.write_text('[vars]\nvalue = "ok"\n\n[hooks]\npre_push = "echo nope"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unknown top-level keys"):
+        DotmanEngine.from_config_path(config_path)
+
+
+def test_repository_rejects_non_table_vars_in_local_override(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    local_override_path = tmp_path / "xdg-config" / "dotman" / "repos" / "fixture" / "local.toml"
+    local_override_path.parent.mkdir(parents=True, exist_ok=True)
+    local_override_path.write_text('vars = "bad"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"\[vars\] must be a table"):
         DotmanEngine.from_config_path(config_path)

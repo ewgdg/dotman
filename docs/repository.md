@@ -36,12 +36,19 @@ This document captures the current repository structure and configuration schema
 - Later included profiles override earlier included profiles.
 - The profile's own vars override all included profiles.
 - Repos may define optional repo-wide defaults in `repo.toml`.
-- `local.toml` is the convention for machine-local or private overrides.
+- Machine-local or private overrides should not live in the repo.
+- Per-repo local overrides should be read from `$XDG_CONFIG_HOME/dotman/repos/<repo-name>/local.toml`, with fallback to `~/.config/dotman/repos/<repo-name>/local.toml`.
+- In v1, per-repo local overrides are limited to `[vars]` data.
 
 ## Resolution Model
 
 - Package values act as defaults unless overridden.
-- Resolution order is `selection -> composed profile -> local`.
+- Variable resolution order is `package defaults -> composed profile -> local`.
+- `local` means the per-repo XDG local override file, not a repo-root file.
+- Local override merge rules should match the rest of resolution:
+  - keyed maps use deep merge by key
+  - scalars use last-wins replacement
+  - lists replace the earlier value; they do not merge
 - A binding stores the selected bound profile.
 - The composed/effective profile is runtime resolution context, not package identity.
 - Packages with no file payload may still be useful as meta packages when they only declare `depends`.
@@ -213,4 +220,5 @@ pull = ["*.dotdropbak"]
 - `examples/repo/packages/`
 - `examples/repo/groups/`
 - `examples/repo/profiles/`
-- `examples/repo/local.toml`
+- `examples/repo/local.example.toml`
+- `$XDG_CONFIG_HOME/dotman/repos/<repo-name>/local.toml`
