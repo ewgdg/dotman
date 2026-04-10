@@ -16,6 +16,8 @@ Modern development workflows are encoded in dotfiles, editor state, helper scrip
 
 Intuition over configuration.
 
+First principles over convention.
+
 ## Platform support
 
 `dotman` follows XDG-style paths and POSIX-like filesystem and process conventions.
