@@ -15,14 +15,15 @@ Modern development workflows are encoded in dotfiles, editor state, helper scrip
 ## Design philosophy
 
 Intuition over configuration.
+
 First principles over convention.
+
 Declarative over imperative.
 
 ## Platform support
 
-`dotman` follows XDG-style paths and POSIX-like filesystem and process conventions.
-
-It is currently intended for POSIX-like systems and is not designed for native Windows support.
+`dotman` follows XDG-style paths and UNIX-like filesystem and process conventions.
+It is currently intended for UNIX-like systems.
 
 ## Install
 
