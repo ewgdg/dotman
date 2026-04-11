@@ -146,19 +146,7 @@ def test_target_preset_jinja_editor_expands_default_workflow(
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
     (home / ".profile").write_text("export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n", encoding="utf-8")
 
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                f'state_path = "{tmp_path / "state"}"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
 
     engine = DotmanEngine.from_config_path(config_path)
 
@@ -206,19 +194,7 @@ def test_target_preset_values_can_be_overridden(
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
     (home / ".profile").write_text("hello\n", encoding="utf-8")
 
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
 
     engine = DotmanEngine.from_config_path(config_path)
 
@@ -252,19 +228,7 @@ def test_unknown_target_preset_fails_engine_load(tmp_path: Path) -> None:
     )
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
 
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
 
     with pytest.raises(ValueError, match="unknown preset 'missing'"):
         DotmanEngine.from_config_path(config_path)

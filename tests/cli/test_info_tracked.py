@@ -256,7 +256,7 @@ def test_info_tracked_cli_shows_effective_values_for_target_preset(
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
 
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    state_dir = tmp_path / "state" / "fixture"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
