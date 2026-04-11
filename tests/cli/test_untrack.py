@@ -34,7 +34,7 @@ def test_untrack_cli_updates_state(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -110,7 +110,7 @@ def test_untrack_cli_allows_selector_only_when_unique(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -178,7 +178,7 @@ def test_untrack_cli_reports_dependency_owner_for_untracked_package_selector(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -220,7 +220,7 @@ def test_untrack_cli_rejects_removal_that_would_expose_implicit_conflict(
     write_untrack_conflict_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
 
-    state_dir = tmp_path / "state" / "fixture"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
     original_state = "\n".join(
         [
@@ -272,7 +272,7 @@ def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(
     monkeypatch.setattr(cli, "colors_enabled", lambda: True)
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -311,7 +311,7 @@ def test_untrack_cli_reports_remaining_package_tracking_after_success(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
