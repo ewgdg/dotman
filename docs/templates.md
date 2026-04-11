@@ -32,6 +32,20 @@ For the common Jinja editor workflow, you can use the built-in shortcut:
 
 `reconcile = "jinja"` recursively discovers static Jinja template dependencies such as `{% include %}`, `{% extends %}`, `{% import %}`, and `{% from ... import ... %}`, then runs the built-in editor reconcile flow with those files added as extra editable sources.
 
+If you want the whole common bundle as defaults, you can also use:
+
+- `preset = "jinja-editor"`
+
+That preset supplies default values for:
+
+- `render = "jinja"`
+- `pull_view_repo = "render"`
+- `pull_view_live = "raw"`
+- `reconcile = "jinja"`
+- `reconcile_io = "tty"`
+
+Explicit target keys still win over the preset.
+
 If your template references other files dynamically, use an explicit `reconcile = 'dotman reconcile editor ...'` command instead.
 
 If `reconcile` opens an editor or otherwise needs a real terminal, also set:
@@ -41,6 +55,34 @@ If `reconcile` opens an editor or otherwise needs a real terminal, also set:
 ## Example
 
 `package.toml`:
+
+```toml
+id = "shell"
+description = "Shell profile"
+
+[targets.profile]
+source = "files/profile"
+path = "~/.profile"
+preset = "jinja-editor"
+```
+
+Equivalent explicit form:
+
+```toml
+id = "shell"
+description = "Shell profile"
+
+[targets.profile]
+source = "files/profile"
+path = "~/.profile"
+render = "jinja"
+pull_view_repo = "render"
+pull_view_live = "raw"
+reconcile_io = "tty"
+reconcile = "jinja"
+```
+
+Or, if you want a fully explicit custom editor command:
 
 ```toml
 id = "shell"
@@ -89,6 +131,8 @@ export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
   - repo source file
 - `path = "~/.profile"`
   - live target path
+- `preset = "jinja-editor"`
+  - optional built-in default bundle for the common Jinja editor workflow
 - `render = "jinja"`
   - shortcut for the built-in Jinja renderer
   - equivalent command form: `dotman render jinja "$DOTMAN_SOURCE"`
@@ -189,7 +233,7 @@ dotman render jinja --profile basic --os linux --var git.user_name='Example User
 ## Rules Of Thumb
 
 - No `template = true` flag or separate template target type exists
-- Jinja file rendering is explicit: use `render = "jinja"`
+- Jinja file rendering is explicit: use `render = "jinja"` or `preset = "jinja-editor"`
 - dotman follows the configured `render`, `pull_view_*`, `capture`, and `reconcile` workflow
 - `.tmpl` is optional naming only
 - If your source uses Jinja `{% include %}`, relative paths resolve from the source file directory

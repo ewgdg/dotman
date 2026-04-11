@@ -110,6 +110,167 @@ def test_pull_plan_uses_declared_repo_and_live_views_for_rendered_targets(
     assert target.reconcile_command == "sh hooks/reconcile.sh"
     assert target.reconcile_io == "tty"
 
+def test_target_preset_jinja_editor_expands_default_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'preset = "jinja-editor"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
+        "{% include 'env.core.sh' %}\n",
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "env.core.sh").write_text(
+        "export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n",
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (home / ".profile").write_text("export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n", encoding="utf-8")
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.fixture]",
+                f'path = "{repo_root}"',
+                "order = 10",
+                f'state_path = "{tmp_path / "state"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    push_plan = engine.plan_push_binding("fixture:shell@default")
+    pull_plan = engine.plan_pull_binding("fixture:shell@default")
+
+    push_target = push_plan.target_plans[0]
+    pull_target = pull_plan.target_plans[0]
+    assert push_target.render_command == "jinja"
+    assert pull_target.pull_view_repo == "render"
+    assert pull_target.pull_view_live == "raw"
+    assert pull_target.reconcile_command == "jinja"
+    assert pull_target.reconcile_io == "tty"
+
+
+
+def test_target_preset_values_can_be_overridden(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'preset = "jinja-editor"',
+                'import_view_repo = "raw"',
+                'reconcile_io = "pipe"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text("hello\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (home / ".profile").write_text("hello\n", encoding="utf-8")
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.fixture]",
+                f'path = "{repo_root}"',
+                "order = 10",
+                f'state_path = "{tmp_path / "state" / "fixture"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    target = engine.plan_pull_binding("fixture:shell@default").target_plans[0]
+
+    assert target.render_command == "jinja"
+    assert target.pull_view_repo == "raw"
+    assert target.pull_view_live == "raw"
+    assert target.reconcile_command == "jinja"
+    assert target.reconcile_io == "pipe"
+
+
+
+def test_unknown_target_preset_fails_engine_load(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'preset = "missing"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.fixture]",
+                f'path = "{repo_root}"',
+                "order = 10",
+                f'state_path = "{tmp_path / "state" / "fixture"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unknown preset 'missing'"):
+        DotmanEngine.from_config_path(config_path)
+
+
+
 def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

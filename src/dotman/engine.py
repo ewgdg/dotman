@@ -34,6 +34,7 @@ from dotman.models import (
     TargetPlan,
     TargetSpec,
 )
+from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 from dotman.profiles import compute_profile_heights, rank_profiles
 from dotman.templates import build_template_context, render_template_file, render_template_string
 
@@ -192,6 +193,117 @@ def read_schema_alias(payload: dict[str, Any], primary_key: str, legacy_key: str
     return legacy_value
 
 
+
+def resolve_target_preset(
+    *,
+    target_payload: dict[str, Any],
+    manifest_path: Path,
+    target_name: str,
+) -> dict[str, Any]:
+    preset_name = target_payload.get("preset")
+    if preset_name is None:
+        return {}
+    if not isinstance(preset_name, str):
+        raise ValueError(
+            f"package manifest {manifest_path} target '{target_name}' preset must be a string"
+        )
+    preset = get_builtin_target_preset(preset_name)
+    if preset is None:
+        available = ", ".join(sorted(BUILTIN_TARGET_PRESETS))
+        raise ValueError(
+            f"package manifest {manifest_path} target '{target_name}' uses unknown preset '{preset_name}'; "
+            f"available presets: {available}"
+        )
+    return preset
+
+
+
+def get_target_value(
+    *,
+    target_payload: dict[str, Any],
+    preset_payload: dict[str, Any],
+    key: str,
+) -> Any:
+    if key in target_payload:
+        return target_payload[key]
+    return preset_payload.get(key)
+
+
+
+def read_target_schema_alias(
+    *,
+    target_payload: dict[str, Any],
+    preset_payload: dict[str, Any],
+    primary_key: str,
+    legacy_key: str,
+) -> Any:
+    # Presets are a default layer. Resolve explicit aliases first so a user can
+    # override a preset with either the current key or its legacy schema alias.
+    explicit_value = read_schema_alias(target_payload, primary_key, legacy_key)
+    if explicit_value is not None:
+        return explicit_value
+    return preset_payload.get(primary_key)
+
+
+
+def build_target_spec(
+    *,
+    target_name: str,
+    target_payload: dict[str, Any],
+    manifest_path: Path,
+) -> TargetSpec:
+    preset_payload = resolve_target_preset(
+        target_payload=target_payload,
+        manifest_path=manifest_path,
+        target_name=target_name,
+    )
+    return TargetSpec(
+        name=target_name,
+        declared_in=manifest_path.parent,
+        source=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="source"),
+        path=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path"),
+        chmod=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="chmod"),
+        render=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="render"),
+        capture=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="capture"),
+        reconcile=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile"),
+        reconcile_io=normalize_optional_string_enum(
+            get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile_io"),
+            key="reconcile_io",
+            allowed=VALID_RECONCILE_IO_VALUES,
+        ),
+        pull_view_repo=read_target_schema_alias(
+            target_payload=target_payload,
+            preset_payload=preset_payload,
+            primary_key="pull_view_repo",
+            legacy_key="import_view_repo",
+        ),
+        pull_view_live=read_target_schema_alias(
+            target_payload=target_payload,
+            preset_payload=preset_payload,
+            primary_key="pull_view_live",
+            legacy_key="import_view_live",
+        ),
+        push_ignore=normalize_string_list(
+            read_target_schema_alias(
+                target_payload=target_payload,
+                preset_payload=preset_payload,
+                primary_key="push_ignore",
+                legacy_key="apply_ignore",
+            )
+        ),
+        pull_ignore=normalize_string_list(
+            read_target_schema_alias(
+                target_payload=target_payload,
+                preset_payload=preset_payload,
+                primary_key="pull_ignore",
+                legacy_key="import_ignore",
+            )
+        ),
+        disabled=bool(get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="disabled") or False),
+    )
+
+
+
 def merge_ignore_patterns(*pattern_sets: tuple[str, ...]) -> tuple[str, ...]:
     merged: list[str] = []
     for pattern_set in pattern_sets:
@@ -295,25 +407,10 @@ class Repository:
             append_payload = payload.get("append")
             targets = (
                 {
-                    target_name: TargetSpec(
-                        name=target_name,
-                        declared_in=manifest_path.parent,
-                        source=target_payload.get("source"),
-                        path=target_payload.get("path"),
-                        chmod=target_payload.get("chmod"),
-                        render=target_payload.get("render"),
-                        capture=target_payload.get("capture"),
-                        reconcile=target_payload.get("reconcile"),
-                        reconcile_io=normalize_optional_string_enum(
-                            target_payload.get("reconcile_io"),
-                            key="reconcile_io",
-                            allowed=VALID_RECONCILE_IO_VALUES,
-                        ),
-                        pull_view_repo=read_schema_alias(target_payload, "pull_view_repo", "import_view_repo"),
-                        pull_view_live=read_schema_alias(target_payload, "pull_view_live", "import_view_live"),
-                        push_ignore=normalize_string_list(read_schema_alias(target_payload, "push_ignore", "apply_ignore")),
-                        pull_ignore=normalize_string_list(read_schema_alias(target_payload, "pull_ignore", "import_ignore")),
-                        disabled=bool(target_payload.get("disabled", False)),
+                    target_name: build_target_spec(
+                        target_name=target_name,
+                        target_payload=target_payload,
+                        manifest_path=manifest_path,
                     )
                     for target_name, target_payload in targets_payload.items()
                 }

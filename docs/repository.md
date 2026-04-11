@@ -116,6 +116,9 @@ chmod = "600"
 - `path` may use `~/...` for home-relative destinations or an absolute path otherwise.
 - Targets may define `chmod` when the installed root path needs an explicit mode.
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
+- Targets may define `preset` as a built-in default bundle for common target workflows.
+- Explicit target keys override preset defaults.
+- Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow.
 - Targets may define `render` as a forward transform used during `push`.
 - `render` may be a built-in renderer such as `jinja`, or a non-interactive stdout-producing command string.
 - Built-in renderers are just shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` is equivalent to `dotman render jinja "$DOTMAN_SOURCE"`.
