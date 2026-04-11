@@ -161,7 +161,7 @@ def _write_reconcile_preview_execution_repo(repo_root: Path) -> None:
 
 
 def _write_tracked_binding(state_root: Path, *, repo_name: str = "fixture", selector: str = "app") -> None:
-    state_dir = state_root / repo_name
+    state_dir = state_root / "dotman" / "repos" / repo_name
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(

@@ -12,10 +12,14 @@ This document captures the user-level dotman manager configuration.
 - User config defines the available dotman repos, not the package/group/profile schema inside a repo.
 - Repos should be declared under `[repos.<name>]`.
 - Each repo entry must define `path`.
-- Repos may define `state_path` to override where binding state is stored.
+- Repos may define `state_key` to control where binding state is stored under the manager state root.
 - Repos should define `order`, where lower values are searched first.
 - Repo `order` values should be unique; ties should fail config validation.
-- If `state_path` is omitted, dotman may default it from the repo name under `$XDG_STATE_HOME/dotman/`.
+- Repo `state_key` values should be unique.
+- If `state_key` is omitted, dotman should default it to the repo name.
+- Dotman should derive the repo state dir as `$XDG_STATE_HOME/dotman/repos/<state_key>/`.
+- `state_key` must be a non-empty simple key and must not contain path separators or use `.` / `..`.
+- Legacy `state_path` is not supported. Migrate tracked bindings into the derived `$XDG_STATE_HOME/dotman/repos/<state_key>/` path instead.
 - Repo names should be treated as stable identifiers, because dotman also uses the repo name to locate per-repo local overrides under XDG config.
 
 ## Local Overrides
@@ -59,10 +63,12 @@ Example:
 [repos.main]
 path = "~/projects/dotfiles"
 order = 10
+state_key = "main"
 
 [repos.test]
 path = "~/sandbox/dotfiles"
 order = 20
+state_key = "test"
 
 [snapshots]
 enabled = true

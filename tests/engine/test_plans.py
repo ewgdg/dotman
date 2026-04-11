@@ -318,7 +318,6 @@ def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
                 "[repos.fixture]",
                 f'path = "{repo_root}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state"}"',
                 "",
             ]
         ),
@@ -372,7 +371,6 @@ def test_plain_file_with_jinja_markers_requires_explicit_render(
                 "[repos.fixture]",
                 f'path = "{repo_root}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
                 "",
             ]
         ),
@@ -435,7 +433,6 @@ def test_template_file_render_supports_relative_include(
                 "[repos.fixture]",
                 f'path = "{repo_root}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
                 "",
             ]
         ),
@@ -551,7 +548,6 @@ def test_repo_toml_pull_ignore_applies_to_directory_targets(
                 "[repos.fixture]",
                 f'path = "{repo_root}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
                 "",
             ]
         ),
@@ -605,7 +601,6 @@ def test_pull_plan_exposes_file_level_items_for_directory_targets(
                 "[repos.fixture]",
                 f'path = "{repo_root}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
                 "",
             ]
         ),
@@ -665,7 +660,6 @@ def test_push_plan_exposes_file_level_items_for_directory_targets(
                 "[repos.fixture]",
                 f'path = "{repo_root}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
                 "",
             ]
         ),
@@ -738,7 +732,6 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
                 "[repos.fixture]",
                 f'path = "{repo_root}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
                 "",
             ]
         ),

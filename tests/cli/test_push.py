@@ -34,7 +34,7 @@ def test_push_cli_uses_tracked_binding_profile_without_prompting(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -119,7 +119,7 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
         },
     )
     for repo_name in ("alpha", "beta"):
-        state_dir = tmp_path / "state" / repo_name
+        state_dir = tmp_path / "state" / "dotman" / "repos" / repo_name
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / "bindings.toml").write_text(
             "\n".join(
@@ -163,7 +163,7 @@ def test_push_cli_accepts_short_dry_run_flag(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -208,7 +208,7 @@ def test_push_cli_uses_state_bindings_in_dry_run_json(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -252,7 +252,7 @@ def test_push_cli_human_dry_run_output_includes_context_and_hooks(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -305,7 +305,7 @@ def test_push_cli_human_dry_run_output_uses_full_path_when_requested(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -350,7 +350,7 @@ def test_push_cli_human_dry_run_output_highlights_leaf_packages_not_root_binding
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -395,7 +395,7 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
     monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -454,7 +454,7 @@ def test_push_cli_enters_diff_review_menu_after_selection(
     monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -508,7 +508,7 @@ def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
     monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -559,7 +559,7 @@ def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
     monkeypatch.setattr(cli, "prompt", lambda _message: "1")
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -613,7 +613,7 @@ def test_push_cli_skips_diff_review_for_json_output(
     )
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -652,7 +652,7 @@ def test_push_cli_allows_package_selected_through_tracked_owner_binding(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(

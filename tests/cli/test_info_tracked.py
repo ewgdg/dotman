@@ -44,7 +44,7 @@ def test_info_tracked_cli_interactively_selects_ambiguous_package(
         },
     )
     for repo_name in ("alpha", "beta"):
-        state_dir = tmp_path / "state" / repo_name
+        state_dir = tmp_path / "state" / "dotman" / "repos" / repo_name
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / "bindings.toml").write_text(
             "\n".join(
@@ -88,7 +88,7 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -169,7 +169,7 @@ def test_info_tracked_cli_emits_readable_text_output(
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -306,7 +306,7 @@ def test_info_tracked_cli_emits_hooks_even_when_package_targets_are_noop(
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -356,7 +356,7 @@ def test_info_tracked_cli_requires_specific_multi_instance_package_identity_in_n
     repo_root = tmp_path / "repo"
     write_multi_instance_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    state_dir = tmp_path / "state" / "fixture"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -424,7 +424,7 @@ def test_info_tracked_cli_uses_resolver_for_ambiguous_multi_instance_identity_in
     repo_root = tmp_path / "repo"
     write_multi_instance_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    state_dir = tmp_path / "state" / "fixture"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(

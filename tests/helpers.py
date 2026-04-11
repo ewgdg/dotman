@@ -40,7 +40,6 @@ def write_named_manager_config(tmp_path: Path, repos: dict[str, Path]) -> Path:
                 f"[repos.{repo_name}]",
                 f'path = "{repo_path}"',
                 f"order = {index * 10}",
-                f'state_path = "{tmp_path / "state" / repo_name}"',
                 "",
             ]
         )
@@ -59,8 +58,49 @@ def write_manager_config(tmp_path: Path) -> Path:
     )
 
 
+def write_named_manager_config_with_state_keys(
+    tmp_path: Path,
+    repos: dict[str, Path],
+    *,
+    state_keys: dict[str, str] | None = None,
+) -> Path:
+    config_path = tmp_path / "config.toml"
+    lines: list[str] = []
+    for index, (repo_name, repo_path) in enumerate(repos.items(), start=1):
+        lines.extend(
+            [
+                f"[repos.{repo_name}]",
+                f'path = "{repo_path}"',
+                f"order = {index * 10}",
+                (
+                    f'state_key = "{state_keys[repo_name]}"'
+                    if state_keys is not None and repo_name in state_keys
+                    else ""
+                ),
+                "",
+            ]
+        )
+        write_example_local_override(tmp_path, repo_name=repo_name, repo_path=repo_path)
+    config_path.write_text("\n".join(lines), encoding="utf-8")
+    return config_path
+
+
 def write_single_repo_config(tmp_path: Path, *, repo_name: str, repo_path: Path) -> Path:
     return write_named_manager_config(tmp_path, {repo_name: repo_path})
+
+
+def write_single_repo_config_with_state_key(
+    tmp_path: Path,
+    *,
+    repo_name: str,
+    repo_path: Path,
+    state_key: str | None = None,
+) -> Path:
+    return write_named_manager_config_with_state_keys(
+        tmp_path,
+        {repo_name: repo_path},
+        state_keys=None if state_key is None else {repo_name: state_key},
+    )
 
 
 def write_profile_switch_repo(repo_root: Path) -> None:

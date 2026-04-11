@@ -16,6 +16,7 @@ class RepoConfig:
     name: str
     path: Path
     order: int
+    state_key: str
     state_path: Path
     local_override_path: Path
 
@@ -179,6 +180,7 @@ class InstalledPackageSummary:
     package_id: str
     description: str | None
     bindings: list[InstalledBindingSummary]
+    state: str
     bound_profile: str | None = None
 
     @property
@@ -192,7 +194,30 @@ class InstalledPackageSummary:
             "package_ref": self.package_ref,
             "bound_profile": self.bound_profile,
             "description": self.description,
+            "state": self.state,
             "bindings": [binding.to_dict() for binding in self.bindings],
+        }
+
+
+@dataclass(frozen=True)
+class TrackedBindingIssue:
+    state_key: str
+    repo: str
+    selector: str
+    profile: str
+    state: str
+    reason: str
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "state_key": self.state_key,
+            "repo": self.repo,
+            "selector": self.selector,
+            "profile": self.profile,
+            "state": self.state,
+            "reason": self.reason,
+            "message": self.message,
         }
 
 

@@ -14,6 +14,7 @@ from tests.helpers import (
     write_multi_instance_repo,
     write_package_override_preview_repo,
     write_single_repo_config,
+    write_single_repo_config_with_state_key,
     write_untrack_conflict_repo,
 )
 
@@ -106,6 +107,81 @@ def test_config_defaults_local_override_path_from_xdg_config_home(tmp_path: Path
     assert engine.config.repos["example"].local_override_path == (
         tmp_path / "xdg-config" / "dotman" / "repos" / "example" / "local.toml"
     ).resolve()
+
+
+def test_config_defaults_state_key_to_repo_name_and_derives_state_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    state_home = tmp_path / "xdg-state"
+    state_home.mkdir()
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    config_path = write_single_repo_config_with_state_key(tmp_path, repo_name="example", repo_path=EXAMPLE_REPO)
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    repo_config = engine.config.repos["example"]
+    assert repo_config.state_key == "example"
+    assert repo_config.state_path == (state_home / "dotman" / "repos" / "example").resolve()
+
+
+def test_config_rejects_duplicate_state_key(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.one]",
+                f'path = "{EXAMPLE_REPO}"',
+                "order = 10",
+                'state_key = "shared"',
+                "",
+                "[repos.two]",
+                f'path = "{REFERENCE_REPO}"',
+                "order = 20",
+                'state_key = "shared"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="state_key"):
+        DotmanEngine.from_config_path(config_path)
+
+
+def test_config_rejects_invalid_state_key_format(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.example]",
+                f'path = "{EXAMPLE_REPO}"',
+                "order = 10",
+                'state_key = "bad/key"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="state_key"):
+        DotmanEngine.from_config_path(config_path)
+
+
+def test_config_rejects_legacy_state_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.example]",
+                f'path = "{EXAMPLE_REPO}"',
+                "order = 10",
+                f'state_path = "{tmp_path / "legacy-state"}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="state_path"):
+        DotmanEngine.from_config_path(config_path)
 
 
 def test_repository_loads_local_overrides_from_xdg_config(tmp_path: Path) -> None:

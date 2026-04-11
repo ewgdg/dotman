@@ -69,7 +69,6 @@ def test_package_reserved_paths_conflict_with_other_package_target(
                 "[repos.fixture]",
                 f'path = "{repo_root}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
                 "",
             ]
         ),
@@ -127,7 +126,6 @@ def test_package_reserved_paths_conflict_with_other_package_reserved_paths(
                 "[repos.fixture]",
                 f'path = "{repo_root}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state" / "fixture"}"',
                 "",
             ]
         ),
@@ -171,7 +169,7 @@ def test_remove_binding_rejects_removal_that_exposes_implicit_conflict(
     repo_root = tmp_path / "fixture-repo"
     write_untrack_conflict_repo(repo_root)
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    state_dir = tmp_path / "state" / "fixture"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
     original_state = "\n".join(
         [

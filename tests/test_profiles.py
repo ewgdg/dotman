@@ -21,12 +21,10 @@ def write_manager_config(tmp_path: Path) -> Path:
                 "[repos.example]",
                 f'path = "{EXAMPLE_REPO}"',
                 "order = 10",
-                f'state_path = "{tmp_path / "state" / "example"}"',
                 "",
                 "[repos.sandbox]",
                 f'path = "{REFERENCE_REPO}"',
                 "order = 20",
-                f'state_path = "{tmp_path / "state" / "sandbox"}"',
                 "",
             ]
         ),

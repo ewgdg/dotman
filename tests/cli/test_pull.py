@@ -38,7 +38,7 @@ def test_pull_cli_accepts_explicit_binding_and_does_not_write_state(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -74,7 +74,7 @@ def test_pull_cli_accepts_explicit_binding_and_does_not_write_state(
     assert payload["bindings"][0]["selector"] == "nvim"
     assert payload["bindings"][0]["profile"] == "basic"
     assert payload["bindings"][0]["targets"][0]["action"] == "update"
-    assert (tmp_path / "state" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
         [
             "version = 1",
             "",
@@ -106,7 +106,7 @@ def test_pull_cli_returns_130_when_diff_review_aborts(
         lambda review_items, *, operation, full_paths=False: False,
     )
 
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -147,7 +147,7 @@ def test_pull_cli_accepts_long_dry_run_flag(
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -196,7 +196,7 @@ def test_pull_cli_emits_dry_run_json(
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -245,7 +245,7 @@ def test_pull_cli_human_dry_run_output_includes_header_and_context(
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -293,7 +293,7 @@ def test_pull_cli_uses_tracked_binding_profile_without_prompting(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
@@ -338,7 +338,7 @@ def test_pull_cli_allows_package_selected_through_tracked_owner_binding(
     monkeypatch.setenv("HOME", str(home))
 
     config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "example"
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "bindings.toml").write_text(
         "\n".join(
