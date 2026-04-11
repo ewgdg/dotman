@@ -66,6 +66,12 @@ MENU_INDEX_STYLE = ("1", "36")
 MENU_PROMPT_STYLE = ("1",)
 MENU_HINT_STYLE = ("2",)
 MENU_REPO_STYLE = ("2", "34")
+TRACKED_STATE_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
+    "explicit": ("2",),
+    "implicit": ("2",),
+    "orphan": ("2", "33"),
+    "invalid": ("2", "31"),
+}
 INTERRUPTED_EXIT_CODE = 130
 MENU_SELECTION_OVERHEAD_LINES = 6
 MENU_ACTION_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
@@ -240,13 +246,16 @@ def render_binding_reference(binding: Binding) -> str:
 
 
 def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: Binding):
-    repo = engine.get_repo(binding.repo)
+    try:
+        repo = engine.get_repo(binding.repo)
+    except ValueError:
+        return None
     if binding.selector not in repo.packages:
         return None
     if repo.resolve_package(binding.selector).binding_mode == "multi_instance":
         return None
     try:
-        return engine.describe_installed_package(f"{binding.repo}:{binding.selector}")
+        return engine.describe_tracked_package(f"{binding.repo}:{binding.selector}")
     except ValueError:
         return None
 
@@ -255,6 +264,29 @@ def render_tracked_reason(reason: str) -> str:
     if not colors_enabled():
         return reason
     return style_text(reason, *MENU_HINT_STYLE)
+
+
+def render_tracked_state(state: str) -> str:
+    if not colors_enabled():
+        return state
+    return style_text(state, *TRACKED_STATE_STYLE_BY_NAME.get(state, MENU_HINT_STYLE))
+
+
+def render_tracked_issue_label(engine: DotmanEngine, issue) -> str:
+    bound_profile: str | None = None
+    try:
+        repo = engine.get_repo(issue.repo)
+    except ValueError:
+        repo = None
+    if repo is not None and issue.selector in repo.packages:
+        package = repo.resolve_package(issue.selector)
+        if package.binding_mode == "multi_instance":
+            bound_profile = issue.profile
+    return render_package_label(
+        repo_name=issue.repo,
+        package_id=issue.selector,
+        bound_profile=bound_profile,
+    )
 
 
 def render_info_section_header(label: str) -> str:
@@ -535,6 +567,17 @@ def confirmation_prompt() -> str:
     )
 
 
+def partial_match_confirmation_prompt(*, candidate_label: str) -> str:
+    prompt_text = f"Did you mean '{candidate_label}'?"
+    hint_text = "[y/N]"
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text} "
+    return (
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
+    )
+
+
 def write_manifest_confirmation_prompt(*, repo_name: str, package_id: str) -> str:
     prompt_text = f"Write package config changes for {repo_name}:{package_id}?"
     hint_text = "[y/N]"
@@ -580,22 +623,36 @@ def binding_replacement_scope(engine: DotmanEngine, binding: Binding) -> tuple[s
     return (binding.repo, binding.selector, None)
 
 
-def find_recorded_binding_for_scope(engine: DotmanEngine, binding: Binding) -> Binding | None:
+def find_recorded_bindings_for_scope(engine: DotmanEngine, binding: Binding) -> list[Binding]:
     repo = engine.get_repo(binding.repo)
-    target_scope = binding_replacement_scope(engine, binding)
-    for existing in engine.read_bindings(repo):
-        if binding_replacement_scope(engine, existing) == target_scope:
-            return existing
-    return None
+    existing_by_scope = {
+        binding_replacement_scope(engine, existing): existing
+        for existing in engine.read_effective_bindings(repo)
+    }
+    matches: list[Binding] = []
+    for expanded_binding in engine.expand_binding_for_tracking(binding):
+        existing = existing_by_scope.get(binding_replacement_scope(engine, expanded_binding))
+        if existing is not None and existing not in matches:
+            matches.append(existing)
+    return matches
+
+
+def find_recorded_binding_for_scope(engine: DotmanEngine, binding: Binding) -> Binding | None:
+    matches = find_recorded_bindings_for_scope(engine, binding)
+    return matches[0] if len(matches) == 1 else None
 
 
 def find_recorded_binding_exact(engine: DotmanEngine, binding: Binding) -> Binding | None:
     repo = engine.get_repo(binding.repo)
-    for existing in engine.read_bindings(repo):
+    expanded_bindings = engine.expand_binding_for_tracking(binding)
+    if len(expanded_bindings) != 1:
+        return None
+    expanded_binding = expanded_bindings[0]
+    for existing in engine.read_effective_bindings(repo):
         if (
-            existing.repo == binding.repo
-            and existing.selector == binding.selector
-            and existing.profile == binding.profile
+            existing.repo == expanded_binding.repo
+            and existing.selector == expanded_binding.selector
+            and existing.profile == expanded_binding.profile
         ):
             return existing
     return None
@@ -639,19 +696,59 @@ def ensure_track_binding_replacement_confirmed(
     binding: Binding,
     json_output: bool,
 ) -> bool:
-    existing_binding = find_recorded_binding_for_scope(engine, binding)
-    if existing_binding is None or existing_binding.profile == binding.profile:
+    expanded_bindings = engine.expand_binding_for_tracking(binding)
+    existing_bindings = find_recorded_bindings_for_scope(engine, binding)
+    replacements = [
+        (existing_binding, expanded_binding)
+        for expanded_binding in expanded_bindings
+        for existing_binding in existing_bindings
+        if binding_replacement_scope(engine, existing_binding) == binding_replacement_scope(engine, expanded_binding)
+        and existing_binding.profile != expanded_binding.profile
+    ]
+    if not replacements:
         return True
+    if len(replacements) == 1:
+        existing_binding, replacement_binding = replacements[0]
+        if not interactive_mode_enabled(json_output=json_output):
+            raise ValueError(
+                f"refusing to replace tracked binding '{existing_binding.repo}:{existing_binding.selector}@"
+                f"{existing_binding.profile}' with '{replacement_binding.repo}:{replacement_binding.selector}@{replacement_binding.profile}' "
+                "in non-interactive mode"
+            )
+        return confirm_tracked_binding_replacement(
+            existing_binding=existing_binding,
+            replacement_binding=replacement_binding,
+        )
+    replacement_labels = ", ".join(
+        f"{existing.repo}:{existing.selector}@{existing.profile} -> {replacement.repo}:{replacement.selector}@{replacement.profile}"
+        for existing, replacement in replacements
+    )
     if not interactive_mode_enabled(json_output=json_output):
         raise ValueError(
-            f"refusing to replace tracked binding '{existing_binding.repo}:{existing_binding.selector}@"
-            f"{existing_binding.profile}' with '{binding.repo}:{binding.selector}@{binding.profile}' "
-            "in non-interactive mode"
+            f"refusing to replace tracked bindings for '{binding.repo}:{binding.selector}@{binding.profile}' "
+            f"in non-interactive mode: {replacement_labels}"
         )
-    return confirm_tracked_binding_replacement(
-        existing_binding=existing_binding,
-        replacement_binding=binding,
-    )
+    print_selection_header(f"Confirm tracked binding replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
+    for existing_binding, replacement_binding in replacements:
+        print(f"  existing: {render_binding_reference(existing_binding)}")
+        print(f"  new:      {render_binding_reference(replacement_binding)}")
+    while True:
+        answer = prompt(confirmation_prompt()).strip().lower()
+        if answer in {"", "n", "no"}:
+            return False
+        if answer in {"y", "yes"}:
+            return True
+        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+
+
+def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
+    while True:
+        answer = prompt(partial_match_confirmation_prompt(candidate_label=candidate_label)).strip().lower()
+        if answer in {"", "n", "no"}:
+            return False
+        if answer in {"y", "yes"}:
+            return True
+        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
 def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Sequence) -> bool:
@@ -701,6 +798,7 @@ def confirm_add_manifest_write(*, repo_name: str, package_id: str) -> bool:
 
 
 def prompt_for_conflicting_package_binding(
+    engine: DotmanEngine,
     *,
     binding: Binding,
     conflict: TrackedTargetConflictError,
@@ -708,11 +806,12 @@ def prompt_for_conflicting_package_binding(
 ) -> Binding | None:
     if conflict.precedence != "implicit" or not interactive_mode_enabled(json_output=json_output):
         return None
+    candidate_bindings = set(engine.expand_binding_for_tracking(binding))
     package_ids = sorted(
         {
             candidate.package_id
             for candidate in conflict.candidates
-            if candidate.binding == binding
+            if candidate.binding in candidate_bindings
         }
     )
     if not package_ids:
@@ -800,7 +899,15 @@ def resolve_candidate_match(
         )
         return ranked_exact_matches[selected_index]
     if len(partial_matches) == 1:
-        return ranked_partial_matches[0]
+        partial_match = ranked_partial_matches[0]
+        partial_option = option_resolver(partial_match)
+        if not interactive:
+            raise ValueError(
+                f"no exact match for '{query_text}'; use exact name '{partial_option.display_label}'"
+            )
+        if not confirm_partial_candidate_match(candidate_label=partial_option.display_label):
+            raise ValueError(f"confirmation required for partial match '{query_text}'")
+        return partial_match
     if len(partial_matches) > 1:
         if not interactive:
             raise ValueError(partial_error_text)
@@ -912,8 +1019,166 @@ def resolve_tracked_binding_text(
     operation: str,
     allow_package_owners: bool,
     json_output: bool,
-) -> tuple[object, Binding]:
+) -> tuple[object | None, Binding]:
     explicit_repo, selector, profile = parse_binding_text(binding_text)
+    interactive = interactive_mode_enabled(json_output=json_output)
+    binding_label = selector if profile is None else f"{selector}@{profile}"
+
+    if operation == "untrack":
+        resolved_selector, _resolved_profile, exact_matches, partial_matches = engine.find_persisted_binding_matches(binding_text)
+        package_matches, owner_bindings = engine._tracked_package_matches_for_untrack(
+            selector=resolved_selector,
+            profile=profile,
+            repo_name=explicit_repo,
+        )
+
+        def persisted_option(record) -> ResolverOption:
+            display_label = render_binding_label(
+                repo_name=record.binding.repo,
+                selector=record.binding.selector,
+                profile=record.binding.profile,
+                selector_first=True,
+            )
+            if record.repo is None or record.state_key != record.binding.repo:
+                display_label += f" {style_text(f'[{record.state_key}]', *MENU_HINT_STYLE) if colors_enabled() else f'[{record.state_key}]'}"
+            return ResolverOption(
+                display_label=display_label,
+                match_fields=build_binding_match_fields(
+                    repo_name=record.binding.repo,
+                    selector=record.binding.selector,
+                    profile=record.binding.profile,
+                ),
+                field_kinds=build_binding_field_kinds(),
+            )
+
+        def package_option(package) -> ResolverOption:
+            display_label = render_package_label(
+                repo_name=package.repo,
+                package_id=package.package_id,
+                bound_profile=package.bound_profile,
+                package_first=True,
+                include_repo_context=True,
+            )
+            return ResolverOption(
+                display_label=display_label,
+                match_fields=build_package_match_fields(
+                    repo_name=package.repo,
+                    package_id=package.package_id,
+                    bound_profile=package.bound_profile,
+                ),
+                field_kinds=build_package_field_kinds(has_bound_profile=package.bound_profile is not None),
+            )
+
+        def package_owner_error(package) -> ValueError:
+            matching_owner_bindings = [
+                binding
+                for binding in package.bindings
+                if profile is None or binding.profile == profile
+            ]
+            owners = ", ".join(
+                render_binding_label(
+                    repo_name=binding.repo,
+                    selector=binding.selector,
+                    profile=binding.profile,
+                    selector_first=True,
+                )
+                for binding in matching_owner_bindings
+            )
+            required_repo = explicit_repo or package.repo
+            required_ref = render_package_label(
+                repo_name=required_repo,
+                package_id=package.package_id,
+                bound_profile=package.bound_profile,
+                package_first=True,
+                include_repo_context=True,
+            )
+            return ValueError(
+                f"cannot {operation} '{required_ref}': required by tracked bindings: {owners}"
+            )
+
+        filtered_package_matches = [
+            package
+            for package in package_matches
+            if not any(
+                record.binding.repo == package.repo and record.binding.selector == package.package_id
+                for record in partial_matches
+            )
+        ]
+
+        def combined_option(match) -> ResolverOption:
+            match_kind, item = match
+            if match_kind == "binding":
+                return persisted_option(item)
+            return package_option(item)
+
+        if interactive and (exact_matches or partial_matches or filtered_package_matches):
+            selected_kind, selected_item = resolve_candidate_match(
+                exact_matches=[("binding", record) for record in exact_matches],
+                partial_matches=[("binding", record) for record in partial_matches]
+                + [("package", package) for package in filtered_package_matches],
+                query_text=binding_label,
+                interactive=True,
+                exact_header_text=f"Select a tracked binding for '{binding_label}':",
+                partial_header_text=(
+                    f"Select an untrack target for '{binding_label}':"
+                    if filtered_package_matches
+                    else f"Select a tracked binding for '{binding_label}':"
+                ),
+                option_resolver=combined_option,
+                exact_error_text="unused",
+                partial_error_text="unused",
+                not_found_text=f"binding '{binding_label}' is not currently tracked",
+            )
+            if selected_kind == "binding":
+                return selected_item.repo, selected_item.binding
+            raise package_owner_error(selected_item)
+
+        if len(exact_matches) == 1:
+            record = exact_matches[0]
+            return record.repo, record.binding
+        if len(exact_matches) > 1:
+            raise ValueError(
+                f"binding '{binding_label}' is ambiguous: "
+                + ", ".join(
+                    f"{record.binding.repo}:{record.binding.selector}@{record.binding.profile}"
+                    for record in exact_matches
+                )
+            )
+
+        if partial_matches:
+            if filtered_package_matches:
+                package_candidates = ", ".join(
+                    f"{package.repo}:{package.package_ref}"
+                    for package in filtered_package_matches
+                )
+                raise ValueError(
+                    f"binding '{binding_label}' is ambiguous: tracked packages: {package_candidates}"
+                )
+            if len(partial_matches) == 1:
+                record = partial_matches[0]
+                raise ValueError(
+                    f"no exact match for '{binding_label}'; use exact name '{persisted_option(record).display_label}'"
+                )
+            raise ValueError(
+                f"binding '{binding_label}' is ambiguous: "
+                + ", ".join(
+                    f"{record.binding.repo}:{record.binding.selector}@{record.binding.profile}"
+                    for record in partial_matches
+                )
+            )
+
+        if filtered_package_matches:
+            if len(filtered_package_matches) > 1:
+                raise ValueError(
+                    f"binding '{binding_label}' is ambiguous: tracked packages: "
+                    + ", ".join(
+                        f"{package.repo}:{package.package_ref}" for package in filtered_package_matches
+                    )
+                )
+            raise package_owner_error(filtered_package_matches[0])
+
+        raise ValueError(f"binding '{binding_label}' is not currently tracked")
+
     repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
     lookup_repo, lookup_selector = parse_slash_qualified_query(
         repo_names=repo_names,
@@ -928,8 +1193,6 @@ def resolve_tracked_binding_text(
     resolved_selector, resolved_profile, exact_matches, partial_matches, owner_bindings = (
         engine.find_tracked_binding_matches(lookup_binding_text)
     )
-    interactive = interactive_mode_enabled(json_output=json_output)
-    binding_label = selector if profile is None else f"{selector}@{profile}"
     binding_resolver = lambda match: ResolverOption(
         display_label=render_binding_label(
             repo_name=match[0].config.name,
@@ -2352,11 +2615,12 @@ def run_execution(*, operation: str, plans: Sequence, json_output: bool, full_pa
     )
 
 
-def emit_tracked_packages(*, packages: Sequence, json_output: bool) -> int:
+def emit_tracked_packages(*, engine: DotmanEngine, packages: Sequence, invalid_bindings: Sequence, json_output: bool) -> int:
     payload = {
         "mode": "dry-run",
         "operation": "list-tracked",
         "packages": [package.to_dict() for package in packages],
+        "invalid_bindings": [binding.to_dict() for binding in invalid_bindings],
     }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -2369,7 +2633,10 @@ def emit_tracked_packages(*, packages: Sequence, json_output: bool) -> int:
                 package_id=package.package_id,
                 bound_profile=package.bound_profile,
             )
+            + f" {render_tracked_state(package.state)}"
         )
+    for binding in invalid_bindings:
+        print(f"{render_tracked_issue_label(engine, binding)} {render_tracked_state(binding.state)}")
     return 0
 
 
@@ -2886,14 +3153,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     binding=binding,
                     json_output=args.json_output,
                 ):
-                    existing_binding = find_recorded_binding_for_scope(engine, binding)
-                    if existing_binding is None:
-                        raise ValueError("missing existing tracked binding during replacement confirmation")
-                    return emit_kept_binding(binding=existing_binding, json_output=args.json_output)
+                    existing_bindings = find_recorded_bindings_for_scope(engine, binding)
+                    if len(existing_bindings) == 1:
+                        return emit_kept_binding(binding=existing_bindings[0], json_output=args.json_output)
+                    return emit_skipped_tracking(binding=binding, json_output=args.json_output)
                 try:
                     engine.validate_recorded_binding(binding)
                 except TrackedTargetConflictError as exc:
                     promoted_binding = prompt_for_conflicting_package_binding(
+                        engine,
                         binding=binding,
                         conflict=exc,
                         json_output=args.json_output,
@@ -3116,7 +3384,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 json_output=args.json_output,
             )
         if args.command == "list" and args.list_command in {"tracked", "installed"}:
-            return emit_tracked_packages(packages=engine.list_installed_packages(), json_output=args.json_output)
+            tracked_state = engine.list_tracked_state()
+            return emit_tracked_packages(
+                engine=engine,
+                packages=tracked_state.packages,
+                invalid_bindings=tracked_state.invalid_bindings,
+                json_output=args.json_output,
+            )
         if args.command == "list" and args.list_command == "snapshots":
             return emit_snapshot_list(
                 snapshots=list_snapshots(engine.config.snapshots.path),
@@ -3131,7 +3405,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
             return emit_tracked_package_detail(
-                package_detail=engine.describe_installed_package(f"{_repo.config.name}:{package_ref}"),
+                package_detail=engine.describe_tracked_package(f"{_repo.config.name}:{package_ref}"),
                 json_output=args.json_output,
             )
         if args.command == "info" and args.info_command == "snapshot":

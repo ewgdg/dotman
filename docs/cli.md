@@ -74,17 +74,18 @@ This document captures the current command and selector direction for `dotman`.
 - `selector@profile` is a convenient shorthand when repo resolution is unambiguous.
 - A bare selector such as `git` or `os/arch` may still be accepted for interactive commands.
 - `track` may resolve a bare or partial selector first, then prompt for a profile interactively.
-- If there is exactly one available profile, dotman may use it directly.
+- If there is exactly one available profile and the user did not type a partial profile query, dotman may use it directly.
 - In non-interactive mode, a missing profile should be an error instead of a hidden guess.
 
 ## Track
 
-- `track <binding>` should resolve the binding, prompt for a profile when needed, and persist the selected root binding into repo state.
-- Re-tracking the same exact root binding should update that tracked binding instead of appending a duplicate entry.
-- A root selector that resolves to a group or `singleton` package should have at most one tracked binding per repo and selector.
-- A root selector that resolves to a `multi_instance` package may keep one tracked binding per bound profile.
-- If tracking a group or `singleton` package would replace an existing tracked selector with a different profile, interactive mode should ask for confirmation before writing state.
-- In non-interactive mode, profile-replacing `track` for a group or `singleton` package should fail instead of silently overwriting the tracked binding.
+- `track <binding>` should resolve the binding, prompt for a profile when needed, and persist the resulting package bindings into repo state.
+- If the input selector is a group, `track` should expand it exactly as if the user had listed each resolved package selector explicitly.
+- Re-tracking the same effective package binding should update that tracked binding instead of appending a duplicate entry.
+- A tracked `singleton` package should have at most one tracked binding per repo and package ID.
+- A tracked `multi_instance` package may keep one tracked binding per bound profile.
+- If tracking would replace an existing tracked package binding with a different profile, interactive mode should ask for confirmation before writing state.
+- In non-interactive mode, profile-replacing `track` should fail instead of silently overwriting the tracked package binding.
 - Tracking a `multi_instance` package with a different bound profile should add a distinct tracked binding instead of replacing the existing one.
 - If `track` would make a new explicit binding override existing implicit targets, interactive mode should ask for confirmation before writing state.
 - In non-interactive mode, `track` should fail instead of silently overriding implicit tracked targets.
@@ -101,6 +102,7 @@ This document captures the current command and selector direction for `dotman`.
 - Plain `push` should perform real execution after planning, interactive exclusion, and diff review.
 - `push` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
 - `push <selector>` should resolve only within tracked state and reuse the tracked profile instead of prompting for a fresh profile.
+- Because groups are not tracked identities, tracked-state selector lookup for `push`, `pull`, `info tracked`, and `untrack` should resolve against tracked packages, not historical group names.
 - `push <package>` should also work when that package is currently included through a tracked higher-level binding; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
 - `push` with no binding should replay the current tracked bindings from persisted state without changing the tracked binding set.
@@ -281,8 +283,13 @@ This document captures the current command and selector direction for `dotman`.
 - `untrack` should not delete live files, run hooks, or infer target ownership.
 - `untrack` should match tracked bindings, not current repo manifests, so stale bindings can still be untracked after repo changes.
 - `untrack` should accept either `selector` or `selector@profile`.
-- If the profile is omitted, dotman should untrack the unique tracked binding that matches the selector.
+- If the profile is omitted, dotman should untrack the unique exact tracked binding that matches the selector.
 - Omitting the profile for a tracked `multi_instance` root selector with multiple bound profiles should be an ambiguity error.
+- A single fuzzy/partial match must not execute or mutate state silently.
+- In interactive mode, a single fuzzy/partial match should require explicit confirmation before dotman continues.
+- In non-interactive or JSON mode, a single fuzzy/partial match should fail without guessing.
+- Tracked package matches, including implicit packages, should participate in fuzzy-match ambiguity detection so `untrack` does not treat a destructive partial match as uniquely safe.
+- Exact invalid or orphan explicit bindings should still be removable by matching the persisted binding record.
 - If the selector only names a package that is present through another tracked binding, dotman should explain which tracked bindings currently include it instead of just saying "not tracked".
 - `untrack` should validate the resulting tracked binding set before writing state.
 - If removing one binding would expose a tracked-target conflict among the remaining bindings, `untrack` should fail and keep state unchanged.
@@ -301,6 +308,11 @@ This document captures the current command and selector direction for `dotman`.
 - `list tracked` should resolve the current binding state against the current repo manifests.
 - `list tracked` should not guess from the live filesystem.
 - `list tracked` should not run push/pull planning or execute render/capture commands.
+- `list tracked` should include package-level `state` as `explicit` or `implicit`.
+- `list tracked` should include invalid explicit bindings for configured repos when persisted state no longer resolves cleanly.
+- `list tracked` should include orphan explicit bindings discovered under the manager state root when a persisted `state_key` no longer maps to configured repos.
+- Human `list tracked` output should print one flat `repo:package-or-selector state` list.
+- Human `list tracked` output should list explicit and implicit packages first, then orphan bindings, then invalid bindings.
 - `dotman list tracked` should list tracked package identities, not collapse `multi_instance` package instances by package definition.
 - `singleton` packages should be listed once by package ID.
 - `multi_instance` packages should be listed once per bound instance using `package<bound-profile>`.

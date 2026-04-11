@@ -26,6 +26,10 @@ This document captures the current repository structure and configuration schema
 - Namespaced packages stay explicit, for example `work/git`.
 - Groups live under `groups/` and are used for package selection and composition.
 - Group IDs may be namespaced, for example `os/arch`.
+- Groups are not packages and are not tracked identities.
+- Tracking a group should behave like passing its resolved member packages as track arguments with the same bound profile.
+- Meta packages are still normal packages; they may be tracked explicitly and may use `depends` for aggregation.
+- Terminology should follow ArchWiki's distinction between meta packages and package groups: <https://wiki.archlinux.org/title/Meta_package_and_package_group>
 - `/` is reserved for namespacing inside package and group IDs.
 - Repo qualification stays outside the selector with `repo:selector`, not `repo/selector`.
 - `\` is not a valid selector separator.
@@ -50,6 +54,7 @@ This document captures the current repository structure and configuration schema
   - scalars use last-wins replacement
   - lists replace the earlier value; they do not merge
 - A binding stores the selected bound profile.
+- Persisted tracked state stores package bindings, not group selectors.
 - The composed/effective profile is runtime resolution context, not package identity.
 - Packages with no file payload may still be useful as meta packages when they only declare `depends`.
 - Any string value may contain template expressions and is rendered during resolution.

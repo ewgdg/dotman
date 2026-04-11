@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from dotman.config import expand_path, load_manager_config
+from dotman.config import default_state_root, expand_path, load_manager_config
 from dotman.models import (
     Binding,
     BindingPlan,
@@ -30,6 +30,7 @@ from dotman.models import (
     ProfileSpec,
     RepoConfig,
     RepoIgnoreDefaults,
+    TrackedBindingIssue,
     package_ref_text,
     TargetPlan,
     TargetSpec,
@@ -93,6 +94,30 @@ class TrackedTargetCandidate:
 class TrackedTargetOverride:
     winner: TrackedTargetCandidate
     overridden: tuple[TrackedTargetCandidate, ...]
+
+
+class PersistedBindingResolutionError(ValueError):
+    def __init__(self, *, reason: str, message: str) -> None:
+        self.reason = reason
+        self.message = message
+        super().__init__(message)
+
+
+@dataclass(frozen=True)
+class PersistedBindingRecord:
+    state_key: str
+    state_dir: Path
+    binding: Binding
+    repo: Repository | None = None
+    selector_kind: str | None = None
+    package_ids: tuple[str, ...] = ()
+    issue: TrackedBindingIssue | None = None
+
+
+@dataclass(frozen=True)
+class TrackedStateSummary:
+    packages: list[InstalledPackageSummary]
+    invalid_bindings: list[TrackedBindingIssue]
 
 
 def _copy_map(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -717,7 +742,10 @@ class DotmanEngine:
             candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_matches)
             raise ValueError(f"selector '{selector}' is defined in multiple repos: {candidates}")
         if len(partial_matches) == 1:
-            return partial_matches[0]
+            repo, match, _selector_kind = partial_matches[0]
+            raise ValueError(
+                f"no exact match for '{selector}'; use exact name '{repo.config.name}:{match}'"
+            )
         if len(partial_matches) > 1:
             candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches)
             raise ValueError(f"selector '{selector}' is ambiguous: {candidates}")
@@ -759,7 +787,10 @@ class DotmanEngine:
             raise ValueError(f"binding '{binding_label}' is ambiguous: {candidates}")
 
         if len(partial_matches) == 1:
-            return partial_matches[0]
+            repo, binding = partial_matches[0]
+            raise ValueError(
+                f"no exact match for '{binding_label}'; use exact name '{repo.config.name}:{binding.selector}@{binding.profile}'"
+            )
         if len(partial_matches) > 1:
             candidates = ", ".join(
                 f"{repo.config.name}:{binding.selector}@{binding.profile}"
@@ -802,7 +833,7 @@ class DotmanEngine:
         tracked = [
             (repo, binding)
             for repo in candidate_repos
-            for binding in self.read_bindings(repo)
+            for binding in self.read_effective_bindings(repo)
             if profile is None or binding.profile == profile
         ]
 
@@ -832,9 +863,32 @@ class DotmanEngine:
     def plan_pull(self) -> list[BindingPlan]:
         return self._build_tracked_plans(operation="pull")
 
-    def list_installed_packages(self) -> list[InstalledPackageSummary]:
+    def list_tracked_state(self) -> TrackedStateSummary:
+        return TrackedStateSummary(
+            packages=self.list_tracked_packages(),
+            invalid_bindings=self._sorted_binding_issues(
+                [
+                    *self.list_invalid_explicit_bindings(),
+                    *self.list_orphan_explicit_bindings(),
+                ]
+            ),
+        )
+
+    def list_invalid_explicit_bindings(
+        self,
+        *,
+        bindings_by_repo: dict[str, list[Binding]] | None = None,
+    ) -> list[TrackedBindingIssue]:
+        _valid_records, invalid_records = self._configured_persisted_binding_records(bindings_by_repo=bindings_by_repo)
+        return self._sorted_binding_issues([record.issue for record in invalid_records if record.issue is not None])
+
+    def list_orphan_explicit_bindings(self) -> list[TrackedBindingIssue]:
+        return self._sorted_binding_issues([record.issue for record in self._orphan_persisted_binding_records() if record.issue is not None])
+
+    def list_tracked_packages(self) -> list[InstalledPackageSummary]:
         installed: dict[tuple[str, str, str | None], InstalledPackageSummary] = {}
-        for repo, binding, selector_kind, package_ids in self._iter_installed_bindings():
+        package_states: dict[tuple[str, str, str | None], str] = {}
+        for repo, binding, selector_kind, package_ids in self._iter_tracked_bindings():
             binding_summary = InstalledBindingSummary(
                 repo=repo.config.name,
                 selector=binding.selector,
@@ -845,6 +899,7 @@ class DotmanEngine:
                 package = repo.resolve_package(package_id)
                 bound_profile = self._bound_profile_for_package(repo, package_id, binding.profile)
                 key = (repo.config.name, package_id, bound_profile)
+                package_state = "explicit" if selector_kind == "package" and binding.selector == package_id else "implicit"
                 existing = installed.get(key)
                 if existing is None:
                     installed[key] = InstalledPackageSummary(
@@ -852,11 +907,15 @@ class DotmanEngine:
                         package_id=package_id,
                         description=package.description,
                         bindings=[binding_summary],
+                        state=package_state,
                         bound_profile=bound_profile,
                     )
+                    package_states[key] = package_state
                     continue
                 if binding_summary not in existing.bindings:
                     existing.bindings.append(binding_summary)
+                if package_state == "explicit":
+                    package_states[key] = "explicit"
 
         return [
             InstalledPackageSummary(
@@ -864,11 +923,13 @@ class DotmanEngine:
                 package_id=summary.package_id,
                 description=summary.description,
                 bindings=sorted(summary.bindings, key=lambda item: (item.selector, item.profile, item.repo)),
+                state=package_states[key],
                 bound_profile=summary.bound_profile,
             )
-            for _key, summary in sorted(
+            for key, summary in sorted(
                 installed.items(),
                 key=lambda item: (
+                    0 if package_states[item[0]] == "explicit" else 1,
                     item[0][0],
                     item[0][1],
                     "" if item[0][2] is None else item[0][2],
@@ -876,7 +937,10 @@ class DotmanEngine:
             )
         ]
 
-    def describe_installed_package(self, package_text: str) -> InstalledPackageDetail:
+    def list_installed_packages(self) -> list[InstalledPackageSummary]:
+        return self.list_tracked_packages()
+
+    def describe_tracked_package(self, package_text: str) -> InstalledPackageDetail:
         repo, package_id, bound_profile = self._resolve_installed_package(package_text)
         effective_binding_keys = self._effective_package_binding_keys(
             repo.config.name,
@@ -886,7 +950,7 @@ class DotmanEngine:
         details: list[InstalledPackageBindingDetail] = []
         description = repo.resolve_package(package_id).description
 
-        for candidate_repo, binding, selector_kind, package_ids in self._iter_installed_bindings():
+        for candidate_repo, binding, selector_kind, package_ids in self._iter_tracked_bindings():
             if candidate_repo.config.name != repo.config.name or package_id not in package_ids:
                 continue
             if self._bound_profile_for_package(candidate_repo, package_id, binding.profile) != bound_profile:
@@ -919,8 +983,10 @@ class DotmanEngine:
             bound_profile=bound_profile,
         )
 
-    def read_bindings(self, repo: Repository) -> list[Binding]:
-        state_path = repo.config.state_path / "bindings.toml"
+    def describe_installed_package(self, package_text: str) -> InstalledPackageDetail:
+        return self.describe_tracked_package(package_text)
+
+    def _read_bindings_file(self, state_path: Path) -> list[Binding]:
         if not state_path.exists():
             return []
         payload = tomllib.loads(state_path.read_text(encoding="utf-8"))
@@ -936,9 +1002,32 @@ class DotmanEngine:
             )
         return bindings
 
-    def _bindings_by_repo(self) -> dict[str, list[Binding]]:
+    def read_bindings(self, repo: Repository) -> list[Binding]:
+        return self._read_bindings_file(repo.config.state_path / "bindings.toml")
+
+    def read_effective_bindings(self, repo: Repository) -> list[Binding]:
+        return self._effective_bindings_for_repo(repo, self.read_bindings(repo))
+
+    def expand_binding_for_tracking(self, binding: Binding) -> list[Binding]:
+        repo = self.get_repo(binding.repo)
+        return self._expand_binding_for_tracking(repo, binding)
+
+    def _raw_bindings_by_repo(self) -> dict[str, list[Binding]]:
         return {
             repo_config.name: self.read_bindings(self.get_repo(repo_config.name))
+            for repo_config in self.config.ordered_repos
+        }
+
+    def _effective_bindings_by_repo(
+        self,
+        raw_bindings_by_repo: dict[str, list[Binding]] | None = None,
+    ) -> dict[str, list[Binding]]:
+        current_raw_bindings = raw_bindings_by_repo or self._raw_bindings_by_repo()
+        return {
+            repo_config.name: self._effective_bindings_for_repo(
+                self.get_repo(repo_config.name),
+                current_raw_bindings.get(repo_config.name, []),
+            )
             for repo_config in self.config.ordered_repos
         }
 
@@ -973,46 +1062,143 @@ class DotmanEngine:
             normalized.append(binding)
         return normalized
 
+    def _normalize_recorded_binding_set(self, bindings: list[Binding], additions: list[Binding]) -> list[Binding]:
+        normalized = list(bindings)
+        for binding in additions:
+            normalized = self._normalize_recorded_bindings(normalized, binding)
+        return normalized
+
+    def _expand_binding_for_tracking(self, repo: Repository, binding: Binding) -> list[Binding]:
+        if binding.profile not in repo.profiles:
+            raise PersistedBindingResolutionError(reason="unknown_profile", message="unknown profile")
+        package_match = binding.selector in repo.packages
+        group_match = binding.selector in repo.groups
+        if package_match and group_match:
+            raise PersistedBindingResolutionError(reason="selector_kind_invalid", message="selector kind invalid")
+        if not package_match and not group_match:
+            raise PersistedBindingResolutionError(reason="unknown_selector", message="unknown selector")
+        if package_match:
+            return [binding]
+        try:
+            package_ids = repo.expand_group(binding.selector)
+        except ValueError as exc:
+            raise PersistedBindingResolutionError(
+                reason="dependency_resolution_failed",
+                message="dependency resolution failed",
+            ) from exc
+        return [Binding(repo=binding.repo, selector=package_id, profile=binding.profile) for package_id in package_ids]
+
+    def _effective_bindings_for_repo(self, repo: Repository, raw_bindings: list[Binding]) -> list[Binding]:
+        effective_bindings: list[Binding] = []
+        for binding in raw_bindings:
+            try:
+                expanded_bindings = self._expand_binding_for_tracking(repo, binding)
+            except PersistedBindingResolutionError:
+                continue
+            effective_bindings = self._normalize_recorded_binding_set(effective_bindings, expanded_bindings)
+        return effective_bindings
+
     def _validate_tracked_bindings(self, bindings_by_repo: dict[str, list[Binding]]) -> None:
         # Tracked-state validity is defined by the resolved push winner set for live targets.
         self._build_tracked_plans(operation="push", bindings_by_repo=bindings_by_repo)
 
     def record_binding(self, binding: Binding) -> None:
         repo = self.get_repo(binding.repo)
-        bindings_by_repo = self._bindings_by_repo()
-        normalized = self._normalize_recorded_bindings(self.read_bindings(repo), binding)
-        bindings_by_repo[repo.config.name] = normalized
-        self._validate_tracked_bindings(bindings_by_repo)
+        raw_bindings_by_repo = self._raw_bindings_by_repo()
+        normalized = self._normalize_recorded_binding_set(
+            self._effective_bindings_for_repo(repo, raw_bindings_by_repo.get(repo.config.name, [])),
+            self._expand_binding_for_tracking(repo, binding),
+        )
+        raw_bindings_by_repo[repo.config.name] = normalized
+        if not self.list_invalid_explicit_bindings(bindings_by_repo=raw_bindings_by_repo):
+            self._validate_tracked_bindings(self._effective_bindings_by_repo(raw_bindings_by_repo))
         self.write_bindings(repo, normalized)
 
     def validate_recorded_binding(self, binding: Binding) -> None:
         repo = self.get_repo(binding.repo)
-        bindings_by_repo = self._bindings_by_repo()
-        bindings_by_repo[repo.config.name] = self._normalize_recorded_bindings(self.read_bindings(repo), binding)
-        self._validate_tracked_bindings(bindings_by_repo)
+        raw_bindings_by_repo = self._raw_bindings_by_repo()
+        raw_bindings_by_repo[repo.config.name] = self._normalize_recorded_binding_set(
+            self._effective_bindings_for_repo(repo, raw_bindings_by_repo.get(repo.config.name, [])),
+            self._expand_binding_for_tracking(repo, binding),
+        )
+        if not self.list_invalid_explicit_bindings(bindings_by_repo=raw_bindings_by_repo):
+            self._validate_tracked_bindings(self._effective_bindings_by_repo(raw_bindings_by_repo))
+
+    def find_persisted_binding_matches(
+        self,
+        binding_text: str,
+    ) -> tuple[str, str | None, list[PersistedBindingRecord], list[PersistedBindingRecord]]:
+        explicit_repo, selector, profile = parse_binding_text(binding_text)
+        tracked_records = [
+            *self._all_persisted_binding_records(),
+        ]
+        if explicit_repo is not None:
+            tracked_records = [record for record in tracked_records if record.binding.repo == explicit_repo]
+        if profile is not None:
+            tracked_records = [record for record in tracked_records if record.binding.profile == profile]
+        exact_matches = [record for record in tracked_records if record.binding.selector == selector]
+        partial_matches = [record for record in tracked_records if selector in record.binding.selector]
+        unique_partials = {
+            (
+                record.state_key,
+                record.binding.repo,
+                record.binding.selector,
+                record.binding.profile,
+            ): record
+            for record in partial_matches
+        }
+        return selector, profile, exact_matches, list(unique_partials.values())
 
     def remove_binding(self, binding_text: str, *, operation: str = "untrack") -> Binding:
-        repo, binding = self.resolve_tracked_binding(binding_text, operation=operation)
-        remaining = [
-            existing
-            for existing in self.read_bindings(repo)
-            if not (
-                existing.repo == binding.repo
-                and existing.selector == binding.selector
-                and existing.profile == binding.profile
-            )
-        ]
-        bindings_by_repo = self._bindings_by_repo()
-        bindings_by_repo[repo.config.name] = remaining
-        try:
-            self._validate_tracked_bindings(bindings_by_repo)
-        except TrackedTargetConflictError as exc:
-            binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
+        selector, profile, exact_matches, partial_matches = self.find_persisted_binding_matches(binding_text)
+        binding_label = selector if profile is None else f"{selector}@{profile}"
+        if len(exact_matches) == 1:
+            return self.remove_persisted_binding(exact_matches[0], operation=operation)
+        if len(exact_matches) > 1:
             raise ValueError(
-                f"cannot {operation} '{binding_label}': removing this binding would expose {exc}"
-            ) from None
-        self.write_bindings(repo, remaining)
-        return binding
+                f"binding '{binding_label}' is ambiguous: {self._format_persisted_binding_candidates(exact_matches)}"
+            )
+
+        package_matches, owner_bindings = self._tracked_package_matches_for_untrack(
+            selector=selector,
+            profile=profile,
+            repo_name=parse_binding_text(binding_text)[0],
+        )
+        if partial_matches:
+            package_matches = [
+                package
+                for package in package_matches
+                if not any(
+                    record.binding.repo == package.repo and record.binding.selector == package.package_id
+                    for record in partial_matches
+                )
+            ]
+            if package_matches:
+                binding_candidates = self._format_persisted_binding_candidates(partial_matches)
+                package_candidates = self._format_tracked_package_candidates(package_matches)
+                raise ValueError(
+                    f"binding '{binding_label}' is ambiguous: tracked bindings: {binding_candidates}; tracked packages: {package_candidates}"
+                )
+            if len(partial_matches) == 1:
+                record = partial_matches[0]
+                raise ValueError(
+                    f"no exact match for '{binding_label}'; use exact name '{record.binding.repo}:{record.binding.selector}@{record.binding.profile}'"
+                )
+            raise ValueError(
+                f"binding '{binding_label}' is ambiguous: {self._format_persisted_binding_candidates(partial_matches)}"
+            )
+
+        if package_matches:
+            if len(package_matches) > 1:
+                raise ValueError(
+                    f"binding '{binding_label}' is ambiguous: tracked packages: {self._format_tracked_package_candidates(package_matches)}"
+                )
+            owners = self._format_owner_bindings(owner_bindings)
+            required_repo = parse_binding_text(binding_text)[0] or package_matches[0].repo
+            required_ref = f"{required_repo}:{selector}"
+            raise ValueError(f"cannot {operation} '{required_ref}': required by tracked bindings: {owners}")
+
+        raise ValueError(f"binding '{binding_label}' is not currently tracked")
 
     def _find_tracked_package_owners(
         self,
@@ -1022,7 +1208,7 @@ class DotmanEngine:
     ) -> list[tuple[Repository, Binding]]:
         owners: list[tuple[Repository, Binding]] = []
         candidate_repo_names = {repo.config.name for repo in candidate_repos}
-        for repo, binding, _selector_kind, package_ids in self._iter_installed_bindings():
+        for repo, binding, _selector_kind, package_ids in self._iter_tracked_bindings():
             if repo.config.name not in candidate_repo_names:
                 continue
             if profile is not None and binding.profile != profile:
@@ -1032,7 +1218,9 @@ class DotmanEngine:
         return owners
 
     def write_bindings(self, repo: Repository, bindings: list[Binding]) -> None:
-        state_dir = repo.config.state_path
+        self._write_bindings_file(repo.config.state_path, bindings)
+
+    def _write_bindings_file(self, state_dir: Path, bindings: list[Binding]) -> None:
         state_dir.mkdir(parents=True, exist_ok=True)
         state_path = state_dir / "bindings.toml"
         temp_path = state_path.with_suffix(".tmp")
@@ -1050,14 +1238,217 @@ class DotmanEngine:
         temp_path.write_text("\n".join(lines), encoding="utf-8")
         temp_path.replace(state_path)
 
+    def remove_persisted_binding(self, record: PersistedBindingRecord, *, operation: str = "untrack") -> Binding:
+        state_path = record.state_dir / "bindings.toml"
+        if record.repo is not None and record.issue is None:
+            raw_bindings_by_repo = self._raw_bindings_by_repo()
+            remaining = self._remove_binding_record(self.read_effective_bindings(record.repo), record.binding)
+            raw_bindings_by_repo[record.repo.config.name] = remaining
+            if not self.list_invalid_explicit_bindings(bindings_by_repo=raw_bindings_by_repo):
+                try:
+                    self._validate_tracked_bindings(self._effective_bindings_by_repo(raw_bindings_by_repo))
+                except TrackedTargetConflictError as exc:
+                    binding_label = f"{record.binding.repo}:{record.binding.selector}@{record.binding.profile}"
+                    raise ValueError(
+                        f"cannot {operation} '{binding_label}': removing this binding would expose {exc}"
+                    ) from None
+            self._write_bindings_file(record.state_dir, remaining)
+            return record.binding
+
+        remaining = self._remove_binding_record(self._read_bindings_file(state_path), record.binding)
+        if record.repo is not None:
+            raw_bindings_by_repo = self._raw_bindings_by_repo()
+            raw_bindings_by_repo[record.repo.config.name] = remaining
+            if not self.list_invalid_explicit_bindings(bindings_by_repo=raw_bindings_by_repo):
+                try:
+                    self._validate_tracked_bindings(self._effective_bindings_by_repo(raw_bindings_by_repo))
+                except TrackedTargetConflictError as exc:
+                    binding_label = f"{record.binding.repo}:{record.binding.selector}@{record.binding.profile}"
+                    raise ValueError(
+                        f"cannot {operation} '{binding_label}': removing this binding would expose {exc}"
+                    ) from None
+        self._write_bindings_file(record.state_dir, remaining)
+        return record.binding
+
+    def _remove_binding_record(self, bindings: list[Binding], target: Binding) -> list[Binding]:
+        removed = False
+        remaining: list[Binding] = []
+        for binding in bindings:
+            if not removed and binding == target:
+                removed = True
+                continue
+            remaining.append(binding)
+        return remaining
+
+    def _iter_tracked_bindings(self) -> list[tuple[Repository, Binding, str, list[str]]]:
+        valid_records, _invalid_records = self._configured_persisted_binding_records()
+        return [
+            (record.repo, record.binding, record.selector_kind or "package", list(record.package_ids))
+            for record in valid_records
+            if record.repo is not None
+        ]
+
     def _iter_installed_bindings(self) -> list[tuple[Repository, Binding, str, list[str]]]:
-        installed_bindings: list[tuple[Repository, Binding, str, list[str]]] = []
+        return self._iter_tracked_bindings()
+
+    def _configured_persisted_binding_records(
+        self,
+        *,
+        bindings_by_repo: dict[str, list[Binding]] | None = None,
+    ) -> tuple[list[PersistedBindingRecord], list[PersistedBindingRecord]]:
+        valid_records: list[PersistedBindingRecord] = []
+        invalid_records: list[PersistedBindingRecord] = []
+        current_bindings = bindings_by_repo or self._raw_bindings_by_repo()
         for repo_config in self.config.ordered_repos:
             repo = self.get_repo(repo_config.name)
-            for binding in self.read_bindings(repo):
-                selector_kind = "group" if binding.selector in repo.groups else "package"
-                installed_bindings.append((repo, binding, selector_kind, self._resolve_package_ids(repo, binding.selector, selector_kind)))
-        return installed_bindings
+            for binding in current_bindings.get(repo_config.name, []):
+                try:
+                    resolved_bindings = self._resolve_persisted_binding(repo, binding)
+                except PersistedBindingResolutionError as exc:
+                    invalid_records.append(
+                        PersistedBindingRecord(
+                            state_key=repo.config.state_key,
+                            state_dir=repo.config.state_path,
+                            binding=binding,
+                            repo=repo,
+                            issue=TrackedBindingIssue(
+                                state_key=repo.config.state_key,
+                                repo=binding.repo,
+                                selector=binding.selector,
+                                profile=binding.profile,
+                                state="invalid",
+                                reason=exc.reason,
+                                message=exc.message,
+                            ),
+                        )
+                    )
+                    continue
+                for resolved_binding in resolved_bindings:
+                    valid_records.append(
+                        PersistedBindingRecord(
+                            state_key=repo.config.state_key,
+                            state_dir=repo.config.state_path,
+                            binding=resolved_binding,
+                            repo=repo,
+                            selector_kind="package",
+                            package_ids=tuple(self._resolve_package_ids(repo, resolved_binding.selector, "package")),
+                        )
+                    )
+        return valid_records, invalid_records
+
+    def _orphan_persisted_binding_records(self) -> list[PersistedBindingRecord]:
+        state_root = default_state_root() / "repos"
+        if not state_root.exists():
+            return []
+        configured_state_keys = {repo_config.state_key for repo_config in self.config.ordered_repos}
+        orphan_records: list[PersistedBindingRecord] = []
+        for state_dir in sorted(path for path in state_root.iterdir() if path.is_dir()):
+            if state_dir.name in configured_state_keys:
+                continue
+            state_path = state_dir / "bindings.toml"
+            if not state_path.exists():
+                continue
+            for binding in self._read_bindings_file(state_path):
+                orphan_records.append(
+                    PersistedBindingRecord(
+                        state_key=state_dir.name,
+                        state_dir=state_dir,
+                        binding=binding,
+                        issue=TrackedBindingIssue(
+                            state_key=state_dir.name,
+                            repo=binding.repo,
+                            selector=binding.selector,
+                            profile=binding.profile,
+                            state="orphan",
+                            reason="unknown_repo",
+                            message="repo not in config",
+                        ),
+                    )
+                )
+        return orphan_records
+
+    def _all_persisted_binding_records(self) -> list[PersistedBindingRecord]:
+        valid_records, invalid_records = self._configured_persisted_binding_records()
+        return [*valid_records, *invalid_records, *self._orphan_persisted_binding_records()]
+
+    def _resolve_persisted_binding(self, repo: Repository, binding: Binding) -> list[Binding]:
+        resolved_bindings = self._expand_binding_for_tracking(repo, binding)
+        try:
+            for resolved_binding in resolved_bindings:
+                self._resolve_package_ids(repo, resolved_binding.selector, "package")
+        except ValueError as exc:
+            raise PersistedBindingResolutionError(
+                reason="dependency_resolution_failed",
+                message="dependency resolution failed",
+            ) from exc
+        return resolved_bindings
+
+    def _tracked_package_matches_for_untrack(
+        self,
+        *,
+        selector: str,
+        profile: str | None,
+        repo_name: str | None,
+    ) -> tuple[list[InstalledPackageSummary], list[InstalledBindingSummary]]:
+        package_matches: list[InstalledPackageSummary] = []
+        owner_bindings: dict[tuple[str, str, str], InstalledBindingSummary] = {}
+        if repo_name is not None and repo_name not in self.repos:
+            return package_matches, []
+        candidate_repo_names = set(self.repos) if repo_name is None else {repo_name}
+        for package in self.list_tracked_packages():
+            if package.repo not in candidate_repo_names:
+                continue
+            matching_bindings = [binding for binding in package.bindings if profile is None or binding.profile == profile]
+            if not matching_bindings:
+                continue
+            package_ref = package.package_ref
+            if package.package_id == selector:
+                package_matches.append(package)
+            elif selector in package_ref:
+                package_matches.append(package)
+            else:
+                continue
+            for binding in matching_bindings:
+                owner_bindings[(binding.repo, binding.selector, binding.profile)] = binding
+        sorted_package_matches = sorted(
+            package_matches,
+            key=lambda item: (item.repo, item.package_id, "" if item.bound_profile is None else item.bound_profile),
+        )
+        sorted_owner_bindings = sorted(
+            owner_bindings.values(),
+            key=lambda item: (item.repo, item.selector, item.profile),
+        )
+        return sorted_package_matches, sorted_owner_bindings
+
+    def _sorted_binding_issues(self, issues: list[TrackedBindingIssue]) -> list[TrackedBindingIssue]:
+        return sorted(
+            issues,
+            key=lambda item: (
+                0 if item.state == "orphan" else 1,
+                item.repo,
+                item.selector,
+                item.profile,
+                item.state_key,
+            ),
+        )
+
+    def _format_persisted_binding_candidates(self, records: list[PersistedBindingRecord]) -> str:
+        return ", ".join(
+            f"{record.binding.repo}:{record.binding.selector}@{record.binding.profile}"
+            for record in records
+        )
+
+    def _format_tracked_package_candidates(self, packages: list[InstalledPackageSummary]) -> str:
+        return ", ".join(
+            f"{package.repo}:{package.package_ref}"
+            for package in packages
+        )
+
+    def _format_owner_bindings(self, bindings: list[InstalledBindingSummary]) -> str:
+        return ", ".join(
+            f"{binding.repo}:{binding.selector}@{binding.profile}"
+            for binding in bindings
+        )
 
     def _selected_package_ids(self, repo: Repository, selector: str, selector_kind: str) -> list[str]:
         return [selector] if selector_kind == "package" else repo.expand_group(selector)
@@ -1076,7 +1467,11 @@ class DotmanEngine:
             raise ValueError(f"tracked package '{selector}' is ambiguous: {candidates}")
 
         if len(partial_matches) == 1:
-            return partial_matches[0]
+            repo, package_id, match_bound_profile = partial_matches[0]
+            raise ValueError(
+                f"no exact match for '{selector}'; use exact name '"
+                f"{repo.config.name}:{package_ref_text(package_id=package_id, bound_profile=match_bound_profile)}'"
+            )
         if len(partial_matches) > 1:
             candidates = ", ".join(
                 f"{repo.config.name}:{package_ref_text(package_id=package_id, bound_profile=match_bound_profile)}"
@@ -1344,12 +1739,12 @@ class DotmanEngine:
     ) -> tuple[list[BindingPlan], dict[Path, list[TrackedTargetCandidate]]]:
         plans: list[BindingPlan] = []
         candidates_by_live_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
-        current_bindings = bindings_by_repo or self._bindings_by_repo()
+        current_bindings = bindings_by_repo or self._effective_bindings_by_repo()
 
         for repo_config in self.config.ordered_repos:
             repo = self.get_repo(repo_config.name)
             for binding in current_bindings.get(repo_config.name, []):
-                selector_kind = "group" if binding.selector in repo.groups else "package"
+                selector_kind = "package"
                 selected_packages = set(self._selected_package_ids(repo, binding.selector, selector_kind))
                 plan = self._build_plan(repo, binding, selector_kind, operation=operation)
                 plan_index = len(plans)
@@ -1375,11 +1770,14 @@ class DotmanEngine:
 
     def preview_binding_implicit_overrides(self, binding: Binding) -> list[TrackedTargetOverride]:
         repo = self.get_repo(binding.repo)
-        bindings_by_repo = self._bindings_by_repo()
-        bindings_by_repo[repo.config.name] = self._normalize_recorded_bindings(self.read_bindings(repo), binding)
+        raw_bindings_by_repo = self._raw_bindings_by_repo()
+        raw_bindings_by_repo[repo.config.name] = self._normalize_recorded_binding_set(
+            self._effective_bindings_for_repo(repo, raw_bindings_by_repo.get(repo.config.name, [])),
+            self._expand_binding_for_tracking(repo, binding),
+        )
         _plans, candidates_by_live_path = self._collect_tracked_candidates(
             operation="push",
-            bindings_by_repo=bindings_by_repo,
+            bindings_by_repo=self._effective_bindings_by_repo(raw_bindings_by_repo),
         )
 
         overrides_by_package: dict[

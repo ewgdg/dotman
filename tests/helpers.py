@@ -274,6 +274,40 @@ def write_multi_instance_repo(repo_root: Path) -> None:
     )
 
 
+def write_shared_stack_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "shared" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "shared-stack").mkdir(parents=True)
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "shared" / "files" / "shared.conf").write_text(
+        "shared\n",
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shared" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shared"',
+                "",
+                "[targets.shared]",
+                'source = "files/shared.conf"',
+                'path = "~/.config/shared.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shared-stack" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shared-stack"',
+                'depends = ["shared"]',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def write_package_override_preview_repo(repo_root: Path) -> None:
     (repo_root / "profiles").mkdir(parents=True)
     (repo_root / "groups").mkdir(parents=True)
