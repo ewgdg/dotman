@@ -52,6 +52,11 @@ def plan_targets(
 
     plans: list[TargetPlan] = []
     for package, target, repo_path, live_path, push_ignore, pull_ignore in rendered_targets:
+        target_kind = (
+            infer_target_kind(repo_path=repo_path, live_path=live_path)
+            if operation == "pull"
+            else ("directory" if repo_path.is_dir() else "file")
+        )
         render_command = (
             render_template_string(target.render, context, base_dir=target.declared_in)
             if target.render is not None
@@ -78,7 +83,7 @@ def plan_targets(
             inferred_os=inferred_os,
             context=context,
         )
-        if repo_path.is_dir():
+        if target_kind == "directory":
             action, directory_items = plan_directory_action(
                 repo_path,
                 live_path,
@@ -115,23 +120,24 @@ def plan_targets(
         desired_bytes: bytes | None = None
         projection_kind = "raw"
         try:
-            desired_bytes, projection_kind = project_repo_file(
-                engine,
-                repo=repo,
-                package=package,
-                target=target,
-                repo_path=repo_path,
-                live_path=live_path,
-                render_command=render_command,
-                context=context,
-                binding=binding,
-                operation=operation,
-                inferred_os=inferred_os,
-            )
+            if operation in {"upgrade", "push"} or repo_path.exists():
+                desired_bytes, projection_kind = project_repo_file(
+                    engine,
+                    repo=repo,
+                    package=package,
+                    target=target,
+                    repo_path=repo_path,
+                    live_path=live_path,
+                    render_command=render_command,
+                    context=context,
+                    binding=binding,
+                    operation=operation,
+                    inferred_os=inferred_os,
+                )
         except ValueError as exc:
             if render_command == "jinja":
                 raise
-            if operation in {"upgrade", "push"} and not live_path.exists():
+            if render_command is not None and operation in {"upgrade", "push"} and not live_path.exists():
                 projection_error = str(exc)
                 projection_kind = "command"
             else:
@@ -209,6 +215,19 @@ def plan_targets(
 
 
 
+def infer_target_kind(*, repo_path: Path, live_path: Path) -> str:
+    if repo_path.is_dir():
+        return "directory"
+    if repo_path.exists():
+        return "file"
+    if live_path.is_dir():
+        # Pull must still recognize directory targets before the repo source tree
+        # exists, otherwise a missing source directory gets misclassified as a file.
+        return "directory"
+    return "file"
+
+
+
 def project_repo_file(
     engine: Any,
     *,
@@ -223,26 +242,31 @@ def project_repo_file(
     operation: str,
     inferred_os: str,
 ) -> tuple[bytes, str]:
-    if render_command == "jinja":
-        return render_template_file(repo_path, context)
-    if render_command:
-        return (
-            run_command_projection(
-                engine,
-                repo=repo,
-                package=package,
-                target=target,
-                repo_path=repo_path,
-                live_path=live_path,
-                command=render_command,
-                binding=binding,
-                operation=operation,
-                inferred_os=inferred_os,
-                context=context,
-            ),
-            "command",
-        )
-    return repo_path.read_bytes(), "raw"
+    try:
+        if render_command == "jinja":
+            return render_template_file(repo_path, context)
+        if render_command:
+            return (
+                run_command_projection(
+                    engine,
+                    repo=repo,
+                    package=package,
+                    target=target,
+                    repo_path=repo_path,
+                    live_path=live_path,
+                    command=render_command,
+                    binding=binding,
+                    operation=operation,
+                    inferred_os=inferred_os,
+                    context=context,
+                ),
+                "command",
+            )
+        return repo_path.read_bytes(), "raw"
+    except FileNotFoundError as exc:
+        raise ValueError(
+            f"repo source path does not exist for target '{package.id}:{target.name}': {repo_path}"
+        ) from exc
 
 
 
@@ -362,8 +386,14 @@ def plan_file_action(
             return "unknown"
         return "noop" if desired_bytes == live_path.read_bytes() else "update"
 
-    if not live_path.exists():
+    repo_exists = repo_path.exists()
+    live_exists = live_path.exists()
+    if not repo_exists and not live_exists:
+        return "noop"
+    if not live_exists:
         return "delete"
+    if not repo_exists:
+        return "create"
     repo_bytes = pull_view_bytes(
         engine,
         repo=repo,
@@ -478,6 +508,9 @@ def pull_view_bytes(
     inferred_os: str,
 ) -> bytes:
     if view == "raw":
+        if repo_side and not repo_path.exists():
+            # Missing repo source during pull means "nothing captured yet", not an error.
+            return b""
         return repo_path.read_bytes() if repo_side else live_path.read_bytes()
     if view == "render":
         desired_bytes, _projection = project_repo_file(

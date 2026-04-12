@@ -5,6 +5,7 @@ from typing import Any
 
 from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
+from dotman.projection import infer_target_kind
 from dotman.models import (
     Binding,
     InstalledBindingSummary,
@@ -161,7 +162,7 @@ def summarize_targets(
                 target_name=target.name,
                 repo_path=repo_path,
                 live_path=live_path,
-                target_kind="directory" if repo_path.is_dir() else "file",
+                target_kind=infer_target_kind(repo_path=repo_path, live_path=live_path),
                 render_command=render_command,
                 capture_command=capture_command,
                 reconcile_command=reconcile_command,

@@ -271,6 +271,94 @@ def test_push_cli_human_execution_colors_step_status_only(
 
 
 
+def test_pull_cli_creates_missing_repo_source_file_and_emits_json_results(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
+    repo_path.unlink()
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("live value\n", encoding="utf-8")
+
+    exit_code = main(["--config", str(config_path), "--json", "pull"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert repo_path.read_text(encoding="utf-8") == "live value\n"
+    assert payload["mode"] == "execute"
+    assert payload["operation"] == "pull"
+    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
+        "guard_pull",
+        "pre_pull",
+        "create_repo",
+        "post_pull",
+    ]
+
+
+
+def test_pull_cli_executes_directory_pull_when_repo_source_directory_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    package_root = repo_root / "packages" / "app"
+    (repo_root / "profiles").mkdir(parents=True)
+    package_root.mkdir(parents=True)
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "app"',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/app"',
+                "",
+                "[hooks]",
+                'guard_pull = "printf \'guard pull\\n\'"',
+                'post_pull = "printf \'post pull\\n\'"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.toml"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("live value\n", encoding="utf-8")
+
+    exit_code = main(["--config", str(config_path), "--json", "pull"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    repo_path = repo_root / "packages" / "app" / "files" / "config" / "config.toml"
+    assert repo_path.read_text(encoding="utf-8") == "live value\n"
+    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
+        "guard_pull",
+        "create_repo",
+        "post_pull",
+    ]
+
+
+
 def test_pull_cli_executes_direct_repo_update_and_emits_json_results(
     tmp_path: Path,
     monkeypatch,
