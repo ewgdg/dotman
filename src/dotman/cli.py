@@ -1150,6 +1150,134 @@ def resolve_tracked_binding_text(
         field_kinds=build_binding_field_kinds(),
     )
 
+    package_matches, _package_owner_bindings = engine._tracked_package_matches_for_untrack(
+        selector=resolved_selector,
+        profile=resolved_profile,
+        repo_name=lookup_repo,
+    )
+    direct_binding_match_keys = {
+        (repo.config.name, binding.selector, binding.profile)
+        for repo, binding in [*exact_matches, *partial_matches]
+    }
+    owner_target_matches: list[tuple[object, str, Binding]] = []
+    seen_owner_target_matches: set[tuple[str, str, str, str]] = set()
+    for package in package_matches:
+        repo = engine.get_repo(package.repo)
+        for owner_binding in package.bindings:
+            if resolved_profile is not None and owner_binding.profile != resolved_profile:
+                continue
+            if (package.repo, package.package_id, owner_binding.profile) in direct_binding_match_keys:
+                continue
+            owner_match_key = (
+                package.repo,
+                package.package_id,
+                owner_binding.profile,
+                owner_binding.selector,
+            )
+            if owner_match_key in seen_owner_target_matches:
+                continue
+            seen_owner_target_matches.add(owner_match_key)
+            owner_target_matches.append(
+                (
+                    repo,
+                    package.package_id,
+                    Binding(
+                        repo=owner_binding.repo,
+                        selector=owner_binding.selector,
+                        profile=owner_binding.profile,
+                    ),
+                )
+            )
+
+    owner_exact_matches = [match for match in owner_target_matches if match[1] == resolved_selector]
+    owner_partial_matches = [match for match in owner_target_matches if match[1] != resolved_selector]
+
+    def owner_target_resolver(match) -> ResolverOption:
+        owner_repo, package_id, owner_binding = match
+        target_label = render_package_profile_label(
+            repo_name=owner_repo.config.name,
+            package_id=package_id,
+            profile=owner_binding.profile,
+        )
+        owner_label = binding_label_text(
+            repo_name=owner_repo.config.name,
+            selector=owner_binding.selector,
+            profile=owner_binding.profile,
+            selector_first=True,
+        )
+        owner_badge = render_menu_badge(f"[via {owner_label}]")
+        return ResolverOption(
+            display_label=target_label,
+            display_fields=(target_label, owner_badge),
+            match_fields=build_binding_match_fields(
+                repo_name=owner_repo.config.name,
+                selector=package_id,
+                profile=owner_binding.profile,
+            ),
+            field_kinds=build_binding_field_kinds(),
+        )
+
+    def owner_target_error_label(match) -> str:
+        owner_repo, package_id, owner_binding = match
+        return (
+            f"{owner_repo.config.name}:{package_id}@{owner_binding.profile}"
+            f" via {owner_repo.config.name}:{owner_binding.selector}@{owner_binding.profile}"
+        )
+
+    def binding_from_owner_match(match) -> tuple[object, Binding]:
+        owner_repo, package_id, owner_binding = match
+        return owner_repo, Binding(
+            repo=owner_repo.config.name,
+            selector=package_id,
+            profile=owner_binding.profile,
+        )
+
+    if allow_package_owners and not exact_matches and (partial_matches or owner_exact_matches or owner_partial_matches):
+        # Tracked package targets can be selected through owner bindings. Combine them
+        # with partial tracked-binding hits so ambiguous user input goes through the
+        # normal resolver instead of silently preferring one path.
+        def combined_resolver(match) -> ResolverOption:
+            match_kind, item = match
+            if match_kind == "binding":
+                return binding_resolver(item)
+            return owner_target_resolver(item)
+
+        combined_exact_matches = [(
+            "owner", match
+        ) for match in owner_exact_matches] if not partial_matches else []
+        combined_partial_matches = [("binding", match) for match in partial_matches] + [
+            ("owner", match)
+            for match in ([*owner_exact_matches, *owner_partial_matches] if partial_matches else owner_partial_matches)
+        ]
+        selected_kind, selected_item = resolve_candidate_match(
+            exact_matches=combined_exact_matches,
+            partial_matches=combined_partial_matches,
+            query_text=binding_label,
+            interactive=interactive,
+            exact_header_text=f"Select a tracked binding for '{binding_label}':",
+            partial_header_text=f"Select a tracked binding for '{binding_label}':",
+            option_resolver=combined_resolver,
+            exact_error_text=f"binding '{binding_label}' is ambiguous: "
+            + ", ".join(owner_target_error_label(match) for match in owner_exact_matches),
+            partial_error_text=f"binding '{binding_label}' is ambiguous: "
+            + ", ".join(
+                [
+                    *(
+                        f"{repo.config.name}:{binding.selector}@{binding.profile}"
+                        for repo, binding in partial_matches
+                    ),
+                    *(
+                        owner_target_error_label(match)
+                        for match in ([*owner_exact_matches, *owner_partial_matches] if partial_matches else owner_partial_matches)
+                    ),
+                ]
+            ),
+            not_found_text=f"binding '{binding_label}' is not currently tracked",
+        )
+        if selected_kind == "binding":
+            return selected_item
+        return binding_from_owner_match(selected_item)
+
     try:
         return resolve_candidate_match(
             exact_matches=exact_matches,
@@ -1192,11 +1320,7 @@ def resolve_tracked_binding_text(
                     for repo, binding in owner_bindings
                 )
                 raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked bindings: {candidates}") from None
-            return owner_repo, Binding(
-                repo=owner_repo.config.name,
-                selector=resolved_selector,
-                profile=owner_binding.profile,
-            )
+            return binding_from_owner_match((owner_repo, owner_binding))
         if owner_bindings and not allow_package_owners:
             owners = ", ".join(
                 f"{repo.config.name}:{binding.selector}@{binding.profile}"

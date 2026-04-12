@@ -153,6 +153,146 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
     assert "beta:sunshine@host/linux" in output
     assert "sunshine:selected_config -> create" in output
 
+
+def test_push_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_and_owned_package(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    selected_menu: dict[str, object] = {}
+
+    def select_git_target(*, header_text, option_labels, option_search_fields=None, option_display_fields=None):
+        selected_menu["header_text"] = header_text
+        selected_menu["option_labels"] = tuple(option_labels)
+        return next(index for index, label in enumerate(option_labels) if "example:git@basic" in label)
+
+    monkeypatch.setattr(cli, "select_menu_option", select_git_target)
+    monkeypatch.setattr(
+        cli,
+        "prompt",
+        lambda _message: (_ for _ in ()).throw(AssertionError("expected resolver menu, not partial confirmation")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "filter_plans_for_interactive_selection",
+        lambda *, plans, operation, json_output, full_paths=False: list(plans),
+    )
+    monkeypatch.setattr(
+        cli,
+        "review_plans_for_interactive_diffs",
+        lambda *, plans, operation, json_output, full_paths=False: True,
+    )
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "work/git"',
+                'profile = "work"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+            "--dry-run",
+            "git",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert selected_menu["header_text"] == "Select a tracked binding for 'git':"
+    assert any("example:git@basic" in label for label in selected_menu["option_labels"])
+    assert any("example:work/git@work" in label for label in selected_menu["option_labels"])
+    assert ":: example:git@basic" in output
+    assert "git:gitconfig -> create" in output
+
+
+def test_push_cli_accepts_partial_owned_package_match(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    prompts: list[str] = []
+
+    def confirm_partial_match(message: str) -> str:
+        prompts.append(message)
+        return "y"
+
+    monkeypatch.setattr(cli, "prompt", confirm_partial_match)
+    monkeypatch.setattr(
+        cli,
+        "filter_plans_for_interactive_selection",
+        lambda *, plans, operation, json_output, full_paths=False: list(plans),
+    )
+    monkeypatch.setattr(
+        cli,
+        "review_plans_for_interactive_diffs",
+        lambda *, plans, operation, json_output, full_paths=False: True,
+    )
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "push",
+            "--dry-run",
+            "nv",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert prompts
+    assert "nvim@basic" in prompts[0]
+    assert ":: example:nvim@basic" in output
+    assert "nvim:init_lua -> create" in output
+
+
 def test_push_cli_accepts_short_dry_run_flag(
     tmp_path: Path,
     monkeypatch,
