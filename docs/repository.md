@@ -149,9 +149,11 @@ chmod = "600"
   - `pull_view_repo = "raw"`
   - `pull_view_live = "capture"`
 - Targets may define `push_ignore` as gitignore-style patterns relative to the source root.
-- `push_ignore` is for tracked files that should stay in the repo but should not be installed, for example `*.archived`.
+- `push_ignore` is for tracked files that should stay in the repo but should not be installed, for example `*.archived` or `__pycache__/`.
+- The old `*/__pycache__/*` workaround is no longer needed.
 - Targets may define `pull_ignore` as gitignore-style patterns relative to the live target root.
 - `pull_ignore` is for live-side ignore during pull planning and reconciliation.
+- Patterns follow gitignore semantics: `**`, leading `/`, trailing `/`, and `!` negation are all supported.
 - Repos may define repo-wide ignore defaults in `repo.toml`:
   - `[ignore]`
   - `push = [...]`
@@ -160,8 +162,8 @@ chmod = "600"
 - For directory targets, old install-ignore style rules should map to `push_ignore`.
 - For directory targets, old update-ignore style rules should map to `pull_ignore`.
 - In v1, directory-target `pull_ignore` should also preserve matching live paths during push cleanup, so users do not need to maintain a duplicate preserve list.
-- Standard `.gitignore` files inside the package source tree should still be respected during push.
-- `push` should install everything under the source tree except paths excluded by `.gitignore` or `push_ignore`.
+- Dotman does not read package-local `.gitignore` files here; use `push_ignore` and `pull_ignore` instead.
+- For directory targets, `push` should install everything under the source tree except paths matched by `push_ignore`.
 - For directory targets, `push` should also remove stale live paths that are no longer present in the repo source, except paths matched by `pull_ignore`.
 - Source files can follow a default reverse-sync convention by mirroring the live path under `files/`.
 - Template suffixes such as `.tmpl` are optional conventions, not the source of truth.

@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import fnmatch
 import os
 import subprocess
 import sys
 import tomllib
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 from dotman.config import default_state_root, expand_path, load_manager_config
+from dotman.ignore import IgnoreMatcher, list_directory_files, matches_ignore_pattern
 from dotman.models import (
     Binding,
     BindingPlan,
@@ -360,33 +360,6 @@ def infer_profile_os(profile_id: str, lineage: list[str], variables: dict[str, A
     if "linux" in joined or "arch" in joined:
         return "linux"
     return sys.platform
-
-
-def matches_ignore_pattern(relative_path: str, pattern: str) -> bool:
-    normalized = relative_path.strip("/")
-    cleaned = pattern.strip("/")
-    if not cleaned:
-        return False
-    if "/" in cleaned:
-        return fnmatch.fnmatchcase(normalized, cleaned)
-    path_parts = PurePosixPath(normalized).parts
-    return fnmatch.fnmatchcase(normalized, cleaned) or any(
-        fnmatch.fnmatchcase(part, cleaned) for part in path_parts
-    )
-
-
-def list_directory_files(root: Path, ignore_patterns: tuple[str, ...]) -> dict[str, Path]:
-    files: dict[str, Path] = {}
-    if not root.exists():
-        return files
-    for path in sorted(root.rglob("*")):
-        if path.is_dir():
-            continue
-        relative = path.relative_to(root).as_posix()
-        if any(matches_ignore_pattern(relative, pattern) for pattern in ignore_patterns):
-            continue
-        files[relative] = path
-    return files
 
 
 class Repository:
@@ -2189,15 +2162,19 @@ class DotmanEngine:
                     )
                 if live_path in other_live_path.parents:
                     relative = other_live_path.relative_to(live_path).as_posix()
-                    parent_ignore = set(push_ignore) | set(pull_ignore)
-                    if not any(matches_ignore_pattern(relative, pattern) for pattern in parent_ignore):
+                    parent_ignore = IgnoreMatcher.from_patterns(
+                        merge_ignore_patterns(push_ignore, pull_ignore)
+                    )
+                    if not parent_ignore.matches(relative):
                         raise ValueError(
                             f"incompatible nested targets: {package.id}:{target.name} contains {other_package.id}:{other_target.name}"
                         )
                 elif other_live_path in live_path.parents:
                     relative = live_path.relative_to(other_live_path).as_posix()
-                    parent_ignore = set(other_push_ignore) | set(other_pull_ignore)
-                    if not any(matches_ignore_pattern(relative, pattern) for pattern in parent_ignore):
+                    parent_ignore = IgnoreMatcher.from_patterns(
+                        merge_ignore_patterns(other_push_ignore, other_pull_ignore)
+                    )
+                    if not parent_ignore.matches(relative):
                         raise ValueError(
                             f"incompatible nested targets: {other_package.id}:{other_target.name} contains {package.id}:{target.name}"
                         )

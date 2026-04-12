@@ -5,12 +5,12 @@ description = "Fixture Sunshine package"
 source = "files/config/sunshine"
 path = "~/.config/sunshine"
 push_ignore = [
-  "__pycache__/*",
+  "__pycache__/",
   "tests/*",
   "sunshine-*.conf",
 ]
 pull_ignore = [
-  "__pycache__/*",
+  "__pycache__/",
   "tests/*",
   "sunshine-*.conf",
   "sunshine.conf",
