@@ -14,6 +14,7 @@ class ResolverOption:
     display_label: str
     match_fields: tuple[str, ...]
     field_kinds: tuple[str, ...] | None = None
+    display_fields: tuple[str, ...] | None = None
 
 
 def normalize_match_fields(*fields: str) -> tuple[str, ...]:

@@ -339,7 +339,7 @@ def test_select_menu_option_with_prompt_renders_bottom_up_by_default(monkeypatch
     output = capsys.readouterr().out
     assert output.index("  3) gamma") < output.index("  2) beta") < output.index("  1) alpha")
 
-def test_select_menu_option_with_fzf_uses_hidden_match_fields(monkeypatch) -> None:
+def test_select_menu_option_with_fzf_uses_structured_display_fields(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_run(command, *, input, text, capture_output, check):
@@ -355,20 +355,26 @@ def test_select_menu_option_with_fzf_uses_hidden_match_fields(monkeypatch) -> No
 
     selected_index = cli._select_menu_option_with_fzf(
         header_text="Select a package:",
-        option_labels=["sandbox/sunshine", "sandbox/host/linux-meta"],
+        option_labels=["sandbox/sunshine [package]", "sandbox/host/linux-meta [group]"],
         option_search_fields=[
             ("sunshine", "sandbox/sunshine"),
             ("host/linux-meta", "sandbox/host/linux-meta"),
         ],
+        option_display_fields=[
+            ("sandbox/sunshine", "[package]"),
+            ("sandbox/host/linux-meta", "[group]"),
+        ],
     )
 
     assert selected_index == 1
-    assert "--nth=2..3" in captured["command"]
-    assert "--with-nth=4" in captured["command"]
+    assert f"--delimiter={cli.FZF_FIELD_DELIMITER}" in captured["command"]
+    assert "--nth=1" in captured["command"]
+    assert "--with-nth=2..3" in captured["command"]
+    assert "--accept-nth=1" in captured["command"]
     assert "--layout=reverse-list" in captured["command"]
     assert captured["input"] == (
-        "1\tsunshine\tsandbox/sunshine\tsandbox/sunshine\n"
-        "2\thost/linux-meta\tsandbox/host/linux-meta\tsandbox/host/linux-meta\n"
+        f"1{cli.FZF_FIELD_DELIMITER}sandbox/sunshine{cli.FZF_FIELD_DELIMITER}[package]\n"
+        f"2{cli.FZF_FIELD_DELIMITER}sandbox/host/linux-meta{cli.FZF_FIELD_DELIMITER}[group]\n"
     )
 
 def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(

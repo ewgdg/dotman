@@ -348,16 +348,39 @@ def render_snapshot_reason(action: str) -> str:
     return f"before {render_payload_action(action)} {style_text('(push)', *MENU_HINT_STYLE)}"
 
 
-def render_selector_match_label(*, repo_name: str, selector: str, selector_kind: str) -> str:
-    package_label = render_package_label(
-        repo_name=repo_name,
-        package_id=selector,
-        package_first=True,
-        include_repo_context=True,
-    )
+def render_menu_badge(text: str) -> str:
     if not colors_enabled():
-        return f"{package_label} [{selector_kind}]"
-    return f"{package_label} {style_text(f'[{selector_kind}]', *MENU_HINT_STYLE)}"
+        return text
+    return style_text(text, *MENU_HINT_STYLE)
+
+
+def join_menu_display_fields(*fields: str) -> str:
+    visible_fields = [field for field in fields if field]
+    if not visible_fields:
+        return ""
+    return visible_fields[0] + "".join(f" {field}" for field in visible_fields[1:])
+
+
+def build_selector_match_display_fields(*, repo_name: str, selector: str, selector_kind: str) -> tuple[str, ...]:
+    return (
+        render_package_label(
+            repo_name=repo_name,
+            package_id=selector,
+            package_first=True,
+            include_repo_context=True,
+        ),
+        render_menu_badge(f"[{selector_kind}]"),
+    )
+
+
+def render_selector_match_label(*, repo_name: str, selector: str, selector_kind: str) -> str:
+    return join_menu_display_fields(
+        *build_selector_match_display_fields(
+            repo_name=repo_name,
+            selector=selector,
+            selector_kind=selector_kind,
+        )
+    )
 
 
 def print_selection_header(header_text: str) -> None:
@@ -461,34 +484,46 @@ def _should_use_fzf_for_selection(option_labels: Sequence[str]) -> bool:
     return len(option_labels) > max(1, terminal_lines - MENU_SELECTION_OVERHEAD_LINES)
 
 
+# Use an invisible delimiter plus a literal space so fzf can keep badge fields
+# separate from the searchable label while rendering `label [badge]` compactly.
+FZF_FIELD_DELIMITER = "\x1f "
+
+
 def _select_menu_option_with_fzf(
     *,
     header_text: str,
     option_labels: Sequence[str],
     option_search_fields: Sequence[Sequence[str]],
+    option_display_fields: Sequence[Sequence[str]] | None = None,
 ) -> int:
-    field_count = max((len(fields) for fields in option_search_fields), default=1)
+    del option_search_fields
+    if option_display_fields is not None and len(option_display_fields) != len(option_labels):
+        raise ValueError("fzf display fields must align with option labels")
+    display_fields_by_option = [
+        tuple(field for field in fields if field)
+        for fields in (option_display_fields or [(label,) for label in option_labels])
+    ]
+    field_count = max((len(fields) for fields in display_fields_by_option), default=1)
     entries = [
-        "\t".join(
+        FZF_FIELD_DELIMITER.join(
             [
                 str(index),
-                *list(fields),
-                *([""] * (field_count - len(fields))),
-                label,
+                *display_fields,
+                *("" for _ in range(field_count - len(display_fields))),
             ]
         )
-        for index, (fields, label) in enumerate(zip(option_search_fields, option_labels, strict=True), start=1)
+        for index, display_fields in enumerate(display_fields_by_option, start=1)
     ]
-    hidden_field_range = f"2..{field_count + 1}"
-    label_field_index = str(field_count + 2)
+    visible_field_range = f"2..{field_count + 1}"
     completed = subprocess.run(
         [
             "fzf",
             "--prompt=Select> ",
             f"--header={header_text}",
-            "--delimiter=\t",
-            f"--nth={hidden_field_range}",
-            f"--with-nth={label_field_index}",
+            f"--delimiter={FZF_FIELD_DELIMITER}",
+            "--ansi",
+            "--nth=1",
+            f"--with-nth={visible_field_range}",
             "--accept-nth=1",
             "--no-sort",
             "--layout=reverse-list" if selection_menu_bottom_up_enabled() else "--layout=reverse",
@@ -508,6 +543,7 @@ def select_menu_option(
     header_text: str,
     option_labels: Sequence[str],
     option_search_fields: Sequence[Sequence[str]] | None = None,
+    option_display_fields: Sequence[Sequence[str]] | None = None,
 ) -> int:
     search_fields = option_search_fields or [(label,) for label in option_labels]
     if _fzf_available() and _should_use_fzf_for_selection(option_labels):
@@ -515,6 +551,7 @@ def select_menu_option(
             header_text=header_text,
             option_labels=option_labels,
             option_search_fields=search_fields,
+            option_display_fields=option_display_fields,
         )
     return _select_menu_option_with_prompt(header_text=header_text, option_labels=option_labels)
 
@@ -889,13 +926,15 @@ def resolve_candidate_match(
     if len(exact_matches) > 1:
         if not interactive:
             raise ValueError(exact_error_text)
+        resolved_options = [option_resolver(match) for match in ranked_exact_matches]
         selected_index = select_menu_option(
             header_text=exact_header_text,
-            option_labels=[option_resolver(match).display_label for match in ranked_exact_matches],
+            option_labels=[option.display_label for option in resolved_options],
             option_search_fields=[
-                build_fzf_search_fields(match_fields=option_resolver(match).match_fields)
-                for match in ranked_exact_matches
+                build_fzf_search_fields(match_fields=option.match_fields)
+                for option in resolved_options
             ],
+            option_display_fields=[option.display_fields or (option.display_label,) for option in resolved_options],
         )
         return ranked_exact_matches[selected_index]
     if len(partial_matches) == 1:
@@ -911,13 +950,15 @@ def resolve_candidate_match(
     if len(partial_matches) > 1:
         if not interactive:
             raise ValueError(partial_error_text)
+        resolved_options = [option_resolver(match) for match in ranked_partial_matches]
         selected_index = select_menu_option(
             header_text=partial_header_text,
-            option_labels=[option_resolver(match).display_label for match in ranked_partial_matches],
+            option_labels=[option.display_label for option in resolved_options],
             option_search_fields=[
-                build_fzf_search_fields(match_fields=option_resolver(match).match_fields)
-                for match in ranked_partial_matches
+                build_fzf_search_fields(match_fields=option.match_fields)
+                for option in resolved_options
             ],
+            option_display_fields=[option.display_fields or (option.display_label,) for option in resolved_options],
         )
         return ranked_partial_matches[selected_index]
     raise ValueError(not_found_text)
@@ -947,6 +988,11 @@ def resolve_binding_text(
         partial_header_text=f"Select a selector match for '{selector}':",
         option_resolver=lambda match: ResolverOption(
             display_label=render_selector_match_label(
+                repo_name=match[0].config.name,
+                selector=match[1],
+                selector_kind=match[2],
+            ),
+            display_fields=build_selector_match_display_fields(
                 repo_name=match[0].config.name,
                 selector=match[1],
                 selector_kind=match[2],
@@ -1033,16 +1079,18 @@ def resolve_tracked_binding_text(
         )
 
         def persisted_option(record) -> ResolverOption:
-            display_label = render_binding_label(
+            base_label = render_binding_label(
                 repo_name=record.binding.repo,
                 selector=record.binding.selector,
                 profile=record.binding.profile,
                 selector_first=True,
             )
+            state_badge = ""
             if record.repo is None or record.state_key != record.binding.repo:
-                display_label += f" {style_text(f'[{record.state_key}]', *MENU_HINT_STYLE) if colors_enabled() else f'[{record.state_key}]'}"
+                state_badge = render_menu_badge(f"[{record.state_key}]")
             return ResolverOption(
-                display_label=display_label,
+                display_label=join_menu_display_fields(base_label, state_badge),
+                display_fields=(base_label, state_badge) if state_badge else (base_label,),
                 match_fields=build_binding_match_fields(
                     repo_name=record.binding.repo,
                     selector=record.binding.selector,
