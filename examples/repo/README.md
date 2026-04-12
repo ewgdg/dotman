@@ -16,6 +16,8 @@ This example shows one possible repository layout for the new `dotman` design.
 - `note`: minimal single-file package example for quick starts
 - `git`: base Git package with ordered push hooks and a profile-selected simulated install command
 - `core-cli-meta`: meta-package example that uses `depends = ["git", "nvim"]`
+- `depends` may reference groups as well as packages.
+- Meta packages are one common way to aggregate reusable group selectors, but this is not special-case behavior.
 - Meta packages are still normal packages. They can be tracked explicitly.
 - For terminology, see ArchWiki's distinction between meta packages and package groups: <https://wiki.archlinux.org/title/Meta_package_and_package_group>
 - `profile-note`: minimal `binding_mode = "multi_instance"` example with one profile-bound target path

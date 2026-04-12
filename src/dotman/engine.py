@@ -1912,18 +1912,47 @@ class DotmanEngine:
     def _resolve_package_ids(self, repo: Repository, selector: str, selector_kind: str) -> list[str]:
         roots = self._selected_package_ids(repo, selector, selector_kind)
         ordered: list[str] = []
-        seen: set[str] = set()
+        seen_packages: set[str] = set()
+        completed_nodes: set[tuple[str, str]] = set()
 
-        def visit(package_id: str) -> None:
-            if package_id in seen:
+        def format_cycle(stack: tuple[tuple[str, str], ...], node: tuple[str, str]) -> str:
+            cycle_start = stack.index(node)
+            cycle_nodes = [*stack[cycle_start:], node]
+            return " -> ".join(node_id for _node_kind, node_id in cycle_nodes)
+
+        def visit_selector(current_selector: str, stack: tuple[tuple[str, str], ...], *, source: str) -> None:
+            package_exists = current_selector in repo.packages
+            group_exists = current_selector in repo.groups
+            if package_exists and group_exists:
+                raise ValueError(
+                    f"selector '{current_selector}' is ambiguous between package and group in repo '{repo.config.name}'"
+                )
+            if not package_exists and not group_exists:
+                raise ValueError(f"{source} '{current_selector}' does not resolve in repo '{repo.config.name}'")
+
+            node_kind = "package" if package_exists else "group"
+            node = (node_kind, current_selector)
+            if node in stack:
+                raise ValueError(f"dependency cycle detected in repo '{repo.config.name}': {format_cycle(stack, node)}")
+            if node in completed_nodes:
                 return
-            seen.add(package_id)
-            ordered.append(package_id)
-            for dependency in repo.resolve_package(package_id).depends or ():
-                visit(dependency)
+
+            next_stack = (*stack, node)
+            if group_exists:
+                for member in repo.groups[current_selector].members:
+                    visit_selector(member, next_stack, source="group member")
+                completed_nodes.add(node)
+                return
+
+            if current_selector not in seen_packages:
+                seen_packages.add(current_selector)
+                ordered.append(current_selector)
+            for dependency in repo.resolve_package(current_selector).depends or ():
+                visit_selector(dependency, next_stack, source="dependency")
+            completed_nodes.add(node)
 
         for root_package in roots:
-            visit(root_package)
+            visit_selector(root_package, (), source="package")
         return ordered
 
     def _plan_hooks(

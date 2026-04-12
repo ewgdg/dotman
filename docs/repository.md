@@ -19,6 +19,9 @@ This document captures the current repository structure and configuration schema
 - `singleton` means the package has one tracked identity regardless of bound profile.
 - `multi_instance` means the package definition may produce multiple independent package instances, keyed by bound profile.
 - Packages may declare `depends` for hard requirements.
+- `depends` entries may reference either package IDs or group selectors.
+- Group dependencies expand to their member packages during dependency resolution.
+- Dependency resolution must reject cycles, including mixed package/group cycles.
 - Packages that exist only for hard dependency aggregation should use a `-meta` suffix by convention.
 - A package's target live paths are implicitly reserved.
 - Packages may define `reserved_paths = [...]` for additional live paths that must stay exclusive to that package.

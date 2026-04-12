@@ -12,7 +12,8 @@ All fixture content must stay synthetic and sanitized:
 It exists only for tests and covers:
 
 - profile include composition
-- host group wrappers around host meta packages
+- host groups used as reusable selectors for host packages
+- host meta packages that depend on host groups
 - host meta package dependency expansion
 - namespaced packages with `extends`
 - templated target source paths

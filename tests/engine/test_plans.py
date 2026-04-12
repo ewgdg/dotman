@@ -69,6 +69,107 @@ def test_example_group_push_plan_expands_depends_and_render_target(
     assert nvim_target.projection_kind == "command"
     assert nvim_target.desired_text == 'vim.g.mapleader = " "\nvim.cmd.colorscheme("industry")\n'
 
+
+def test_meta_package_depends_on_group_expands_group_members(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "groups").mkdir(parents=True)
+    (repo_root / "packages" / "tooling-meta").mkdir(parents=True)
+    (repo_root / "packages" / "git" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "nvim" / "files").mkdir(parents=True)
+
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "groups" / "tooling.toml").write_text('members = ["git", "nvim"]\n', encoding="utf-8")
+    (repo_root / "packages" / "tooling-meta" / "package.toml").write_text(
+        '\n'.join([
+            'id = "tooling-meta"',
+            'depends = ["tooling"]',
+            '',
+        ]),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "git" / "files" / "git.conf").write_text("git\n", encoding="utf-8")
+    (repo_root / "packages" / "git" / "package.toml").write_text(
+        '\n'.join([
+            'id = "git"',
+            '',
+            '[targets.git]',
+            'source = "files/git.conf"',
+            'path = "~/.gitconfig"',
+            '',
+        ]),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "nvim" / "files" / "init.lua").write_text("nvim\n", encoding="utf-8")
+    (repo_root / "packages" / "nvim" / "package.toml").write_text(
+        '\n'.join([
+            'id = "nvim"',
+            '',
+            '[targets.nvim]',
+            'source = "files/init.lua"',
+            'path = "~/.config/nvim/init.lua"',
+            '',
+        ]),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    plan = engine.plan_push_binding("fixture:tooling-meta@basic")
+
+    assert plan.selector_kind == "package"
+    assert plan.package_ids == ["tooling-meta", "git", "nvim"]
+    assert {target.package_id for target in plan.target_plans} == {"git", "nvim"}
+
+
+def test_dependency_cycle_detection_reports_mixed_package_and_group_cycles(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "fixture-repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "groups").mkdir(parents=True)
+    (repo_root / "packages" / "alpha").mkdir(parents=True)
+    (repo_root / "packages" / "beta").mkdir(parents=True)
+
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "groups" / "bundle.toml").write_text('members = ["beta"]\n', encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "package.toml").write_text(
+        '\n'.join([
+            'id = "alpha"',
+            'depends = ["bundle"]',
+            '',
+        ]),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "beta" / "package.toml").write_text(
+        '\n'.join([
+            'id = "beta"',
+            'depends = ["alpha"]',
+            '',
+        ]),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"dependency cycle detected in repo 'fixture': alpha -> bundle -> beta -> alpha",
+    ):
+        engine.plan_push_binding("fixture:alpha@basic")
+
+
 def test_example_extends_preserves_child_values_after_local_merge(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
