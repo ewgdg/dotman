@@ -1,47 +1,34 @@
 from __future__ import annotations
 
-import argparse
-import json
 import os
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Sequence, TypeVar
 
+from dotman import cli_style
 from dotman.add import (
     add_editor_available,
-    prepare_add_to_package,
     review_add_manifest,
     validate_package_id,
-    write_add_result,
 )
 from dotman.diff_review import (
     ReviewItem,
     build_review_items,
-    display_review_path,
     diff_status as review_diff_status,
     run_review_item_diff,
 )
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text, parse_package_ref_text
-from dotman.execution import ExecutionSession, ExecutionStep, ExecutionStepResult, PackageExecutionResult, build_execution_session, execute_session
-from dotman.models import Binding, HookPlan, filter_hook_plans_for_targets, package_ref_text
+from dotman.models import Binding, filter_hook_plans_for_targets, package_ref_text
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_file
 from dotman.snapshot import (
     RollbackAction,
     SnapshotRecord,
-    build_rollback_actions,
-    create_push_snapshot,
-    execute_rollback,
     find_snapshot_matches,
-    list_snapshots,
-    mark_snapshot_status,
-    prune_snapshots,
-    record_snapshot_restore,
 )
 from dotman.resolver import (
     ResolverOption,
@@ -57,38 +44,20 @@ from dotman.resolver import (
     parse_slash_qualified_query,
     rank_resolver_option,
 )
+from dotman.cli_parser import build_parser as build_cli_parser
+from dotman import cli_emit, cli_commands
 
 
-ANSI_RESET = "\033[0m"
-MENU_HEADER_MARKER = "::"
-MENU_HEADER_MARKER_STYLE = ("1", "34")
-MENU_INDEX_STYLE = ("1", "36")
-MENU_PROMPT_STYLE = ("1",)
-MENU_HINT_STYLE = ("2",)
-MENU_REPO_STYLE = ("2", "34")
-TRACKED_STATE_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
-    "explicit": ("2",),
-    "implicit": ("2",),
-    "orphan": ("2", "33"),
-    "invalid": ("2", "31"),
-}
+MENU_HEADER_MARKER = cli_style.MENU_HEADER_MARKER
+MENU_HEADER_MARKER_STYLE = cli_style.MENU_HEADER_MARKER_STYLE
+MENU_INDEX_STYLE = cli_style.MENU_INDEX_STYLE
+MENU_PROMPT_STYLE = cli_style.MENU_PROMPT_STYLE
+MENU_HINT_STYLE = cli_style.MENU_HINT_STYLE
+MENU_REPO_STYLE = cli_style.MENU_REPO_STYLE
+MENU_ACTION_STYLE_BY_NAME = cli_style.MENU_ACTION_STYLE_BY_NAME
+EXECUTION_STATUS_STYLE_BY_NAME = cli_style.EXECUTION_STATUS_STYLE_BY_NAME
 INTERRUPTED_EXIT_CODE = 130
 MENU_SELECTION_OVERHEAD_LINES = 6
-MENU_ACTION_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
-    "create": ("1", "32"),
-    "update": ("1", "36"),
-    "delete": ("1", "31"),
-}
-EXECUTION_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
-    "ok": ("1", "32"),
-    "failed": ("1", "31"),
-    "skipped": ("1", "33"),
-}
-SNAPSHOT_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
-    "prepared": ("1", "33"),
-    "applied": ("1", "32"),
-    "failed": ("1", "31"),
-}
 SelectableItem = TypeVar("SelectableItem")
 
 
@@ -101,16 +70,6 @@ class PendingSelectionItem:
     source_path: str
     destination_path: str
 
-
-@dataclass
-class PayloadPackageSection:
-    repo_name: str
-    package_id: str
-    profile: str
-    hooks: dict[str, list[HookPlan]]
-    targets: list[PendingSelectionItem]
-
-
 def prompt(message: str) -> str:
     sys.stdout.write(message)
     sys.stdout.flush()
@@ -119,21 +78,19 @@ def prompt(message: str) -> str:
 
 
 def colors_enabled() -> bool:
-    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+    return cli_style.colors_enabled()
 
 
 def style_text(text: str, *codes: str) -> str:
-    if not codes:
-        return text
-    return f"\033[{';'.join(codes)}m{text}{ANSI_RESET}"
+    return cli_style.style_text(text, *codes)
 
 
 def repo_name_from_binding_label(binding_label: str) -> str:
-    return binding_label.split(":", 1)[0]
+    return cli_style.repo_name_from_binding_label(binding_label)
 
 
 def repo_qualified_selector_text(*, repo_name: str, selector: str) -> str:
-    return f"{repo_name}:{selector}"
+    return cli_style.repo_qualified_selector_text(repo_name=repo_name, selector=selector)
 
 
 def package_label_text(
@@ -145,18 +102,14 @@ def package_label_text(
     package_first: bool = False,
     include_repo_context: bool = False,
 ) -> str:
-    package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
-    if package_first:
-        package_text = (
-            repo_qualified_selector_text(repo_name=repo_name, selector=package_ref)
-            if include_repo_context
-            else package_ref
-        )
-    else:
-        package_text = repo_qualified_selector_text(repo_name=repo_name, selector=package_ref)
-    if target_name is None:
-        return package_text
-    return f"{package_text} ({target_name})"
+    return cli_style.package_label_text(
+        repo_name=repo_name,
+        package_id=package_id,
+        bound_profile=bound_profile,
+        target_name=target_name,
+        package_first=package_first,
+        include_repo_context=include_repo_context,
+    )
 
 
 def render_package_label(
@@ -168,81 +121,60 @@ def render_package_label(
     package_first: bool = False,
     include_repo_context: bool = False,
 ) -> str:
-    package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
-    if not colors_enabled():
-        return package_label_text(
-            repo_name=repo_name,
-            package_id=package_id,
-            bound_profile=bound_profile,
-            target_name=target_name,
-            package_first=package_first,
-            include_repo_context=include_repo_context,
-        )
-    if package_first:
-        if include_repo_context:
-            package_label = (
-                f"{style_text(repo_name, *MENU_REPO_STYLE)}"
-                f"{style_text(':', *MENU_HINT_STYLE)}"
-                f"{style_text(package_ref, '1')}"
-            )
-        else:
-            package_label = style_text(package_ref, "1")
-    else:
-        package_label = (
-            f"{style_text(repo_name, *MENU_REPO_STYLE)}"
-            f"{style_text(':', *MENU_HINT_STYLE)}"
-            f"{style_text(package_ref, '1')}"
-        )
-    if target_name is None:
-        return package_label
-    return f"{package_label} {style_text(f'({target_name})', *MENU_HINT_STYLE)}"
+    return cli_style.render_package_label(
+        repo_name=repo_name,
+        package_id=package_id,
+        bound_profile=bound_profile,
+        target_name=target_name,
+        package_first=package_first,
+        include_repo_context=include_repo_context,
+        use_color=colors_enabled(),
+    )
 
 
 def render_package_target_label(*, repo_name: str, package_id: str, target_name: str) -> str:
-    return render_package_label(repo_name=repo_name, package_id=package_id, target_name=target_name)
+    return cli_style.render_package_target_label(
+        repo_name=repo_name,
+        package_id=package_id,
+        target_name=target_name,
+        use_color=colors_enabled(),
+    )
 
 
 def package_profile_label_text(*, repo_name: str, package_id: str, profile: str) -> str:
-    return f"{repo_qualified_selector_text(repo_name=repo_name, selector=package_id)}@{profile}"
+    return cli_style.package_profile_label_text(repo_name=repo_name, package_id=package_id, profile=profile)
 
 
 def render_package_profile_label(*, repo_name: str, package_id: str, profile: str) -> str:
-    if not colors_enabled():
-        return package_profile_label_text(repo_name=repo_name, package_id=package_id, profile=profile)
-    return (
-        f"{style_text(repo_name, *MENU_REPO_STYLE)}"
-        f"{style_text(':', *MENU_HINT_STYLE)}"
-        f"{style_text(package_id, '1')}"
-        f"{style_text(f'@{profile}', *MENU_HINT_STYLE)}"
+    return cli_style.render_package_profile_label(
+        repo_name=repo_name,
+        package_id=package_id,
+        profile=profile,
+        use_color=colors_enabled(),
     )
 
 
 def binding_label_text(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
-    return f"{repo_qualified_selector_text(repo_name=repo_name, selector=selector)}@{profile}"
+    return cli_style.binding_label_text(
+        repo_name=repo_name,
+        selector=selector,
+        profile=profile,
+        selector_first=selector_first,
+    )
 
 
 def render_binding_label(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
-    if not colors_enabled():
-        return binding_label_text(
-            repo_name=repo_name,
-            selector=selector,
-            profile=profile,
-            selector_first=selector_first,
-        )
-    return (
-        f"{style_text(repo_name, *MENU_REPO_STYLE)}"
-        f"{style_text(':', *MENU_HINT_STYLE)}"
-        f"{style_text(selector, '1')}"
-        f"{style_text(f'@{profile}', *MENU_HINT_STYLE)}"
+    return cli_style.render_binding_label(
+        repo_name=repo_name,
+        selector=selector,
+        profile=profile,
+        selector_first=selector_first,
+        use_color=colors_enabled(),
     )
 
 
 def render_binding_reference(binding: Binding) -> str:
-    return render_binding_label(
-        repo_name=binding.repo,
-        selector=binding.selector,
-        profile=binding.profile,
-    )
+    return cli_style.render_binding_reference(binding, use_color=colors_enabled())
 
 
 def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: Binding):
@@ -261,15 +193,11 @@ def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: 
 
 
 def render_tracked_reason(reason: str) -> str:
-    if not colors_enabled():
-        return reason
-    return style_text(reason, *MENU_HINT_STYLE)
+    return cli_style.render_tracked_reason(reason, use_color=colors_enabled())
 
 
 def render_tracked_state(state: str) -> str:
-    if not colors_enabled():
-        return state
-    return style_text(state, *TRACKED_STATE_STYLE_BY_NAME.get(state, MENU_HINT_STYLE))
+    return cli_style.render_tracked_state(state, use_color=colors_enabled())
 
 
 def render_tracked_issue_label(engine: DotmanEngine, issue) -> str:
@@ -290,96 +218,62 @@ def render_tracked_issue_label(engine: DotmanEngine, issue) -> str:
 
 
 def render_info_section_header(label: str) -> str:
-    if not colors_enabled():
-        return f"  :: {label}"
-    return (
-        f"  {style_text('::', *MENU_HEADER_MARKER_STYLE)} "
-        f"{style_text(label, '1')}"
-    )
+    return cli_style.render_info_section_header(label, use_color=colors_enabled())
 
 
 def format_snapshot_timestamp(timestamp: str | None) -> str:
-    if timestamp is None:
-        return "never"
-    try:
-        instant = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    except ValueError:
-        return timestamp
-    return instant.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return cli_style.format_snapshot_timestamp(timestamp)
 
 
 def render_snapshot_status(status: str) -> str:
-    if not colors_enabled():
-        return status
-    return style_text(status, *SNAPSHOT_STATUS_STYLE_BY_NAME.get(status, ("1",)))
+    return cli_style.render_snapshot_status(status, use_color=colors_enabled())
 
 
 def render_snapshot_ref(snapshot_id: str) -> str:
-    if not colors_enabled():
-        return snapshot_id
-    return style_text(snapshot_id, "1")
+    return cli_style.render_snapshot_ref(snapshot_id, use_color=colors_enabled())
 
 
 def render_snapshot_metadata_label(label: str) -> str:
-    if not colors_enabled():
-        return label
-    return style_text(label, *MENU_HINT_STYLE)
+    return cli_style.render_snapshot_metadata_label(label, use_color=colors_enabled())
 
 
 def render_snapshot_provenance(*, repo_name: str | None, package_id: str | None, target_name: str | None, binding_label: str | None) -> str | None:
-    if repo_name is None or package_id is None or target_name is None:
-        return binding_label
-    profile = None
-    if binding_label is not None:
-        binding_repo, _binding_selector, binding_profile = parse_binding_text(binding_label)
-        if binding_repo is not None:
-            repo_name = binding_repo
-        profile = binding_profile
-    if profile is not None:
-        return render_package_profile_label(repo_name=repo_name, package_id=package_id, profile=profile) + (
-            f" {style_text(f'({target_name})', *MENU_HINT_STYLE)}" if colors_enabled() else f" ({target_name})"
-        )
-    return render_package_target_label(repo_name=repo_name, package_id=package_id, target_name=target_name)
+    return cli_style.render_snapshot_provenance(
+        repo_name=repo_name,
+        package_id=package_id,
+        target_name=target_name,
+        binding_label=binding_label,
+        use_color=colors_enabled(),
+    )
 
 
 def render_snapshot_reason(action: str) -> str:
-    if not colors_enabled():
-        return f"before {action} (push)"
-    return f"before {render_payload_action(action)} {style_text('(push)', *MENU_HINT_STYLE)}"
+    return cli_style.render_snapshot_reason(action, use_color=colors_enabled())
 
 
 def render_menu_badge(text: str) -> str:
-    if not colors_enabled():
-        return text
-    return style_text(text, *MENU_HINT_STYLE)
+    return cli_style.render_menu_badge(text, use_color=colors_enabled())
 
 
 def join_menu_display_fields(*fields: str) -> str:
-    visible_fields = [field for field in fields if field]
-    if not visible_fields:
-        return ""
-    return visible_fields[0] + "".join(f" {field}" for field in visible_fields[1:])
+    return cli_style.join_menu_display_fields(*fields)
 
 
 def build_selector_match_display_fields(*, repo_name: str, selector: str, selector_kind: str) -> tuple[str, ...]:
-    return (
-        render_package_label(
-            repo_name=repo_name,
-            package_id=selector,
-            package_first=True,
-            include_repo_context=True,
-        ),
-        render_menu_badge(f"[{selector_kind}]"),
+    return cli_style.build_selector_match_display_fields(
+        repo_name=repo_name,
+        selector=selector,
+        selector_kind=selector_kind,
+        use_color=colors_enabled(),
     )
 
 
 def render_selector_match_label(*, repo_name: str, selector: str, selector_kind: str) -> str:
-    return join_menu_display_fields(
-        *build_selector_match_display_fields(
-            repo_name=repo_name,
-            selector=selector,
-            selector_kind=selector_kind,
-        )
+    return cli_style.render_selector_match_label(
+        repo_name=repo_name,
+        selector=selector,
+        selector_kind=selector_kind,
+        use_color=colors_enabled(),
     )
 
 
@@ -1997,74 +1891,6 @@ def emit_interrupt_notice() -> None:
     sys.stderr.write("\ninterrupted\n")
 
 
-def add_binding_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:
-    parser.add_argument(
-        "binding",
-        nargs=None if required else "?",
-        metavar="<binding>",
-        help="Binding argument in the form <repo>:<selector>[@<profile>]",
-    )
-
-
-def add_package_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "package",
-        metavar="<package>",
-        help="Tracked package argument in the form <repo>:<package> or <package>",
-    )
-
-
-def add_live_path_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "live_path",
-        metavar="<live-path>",
-        help="Live file or directory path to adopt into package config",
-    )
-
-
-def add_package_query_argument(parser: argparse.ArgumentParser, *, required: bool = False) -> None:
-    parser.add_argument(
-        "package_query",
-        nargs=None if required else "?",
-        metavar="<package-query>",
-        help="Package query in the form [<repo>:]<package>",
-    )
-
-
-def add_snapshot_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:
-    parser.add_argument(
-        "snapshot",
-        nargs=None if required else "?",
-        metavar="<snapshot>",
-        help="Snapshot ID, unique leading snapshot prefix, or 'latest'",
-    )
-
-
-def add_dry_run_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "-d",
-        "--dry-run",
-        action="store_true",
-        help="Preview only; skip execution after planning and diff review",
-    )
-
-
-def add_full_path_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--full-path",
-        action="store_true",
-        dest="full_path",
-        help="Show unabridged absolute paths in human-readable push/pull output",
-    )
-
-
-def hide_subparser_from_help(subparsers, name: str) -> None:
-    # Argparse has no public API for parseable-but-hidden subcommands.
-    subparsers._choices_actions = [
-        action for action in subparsers._choices_actions if getattr(action, "dest", None) != name
-    ]
-
-
 def _assign_nested_value(target: dict[str, object], key_parts: Sequence[str], value: str) -> None:
     current = target
     for key in key_parts[:-1]:
@@ -2120,802 +1946,134 @@ def run_jinja_render(*, source_path: str, profile: str | None, inferred_os: str 
 
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dotman", description="dotman CLI")
-    parser.add_argument("--config", metavar="<config-path>", help="Path to dotman config.toml")
-    parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
-
-    subparsers = parser.add_subparsers(dest="command", required=True, title="commands", metavar="<command>")
-
-    track_parser = subparsers.add_parser(
-        "track",
-        help="Track a binding in manager state",
-        description="Track a binding in manager state",
-    )
-    add_binding_argument(track_parser)
-
-    add_parser = subparsers.add_parser(
-        "add",
-        help="Create or update package config from a live path",
-        description="Create or update package config from a live path",
-    )
-    add_live_path_argument(add_parser)
-    add_package_query_argument(add_parser, required=False)
-
-    push_parser = subparsers.add_parser(
-        "push",
-        help="Push tracked changes from repo to live paths",
-        description="Push tracked changes from repo to live paths",
-    )
-    add_dry_run_argument(push_parser)
-    add_full_path_argument(push_parser)
-    add_binding_argument(push_parser, required=False)
-
-    pull_parser = subparsers.add_parser(
-        "pull",
-        help="Pull live changes back into the repo",
-        description="Pull live changes back into the repo",
-    )
-    add_dry_run_argument(pull_parser)
-    add_full_path_argument(pull_parser)
-    add_binding_argument(pull_parser, required=False)
-
-    rollback_parser = subparsers.add_parser(
-        "rollback",
-        help="Restore managed live paths from a recorded snapshot",
-        description="Restore managed live paths from a recorded snapshot",
-    )
-    add_dry_run_argument(rollback_parser)
-    add_full_path_argument(rollback_parser)
-    add_snapshot_argument(rollback_parser, required=False)
-
-    untrack_parser = subparsers.add_parser(
-        "untrack",
-        help="Remove a tracked binding from manager state",
-        description="Remove a tracked binding from manager state",
-    )
-    add_binding_argument(untrack_parser)
-
-    forget_parser = subparsers.add_parser(
-        "forget",
-        help="Alias for untrack",
-        description="Alias for untrack",
-    )
-    add_binding_argument(forget_parser)
-
-    list_parser = subparsers.add_parser(
-        "list",
-        help="List tracked or installed items",
-        description="List tracked or installed items",
-    )
-    list_subparsers = list_parser.add_subparsers(
-        dest="list_command",
-        required=True,
-        title="list commands",
-        metavar="<list-command>",
-    )
-    list_subparsers.add_parser(
-        "tracked",
-        help="List tracked packages",
-        description="List tracked packages",
-    )
-    list_subparsers.add_parser(
-        "snapshots",
-        help="List available snapshots",
-        description="List available snapshots",
-    )
-    list_subparsers.add_parser("installed", help=argparse.SUPPRESS)
-    hide_subparser_from_help(list_subparsers, "installed")
-
-    info_parser = subparsers.add_parser(
-        "info",
-        help="Show detailed information about tracked or installed items",
-        description="Show detailed information about tracked or installed items",
-    )
-    info_subparsers = info_parser.add_subparsers(
-        dest="info_command",
-        required=True,
-        title="info commands",
-        metavar="<info-command>",
-    )
-    info_tracked_parser = info_subparsers.add_parser(
-        "tracked",
-        help="Show tracked package details",
-        description="Show tracked package details",
-    )
-    add_package_argument(info_tracked_parser)
-    info_snapshot_parser = info_subparsers.add_parser(
-        "snapshot",
-        help="Show snapshot details",
-        description="Show snapshot details",
-    )
-    add_full_path_argument(info_snapshot_parser)
-    add_snapshot_argument(info_snapshot_parser)
-    info_installed_parser = info_subparsers.add_parser("installed", help=argparse.SUPPRESS)
-    add_package_argument(info_installed_parser)
-    hide_subparser_from_help(info_subparsers, "installed")
-
-    reconcile_parser = subparsers.add_parser(
-        "reconcile",
-        help="Re-run a reconcile helper subcommand",
-        description="Re-run a reconcile helper subcommand",
-    )
-    reconcile_subparsers = reconcile_parser.add_subparsers(
-        dest="reconcile_command",
-        required=True,
-        title="reconcile commands",
-        metavar="<reconcile-command>",
-    )
-
-    reconcile_editor_parser = reconcile_subparsers.add_parser(
-        "editor",
-        help="Open repo and live files in an editor for reconcile review",
-        description="Open repo and live files in an editor for reconcile review",
-    )
-    reconcile_editor_parser.add_argument(
-        "--repo-path",
-        required=True,
-        metavar="<repo-path>",
-        help="Path to the repo copy of the target file",
-    )
-    reconcile_editor_parser.add_argument(
-        "--live-path",
-        required=True,
-        metavar="<live-path>",
-        help="Path to the live copy of the target file",
-    )
-    reconcile_editor_parser.add_argument(
-        "--review-repo-path",
-        metavar="<review-repo-path>",
-        help="Optional prepared repo-side review file path",
-    )
-    reconcile_editor_parser.add_argument(
-        "--review-live-path",
-        metavar="<review-live-path>",
-        help="Optional prepared live-side review file path",
-    )
-    reconcile_editor_parser.add_argument(
-        "--additional-source",
-        action="append",
-        default=[],
-        metavar="<source-path>",
-        help="Additional repo source file to include in transactional reconcile editing",
-    )
-    reconcile_editor_parser.add_argument(
-        "--editor",
-        metavar="<editor-command>",
-        help="Editor command to run instead of the default editor",
-    )
-
-    reconcile_jinja_parser = reconcile_subparsers.add_parser(
-        "jinja",
-        help="Reconcile a Jinja source with its recursive template dependencies",
-        description="Reconcile a Jinja source with its recursive template dependencies",
-    )
-    reconcile_jinja_parser.add_argument(
-        "--repo-path",
-        required=True,
-        metavar="<repo-path>",
-        help="Path to the repo copy of the target file",
-    )
-    reconcile_jinja_parser.add_argument(
-        "--live-path",
-        required=True,
-        metavar="<live-path>",
-        help="Path to the live copy of the target file",
-    )
-    reconcile_jinja_parser.add_argument(
-        "--review-repo-path",
-        metavar="<review-repo-path>",
-        help="Optional prepared repo-side review file path",
-    )
-    reconcile_jinja_parser.add_argument(
-        "--review-live-path",
-        metavar="<review-live-path>",
-        help="Optional prepared live-side review file path",
-    )
-    reconcile_jinja_parser.add_argument(
-        "--editor",
-        metavar="<editor-command>",
-        help="Editor command to run instead of the default editor",
-    )
-
-    render_parser = subparsers.add_parser(
-        "render",
-        help="Render built-in template helpers",
-        description="Render built-in template helpers",
-    )
-    render_subparsers = render_parser.add_subparsers(
-        dest="render_command",
-        required=True,
-        title="render commands",
-        metavar="<render-command>",
-    )
-    render_jinja_parser = render_subparsers.add_parser(
-        "jinja",
-        help="Render a file with the built-in Jinja renderer",
-        description="Render a file with the built-in Jinja renderer",
-    )
-    render_jinja_parser.add_argument(
-        "source_path",
-        metavar="<source-path>",
-        help="Path to the Jinja source file",
-    )
-    render_jinja_parser.add_argument(
-        "--profile",
-        metavar="<profile>",
-        help="Profile value to expose in template context",
-    )
-    render_jinja_parser.add_argument(
-        "--os",
-        dest="template_os",
-        metavar="<os>",
-        help="OS value to expose in template context",
-    )
-    render_jinja_parser.add_argument(
-        "--var",
-        action="append",
-        default=[],
-        metavar="<key=value>",
-        help="Additional template var assignment using dotted keys",
-    )
-    return parser
+def build_parser():
+    return build_cli_parser()
 
 
-def effective_execution_mode(*, dry_run_requested: bool) -> str:
-    return "dry-run" if dry_run_requested else "execute"
-
-
-def count_hook_commands(plans: Sequence) -> int:
-    return sum(len(hook_plans) for plan in plans for hook_plans in plan.hooks.values())
-
-
-def render_summary_stat(*, label: str, value: int) -> str:
-    if not colors_enabled():
-        return f"{label}: {value}"
-    return f"{style_text(f'{label}:', *MENU_HINT_STYLE)} {style_text(str(value), '1')}"
+effective_execution_mode = cli_emit.effective_execution_mode
 
 
 def display_cli_path(reference_path: Path | str, *, full_paths: bool) -> str:
-    return display_review_path(reference_path, compact=not full_paths)
-
-
-def render_payload_section_label(label: str) -> str:
-    if not colors_enabled():
-        return label
-    return style_text(label, *MENU_HINT_STYLE)
-
-
-def print_payload_header(header_text: str) -> None:
-    print()
-    if not colors_enabled():
-        print(f"{MENU_HEADER_MARKER} {header_text}")
-        return
-    print(
-        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
-        f"{style_text(header_text, '1')}"
-    )
-
-
-def print_payload_package_header(*, repo_name: str, package_id: str, profile: str) -> None:
-    if not colors_enabled():
-        print(f"  {MENU_HEADER_MARKER} {package_profile_label_text(repo_name=repo_name, package_id=package_id, profile=profile)}")
-        return
-    print(
-        f"  {style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
-        f"{render_package_profile_label(repo_name=repo_name, package_id=package_id, profile=profile)}"
-    )
-
-
-def render_payload_hook_label(hook_name: str) -> str:
-    hook_label = f"[{hook_name}]"
-    if not colors_enabled():
-        return hook_label
-    return style_text(hook_label, *MENU_HINT_STYLE)
-
-
-def render_payload_action(action: str) -> str:
-    if not colors_enabled():
-        return action
-    return style_text(action, *MENU_ACTION_STYLE_BY_NAME.get(action, ("1",)))
-
-
-def print_payload_target_item(item: PendingSelectionItem, *, full_paths: bool = False) -> None:
-    source_path = display_cli_path(item.source_path, full_paths=full_paths)
-    destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
-    arrow_text = style_text("->", *MENU_HINT_STYLE) if colors_enabled() else "->"
-    print(f"      {item.package_id}:{item.target_name} -> {render_payload_action(item.action)}")
-    print(f"        {source_path} {arrow_text} {destination_path}")
-
-
-def collect_payload_package_sections(plans: Sequence, *, operation: str) -> list[PayloadPackageSection]:
-    package_sections: dict[tuple[str, str, str], PayloadPackageSection] = {}
-
-    for plan in plans:
-        targets_by_package: dict[str, list[PendingSelectionItem]] = {}
-        for item in collect_pending_selection_items_for_operation([plan], operation=operation):
-            targets_by_package.setdefault(item.package_id, []).append(item)
-
-        hooks_by_package: dict[str, dict[str, list[HookPlan]]] = {}
-        for hook_name, hook_plans in plan.hooks.items():
-            for hook_plan in hook_plans:
-                hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
-
-        for package_id in plan.package_ids:
-            package_targets = targets_by_package.get(package_id, [])
-            package_hooks = hooks_by_package.get(package_id, {})
-            if not package_targets and not package_hooks:
-                continue
-            section_key = (plan.binding.repo, package_id, plan.binding.profile)
-            section = package_sections.get(section_key)
-            if section is None:
-                section = PayloadPackageSection(
-                    repo_name=plan.binding.repo,
-                    package_id=package_id,
-                    profile=plan.binding.profile,
-                    hooks={},
-                    targets=[],
-                )
-                package_sections[section_key] = section
-            for hook_name, hook_plans in package_hooks.items():
-                section.hooks.setdefault(hook_name, []).extend(hook_plans)
-            section.targets.extend(package_targets)
-
-    return list(package_sections.values())
+    return cli_emit.display_cli_path(reference_path, full_paths=full_paths)
 
 
 def emit_payload(*, operation: str, plans: Sequence, json_output: bool, mode: str, full_paths: bool = False) -> int:
-    visible_plans = []
-    for plan in plans:
-        visible_targets = [target for target in plan.target_plans if target.action != "noop"]
-        if not visible_targets:
-            continue
-        visible_plans.append(replace(plan, target_plans=visible_targets))
-    payload = {
-        "mode": mode,
-        "operation": operation,
-        "bindings": [plan.to_dict() for plan in visible_plans],
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
-
-    package_sections = collect_payload_package_sections(visible_plans, operation=operation)
-    target_items = [item for section in package_sections for item in section.targets]
-    print_payload_header(f"{mode} {operation}")
-    print(f"  {render_payload_section_label('preview only; no files or hooks will be changed')}")
-    print(
-        "  "
-        + " · ".join(
-            [
-                render_summary_stat(label="packages", value=len(package_sections)),
-                render_summary_stat(label="target actions", value=len(target_items)),
-                render_summary_stat(label="hook commands", value=count_hook_commands(visible_plans)),
-            ]
-        )
-    )
-
-    if not package_sections:
-        print()
-        print(f"  {render_payload_section_label('no pending target actions')}")
-        return 0
-
-    for section in package_sections:
-        print()
-        print_payload_package_header(
-            repo_name=section.repo_name,
-            package_id=section.package_id,
-            profile=section.profile,
-        )
-
-        print(f"    {render_payload_section_label('targets:')}")
-        for item in section.targets:
-            print_payload_target_item(item, full_paths=full_paths)
-
-        if section.hooks:
-            print(f"    {render_payload_section_label('hooks:')}")
-            for hook_name, hook_plans in section.hooks.items():
-                print(f"      {render_payload_hook_label(hook_name)}")
-                for index, hook_plan in enumerate(hook_plans, start=1):
-                    for line in render_hook_command_lines(
-                        hook_plan.command,
-                        command_count=len(hook_plans),
-                        index=index,
-                    ):
-                        print(f"  {line}")
-    return 0
-
-
-def execution_step_display(step: ExecutionStep, *, full_paths: bool) -> str:
-    if step.hook_plan is not None:
-        return step.hook_plan.command
-    target = step.target_plan
-    if target is None:
-        return ""
-    if step.kind == "chmod":
-        reference_path = target.live_path if step.binding_plan.operation == "push" else target.repo_path
-        chmod_mode = target.chmod or "?"
-        return f"{chmod_mode} {display_cli_path(reference_path, full_paths=full_paths)}"
-    if step.action == "reconcile":
-        return display_cli_path(target.live_path, full_paths=full_paths)
-    if step.directory_item is not None:
-        reference_path = (
-            step.directory_item.live_path
-            if step.binding_plan.operation == "push"
-            else step.directory_item.repo_path
-        )
-        return display_cli_path(reference_path, full_paths=full_paths)
-    reference_path = target.live_path if step.binding_plan.operation == "push" else target.repo_path
-    return display_cli_path(reference_path, full_paths=full_paths)
-
-
-def render_execution_action(action: str) -> str:
-    display_action = action.replace("_repo", " repo") if action.endswith("_repo") else action
-    if not colors_enabled():
-        return display_action
-    style_key = action.removesuffix("_repo")
-    return style_text(display_action, *MENU_ACTION_STYLE_BY_NAME.get(style_key, ("1",)))
-
-
-def print_execution_header(*, session: ExecutionSession) -> None:
-    step_count = sum(len(package.steps) for package in session.packages)
-    print_payload_header(f"executing {session.operation}")
-    print(
-        "  "
-        + " · ".join(
-            [
-                render_summary_stat(label="packages", value=len(session.packages)),
-                render_summary_stat(label="steps", value=step_count),
-            ]
-        )
-    )
-    if not session.packages:
-        print()
-        print(f"  {render_payload_section_label('no pending target actions')}")
-
-
-def print_execution_package_start(package) -> None:
-    print()
-    print_payload_package_header(
-        repo_name=package.repo_name,
-        package_id=package.package_id,
-        profile=package.profile,
+    return cli_emit.emit_payload(
+        operation=operation,
+        plans=plans,
+        json_output=json_output,
+        mode=mode,
+        full_paths=full_paths,
+        use_color=colors_enabled(),
+        collect_pending_selection_items_for_operation=collect_pending_selection_items_for_operation,
     )
 
 
-def print_execution_step_start(
-    _package,
-    step: ExecutionStep,
-    index: int,
-    total: int,
-    *,
-    full_paths: bool,
-) -> None:
-    print(
-        f"    [{index}/{total}] {render_execution_action(step.action):<11} "
-        f"{execution_step_display(step, full_paths=full_paths)}"
-    )
+emit_execution_result = cli_emit.emit_execution_result
 
-
-def render_execution_status(status: str) -> str:
-    if not colors_enabled():
-        return status
-    return style_text(status, *EXECUTION_STATUS_STYLE_BY_NAME.get(status, ("1",)))
-
-
-def print_execution_step_finish(
-    _package,
-    step_result: ExecutionStepResult,
-    _index: int,
-    _total: int,
-) -> None:
-    if step_result.status == "ok":
-        print(f"      {render_execution_status('ok')}")
-        return
-    if step_result.error:
-        print(f"      {step_result.error}")
-    print(f"      {render_execution_status(step_result.status)}")
-
-
-def print_execution_package_finish(package_result: PackageExecutionResult) -> None:
-    if package_result.status == "skipped":
-        print(f"    {render_execution_status('skipped')}")
-
-
-def emit_execution_result(*, result, json_output: bool) -> int:
-    if json_output:
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
-    return result.exit_code
 
 
 def execute_plans(*, operation: str, plans: Sequence, json_output: bool, full_paths: bool = False):
-    session = build_execution_session(plans, operation=operation)
-    if json_output:
-        return execute_session(session, stream_output=False)
-    print_execution_header(session=session)
-    if not session.packages:
-        return execute_session(session, stream_output=True)
-    return execute_session(
-        session,
-        stream_output=True,
-        on_package_start=print_execution_package_start,
-        on_step_start=lambda package, step, index, total: print_execution_step_start(
-            package,
-            step,
-            index,
-            total,
-            full_paths=full_paths,
-        ),
-        on_step_finish=print_execution_step_finish,
-        on_package_finish=print_execution_package_finish,
+    return cli_emit.execute_plans(
+        operation=operation,
+        plans=plans,
+        json_output=json_output,
+        full_paths=full_paths,
+        use_color=colors_enabled(),
     )
+
 
 
 def run_execution(*, operation: str, plans: Sequence, json_output: bool, full_paths: bool = False) -> int:
-    return emit_execution_result(
-        result=execute_plans(
-            operation=operation,
-            plans=plans,
-            json_output=json_output,
-            full_paths=full_paths,
-        ),
+    return cli_emit.run_execution(
+        operation=operation,
+        plans=plans,
         json_output=json_output,
+        full_paths=full_paths,
+        use_color=colors_enabled(),
     )
+
 
 
 def emit_tracked_packages(*, engine: DotmanEngine, packages: Sequence, invalid_bindings: Sequence, json_output: bool) -> int:
-    payload = {
-        "mode": "dry-run",
-        "operation": "list-tracked",
-        "packages": [package.to_dict() for package in packages],
-        "invalid_bindings": [binding.to_dict() for binding in invalid_bindings],
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
+    return cli_emit.emit_tracked_packages(
+        engine=engine,
+        packages=packages,
+        invalid_bindings=invalid_bindings,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
 
-    for package in packages:
-        print(
-            render_package_label(
-                repo_name=package.repo,
-                package_id=package.package_id,
-                bound_profile=package.bound_profile,
-            )
-            + f" {render_tracked_state(package.state)}"
-        )
-    for binding in invalid_bindings:
-        print(f"{render_tracked_issue_label(engine, binding)} {render_tracked_state(binding.state)}")
-    return 0
 
 
 def emit_forgotten_binding(*, binding, still_tracked_package, json_output: bool) -> int:
-    payload = {
-        "mode": "state-only",
-        "operation": "untrack",
-        "binding": {
-            "repo": binding.repo,
-            "selector": binding.selector,
-            "profile": binding.profile,
-        },
-    }
-    if still_tracked_package is not None:
-        payload["still_tracked_package"] = {
-            "repo": still_tracked_package.repo,
-            "package_id": still_tracked_package.package_id,
-            "bindings": [
-                {
-                    **binding_detail.binding.to_dict(),
-                    "tracked_reason": binding_detail.tracked_reason,
-                }
-                for binding_detail in still_tracked_package.bindings
-            ],
-        }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
+    return cli_emit.emit_forgotten_binding(
+        binding=binding,
+        still_tracked_package=still_tracked_package,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
 
-    print(f"untracked {render_binding_reference(binding)}")
-    if still_tracked_package is not None:
-        print(
-            f"{render_package_label(repo_name=still_tracked_package.repo, package_id=still_tracked_package.package_id, bound_profile=still_tracked_package.bound_profile)} "
-            "remains tracked via:"
-        )
-        for binding_detail in still_tracked_package.bindings:
-            print(
-                f"  {render_tracked_reason(binding_detail.tracked_reason)}: "
-                + render_binding_label(
-                    repo_name=binding_detail.binding.repo,
-                    selector=binding_detail.binding.selector,
-                    profile=binding_detail.binding.profile,
-                )
-            )
-    return 0
 
 
 def emit_tracked_binding(*, binding, json_output: bool) -> int:
-    payload = {
-        "mode": "state-only",
-        "operation": "track",
-        "binding": {
-            "repo": binding.repo,
-            "selector": binding.selector,
-            "profile": binding.profile,
-        },
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
+    return cli_emit.emit_tracked_binding(
+        binding=binding,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
 
-    print(f"tracked {render_binding_reference(binding)}")
-    return 0
 
 
 def emit_add_result(*, result, json_output: bool) -> int:
-    if json_output:
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
-        return 0
-
-    package_label = render_package_label(
-        repo_name=result.repo_name,
-        package_id=result.package_id,
-        package_first=True,
-        include_repo_context=True,
+    return cli_emit.emit_add_result(
+        result=result,
+        json_output=json_output,
+        use_color=colors_enabled(),
     )
-    action = "created" if result.created_package else "updated"
-    print(f"{action} package config {package_label}")
-    print(f"  manifest: {result.manifest_path}")
-    print(f"  target:   {result.target_name} [{result.target_kind}]")
-    print(f"  source:   {result.source_path}")
-    print(f"  path:     {result.config_path}")
-    if result.chmod is not None:
-        print(f"  chmod:    {result.chmod}")
-    manifest_only_note = "manifest only; repo source files were not copied"
-    if colors_enabled():
-        manifest_only_note = style_text(manifest_only_note, *MENU_HINT_STYLE)
-    print(f"  {manifest_only_note}")
-    return 0
+
 
 
 def emit_kept_add_result(*, repo_name: str, package_id: str, json_output: bool) -> int:
-    payload = {
-        "mode": "config-only",
-        "operation": "add",
-        "repo": repo_name,
-        "package_id": package_id,
-        "written": False,
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
-    print(f"kept package config unchanged {render_package_label(repo_name=repo_name, package_id=package_id, package_first=True, include_repo_context=True)}")
-    return 0
+    return cli_emit.emit_kept_add_result(
+        repo_name=repo_name,
+        package_id=package_id,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
 
 
-def emit_noop_add_result(*, json_output: bool) -> int:
-    payload = {
-        "mode": "config-only",
-        "operation": "add",
-        "written": False,
-        "changed": False,
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
-    print("No package config changes.")
-    return 0
+emit_noop_add_result = cli_emit.emit_noop_add_result
+
 
 
 def emit_kept_binding(*, binding, json_output: bool) -> int:
-    payload = {
-        "mode": "state-only",
-        "operation": "track",
-        "binding": {
-            "repo": binding.repo,
-            "selector": binding.selector,
-            "profile": binding.profile,
-        },
-        "recorded": False,
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
+    return cli_emit.emit_kept_binding(
+        binding=binding,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
 
-    print(f"kept existing tracked binding {render_binding_reference(binding)}")
-    return 0
 
 
 def emit_skipped_tracking(*, binding, json_output: bool) -> int:
-    payload = {
-        "mode": "state-only",
-        "operation": "track",
-        "binding": {
-            "repo": binding.repo,
-            "selector": binding.selector,
-            "profile": binding.profile,
-        },
-        "recorded": False,
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
-
-    print(f"skipped tracking {render_binding_reference(binding)}")
-    return 0
+    return cli_emit.emit_skipped_tracking(
+        binding=binding,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
 
 
-def render_hook_command_lines(command: str, *, command_count: int, index: int) -> list[str]:
-    command_lines = command.splitlines() or [""]
-    # Number multi-command hooks so users can tell distinct commands apart without cluttering single-command hooks.
-    first_prefix = f"      [{index}] " if command_count > 1 else "      "
-    continuation_prefix = " " * len(first_prefix)
-    return [
-        f"{first_prefix}{command_lines[0]}",
-        *[f"{continuation_prefix}{line}" for line in command_lines[1:]],
-    ]
+render_hook_command_lines = cli_emit.render_hook_command_lines
 
 
 
 def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
-    payload = {
-        "mode": "dry-run",
-        "operation": "info-tracked",
-        "package": package_detail.to_dict(),
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
-
-    print(
-        render_package_label(
-            repo_name=package_detail.repo,
-            package_id=package_detail.package_id,
-            bound_profile=package_detail.bound_profile,
-        )
+    return cli_emit.emit_tracked_package_detail(
+        package_detail=package_detail,
+        json_output=json_output,
+        use_color=colors_enabled(),
     )
-    if package_detail.description:
-        print(f"  {package_detail.description}")
-    if package_detail.bindings:
-        print()
-        print(render_info_section_header("provenance"))
-    for binding in package_detail.bindings:
-        binding_label = render_binding_label(
-            repo_name=binding.binding.repo,
-            selector=binding.binding.selector,
-            profile=binding.binding.profile,
-        )
-        print(f"    {render_tracked_reason(binding.tracked_reason)}: {binding_label}")
-
-    bindings_with_hooks = [binding for binding in package_detail.bindings if binding.hooks]
-    if bindings_with_hooks:
-        print()
-        print(render_info_section_header("hooks"))
-    # Hook output stays package-centric here. Under the current tracked-winner model,
-    # a package instance has one effective hook-bearing binding, so repeating the
-    # provenance binding under ::hooks only adds noise.
-    for binding in bindings_with_hooks:
-        for hook_name, hook_plans in binding.hooks.items():
-            hook_label = f"[{hook_name}]"
-            if colors_enabled():
-                hook_label = style_text(hook_label, *MENU_HINT_STYLE)
-            print(f"    {hook_label}")
-            for index, hook_plan in enumerate(hook_plans, start=1):
-                for line in render_hook_command_lines(
-                    hook_plan.command,
-                    command_count=len(hook_plans),
-                    index=index,
-                ):
-                    print(line)
-
-    if package_detail.owned_targets:
-        print()
-        print(render_info_section_header("owned targets"))
-    for target in package_detail.owned_targets:
-        print(
-            "    "
-            + f"{style_text(target.target.target_name, '1') if colors_enabled() else target.target.target_name} "
-            + f"-> {target.target.live_path}"
-        )
-    return 0
 
 
 def resolve_snapshot_record(snapshot_root: Path, snapshot_ref: str | None, *, json_output: bool) -> SnapshotRecord:
@@ -2940,31 +2098,9 @@ def resolve_snapshot_record(snapshot_root: Path, snapshot_ref: str | None, *, js
     return matches[selected_index]
 
 
-def visible_rollback_actions(actions: Sequence[RollbackAction]) -> list[RollbackAction]:
-    return [action for action in actions if action.action != "noop"]
+visible_rollback_actions = cli_emit.visible_rollback_actions
+build_rollback_review_items = cli_emit.build_rollback_review_items
 
-
-def build_rollback_review_items(snapshot: SnapshotRecord, actions: Sequence[RollbackAction]) -> list[ReviewItem]:
-    review_items: list[ReviewItem] = []
-    for action in actions:
-        if action.action == "noop":
-            continue
-        review_items.append(
-            ReviewItem(
-                binding_label=f"snapshot:{snapshot.snapshot_id}",
-                package_id="snapshot",
-                target_name=str(action.live_path),
-                action=action.action,
-                operation="rollback",
-                repo_path=action.snapshot_path,
-                live_path=action.live_path,
-                source_path=str(action.snapshot_path),
-                destination_path=str(action.live_path),
-                before_bytes=action.before_bytes,
-                after_bytes=action.after_bytes,
-            )
-        )
-    return review_items
 
 
 def review_rollback_actions_for_interactive_diffs(
@@ -2982,98 +2118,30 @@ def review_rollback_actions_for_interactive_diffs(
     return run_diff_review_menu(review_items, operation="rollback", full_paths=full_paths)
 
 
+
 def emit_snapshot_list(
     *,
     snapshots: Sequence[SnapshotRecord],
     json_output: bool,
     max_generations: int | None = None,
 ) -> int:
-    payload = {
-        "mode": "dry-run",
-        "operation": "list-snapshots",
-        "snapshots": [snapshot.to_dict() for snapshot in snapshots],
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
+    return cli_emit.emit_snapshot_list(
+        snapshots=snapshots,
+        json_output=json_output,
+        max_generations=max_generations,
+        use_color=colors_enabled(),
+    )
 
-    print_payload_header("snapshots")
-    if max_generations is not None:
-        print(
-            "  "
-            + " · ".join(
-                [
-                    render_summary_stat(label="retained", value=len(snapshots)),
-                    render_summary_stat(label="limit", value=max_generations),
-                ]
-            )
-        )
-    else:
-        print(f"  {render_summary_stat(label='snapshots', value=len(snapshots))}")
-
-    if not snapshots:
-        print()
-        print(f"  {render_payload_section_label('no snapshots')}")
-        return 0
-
-    for index, snapshot in enumerate(snapshots, start=1):
-        print()
-        title = format_snapshot_timestamp(snapshot.created_at)
-        if colors_enabled():
-            title = style_text(title, "1")
-        print(f"  {style_text(f'{index})', *MENU_INDEX_STYLE) if colors_enabled() else f'{index})'} {title}")
-        print(f"     {render_snapshot_metadata_label('ref:')}          {render_snapshot_ref(snapshot.snapshot_id)}")
-        print(f"     {render_snapshot_metadata_label('status:')}       {render_snapshot_status(snapshot.status)}")
-        print(f"     {render_snapshot_metadata_label('paths:')}        {snapshot.entry_count}")
-        if snapshot.restore_count > 0:
-            restore_summary = f"{snapshot.restore_count}x"
-            if snapshot.last_restored_at is not None:
-                restore_summary += f" · {format_snapshot_timestamp(snapshot.last_restored_at)}"
-            print(f"     {render_snapshot_metadata_label('restored:')}     {restore_summary}")
-    return 0
 
 
 def emit_snapshot_detail(*, snapshot: SnapshotRecord, json_output: bool, full_paths: bool = False) -> int:
-    payload = {
-        "mode": "dry-run",
-        "operation": "info-snapshot",
-        "snapshot": snapshot.to_dict(),
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
+    return cli_emit.emit_snapshot_detail(
+        snapshot=snapshot,
+        json_output=json_output,
+        full_paths=full_paths,
+        use_color=colors_enabled(),
+    )
 
-    header_text = f"snapshot {snapshot.snapshot_id}"
-    if colors_enabled():
-        print(style_text(header_text, "1"))
-    else:
-        print(header_text)
-    print(f"  {render_snapshot_metadata_label('created:')}       {format_snapshot_timestamp(snapshot.created_at)}")
-    print(f"  {render_snapshot_metadata_label('status:')}        {render_snapshot_status(snapshot.status)}")
-    print(f"  {render_snapshot_metadata_label('paths:')}         {snapshot.entry_count}")
-    print(f"  {render_snapshot_metadata_label('restore count:')} {snapshot.restore_count}")
-    if snapshot.last_restored_at is not None:
-        print(
-            f"  {render_snapshot_metadata_label('last restored:')} "
-            f"{format_snapshot_timestamp(snapshot.last_restored_at)}"
-        )
-
-    if snapshot.entries:
-        print()
-        print(render_info_section_header("paths"))
-    for entry in snapshot.entries:
-        path_text = display_cli_path(entry.live_path, full_paths=full_paths)
-        print(f"    {path_text}")
-        print(f"      {render_snapshot_metadata_label('reason:')} {render_snapshot_reason(entry.push_action)}")
-        provenance = render_snapshot_provenance(
-            repo_name=entry.repo_name,
-            package_id=entry.package_id,
-            target_name=entry.target_name,
-            binding_label=entry.binding_label,
-        )
-        if provenance is not None:
-            print(f"      {render_snapshot_metadata_label('provenance:')} {provenance}")
-    return 0
 
 
 def emit_rollback_payload(
@@ -3084,57 +2152,18 @@ def emit_rollback_payload(
     mode: str,
     full_paths: bool = False,
 ) -> int:
-    visible_actions = visible_rollback_actions(actions)
-    payload = {
-        "mode": mode,
-        "operation": "rollback",
-        "snapshot": snapshot.to_dict(),
-        "actions": [action.to_dict() for action in visible_actions],
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
-
-    print_payload_header(f"{mode} rollback")
-    print(f"  snapshot: {snapshot.snapshot_id}")
-    print(f"  created:  {snapshot.created_at}")
-    print(f"  status:   {snapshot.status}")
-    print(f"  {render_summary_stat(label='paths', value=len(visible_actions))}")
-    if not visible_actions:
-        print()
-        print(f"  {render_payload_section_label('no pending target actions')}")
-        return 0
-    for action in visible_actions:
-        print(
-            f"  [{render_payload_action(action.action)}] "
-            f"{display_cli_path(action.snapshot_path, full_paths=full_paths)} -> "
-            f"{display_cli_path(action.live_path, full_paths=full_paths)}"
-        )
-    return 0
-
-
-def print_rollback_execution_header(*, snapshot: SnapshotRecord, action_count: int) -> None:
-    print_payload_header("executing rollback")
-    print(f"  snapshot: {snapshot.snapshot_id}")
-    print(f"  created:  {snapshot.created_at}")
-    print(f"  status:   {snapshot.status}")
-    print(f"  {render_summary_stat(label='paths', value=action_count)}")
-    if action_count == 0:
-        print()
-        print(f"  {render_payload_section_label('no pending target actions')}")
-
-
-def print_rollback_execution_step(index: int, total: int, action: RollbackAction, *, full_paths: bool) -> None:
-    print(
-        f"    [{index}/{total}] {render_execution_action(action.action):<11} "
-        f"{display_cli_path(action.live_path, full_paths=full_paths)}"
+    return cli_emit.emit_rollback_payload(
+        snapshot=snapshot,
+        actions=actions,
+        json_output=json_output,
+        mode=mode,
+        full_paths=full_paths,
+        use_color=colors_enabled(),
     )
 
 
-def emit_rollback_result(*, result, json_output: bool) -> int:
-    if json_output:
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
-    return result.exit_code
+emit_rollback_result = cli_emit.emit_rollback_result
+
 
 
 def run_rollback_execution(
@@ -3144,328 +2173,71 @@ def run_rollback_execution(
     json_output: bool,
     full_paths: bool = False,
 ) -> int:
-    visible_actions = visible_rollback_actions(actions)
-    if not json_output:
-        print_rollback_execution_header(snapshot=snapshot, action_count=len(visible_actions))
-    if not visible_actions:
-        return 0
-    for index, action in enumerate(visible_actions, start=1):
-        if not json_output:
-            print_rollback_execution_step(index, len(visible_actions), action, full_paths=full_paths)
-    result = execute_rollback(snapshot, visible_actions)
-    if not json_output:
-        for action_result in result.actions:
-            if action_result.status == "ok":
-                print(f"      {render_execution_status('ok')}")
-                continue
-            if action_result.error:
-                print(f"      {action_result.error}")
-            print(f"      {render_execution_status(action_result.status)}")
-    return emit_rollback_result(result=result, json_output=json_output)
+    return cli_emit.run_rollback_execution(
+        snapshot=snapshot,
+        actions=actions,
+        json_output=json_output,
+        full_paths=full_paths,
+        use_color=colors_enabled(),
+    )
+
+
+def _build_command_handlers() -> cli_commands.CliCommandHandlers:
+    return cli_commands.CliCommandHandlers(
+        run_basic_reconcile=run_basic_reconcile,
+        run_jinja_reconcile=run_jinja_reconcile,
+        run_jinja_render=run_jinja_render,
+        resolve_binding_text=resolve_binding_text,
+        ensure_track_binding_replacement_confirmed=ensure_track_binding_replacement_confirmed,
+        find_recorded_bindings_for_scope=find_recorded_bindings_for_scope,
+        emit_kept_binding=emit_kept_binding,
+        emit_skipped_tracking=emit_skipped_tracking,
+        prompt_for_conflicting_package_binding=prompt_for_conflicting_package_binding,
+        select_non_conflicting_track_profile=select_non_conflicting_track_profile,
+        ensure_track_binding_implicit_overrides_confirmed=ensure_track_binding_implicit_overrides_confirmed,
+        find_recorded_binding_exact=find_recorded_binding_exact,
+        emit_tracked_binding=emit_tracked_binding,
+        resolve_add_package_text=resolve_add_package_text,
+        interactive_mode_enabled=interactive_mode_enabled,
+        add_editor_available=add_editor_available,
+        review_add_manifest=review_add_manifest,
+        confirm_add_manifest_write=confirm_add_manifest_write,
+        emit_add_result=emit_add_result,
+        emit_noop_add_result=emit_noop_add_result,
+        emit_kept_add_result=emit_kept_add_result,
+        resolve_tracked_binding_text=resolve_tracked_binding_text,
+        filter_plans_for_interactive_selection=filter_plans_for_interactive_selection,
+        review_plans_for_interactive_diffs=review_plans_for_interactive_diffs,
+        emit_interrupt_notice=emit_interrupt_notice,
+        interrupted_exit_code=INTERRUPTED_EXIT_CODE,
+        emit_payload=emit_payload,
+        effective_execution_mode=effective_execution_mode,
+        execute_plans=execute_plans,
+        emit_execution_result=emit_execution_result,
+        run_execution=run_execution,
+        resolve_snapshot_record=resolve_snapshot_record,
+        review_rollback_actions_for_interactive_diffs=review_rollback_actions_for_interactive_diffs,
+        emit_rollback_payload=emit_rollback_payload,
+        run_rollback_execution=run_rollback_execution,
+        emit_forgotten_binding=emit_forgotten_binding,
+        find_remaining_tracked_package_after_untrack=find_remaining_tracked_package_after_untrack,
+        emit_tracked_packages=emit_tracked_packages,
+        resolve_tracked_package_text=resolve_tracked_package_text,
+        emit_tracked_package_detail=emit_tracked_package_detail,
+        emit_snapshot_list=emit_snapshot_list,
+        emit_snapshot_detail=emit_snapshot_detail,
+    )
+
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(list(argv) if argv is not None else None)
-        if args.command == "reconcile" and args.reconcile_command == "editor":
-            return run_basic_reconcile(
-                repo_path=args.repo_path,
-                live_path=args.live_path,
-                additional_sources=args.additional_source,
-                review_repo_path=args.review_repo_path,
-                review_live_path=args.review_live_path,
-                editor=args.editor,
-            )
-        if args.command == "reconcile" and args.reconcile_command == "jinja":
-            return run_jinja_reconcile(
-                repo_path=args.repo_path,
-                live_path=args.live_path,
-                review_repo_path=args.review_repo_path,
-                review_live_path=args.review_live_path,
-                editor=args.editor,
-            )
-        if args.command == "render" and args.render_command == "jinja":
-            return run_jinja_render(
-                source_path=args.source_path,
-                profile=args.profile,
-                inferred_os=args.template_os,
-                var_assignments=args.var,
-            )
-        engine = DotmanEngine.from_config_path(args.config)
-        if args.command == "track":
-            binding_text, profile = resolve_binding_text(engine, args.binding, json_output=args.json_output)
-            _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=profile)
-            while True:
-                if not ensure_track_binding_replacement_confirmed(
-                    engine,
-                    binding=binding,
-                    json_output=args.json_output,
-                ):
-                    existing_bindings = find_recorded_bindings_for_scope(engine, binding)
-                    if len(existing_bindings) == 1:
-                        return emit_kept_binding(binding=existing_bindings[0], json_output=args.json_output)
-                    return emit_skipped_tracking(binding=binding, json_output=args.json_output)
-                try:
-                    engine.validate_recorded_binding(binding)
-                except TrackedTargetConflictError as exc:
-                    promoted_binding = prompt_for_conflicting_package_binding(
-                        engine,
-                        binding=binding,
-                        conflict=exc,
-                        json_output=args.json_output,
-                    )
-                    if promoted_binding is not None:
-                        binding = promoted_binding
-                        binding_text = f"{binding.repo}:{binding.selector}"
-                        continue
-                    alternative_profile = select_non_conflicting_track_profile(
-                        engine,
-                        binding_text=binding_text,
-                        current_profile=binding.profile,
-                        json_output=args.json_output,
-                    )
-                    if alternative_profile is None:
-                        raise
-                    _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=alternative_profile)
-                    continue
-                if not ensure_track_binding_implicit_overrides_confirmed(
-                    engine,
-                    binding=binding,
-                    json_output=args.json_output,
-                ):
-                    existing_binding = find_recorded_binding_exact(engine, binding)
-                    if existing_binding is not None:
-                        return emit_kept_binding(binding=existing_binding, json_output=args.json_output)
-                    return emit_skipped_tracking(binding=binding, json_output=args.json_output)
-                engine.record_binding(binding)
-                return emit_tracked_binding(binding=binding, json_output=args.json_output)
-        if args.command == "add":
-            repo_name, package_id = resolve_add_package_text(
-                engine,
-                args.package_query,
-                json_output=args.json_output,
-            )
-            result = prepare_add_to_package(
-                repo_root=engine.get_repo(repo_name).root,
-                repo_name=repo_name,
-                package_id=package_id,
-                live_path_text=args.live_path,
-            )
-            if args.json_output or not interactive_mode_enabled(json_output=args.json_output):
-                return emit_add_result(
-                    result=write_add_result(result),
-                    json_output=args.json_output,
-                )
-            if add_editor_available():
-                review_result = review_add_manifest(result)
-                if review_result is None:
-                    raise ValueError("add review expected an editor, but none is configured")
-                if review_result.exit_code != 0:
-                    return review_result.exit_code
-                if review_result.manifest_text == result.before_text:
-                    return emit_noop_add_result(json_output=args.json_output)
-                if not confirm_add_manifest_write(repo_name=repo_name, package_id=package_id):
-                    return emit_kept_add_result(
-                        repo_name=repo_name,
-                        package_id=package_id,
-                        json_output=args.json_output,
-                    )
-                result = write_add_result(result, manifest_text=review_result.manifest_text)
-                return emit_add_result(result=result, json_output=args.json_output)
-            return emit_add_result(result=write_add_result(result), json_output=args.json_output)
-        if args.command == "push":
-            if args.binding:
-                _repo, binding = resolve_tracked_binding_text(
-                    engine,
-                    args.binding,
-                    operation="push",
-                    allow_package_owners=True,
-                    json_output=args.json_output,
-                )
-                binding_text = f"{binding.repo}:{binding.selector}"
-                plan = engine.plan_push_binding(binding_text, profile=binding.profile)
-                plans = filter_plans_for_interactive_selection(
-                    plans=[plan],
-                    operation="push",
-                    json_output=args.json_output,
-                    full_paths=args.full_path,
-                )
-            else:
-                plans = filter_plans_for_interactive_selection(
-                    plans=engine.plan_push(),
-                    operation="push",
-                    json_output=args.json_output,
-                    full_paths=args.full_path,
-                )
-            if not review_plans_for_interactive_diffs(
-                plans=plans,
-                operation="push",
-                json_output=args.json_output,
-                full_paths=args.full_path,
-            ):
-                emit_interrupt_notice()
-                return INTERRUPTED_EXIT_CODE
-            if args.dry_run:
-                return emit_payload(
-                    operation="push",
-                    plans=plans,
-                    json_output=args.json_output,
-                    mode=effective_execution_mode(dry_run_requested=True),
-                    full_paths=args.full_path,
-                )
-            snapshot = create_push_snapshot(plans, engine.config.snapshots)
-            try:
-                execution_result = execute_plans(
-                    operation="push",
-                    plans=plans,
-                    json_output=args.json_output,
-                    full_paths=args.full_path,
-                )
-            except Exception:
-                if snapshot is not None:
-                    mark_snapshot_status(snapshot, "failed")
-                    prune_snapshots(
-                        engine.config.snapshots.path,
-                        max_generations=engine.config.snapshots.max_generations,
-                    )
-                raise
-            if snapshot is not None:
-                snapshot = mark_snapshot_status(snapshot, "applied" if execution_result.exit_code == 0 else "failed")
-                prune_snapshots(
-                    engine.config.snapshots.path,
-                    max_generations=engine.config.snapshots.max_generations,
-                )
-            return emit_execution_result(result=execution_result, json_output=args.json_output)
-        if args.command == "pull":
-            if args.binding:
-                _repo, binding = resolve_tracked_binding_text(
-                    engine,
-                    args.binding,
-                    operation="pull",
-                    allow_package_owners=True,
-                    json_output=args.json_output,
-                )
-                binding_text = f"{binding.repo}:{binding.selector}"
-                profile = binding.profile
-                plans = filter_plans_for_interactive_selection(
-                    plans=[engine.plan_pull_binding(binding_text, profile=profile)],
-                    operation="pull",
-                    json_output=args.json_output,
-                    full_paths=args.full_path,
-                )
-            else:
-                plans = filter_plans_for_interactive_selection(
-                    plans=engine.plan_pull(),
-                    operation="pull",
-                    json_output=args.json_output,
-                    full_paths=args.full_path,
-                )
-            if not review_plans_for_interactive_diffs(
-                plans=plans,
-                operation="pull",
-                json_output=args.json_output,
-                full_paths=args.full_path,
-            ):
-                emit_interrupt_notice()
-                return INTERRUPTED_EXIT_CODE
-            if args.dry_run:
-                return emit_payload(
-                    operation="pull",
-                    plans=plans,
-                    json_output=args.json_output,
-                    mode=effective_execution_mode(dry_run_requested=True),
-                    full_paths=args.full_path,
-                )
-            return run_execution(
-                operation="pull",
-                plans=plans,
-                json_output=args.json_output,
-                full_paths=args.full_path,
-            )
-        if args.command == "rollback":
-            snapshot = resolve_snapshot_record(
-                engine.config.snapshots.path,
-                args.snapshot,
-                json_output=args.json_output,
-            )
-            rollback_actions = build_rollback_actions(snapshot)
-            if not review_rollback_actions_for_interactive_diffs(
-                snapshot=snapshot,
-                actions=rollback_actions,
-                json_output=args.json_output,
-                full_paths=args.full_path,
-            ):
-                emit_interrupt_notice()
-                return INTERRUPTED_EXIT_CODE
-            if args.dry_run:
-                return emit_rollback_payload(
-                    snapshot=snapshot,
-                    actions=rollback_actions,
-                    json_output=args.json_output,
-                    mode=effective_execution_mode(dry_run_requested=True),
-                    full_paths=args.full_path,
-                )
-            exit_code = run_rollback_execution(
-                snapshot=snapshot,
-                actions=rollback_actions,
-                json_output=args.json_output,
-                full_paths=args.full_path,
-            )
-            if exit_code == 0:
-                record_snapshot_restore(snapshot)
-            return exit_code
-        if args.command in {"untrack", "forget"}:
-            _repo, binding = resolve_tracked_binding_text(
-                engine,
-                args.binding,
-                operation="untrack",
-                allow_package_owners=False,
-                json_output=args.json_output,
-            )
-            removed_binding = engine.remove_binding(
-                f"{binding.repo}:{binding.selector}@{binding.profile}",
-                operation="untrack",
-            )
-            return emit_forgotten_binding(
-                binding=removed_binding,
-                still_tracked_package=find_remaining_tracked_package_after_untrack(engine, removed_binding),
-                json_output=args.json_output,
-            )
-        if args.command == "list" and args.list_command in {"tracked", "installed"}:
-            tracked_state = engine.list_tracked_state()
-            return emit_tracked_packages(
-                engine=engine,
-                packages=tracked_state.packages,
-                invalid_bindings=tracked_state.invalid_bindings,
-                json_output=args.json_output,
-            )
-        if args.command == "list" and args.list_command == "snapshots":
-            return emit_snapshot_list(
-                snapshots=list_snapshots(engine.config.snapshots.path),
-                json_output=args.json_output,
-                max_generations=engine.config.snapshots.max_generations,
-            )
-        if args.command == "info" and args.info_command in {"tracked", "installed"}:
-            _repo, package_id, bound_profile = resolve_tracked_package_text(
-                engine,
-                args.package,
-                json_output=args.json_output,
-            )
-            package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
-            return emit_tracked_package_detail(
-                package_detail=engine.describe_tracked_package(f"{_repo.config.name}:{package_ref}"),
-                json_output=args.json_output,
-            )
-        if args.command == "info" and args.info_command == "snapshot":
-            return emit_snapshot_detail(
-                snapshot=resolve_snapshot_record(
-                    engine.config.snapshots.path,
-                    args.snapshot,
-                    json_output=args.json_output,
-                ),
-                json_output=args.json_output,
-                full_paths=args.full_path,
-            )
+        return cli_commands.dispatch_command(
+            args=args,
+            engine_factory=DotmanEngine.from_config_path,
+            handlers=_build_command_handlers(),
+        )
     except KeyboardInterrupt:
         emit_interrupt_notice()
         return INTERRUPTED_EXIT_CODE
