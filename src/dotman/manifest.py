@@ -1,0 +1,313 @@
+from __future__ import annotations
+
+import sys
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+from dotman.models import PackageSpec, TargetSpec
+from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
+
+
+VALID_RECONCILE_IO_VALUES = ("pipe", "tty")
+
+
+def _copy_map(value: dict[str, Any] | None) -> dict[str, Any]:
+    if value is None:
+        return {}
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if isinstance(item, dict):
+            result[key] = _copy_map(item)
+        elif isinstance(item, list):
+            result[key] = list(item)
+        else:
+            result[key] = item
+    return result
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = _copy_map(base)
+    for key, override_value in override.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, dict) and isinstance(override_value, dict):
+            merged[key] = deep_merge(base_value, override_value)
+        elif isinstance(override_value, list):
+            merged[key] = list(override_value)
+        elif isinstance(override_value, dict):
+            merged[key] = _copy_map(override_value)
+        else:
+            merged[key] = override_value
+    return merged
+
+
+def dotted_get(data: dict[str, Any], dotted_path: str) -> Any:
+    current: Any = data
+    for part in dotted_path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def dotted_delete(data: dict[str, Any], dotted_path: str) -> None:
+    parts = dotted_path.split(".")
+    current: Any = data
+    for part in parts[:-1]:
+        if not isinstance(current, dict) or part not in current:
+            return
+        current = current[part]
+    if isinstance(current, dict):
+        current.pop(parts[-1], None)
+
+
+def dotted_append(data: dict[str, Any], dotted_path: str, values: list[Any]) -> None:
+    parts = dotted_path.split(".")
+    current = data
+    for part in parts[:-1]:
+        next_value = current.get(part)
+        if not isinstance(next_value, dict):
+            next_value = {}
+            current[part] = next_value
+        current = next_value
+    existing = current.get(parts[-1])
+    if existing is None:
+        current[parts[-1]] = list(values)
+        return
+    if not isinstance(existing, list):
+        raise ValueError(f"append target '{dotted_path}' is not a list")
+    current[parts[-1]] = [*existing, *values]
+
+
+def normalize_string_list(value: Any) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return tuple(value)
+    raise ValueError(f"expected string or list[str], got {type(value).__name__}")
+
+
+def normalize_optional_string_enum(value: Any, *, key: str, allowed: tuple[str, ...]) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"expected string for '{key}', got {type(value).__name__}")
+    if value not in allowed:
+        allowed_text = ", ".join(allowed)
+        raise ValueError(f"unsupported {key} '{value}'; expected one of: {allowed_text}")
+    return value
+
+
+def read_schema_alias(payload: dict[str, Any], primary_key: str, legacy_key: str) -> Any:
+    primary_value = payload.get(primary_key)
+    legacy_value = payload.get(legacy_key)
+    if primary_value is not None and legacy_value is not None and primary_value != legacy_value:
+        raise ValueError(f"conflicting schema keys '{primary_key}' and legacy '{legacy_key}'")
+    if primary_value is not None:
+        return primary_value
+    return legacy_value
+
+
+def resolve_target_preset(
+    *,
+    target_payload: dict[str, Any],
+    manifest_path: Path,
+    target_name: str,
+) -> dict[str, Any]:
+    preset_name = target_payload.get("preset")
+    if preset_name is None:
+        return {}
+    if not isinstance(preset_name, str):
+        raise ValueError(
+            f"package manifest {manifest_path} target '{target_name}' preset must be a string"
+        )
+    preset = get_builtin_target_preset(preset_name)
+    if preset is None:
+        available = ", ".join(sorted(BUILTIN_TARGET_PRESETS))
+        raise ValueError(
+            f"package manifest {manifest_path} target '{target_name}' uses unknown preset '{preset_name}'; "
+            f"available presets: {available}"
+        )
+    return preset
+
+
+def get_target_value(
+    *,
+    target_payload: dict[str, Any],
+    preset_payload: dict[str, Any],
+    key: str,
+) -> Any:
+    if key in target_payload:
+        return target_payload[key]
+    return preset_payload.get(key)
+
+
+def read_target_schema_alias(
+    *,
+    target_payload: dict[str, Any],
+    preset_payload: dict[str, Any],
+    primary_key: str,
+    legacy_key: str,
+) -> Any:
+    # Presets are default layer. Resolve explicit aliases first so user can
+    # override preset with current key or legacy schema alias.
+    explicit_value = read_schema_alias(target_payload, primary_key, legacy_key)
+    if explicit_value is not None:
+        return explicit_value
+    return preset_payload.get(primary_key)
+
+
+def build_target_spec(
+    *,
+    target_name: str,
+    target_payload: dict[str, Any],
+    manifest_path: Path,
+) -> TargetSpec:
+    preset_payload = resolve_target_preset(
+        target_payload=target_payload,
+        manifest_path=manifest_path,
+        target_name=target_name,
+    )
+    return TargetSpec(
+        name=target_name,
+        declared_in=manifest_path.parent,
+        source=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="source"),
+        path=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path"),
+        chmod=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="chmod"),
+        render=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="render"),
+        capture=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="capture"),
+        reconcile=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile"),
+        reconcile_io=normalize_optional_string_enum(
+            get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile_io"),
+            key="reconcile_io",
+            allowed=VALID_RECONCILE_IO_VALUES,
+        ),
+        pull_view_repo=read_target_schema_alias(
+            target_payload=target_payload,
+            preset_payload=preset_payload,
+            primary_key="pull_view_repo",
+            legacy_key="import_view_repo",
+        ),
+        pull_view_live=read_target_schema_alias(
+            target_payload=target_payload,
+            preset_payload=preset_payload,
+            primary_key="pull_view_live",
+            legacy_key="import_view_live",
+        ),
+        push_ignore=normalize_string_list(
+            read_target_schema_alias(
+                target_payload=target_payload,
+                preset_payload=preset_payload,
+                primary_key="push_ignore",
+                legacy_key="apply_ignore",
+            )
+        ),
+        pull_ignore=normalize_string_list(
+            read_target_schema_alias(
+                target_payload=target_payload,
+                preset_payload=preset_payload,
+                primary_key="pull_ignore",
+                legacy_key="import_ignore",
+            )
+        ),
+        disabled=bool(get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="disabled") or False),
+    )
+
+
+def merge_ignore_patterns(*pattern_sets: tuple[str, ...]) -> tuple[str, ...]:
+    merged: list[str] = []
+    for pattern_set in pattern_sets:
+        for pattern in pattern_set:
+            if pattern not in merged:
+                merged.append(pattern)
+    return tuple(merged)
+
+
+def flatten_vars(data: dict[str, Any], prefix: str = "") -> dict[str, str]:
+    flattened: dict[str, str] = {}
+    for key, value in data.items():
+        flat_key = f"{prefix}__{key}" if prefix else key
+        if isinstance(value, dict):
+            flattened.update(flatten_vars(value, flat_key))
+        else:
+            flattened[flat_key] = str(value)
+    return flattened
+
+
+def infer_profile_os(profile_id: str, lineage: list[str], variables: dict[str, Any]) -> str:
+    explicit = variables.get("os")
+    if isinstance(explicit, str):
+        return explicit
+    names = [profile_id, *lineage]
+    joined = " ".join(names)
+    if "mac" in joined:
+        return "darwin"
+    if "linux" in joined or "arch" in joined:
+        return "linux"
+    return sys.platform
+
+
+def strip_package_extensions(package: PackageSpec) -> PackageSpec:
+    return replace(package, extends=None)
+
+
+def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
+    return TargetSpec(
+        name=override.name,
+        declared_in=override.declared_in,
+        source=override.source if override.source is not None else base.source,
+        path=override.path if override.path is not None else base.path,
+        chmod=override.chmod if override.chmod is not None else base.chmod,
+        render=override.render if override.render is not None else base.render,
+        capture=override.capture if override.capture is not None else base.capture,
+        reconcile=override.reconcile if override.reconcile is not None else base.reconcile,
+        reconcile_io=override.reconcile_io if override.reconcile_io is not None else base.reconcile_io,
+        pull_view_repo=override.pull_view_repo if override.pull_view_repo is not None else base.pull_view_repo,
+        pull_view_live=override.pull_view_live if override.pull_view_live is not None else base.pull_view_live,
+        push_ignore=override.push_ignore if override.push_ignore is not None else base.push_ignore,
+        pull_ignore=override.pull_ignore if override.pull_ignore is not None else base.pull_ignore,
+        disabled=override.disabled or base.disabled,
+    )
+
+
+def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec:
+    targets = dict(base.targets or {})
+    for name, target in (override.targets or {}).items():
+        targets[name] = merge_target_specs(targets[name], target) if name in targets else target
+
+    hooks = dict(base.hooks or {})
+    hooks.update(override.hooks or {})
+
+    return PackageSpec(
+        id=override.id,
+        package_root=override.package_root,
+        description=override.description if override.description is not None else base.description,
+        binding_mode=override.binding_mode,
+        depends=override.depends if override.depends is not None else base.depends,
+        extends=None,
+        reserved_paths=override.reserved_paths if override.reserved_paths is not None else base.reserved_paths,
+        vars=deep_merge(base.vars or {}, override.vars or {}),
+        targets=targets,
+        hooks=hooks,
+        remove=override.remove if override.remove is not None else base.remove,
+        append=deep_merge(base.append or {}, override.append or {}),
+    )
+
+
+def patch_remove_and_append(package: PackageSpec, remove_paths: tuple[str, ...], append_payload: dict[str, Any]) -> PackageSpec:
+    vars_payload = _copy_map(package.vars or {})
+    for dotted_path in remove_paths:
+        if dotted_path.startswith("vars."):
+            dotted_delete(vars_payload, dotted_path.removeprefix("vars."))
+
+    if append_payload:
+        for top_key, value in append_payload.items():
+            if isinstance(value, dict):
+                for nested_key, nested_value in value.items():
+                    dotted_append(vars_payload, f"{top_key}.{nested_key}", list(nested_value))
+            else:
+                dotted_append(vars_payload, top_key, list(value))
+
+    return replace(package, vars=vars_payload)
