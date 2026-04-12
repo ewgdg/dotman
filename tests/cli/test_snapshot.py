@@ -132,6 +132,37 @@ def test_push_execute_creates_snapshot_and_rollback_restores_latest_snapshot(
     assert "executing rollback" in capsys.readouterr().out
 
 
+def test_push_execute_creates_missing_file_and_rollback_deletes_it(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_snapshot_execution_repo(repo_root)
+    config_path = _write_snapshot_config(tmp_path, repo_root)
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    assert not live_path.exists()
+
+    push_exit_code = main(["--config", str(config_path), "push"])
+
+    assert push_exit_code == 0
+    assert live_path.read_text(encoding="utf-8") == "repo value\n"
+    snapshots = list_snapshots(tmp_path / "snapshots")
+    assert len(snapshots) == 1
+    assert snapshots[0].entries[0].live_path == live_path
+    assert snapshots[0].entries[0].existed_before is False
+    assert snapshots[0].entries[0].push_action == "create"
+    assert snapshots[0].entries[0].content_path is None
+
+    rollback_exit_code = main(["--config", str(config_path), "rollback"])
+
+    assert rollback_exit_code == 0
+    assert not live_path.exists()
+
+
+
 def test_push_dry_run_does_not_create_snapshot(tmp_path: Path, monkeypatch, capsys) -> None:
     home = tmp_path / "home"
     home.mkdir()
