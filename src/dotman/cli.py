@@ -476,7 +476,7 @@ def pending_selection_prompt() -> str:
 
 def review_menu_prompt() -> str:
     prompt_text = "Review command"
-    hint_text = '("?", number, "a", "c", "q"; default: continue)'
+    hint_text = '("?", number, "n", "a", "c", "q"; default: next)'
     if not colors_enabled():
         return f"\n{prompt_text} {hint_text}: "
     return (
@@ -521,6 +521,28 @@ def write_manifest_confirmation_prompt(*, repo_name: str, package_id: str) -> st
     )
 
 
+def review_continue_prompt() -> str:
+    prompt_text = "Continue?"
+    hint_text = "[Y/n]"
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text} "
+    return (
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
+    )
+
+
+def confirm_review_continue() -> bool:
+    while True:
+        answer = prompt(review_continue_prompt()).strip().lower()
+        if answer in {"", "y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+
+
 def print_selection_help() -> None:
     print("Selection help:")
     print("  <number>  choose that item")
@@ -537,6 +559,7 @@ def print_pending_selection_help() -> None:
 def print_review_command_help() -> None:
     print("Review commands:")
     print("  <number>   inspect one diff")
+    print("  n          inspect next diff")
     print("  a          inspect all diffs")
     print("  c          continue")
     print("  q          abort")
@@ -774,7 +797,9 @@ def prompt_for_conflicting_package_binding(
 
 def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | None]:
     answer = raw_answer.strip().lower()
-    if not answer or answer == "c":
+    if not answer or answer == "n":
+        return "next", None
+    if answer == "c":
         return "continue", None
     if answer == "?":
         return "help", None
@@ -1955,6 +1980,8 @@ def run_diff_review_menu(
     print_selection_header(f"Review pending diffs for {operation}:")
     for index, item in enumerate(review_items, start=1):
         print_review_item(index, item, full_paths=full_paths)
+
+    last_viewed_index: int | None = None
     while True:
         try:
             command_name, selected_index = parse_review_command(prompt(review_menu_prompt()), len(review_items))
@@ -1977,11 +2004,20 @@ def run_diff_review_menu(
                     print_review_diff_footer(index=item_index, total=len(review_items))
                 except ValueError as exc:
                     print(f"review unavailable: {exc}", file=sys.stderr)
+            if review_items:
+                last_viewed_index = len(review_items) - 1
             continue
+        if command_name == "next":
+            selected_index = 0 if last_viewed_index is None else last_viewed_index + 1
+            if selected_index >= len(review_items):
+                if confirm_review_continue():
+                    return True
+                continue
         if selected_index is None:
             print("invalid selection: missing review item", file=sys.stderr)
             continue
-        if command_name == "inspect":
+        if command_name in {"inspect", "next"}:
+            last_viewed_index = selected_index
             try:
                 print_review_diff_header(
                     review_items[selected_index],

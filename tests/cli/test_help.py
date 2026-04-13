@@ -206,6 +206,7 @@ def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> 
 
     output = capsys.readouterr().out
     assert "Review commands:" in output
+    assert "  n          inspect next diff" in output
     assert "  a          inspect all diffs" in output
     assert '  "?"        show this help' in output
 

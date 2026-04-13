@@ -454,6 +454,150 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
     assert "----- Diff 1/1: example:git (gitconfig) [update] -----" in output
     assert "----- End Diff 1/1 -----" in output
 
+
+def test_run_diff_review_menu_default_command_views_next_diff(
+    monkeypatch,
+    capsys,
+) -> None:
+    review_items = [
+        cli.ReviewItem(
+            binding_label="example:git@basic",
+            package_id="git",
+            target_name="gitconfig",
+            action="update",
+            operation="push",
+            repo_path=Path("/repo/gitconfig"),
+            live_path=Path("/live/gitconfig"),
+            source_path="/repo/gitconfig",
+            destination_path="/live/gitconfig",
+            before_bytes=b"before\n",
+            after_bytes=b"after\n",
+        ),
+        cli.ReviewItem(
+            binding_label="example:zsh@basic",
+            package_id="zsh",
+            target_name="zshrc",
+            action="update",
+            operation="push",
+            repo_path=Path("/repo/.zshrc"),
+            live_path=Path("/live/.zshrc"),
+            source_path="/repo/.zshrc",
+            destination_path="/live/.zshrc",
+            before_bytes=b"before\n",
+            after_bytes=b"after\n",
+        ),
+    ]
+    prompts = iter(["", "", "c"])
+    inspected: list[str] = []
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.run_diff_review_menu(review_items, operation="push") is True
+
+    assert inspected == ["gitconfig", "zshrc"]
+    output = capsys.readouterr().out
+    assert "----- Diff 1/2: example:git (gitconfig) [update] -----" in output
+    assert "----- Diff 2/2: example:zsh (zshrc) [update] -----" in output
+
+
+def test_run_diff_review_menu_next_command_uses_last_viewed_file(
+    monkeypatch,
+    capsys,
+) -> None:
+    review_items = [
+        cli.ReviewItem(
+            binding_label="example:git@basic",
+            package_id="git",
+            target_name="gitconfig",
+            action="update",
+            operation="push",
+            repo_path=Path("/repo/gitconfig"),
+            live_path=Path("/live/gitconfig"),
+            source_path="/repo/gitconfig",
+            destination_path="/live/gitconfig",
+            before_bytes=b"before\n",
+            after_bytes=b"after\n",
+        ),
+        cli.ReviewItem(
+            binding_label="example:zsh@basic",
+            package_id="zsh",
+            target_name="zshrc",
+            action="update",
+            operation="push",
+            repo_path=Path("/repo/.zshrc"),
+            live_path=Path("/live/.zshrc"),
+            source_path="/repo/.zshrc",
+            destination_path="/live/.zshrc",
+            before_bytes=b"before\n",
+            after_bytes=b"after\n",
+        ),
+        cli.ReviewItem(
+            binding_label="example:nvim@basic",
+            package_id="nvim",
+            target_name="init.lua",
+            action="update",
+            operation="push",
+            repo_path=Path("/repo/init.lua"),
+            live_path=Path("/live/init.lua"),
+            source_path="/repo/init.lua",
+            destination_path="/live/init.lua",
+            before_bytes=b"before\n",
+            after_bytes=b"after\n",
+        ),
+    ]
+    prompts = iter(["2", "n", "c"])
+    inspected: list[str] = []
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.run_diff_review_menu(review_items, operation="push") is True
+
+    assert inspected == ["zshrc", "init.lua"]
+    output = capsys.readouterr().out
+    assert "----- Diff 2/3: example:zsh (zshrc) [update] -----" in output
+    assert "----- Diff 3/3: example:nvim (init.lua) [update] -----" in output
+
+
+def test_run_diff_review_menu_next_command_at_end_prompts_for_continue(monkeypatch) -> None:
+    review_item = cli.ReviewItem(
+        binding_label="example:git@basic",
+        package_id="git",
+        target_name="gitconfig",
+        action="update",
+        operation="push",
+        repo_path=Path("/repo/gitconfig"),
+        live_path=Path("/live/gitconfig"),
+        source_path="/repo/gitconfig",
+        destination_path="/live/gitconfig",
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+    prompt_messages: list[str] = []
+    prompts = iter(["", "", ""])
+    inspected: list[str] = []
+
+    def fake_prompt(message: str) -> str:
+        prompt_messages.append(message)
+        return next(prompts)
+
+    monkeypatch.setattr(cli, "prompt", fake_prompt)
+    monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.run_diff_review_menu([review_item], operation="push") is True
+
+    assert inspected == ["gitconfig"]
+    assert prompt_messages == [
+        '\nReview command ("?", number, "n", "a", "c", "q"; default: next): ',
+        '\nReview command ("?", number, "n", "a", "c", "q"; default: next): ',
+        'Continue? [Y/n] ',
+    ]
+
+
 def test_print_selection_header_prepends_blank_line(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
@@ -464,7 +608,7 @@ def test_print_selection_header_prepends_blank_line(monkeypatch, capsys) -> None
 def test_review_menu_prompt_prepends_blank_line(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
-    assert cli.review_menu_prompt() == '\nReview command ("?", number, "a", "c", "q"; default: continue): '
+    assert cli.review_menu_prompt() == '\nReview command ("?", number, "n", "a", "c", "q"; default: next): '
 
 def test_pending_selection_prompt_prepends_blank_line(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
