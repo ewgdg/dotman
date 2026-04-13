@@ -9,6 +9,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotman.terminal import preserve_terminal_state
+
 
 ANSI_RESET = "\033[0m"
 MENU_HEADER_MARKER = "::"
@@ -235,14 +237,15 @@ def run_basic_reconcile(
             live_path=resolved_review_live_path,
             editable_sources=editable_sources,
         )
-        completed = subprocess.run(
-            [
-                *editor_command,
-                str(review_file_path),
-                *(str(editable_source.editable_copy_path) for editable_source in editable_sources),
-            ],
-            check=False,
-        )
+        with preserve_terminal_state():
+            completed = subprocess.run(
+                [
+                    *editor_command,
+                    str(review_file_path),
+                    *(str(editable_source.editable_copy_path) for editable_source in editable_sources),
+                ],
+                check=False,
+            )
         if completed.returncode != 0:
             return completed.returncode
 

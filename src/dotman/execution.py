@@ -14,6 +14,7 @@ from typing import Iterator, Sequence
 from dotman.engine import HOOK_NAMES_BY_OPERATION
 from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
+from dotman.terminal import preserve_terminal_state
 
 
 @dataclass(frozen=True)
@@ -621,14 +622,15 @@ def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str,
     # TTY reconcile commands are allowed to launch full-screen editors. Piping
     # and prefixing their output corrupts terminal control sequences and leaves
     # the shell looking broken after exit, so dotman must hand them the tty.
-    completed = subprocess.run(
-        command,
-        cwd=str(cwd) if cwd is not None else None,
-        env={**os.environ, **env},
-        shell=True,
-        executable="/bin/sh",
-        check=False,
-    )
+    with preserve_terminal_state():
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd) if cwd is not None else None,
+            env={**os.environ, **env},
+            shell=True,
+            executable="/bin/sh",
+            check=False,
+        )
     return completed.returncode, "", ""
 
 

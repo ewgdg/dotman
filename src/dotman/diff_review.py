@@ -13,6 +13,7 @@ from typing import Sequence
 from dotman.models import BindingPlan
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
+from dotman.terminal import preserve_terminal_state
 
 
 DEFAULT_REVIEW_PAGER = "less -FRX -R"
@@ -147,12 +148,13 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
             diff_env = None
             if pager_command is not None:
                 diff_env = {**os.environ, "GIT_PAGER": pager_command}
-            completed = subprocess.run(
-                diff_command,
-                check=False,
-                env=diff_env,
-                cwd=temp_root,
-            )
+            with preserve_terminal_state():
+                completed = subprocess.run(
+                    diff_command,
+                    check=False,
+                    env=diff_env,
+                    cwd=temp_root,
+                )
         except FileNotFoundError as exc:
             raise ValueError("git is required for diff review") from exc
     if completed.returncode not in {0, 1}:
@@ -179,13 +181,14 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
                     review_repo_path=review_env.get("DOTMAN_REVIEW_REPO_PATH"),
                     review_live_path=review_env.get("DOTMAN_REVIEW_LIVE_PATH"),
                 )
-            completed = subprocess.run(
-                review_item.reconcile_command,
-                check=False,
-                shell=True,
-                cwd=review_item.command_cwd,
-                env={**os.environ, **review_env},
-            )
+            with preserve_terminal_state():
+                completed = subprocess.run(
+                    review_item.reconcile_command,
+                    check=False,
+                    shell=True,
+                    cwd=review_item.command_cwd,
+                    env={**os.environ, **review_env},
+                )
             return completed.returncode
 
     if not review_item.repo_path.exists() or not review_item.live_path.exists():
