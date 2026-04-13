@@ -86,6 +86,79 @@ def test_pull_cli_accepts_explicit_binding_and_does_not_write_state(
         ]
     )
 
+def test_pull_cli_reviews_diffs_before_selection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config" / "nvim").mkdir(parents=True)
+    (home / ".config" / "nvim" / "init.lua").write_text(
+        'vim.g.mapleader = ","\nvim.cmd.colorscheme("industry")\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    order: list[str] = []
+    recorded: dict[str, object] = {}
+
+    def fake_run_diff_review_menu(review_items, *, operation: str, full_paths: bool = False) -> bool:
+        order.append("diff")
+        recorded["operation"] = operation
+        recorded["item_count"] = len(review_items)
+        recorded["full_paths"] = full_paths
+        return True
+
+    monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
+
+    original_filter = cli.filter_plans_for_interactive_selection
+
+    def fake_filter_plans_for_interactive_selection(*, plans, operation, json_output, full_paths=False):
+        order.append("selection")
+        return original_filter(
+            plans=plans,
+            operation=operation,
+            json_output=json_output,
+            full_paths=full_paths,
+        )
+
+    monkeypatch.setattr(cli, "filter_plans_for_interactive_selection", fake_filter_plans_for_interactive_selection)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "nvim"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "pull",
+            "--dry-run",
+        ]
+    )
+
+    assert exit_code == 0
+    assert order == ["diff", "selection"]
+    assert recorded == {
+        "operation": "pull",
+        "item_count": 1,
+        "full_paths": False,
+    }
+
+
 def test_pull_cli_returns_130_when_diff_review_aborts(
     tmp_path: Path,
     monkeypatch,

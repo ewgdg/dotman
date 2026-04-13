@@ -240,17 +240,9 @@ def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, ope
         )
         binding_text = f"{binding.repo}:{binding.selector}"
         if operation == "push":
-            plans = [engine.plan_push_binding(binding_text, profile=binding.profile)]
-        else:
-            plans = [engine.plan_pull_binding(binding_text, profile=binding.profile)]
-    else:
-        plans = engine.plan_push() if operation == "push" else engine.plan_pull()
-    return handlers.filter_plans_for_interactive_selection(
-        plans=plans,
-        operation=operation,
-        json_output=args.json_output,
-        full_paths=args.full_path,
-    )
+            return [engine.plan_push_binding(binding_text, profile=binding.profile)]
+        return [engine.plan_pull_binding(binding_text, profile=binding.profile)]
+    return engine.plan_push() if operation == "push" else engine.plan_pull()
 
 
 
@@ -264,6 +256,12 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
     ):
         handlers.emit_interrupt_notice()
         return handlers.interrupted_exit_code
+    plans = handlers.filter_plans_for_interactive_selection(
+        plans=plans,
+        operation="push",
+        json_output=args.json_output,
+        full_paths=args.full_path,
+    )
     if args.dry_run:
         return handlers.emit_payload(
             operation="push",
@@ -308,6 +306,12 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
     ):
         handlers.emit_interrupt_notice()
         return handlers.interrupted_exit_code
+    plans = handlers.filter_plans_for_interactive_selection(
+        plans=plans,
+        operation="pull",
+        json_output=args.json_output,
+        full_paths=args.full_path,
+    )
     if args.dry_run:
         return handlers.emit_payload(
             operation="pull",

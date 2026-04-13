@@ -531,7 +531,7 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    answers = iter(["1", ""])
+    answers = iter(["c", "1"])
     monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
 
     config_path = write_manager_config(tmp_path)
@@ -574,7 +574,7 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
     assert ":: example:nvim@basic" in output
     assert "nvim:init_lua -> create" in output
 
-def test_push_cli_enters_diff_review_menu_after_selection(
+def test_push_cli_reviews_diffs_before_selection(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -582,16 +582,31 @@ def test_push_cli_enters_diff_review_menu_after_selection(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    order: list[str] = []
     recorded: dict[str, object] = {}
 
     def fake_run_diff_review_menu(review_items, *, operation: str, full_paths: bool = False) -> bool:
+        order.append("diff")
         recorded["operation"] = operation
         recorded["item_count"] = len(review_items)
         recorded["full_paths"] = full_paths
         return True
 
     monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
+
+    original_filter = cli.filter_plans_for_interactive_selection
+
+    def fake_filter_plans_for_interactive_selection(*, plans, operation, json_output, full_paths=False):
+        order.append("selection")
+        return original_filter(
+            plans=plans,
+            operation=operation,
+            json_output=json_output,
+            full_paths=full_paths,
+        )
+
+    monkeypatch.setattr(cli, "filter_plans_for_interactive_selection", fake_filter_plans_for_interactive_selection)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
@@ -621,6 +636,7 @@ def test_push_cli_enters_diff_review_menu_after_selection(
     )
 
     assert exit_code == 0
+    assert order == ["diff", "selection"]
     assert recorded == {
         "operation": "push",
         "item_count": 1,
@@ -696,7 +712,8 @@ def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "prompt", lambda _message: "1")
+    answers = iter(["c", "1"])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
