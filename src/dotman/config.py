@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
-import tomllib
 from pathlib import Path
 
 from dotman.models import ManagerConfig, RepoConfig, SnapshotConfig
+from dotman.toml_utils import load_toml_file
 
 
 def default_repo_state_dir(state_key: str) -> Path:
@@ -57,7 +57,7 @@ def validate_state_key(state_key: object, *, repo_name: str) -> str:
 def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
     resolved_path = Path(config_path) if config_path is not None else default_config_path()
     resolved_path = resolved_path.expanduser().resolve()
-    payload = tomllib.loads(resolved_path.read_text(encoding="utf-8"))
+    payload = load_toml_file(resolved_path, context="manager config")
     repos_payload = payload.get("repos")
     if not isinstance(repos_payload, dict) or not repos_payload:
         raise ValueError("config must define at least one [repos.<name>] entry")

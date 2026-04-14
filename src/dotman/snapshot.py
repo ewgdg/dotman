@@ -9,9 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Sequence
 
-import tomllib
-
 from dotman.config import default_snapshot_root
+from dotman.toml_utils import load_toml_file
 from dotman.execution import delete_path_and_prune_empty_parents, write_bytes_atomic
 from dotman.models import BindingPlan, SnapshotConfig
 
@@ -234,7 +233,7 @@ def resolve_snapshot(snapshot_root: Path, reference: str | None = None) -> Snaps
 
 def load_snapshot(snapshot_root: Path) -> SnapshotRecord:
     manifest_path = snapshot_root / "manifest.toml"
-    payload = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    payload = load_toml_file(manifest_path, context="snapshot manifest")
     snapshot_id = payload.get("snapshot_id")
     created_at = payload.get("created_at")
     status = payload.get("status")

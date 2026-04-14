@@ -221,6 +221,10 @@ def render_snapshot_metadata_label(label: str, *, use_color: bool) -> str:
     return style_text(label, *MENU_HINT_STYLE)
 
 
+def render_error_metadata_label(label: str, *, use_color: bool) -> str:
+    return render_snapshot_metadata_label(label, use_color=use_color)
+
+
 def render_snapshot_provenance(
     *,
     repo_name: str | None,

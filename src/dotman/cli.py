@@ -47,6 +47,7 @@ from dotman.resolver import (
 )
 from dotman.cli_parser import build_parser as build_cli_parser
 from dotman import cli_emit, cli_commands
+from dotman.toml_utils import TomlLoadError
 
 
 MENU_HEADER_MARKER = cli_style.MENU_HEADER_MARKER
@@ -2436,7 +2437,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         emit_interrupt_notice()
         return INTERRUPTED_EXIT_CODE
     except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+        if isinstance(exc, TomlLoadError):
+            cli_emit.emit_toml_load_error(exc, use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None)
+        else:
+            print(str(exc), file=sys.stderr)
         return 2
     return 0
 

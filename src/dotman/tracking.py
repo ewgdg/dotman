@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from dotman.config import default_state_root
+from dotman.toml_utils import load_toml_file
 from dotman.models import (
     Binding,
     InstalledBindingSummary,
@@ -185,7 +185,7 @@ def describe_installed_package(engine: Any, package_text: str) -> InstalledPacka
 def read_bindings_file(state_path: Path) -> list[Binding]:
     if not state_path.exists():
         return []
-    payload = tomllib.loads(state_path.read_text(encoding="utf-8"))
+    payload = load_toml_file(state_path, context="bindings file")
     bindings_payload = payload.get("bindings", [])
     bindings: list[Binding] = []
     for binding_payload in bindings_payload:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+import re
 from pathlib import Path
 
 import pytest
@@ -220,4 +220,55 @@ def test_repository_rejects_non_table_vars_in_local_override(tmp_path: Path) -> 
     local_override_path.write_text('vars = "bad"\n', encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"\[vars\] must be a table"):
+        DotmanEngine.from_config_path(config_path)
+
+
+def test_config_reports_toml_parse_error_with_config_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.example]",
+                f'path = "{EXAMPLE_REPO}"',
+                "order = 10",
+                "",
+                "[snapshots]",
+                'enabled = true',
+                'path = "unterminated',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"invalid TOML in manager config {re.escape(str(config_path))}:",
+    ):
+        DotmanEngine.from_config_path(config_path)
+
+
+def test_repository_reports_toml_parse_error_with_package_context(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    package_manifest_path = repo_root / "packages" / "git" / "package.toml"
+    package_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    package_manifest_path.write_text(
+        "\n".join(
+            [
+                'id = "git"',
+                "",
+                "[targets.git]",
+                'source = "files/gitconfig"',
+                'path = "~/.gitconfig',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"invalid TOML in package manifest for 'fixture:git' {re.escape(str(package_manifest_path))}:",
+    ):
         DotmanEngine.from_config_path(config_path)

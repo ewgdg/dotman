@@ -7,9 +7,10 @@ import shlex
 import stat
 import subprocess
 import tempfile
-import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+from dotman.toml_utils import load_toml_text
 
 
 @dataclass(frozen=True)
@@ -153,7 +154,12 @@ def prepare_add_to_package(*, repo_root: Path, repo_name: str, package_id: str, 
     live_spec = resolve_live_path_spec(live_path_text)
     manifest_path = package_manifest_path(repo_root=repo_root, package_id=package_id)
     before_text = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else ""
-    existing_target_names, existing_target_paths = read_existing_target_metadata(before_text)
+    existing_target_names, existing_target_paths = read_existing_target_metadata(
+        before_text,
+        manifest_path=manifest_path,
+        repo_name=repo_name,
+        package_id=package_id,
+    )
     if live_spec.config_path in existing_target_paths:
         raise ValueError(
             f"package '{repo_name}:{package_id}' already declares target path '{live_spec.config_path}'"
@@ -188,7 +194,12 @@ def prepare_add_to_package(*, repo_root: Path, repo_name: str, package_id: str, 
 
 def write_add_result(result: AddOperationResult, *, manifest_text: str | None = None) -> AddOperationResult:
     final_manifest_text = manifest_text if manifest_text is not None else result.after_text
-    validate_manifest_text(final_manifest_text, package_id=result.package_id)
+    validate_manifest_text(
+        final_manifest_text,
+        package_id=result.package_id,
+        manifest_path=result.manifest_path,
+        repo_name=result.repo_name,
+    )
     result.manifest_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = result.manifest_path.with_suffix(".tmp")
     temp_path.write_text(final_manifest_text, encoding="utf-8")
@@ -196,8 +207,20 @@ def write_add_result(result: AddOperationResult, *, manifest_text: str | None = 
     return replace(result, after_text=final_manifest_text)
 
 
-def validate_manifest_text(manifest_text: str, *, package_id: str) -> None:
-    payload = tomllib.loads(manifest_text)
+def validate_manifest_text(
+    manifest_text: str,
+    *,
+    package_id: str,
+    manifest_path: Path | None = None,
+    repo_name: str | None = None,
+) -> None:
+    payload = load_toml_text(
+        manifest_text,
+        context=_manifest_context(package_id=package_id, manifest_path=manifest_path),
+        path=manifest_path,
+        package_repo=repo_name,
+        package_id=package_id,
+    )
     manifest_id = payload.get("id")
     if not isinstance(manifest_id, str):
         raise ValueError("edited package manifest must define string id")
@@ -207,10 +230,20 @@ def validate_manifest_text(manifest_text: str, *, package_id: str) -> None:
         )
 
 
-def read_existing_target_metadata(manifest_text: str) -> tuple[set[str], set[str]]:
+def read_existing_target_metadata(
+    manifest_text: str,
+    *,
+    manifest_path: Path | None = None,
+    repo_name: str | None = None,
+    package_id: str | None = None,
+) -> tuple[set[str], set[str]]:
     if not manifest_text.strip():
         return set(), set()
-    payload = tomllib.loads(manifest_text)
+    payload = load_toml_text(
+        manifest_text,
+        context=_manifest_context(manifest_path=manifest_path, repo_name=repo_name, package_id=package_id),
+        path=manifest_path,
+    )
     targets_payload = payload.get("targets")
     if not isinstance(targets_payload, dict):
         return set(), set()
@@ -221,6 +254,20 @@ def read_existing_target_metadata(manifest_text: str) -> tuple[set[str], set[str
         if isinstance(target_payload, dict) and isinstance(target_payload.get("path"), str)
     }
     return target_names, target_paths
+
+
+def _manifest_context(*, manifest_path: Path | None = None, repo_name: str | None = None, package_id: str | None = None) -> str:
+    if repo_name is not None and package_id is not None:
+        label = f"{repo_name}:{package_id}"
+    elif repo_name is not None:
+        label = repo_name
+    elif package_id is not None:
+        label = package_id
+    else:
+        label = "package"
+    if manifest_path is None:
+        return f"package manifest for '{label}'"
+    return f"package manifest for '{label}' ({manifest_path})"
 
 
 def next_available_target_name(base_name: str, existing_names: set[str]) -> str:

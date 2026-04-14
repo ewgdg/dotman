@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 from typing import Any
+
+from dotman.toml_utils import load_toml_file
 
 from dotman.manifest import (
     _copy_map,
@@ -42,7 +43,7 @@ class Repository:
         repo_config_path = self.root / "repo.toml"
         if not repo_config_path.exists():
             return RepoIgnoreDefaults()
-        payload = tomllib.loads(repo_config_path.read_text(encoding="utf-8"))
+        payload = load_toml_file(repo_config_path, context="repo config")
         ignore_payload = payload.get("ignore")
         if ignore_payload is None:
             return RepoIgnoreDefaults()
@@ -55,8 +56,15 @@ class Repository:
 
     def _load_packages(self) -> dict[str, PackageSpec]:
         packages: dict[str, PackageSpec] = {}
-        for manifest_path in sorted((self.root / "packages").glob("**/package.toml")):
-            payload = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        packages_root = self.root / "packages"
+        for manifest_path in sorted(packages_root.glob("**/package.toml")):
+            package_id = manifest_path.relative_to(packages_root).parent.as_posix()
+            payload = load_toml_file(
+                manifest_path,
+                context="package manifest",
+                package_repo=self.config.name,
+                package_id=package_id,
+            )
             package_id = payload.get("id")
             if not isinstance(package_id, str):
                 raise ValueError(f"package manifest {manifest_path} must define string id")
@@ -119,7 +127,7 @@ class Repository:
             return groups
         for group_path in sorted(groups_root.glob("**/*.toml")):
             group_id = group_path.relative_to(groups_root).with_suffix("").as_posix()
-            payload = tomllib.loads(group_path.read_text(encoding="utf-8"))
+            payload = load_toml_file(group_path, context=f"group file for repo '{self.config.name}' group '{group_id}'")
             groups[group_id] = GroupSpec(
                 id=group_id,
                 members=normalize_string_list(payload.get("members")) or (),
@@ -134,7 +142,7 @@ class Repository:
             return profiles
         for profile_path in sorted(profiles_root.glob("**/*.toml")):
             profile_id = profile_path.relative_to(profiles_root).with_suffix("").as_posix()
-            payload = tomllib.loads(profile_path.read_text(encoding="utf-8"))
+            payload = load_toml_file(profile_path, context=f"profile file for repo '{self.config.name}' profile '{profile_id}'")
             profiles[profile_id] = ProfileSpec(
                 id=profile_id,
                 includes=normalize_string_list(payload.get("includes")) or (),
@@ -147,7 +155,7 @@ class Repository:
         local_path = self.config.local_override_path
         if not local_path.exists():
             return {}
-        payload = tomllib.loads(local_path.read_text(encoding="utf-8"))
+        payload = load_toml_file(local_path, context=f"local override for repo '{self.config.name}'")
         unknown_top_level_keys = sorted(key for key in payload if key != "vars")
         if unknown_top_level_keys:
             unknown_text = ", ".join(unknown_top_level_keys)

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+import sys
 
 import pytest
 
 from dotman.cli import main
+from tests.helpers import write_single_repo_config
 
 
 def test_render_jinja_cli_renders_with_dotman_env(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -70,3 +73,42 @@ def test_render_jinja_cli_reports_invalid_input(args: list[str], expected_error:
 
     assert exit_code == 2
     assert expected_error in capsys.readouterr().err
+
+
+def test_main_formats_toml_load_error_with_package_path_and_error_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    repo_root = tmp_path / "repo"
+    package_manifest_path = repo_root / "packages" / "git" / "package.toml"
+    package_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    package_manifest_path.write_text(
+        "\n".join(
+            [
+                'id = "git"',
+                "",
+                "[targets.git]",
+                'source = "files/gitconfig"',
+                'path = "~/.gitconfig',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+
+    exit_code = main(["--config", str(config_path), "list", "tracked"])
+    error_output = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "invalid TOML" in error_output
+    assert "package:" in error_output
+    assert "path:" in error_output
+    assert "error:" in error_output
+    stripped_output = re.sub(r"\x1b\[[0-9;]*m", "", error_output)
+    assert "\n:: invalid TOML\n" in stripped_output
+    assert "fixture:git" in stripped_output
+    assert str(package_manifest_path) in error_output
+    assert "\x1b[" in error_output

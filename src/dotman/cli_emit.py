@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -9,6 +10,7 @@ from dotman import cli_style
 from dotman.diff_review import ReviewItem, display_review_path
 from dotman.execution import build_execution_session, execute_session
 from dotman.snapshot import execute_rollback
+from dotman.toml_utils import TomlLoadError
 
 
 @dataclass
@@ -35,14 +37,15 @@ def display_cli_path(reference_path: Path | str, *, full_paths: bool) -> str:
     return display_review_path(reference_path, compact=not full_paths)
 
 
-def _print_payload_header(header_text: str, *, use_color: bool) -> None:
-    print()
+def _print_payload_header(header_text: str, *, use_color: bool, file = sys.stdout) -> None:
+    print(file=file)
     if not use_color:
-        print(f"{cli_style.MENU_HEADER_MARKER} {header_text}")
+        print(f"{cli_style.MENU_HEADER_MARKER} {header_text}", file=file)
         return
     print(
         f"{cli_style.style_text(cli_style.MENU_HEADER_MARKER, *cli_style.MENU_HEADER_MARKER_STYLE)} "
-        f"{cli_style.style_text(header_text, '1')}"
+        f"{cli_style.style_text(header_text, '1')}",
+        file=file,
     )
 
 
@@ -835,6 +838,19 @@ def emit_rollback_result(*, result: Any, json_output: bool) -> int:
     if json_output:
         print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return result.exit_code
+
+
+def emit_toml_load_error(error: TomlLoadError, *, use_color: bool) -> None:
+    _print_payload_header("invalid TOML", use_color=use_color, file=sys.stderr)
+    if error.package_repo is not None and error.package_id is not None:
+        print(
+            f"  {cli_style.render_error_metadata_label('package:', use_color=use_color)} "
+            f"{cli_style.render_package_label(repo_name=error.package_repo, package_id=error.package_id, use_color=use_color)}",
+            file=sys.stderr,
+        )
+    if error.path is not None:
+        print(f"  {cli_style.render_error_metadata_label('path:', use_color=use_color)} {error.path}", file=sys.stderr)
+    print(f"  {cli_style.render_error_metadata_label('error:', use_color=use_color)} {error.detail}", file=sys.stderr)
 
 
 def run_rollback_execution(
