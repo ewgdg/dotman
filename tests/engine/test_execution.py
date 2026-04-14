@@ -98,6 +98,52 @@ def test_build_execution_session_does_not_add_pull_chmod_steps() -> None:
     assert [step.action for step in session.packages[0].steps] == ["update_repo"]
 
 
+def test_execute_session_fails_when_live_target_becomes_symlink_before_execution(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    real_live_path = live_root / "config-real.txt"
+    real_live_path.write_text("live\n", encoding="utf-8")
+    live_path = live_root / "config.txt"
+
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path,
+                live_path=live_path,
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"repo\n",
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="push")
+
+    live_path.symlink_to(real_live_path)
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "failed"
+    assert result.packages[0].steps[0].status == "failed"
+    assert result.packages[0].steps[0].error is not None
+    assert "live target path is a symlink" in result.packages[0].steps[0].error
+    assert real_live_path.read_text(encoding="utf-8") == "live\n"
+
+
+
 def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
     tmp_path: Path,
     monkeypatch,

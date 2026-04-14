@@ -12,6 +12,7 @@ from dotman.ignore import list_directory_files
 from dotman.manifest import flatten_vars, merge_ignore_patterns
 from dotman.models import Binding, DirectoryPlanItem, PackageSpec, TargetPlan, TargetSpec
 from dotman.repository import Repository
+from dotman.target_paths import ensure_declared_live_path_is_not_symlink
 from dotman.templates import render_template_file, render_template_string
 
 
@@ -36,7 +37,12 @@ def plan_targets(
             rendered_source = render_template_string(target.source, context, base_dir=target.declared_in, source_path=target.declared_in)
             rendered_path = render_template_string(target.path, context, base_dir=target.declared_in, source_path=target.declared_in)
             repo_path = (target.declared_in / rendered_source).resolve()
-            live_path = expand_path(rendered_path)
+            live_path = expand_path(rendered_path, dereference=False)
+            if operation in {"push", "upgrade"}:
+                ensure_declared_live_path_is_not_symlink(
+                    live_path=live_path,
+                    target_label=f"{package.id}:{target.name}",
+                )
             rendered_targets.append(
                 (
                     package,

@@ -30,11 +30,15 @@ def default_snapshot_root() -> Path:
     return data_home / "dotman" / "snapshots"
 
 
-def expand_path(value: str, *, base_dir: Path | None = None) -> Path:
+def expand_path(value: str, *, base_dir: Path | None = None, dereference: bool = True) -> Path:
     expanded = Path(os.path.expandvars(os.path.expanduser(value)))
     if not expanded.is_absolute() and base_dir is not None:
         expanded = base_dir / expanded
-    return expanded.resolve()
+    if dereference:
+        return expanded.resolve()
+    # Managed target paths should keep the user-declared pathname as identity
+    # instead of silently following a live symlink to a different file.
+    return Path(os.path.abspath(expanded))
 
 
 def default_local_override_path(repo_name: str) -> Path:

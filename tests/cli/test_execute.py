@@ -215,6 +215,35 @@ def test_push_cli_executes_tracked_binding_and_emits_json_results(
 
 
 
+def test_push_cli_dry_run_fails_for_symlinked_live_target(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_root = home / ".config" / "app"
+    live_root.mkdir(parents=True)
+    symlink_target = live_root / "config-real.txt"
+    symlink_target.write_text("live value\n", encoding="utf-8")
+    (live_root / "config.txt").symlink_to(symlink_target)
+
+    exit_code = main(["--config", str(config_path), "--json", "push", "--dry-run"])
+
+    assert exit_code == 2
+    error_output = capsys.readouterr().err
+    assert "live target path is a symlink" in error_output
+    assert str(live_root / "config.txt") in error_output
+
+
+
 def test_push_cli_human_execution_emits_package_timeline_and_nested_logs(
     tmp_path: Path,
     monkeypatch,
@@ -356,6 +385,36 @@ def test_pull_cli_executes_directory_pull_when_repo_source_directory_is_missing(
         "create_repo",
         "post_pull",
     ]
+
+
+
+def test_pull_cli_allows_symlinked_live_target_and_updates_repo(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_root = home / ".config" / "app"
+    live_root.mkdir(parents=True)
+    symlink_target = live_root / "config-real.txt"
+    symlink_target.write_text("live value\n", encoding="utf-8")
+    (live_root / "config.txt").symlink_to(symlink_target)
+
+    exit_code = main(["--config", str(config_path), "--json", "pull"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
+    assert repo_path.read_text(encoding="utf-8") == "live value\n"
+    assert payload["packages"][0]["steps"][2]["action"] == "update_repo"
 
 
 

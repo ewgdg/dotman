@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from dotman.config import expand_path
 from dotman.engine import DotmanEngine
 from dotman.snapshot import default_snapshot_root
 from tests.helpers import (
@@ -76,6 +77,17 @@ def test_config_reads_snapshot_overrides(tmp_path: Path) -> None:
     assert engine.config.snapshots.enabled is False
     assert engine.config.snapshots.path == snapshot_path.resolve()
     assert engine.config.snapshots.max_generations == 2
+
+
+def test_expand_path_can_preserve_declared_symlink_path(tmp_path: Path) -> None:
+    real_path = tmp_path / "real-target"
+    real_path.mkdir()
+    symlink_path = tmp_path / "declared-link"
+    symlink_path.symlink_to(real_path, target_is_directory=True)
+
+    assert expand_path(str(symlink_path), dereference=False) == symlink_path
+    assert expand_path(str(symlink_path)) == real_path.resolve()
+
 
 
 def test_config_rejects_non_positive_snapshot_retention(tmp_path: Path) -> None:

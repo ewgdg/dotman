@@ -141,7 +141,7 @@ def summarize_targets(
         rendered_source = render_template_string(target.source, context, base_dir=target.declared_in, source_path=target.declared_in)
         rendered_path = render_template_string(target.path, context, base_dir=target.declared_in, source_path=target.declared_in)
         repo_path = (target.declared_in / rendered_source).resolve()
-        live_path = expand_path(rendered_path)
+        live_path = expand_path(rendered_path, dereference=False)
         render_command = (
             render_template_string(target.render, context, base_dir=target.declared_in, source_path=target.declared_in)
             if target.render is not None

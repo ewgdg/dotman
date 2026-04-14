@@ -116,6 +116,8 @@ This document captures the current command and selector direction for `dotman`.
 - Before the first live mutation of a real `push`, dotman should create one manager-level snapshot for the finalized selected plan.
 - That snapshot should capture the pre-push live state only for paths that the finalized plan will mutate.
 - `push --dry-run` should not create a snapshot.
+- Managed target paths should keep the declared pathname as identity instead of silently following a live symlink to a different path.
+- `push` should fail fast when the declared live target path is a symlink.
 - If a real `push` fails after snapshot creation, dotman should keep that snapshot so the user can inspect it or roll back manually.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.
@@ -184,6 +186,8 @@ This document captures the current command and selector direction for `dotman`.
 - If both `capture` and `reconcile` are defined, `capture` should drive planning and `reconcile` should handle the actual selected pull step.
 - If a transformed target has no `reconcile`, dotman may still pull by writing repo-side content from `capture`, but `reconcile` is preferred when manual or custom merge logic is needed.
 - `pull` should only touch sources owned by the current managed selection.
+- Managed target paths should keep the declared pathname as identity instead of silently following a live symlink to a different path.
+- `pull` may read through a symlinked declared live path, but it should still treat the declared pathname as the managed target identity.
 - Examples:
   - `dotman pull --dry-run main:git@default`
   - `dotman pull -d`

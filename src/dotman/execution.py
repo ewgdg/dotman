@@ -15,6 +15,7 @@ from dotman.capture import BUILTIN_PATCH_CAPTURE, capture_patch
 from dotman.engine import HOOK_NAMES_BY_OPERATION
 from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
+from dotman.target_paths import ensure_declared_live_path_is_not_symlink
 from dotman.templates import build_template_context, render_template_string
 from dotman.terminal import preserve_terminal_state
 
@@ -369,8 +370,15 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool) -> ExecutionStepR
                 stderr=stderr,
                 error=None if exit_code == 0 else f"command exited with status {exit_code}",
             )
+
+        target_plan = _require_target_plan(step)
+        if step.binding_plan.operation in {"push", "upgrade"}:
+            ensure_declared_live_path_is_not_symlink(
+                live_path=target_plan.live_path,
+                target_label=f"{target_plan.package_id}:{target_plan.target_name}",
+            )
+
         if step.kind == "reconcile":
-            target_plan = _require_target_plan(step)
             with _materialize_reconcile_review_env(target_plan) as review_env:
                 command_env = {**_build_target_env(target_plan), **review_env}
                 if target_plan.reconcile_io == "tty":

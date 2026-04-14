@@ -36,15 +36,16 @@ def display_cli_path(reference_path: Path | str, *, full_paths: bool) -> str:
     return display_review_path(reference_path, compact=not full_paths)
 
 
-def _print_payload_header(header_text: str, *, use_color: bool, file = sys.stdout) -> None:
-    print(file=file)
+def _print_payload_header(header_text: str, *, use_color: bool, file=None) -> None:
+    output_file = sys.stdout if file is None else file
+    print(file=output_file)
     if not use_color:
-        print(f"{cli_style.MENU_HEADER_MARKER} {header_text}", file=file)
+        print(f"{cli_style.MENU_HEADER_MARKER} {header_text}", file=output_file)
         return
     print(
         f"{cli_style.style_text(cli_style.MENU_HEADER_MARKER, *cli_style.MENU_HEADER_MARKER_STYLE)} "
         f"{cli_style.style_text(header_text, '1')}",
-        file=file,
+        file=output_file,
     )
 
 
