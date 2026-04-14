@@ -5,8 +5,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import dotman.execution as execution
-from dotman.models import Binding, BindingPlan, HookPlan, TargetPlan
+from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
+from dotman.models import Binding, BindingPlan, HookPlan, TargetPlan
+from tests.helpers import write_named_manager_config
 
 
 def test_build_execution_session_orders_push_steps_per_package() -> None:
@@ -438,3 +440,106 @@ def test_execute_session_keeps_batch_reconcile_on_piped_command_path(
     assert result.status == "ok"
     assert result.packages[0].steps[0].stdout == "batch reconcile\n"
     assert recorded["command"] == "printf 'batch reconcile\\n'"
+
+
+def _write_patch_capture_execution_repo(repo_root: Path) -> None:
+    package_root = repo_root / "packages" / "shell"
+    (package_root / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir(parents=True)
+
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (package_root / "files" / "profile").write_text("greeting = {{ vars.greeting }}\n", encoding="utf-8")
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                '[vars]',
+                'greeting = "hello"',
+                "",
+                '[targets.profile]',
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'render = "jinja"',
+                'capture = "patch"',
+                'pull_view_repo = "render"',
+                'pull_view_live = "raw"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_execute_session_uses_review_env_for_patch_capture_and_writes_patched_repo_bytes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_patch_capture_execution_repo(repo_root)
+    live_path = home / ".profile"
+    live_path.write_text("greeting = world\n", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(write_named_manager_config(tmp_path, {"fixture": repo_root}))
+    plan = engine.plan_pull_binding("fixture:shell@default")
+    session = build_execution_session([plan], operation="pull")
+
+    recorded: dict[str, object] = {}
+
+    def fake_capture_patch(*, repo_path, project_repo_bytes, review_repo_path=None, review_live_path=None):
+        recorded["repo_path"] = repo_path
+        recorded["review_repo_path"] = review_repo_path
+        recorded["review_live_path"] = review_live_path
+        assert review_repo_path is None
+        assert review_live_path is None
+        assert execution.os.environ["DOTMAN_REVIEW_REPO_PATH"]
+        assert execution.os.environ["DOTMAN_REVIEW_LIVE_PATH"]
+        assert Path(execution.os.environ["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8") == "greeting = hello\n"
+        assert Path(execution.os.environ["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8") == "greeting = world\n"
+        assert project_repo_bytes(b"greeting = world\n") == b"greeting = world\n"
+        return b"greeting = world\n"
+
+    monkeypatch.setattr("dotman.execution.capture_patch", fake_capture_patch)
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert recorded["repo_path"] == str(repo_root / "packages" / "shell" / "files" / "profile")
+    assert live_path.read_text(encoding="utf-8") == "greeting = world\n"
+    assert (repo_root / "packages" / "shell" / "files" / "profile").read_text(encoding="utf-8") == "greeting = world\n"
+
+
+def test_execute_session_aborts_when_patch_capture_verification_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_patch_capture_execution_repo(repo_root)
+    live_path = home / ".profile"
+    live_path.write_text("greeting = world\n", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(write_named_manager_config(tmp_path, {"fixture": repo_root}))
+    plan = engine.plan_pull_binding("fixture:shell@default")
+    session = build_execution_session([plan], operation="pull")
+
+    monkeypatch.setattr(
+        "dotman.execution.capture_patch",
+        lambda **kwargs: (_ for _ in ()).throw(
+            ValueError("patch capture verification mismatch: projected bytes do not match the review live bytes")
+        ),
+    )
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "failed"
+    assert result.packages[0].steps[0].status == "failed"
+    assert "verification mismatch" in result.packages[0].steps[0].error
+    assert (repo_root / "packages" / "shell" / "files" / "profile").read_text(encoding="utf-8") == "greeting = {{ vars.greeting }}\n"

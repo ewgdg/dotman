@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from dotman.capture import BUILTIN_PATCH_CAPTURE
+
 
 BUILTIN_TARGET_PRESETS: dict[str, dict[str, Any]] = {
     "jinja-editor": {
@@ -10,7 +12,13 @@ BUILTIN_TARGET_PRESETS: dict[str, dict[str, Any]] = {
         "pull_view_live": "raw",
         "reconcile": "jinja",
         "reconcile_io": "tty",
-    }
+    },
+    "jinja-patch": {
+        "render": "jinja",
+        "capture": BUILTIN_PATCH_CAPTURE,
+        "pull_view_repo": "render",
+        "pull_view_live": "raw",
+    },
 }
 
 

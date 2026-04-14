@@ -21,6 +21,7 @@ class CliCommandHandlers:
     run_basic_reconcile: Callable[..., int]
     run_jinja_reconcile: Callable[..., int]
     run_jinja_render: Callable[..., int]
+    run_patch_capture: Callable[..., int]
     resolve_binding_text: Callable[..., Any]
     ensure_track_binding_replacement_confirmed: Callable[..., bool]
     find_recorded_bindings_for_scope: Callable[..., list[Any]]
@@ -114,6 +115,15 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
 
 
 def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> int | None:
+    if args.command == "capture" and args.capture_command == "patch":
+        return handlers.run_patch_capture(
+            repo_path=args.repo_path,
+            review_repo_path=args.review_repo_path,
+            review_live_path=args.review_live_path,
+            profile=args.profile,
+            inferred_os=args.template_os,
+            var_assignments=args.var,
+        )
     if args.command == "reconcile" and args.reconcile_command == "editor":
         return handlers.run_basic_reconcile(
             repo_path=args.repo_path,

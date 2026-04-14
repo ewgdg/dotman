@@ -516,3 +516,35 @@ def test_push_cli_human_execution_prints_package_skipped_only_for_skipped_packag
     assert "\n    failed\n" not in output
     assert ":: fixture-b:other@default" in output
     assert "\n    skipped\n" in output
+
+
+
+def test_capture_patch_cli_emits_patched_repo_bytes(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    repo_path = tmp_path / "config.txt"
+    review_repo_path = tmp_path / "review-repo.txt"
+    review_live_path = tmp_path / "review-live.txt"
+
+    repo_path.write_text("greeting = {{ vars.greeting }}\n", encoding="utf-8")
+    review_repo_path.write_text("greeting = hello\n", encoding="utf-8")
+    review_live_path.write_text("greeting = world\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "capture",
+            "patch",
+            "--repo-path",
+            str(repo_path),
+            "--review-repo-path",
+            str(review_repo_path),
+            "--review-live-path",
+            str(review_live_path),
+            "--var",
+            "greeting=hello",
+        ]
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "greeting = world\n"

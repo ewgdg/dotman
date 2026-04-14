@@ -5,13 +5,14 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from dotman.capture import BUILTIN_PATCH_CAPTURE
+from dotman.collisions import validate_reserved_path_conflicts, validate_target_collisions
 from dotman.config import expand_path
 from dotman.ignore import list_directory_files
 from dotman.manifest import flatten_vars, merge_ignore_patterns
 from dotman.models import Binding, DirectoryPlanItem, PackageSpec, TargetPlan, TargetSpec
 from dotman.repository import Repository
 from dotman.templates import render_template_file, render_template_string
-from dotman.collisions import validate_reserved_path_conflicts, validate_target_collisions
 
 
 
@@ -83,6 +84,12 @@ def plan_targets(
             inferred_os=inferred_os,
             context=context,
         )
+        validate_patch_capture_target(
+            package=package,
+            target=target,
+            target_kind=target_kind,
+            render_command=render_command,
+        )
         if target_kind == "directory":
             action, directory_items = plan_directory_action(
                 repo_path,
@@ -105,7 +112,7 @@ def plan_targets(
                     reconcile_command=reconcile_command,
                     reconcile_io=target.reconcile_io,
                     pull_view_repo=target.pull_view_repo or "raw",
-                    pull_view_live=target.pull_view_live or ("capture" if capture_command else "raw"),
+                    pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
                     push_ignore=push_ignore,
                     pull_ignore=pull_ignore,
                     chmod=target.chmod,
@@ -143,7 +150,7 @@ def plan_targets(
             else:
                 raise
         pull_view_repo = target.pull_view_repo or "raw"
-        pull_view_live = target.pull_view_live or ("capture" if capture_command else "raw")
+        pull_view_live = target.pull_view_live or default_pull_view_live(capture_command)
         action = plan_file_action(
             engine,
             repo=repo,
@@ -225,6 +232,41 @@ def infer_target_kind(*, repo_path: Path, live_path: Path) -> str:
         # exists, otherwise a missing source directory gets misclassified as a file.
         return "directory"
     return "file"
+
+
+
+def default_pull_view_live(capture_command: str | None) -> str:
+    if capture_command == BUILTIN_PATCH_CAPTURE:
+        return "raw"
+    if capture_command is not None:
+        return "capture"
+    return "raw"
+
+
+
+def validate_patch_capture_target(
+    *,
+    package: PackageSpec,
+    target: TargetSpec,
+    target_kind: str,
+    render_command: str | None,
+) -> None:
+    if target.capture != BUILTIN_PATCH_CAPTURE:
+        return
+    if target_kind != "file":
+        raise ValueError(f'capture = "patch" requires a file target for {package.id}:{target.name}')
+    if render_command != "jinja":
+        raise ValueError(f'capture = "patch" requires render = "jinja" for {package.id}:{target.name}')
+    if target.pull_view_repo is None or target.pull_view_live is None:
+        raise ValueError(
+            f'capture = "patch" requires pull_view_repo = "render" and pull_view_live = "raw" for '
+            f"{package.id}:{target.name}"
+        )
+    if target.pull_view_repo != "render" or target.pull_view_live != "raw":
+        raise ValueError(
+            f'capture = "patch" requires pull_view_repo = "render" and pull_view_live = "raw" for '
+            f"{package.id}:{target.name}"
+        )
 
 
 
@@ -528,6 +570,10 @@ def pull_view_bytes(
         )
         return desired_bytes
     if view == "capture":
+        if capture_command == BUILTIN_PATCH_CAPTURE:
+            raise ValueError(
+                f"target '{package.id}:{target.name}' reserves capture = 'patch' for reverse capture and does not expose a capture view"
+            )
         if capture_command is None:
             raise ValueError(f"target '{package.id}:{target.name}' does not define capture")
         return run_command_projection(

@@ -14,6 +14,7 @@ from dotman.add import (
     review_add_manifest,
     validate_package_id,
 )
+from dotman.capture import capture_patch
 from dotman.diff_review import (
     ReviewItem,
     build_review_items,
@@ -24,7 +25,7 @@ from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_bindin
 from dotman.models import Binding, filter_hook_plans_for_targets, package_ref_text
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
-from dotman.templates import build_template_context, render_template_file
+from dotman.templates import build_template_context, render_template_file, render_template_string
 from dotman.snapshot import (
     RollbackAction,
     SnapshotRecord,
@@ -2106,6 +2107,38 @@ def run_jinja_render(*, source_path: str, profile: str | None, inferred_os: str 
 
 
 
+def run_patch_capture(
+    *,
+    repo_path: str,
+    review_repo_path: str | None,
+    review_live_path: str | None,
+    profile: str | None,
+    inferred_os: str | None,
+    var_assignments: Sequence[str],
+) -> int:
+    resolved_repo_path = Path(repo_path).expanduser().resolve()
+    variables = _template_vars_from_dotman_env(dict(os.environ))
+    _apply_template_var_assignments(variables, var_assignments)
+    context = build_template_context(
+        variables,
+        profile=profile or os.environ.get("DOTMAN_PROFILE") or "default",
+        inferred_os=inferred_os or os.environ.get("DOTMAN_OS") or sys.platform,
+    )
+    captured = capture_patch(
+        repo_path=resolved_repo_path,
+        review_repo_path=review_repo_path,
+        review_live_path=review_live_path,
+        project_repo_bytes=lambda candidate_bytes: render_template_string(
+            candidate_bytes.decode("utf-8"),
+            context,
+            base_dir=resolved_repo_path.parent,
+        ).encode("utf-8"),
+    )
+    sys.stdout.buffer.write(captured)
+    return 0
+
+
+
 def build_parser():
     return build_cli_parser()
 
@@ -2347,6 +2380,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         run_basic_reconcile=run_basic_reconcile,
         run_jinja_reconcile=run_jinja_reconcile,
         run_jinja_render=run_jinja_render,
+        run_patch_capture=run_patch_capture,
         resolve_binding_text=resolve_binding_text,
         ensure_track_binding_replacement_confirmed=ensure_track_binding_replacement_confirmed,
         find_recorded_bindings_for_scope=find_recorded_bindings_for_scope,

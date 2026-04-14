@@ -56,6 +56,40 @@ If `reconcile` opens an editor or otherwise needs a real terminal, also set:
 
 - `reconcile_io = "tty"`
 
+## Built-In `capture = "patch"`
+
+`capture = "patch"` is the built-in reverse-capture helper for the narrow Jinja patch workflow.
+
+Use it only for file targets that already have the forward render and pull review split configured as:
+
+- `render = "jinja"`
+- `pull_view_repo = "render"`
+- `pull_view_live = "raw"`
+
+The helper reads the reviewed repo/live projections, patches the raw repo source, rerenders the patched source, and fails unless the rerender matches the review live bytes exactly.
+
+Use the explicit CLI helper when you want to debug the algorithm directly:
+
+```sh
+dotman capture patch \
+  --repo-path "$DOTMAN_REPO_PATH" \
+  --review-repo-path "$DOTMAN_REVIEW_REPO_PATH" \
+  --review-live-path "$DOTMAN_REVIEW_LIVE_PATH" \
+  --profile basic \
+  --var greeting=hello
+```
+
+For the common bundle, use:
+
+- `preset = "jinja-patch"`
+
+That preset supplies default values for:
+
+- `render = "jinja"`
+- `capture = "patch"`
+- `pull_view_repo = "render"`
+- `pull_view_live = "raw"`
+
 ## Example
 
 `package.toml`:
@@ -158,6 +192,8 @@ export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 
 Use `capture` when you can convert the live file back into the canonical repo source **without user interaction**.
 
+Use `capture = "patch"` for the narrow Jinja reverse-capture case where dotman can patch the source automatically and verify that the rerender matches the reviewed live bytes exactly.
+
 Use `reconcile` when a human needs to decide how the live change maps back to one or more template source files.
 
 Typical template target:
@@ -247,12 +283,13 @@ dotman render jinja --profile basic --os linux --var git.user_name='Example User
 ## Rules Of Thumb
 
 - No `template = true` flag or separate template target type exists
-- Jinja file rendering is explicit: use `render = "jinja"` or `preset = "jinja-editor"`
+- Jinja file rendering is explicit: use `render = "jinja"`, `preset = "jinja-editor"`, or `preset = "jinja-patch"`
+- `capture = "patch"` is the narrow automatic reverse-capture helper; it expects `render = "jinja"`, `pull_view_repo = "render"`, and `pull_view_live = "raw"`
 - dotman follows the configured `render`, `pull_view_*`, `capture`, and `reconcile` workflow
 - `.tmpl` is optional naming only
 - If your source uses Jinja `{% include %}`, relative paths resolve from the source file directory
 - For Jinja pull review, use:
   - `pull_view_repo = "render"`
   - `pull_view_live = "raw"`
-- For template-style pull execution, use either `capture` or `reconcile`
+- For template-style pull execution, use either `capture = "patch"` for automatic source patching or `reconcile` for interactive/manual work
 - If `reconcile` is interactive, set `reconcile_io = "tty"`

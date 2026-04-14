@@ -126,13 +126,15 @@ chmod = "600"
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
 - Explicit target keys override preset defaults.
-- Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow.
+- Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow and `jinja-patch` for the narrow Jinja reverse-capture workflow.
 - Targets may define `render` as a forward transform used during `push`.
 - `render` may be a built-in renderer such as `jinja`, or a non-interactive stdout-producing command string.
 - Built-in renderers are shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` means dotman runs the built-in Jinja renderer as if it had executed `dotman render jinja "$DOTMAN_SOURCE"` **with the current binding context already injected through `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`**.
 - Running `dotman render jinja ...` manually is different: it does not resolve repo/profile context by itself, so manual use must pass `--profile` / `--os` / `--var` or set the matching `DOTMAN_*` env vars.
 - Targets may define `capture` as a non-interactive live-to-repo projection used during pull planning.
 - `capture` should be a non-interactive stdout producer.
+- The reserved value `capture = "patch"` selects the built-in patch helper instead of a shell command.
+- `capture = "patch"` is meant for the narrow Jinja reverse-capture workflow, not for arbitrary shell-based stdout capture.
 - Targets may define `reconcile` as the actual reverse-sync action used during `pull`.
 - `reconcile` may be interactive and should receive both repo and live paths.
 - Built-in reconcile helpers are also available; for example, `reconcile = "jinja"` uses dotman's Jinja-aware editor reconcile flow for static template dependency trees.
@@ -141,8 +143,13 @@ chmod = "600"
 - `pull_view_repo` and `pull_view_live` may use built-in values such as `raw`, `render`, and `capture`, or an explicit script/command string when needed.
 - Default pull planning should compare:
   - repo side: `raw`
-  - live side: `capture` if the target defines `capture`, otherwise `raw`
+  - live side: `capture` if the target defines a capture command, otherwise `raw`
 - A template-style forward-managed target should typically set:
+  - `pull_view_repo = "render"`
+  - `pull_view_live = "raw"`
+- For the narrow automatic reverse-capture workflow, use:
+  - `render = "jinja"`
+  - `capture = "patch"`
   - `pull_view_repo = "render"`
   - `pull_view_live = "raw"`
 - See [`templates.md`](./templates.md) for a concrete package-manifest setup, including reconcile configuration for template sources with includes.
@@ -200,13 +207,16 @@ pull = ["*.dotdropbak"]
 - Existing helper scripts may support stdout either when no output path is passed or when an explicit stdout-style output argument is used.
 - A target with `render` is implicitly a transformed/template-like target; no separate template flag is needed.
 - `render` is the forward path used during `push`.
-- `capture` is the live-side planning projection used during `pull`.
+- `capture` is the live-side planning projection used during `pull` when it is a capture command string.
+- The reserved value `capture = "patch"` selects the built-in reverse-capture helper and is not itself a planning projection.
+- If you use `capture = "patch"`, you must also set `pull_view_repo` and `pull_view_live` explicitly.
+- `capture = "patch"` rerenders the patched repo source and must match the reviewed live bytes exactly.
 - `reconcile` is the reverse action used during `pull`.
 - Directory targets should not support `render`, `capture`, or `reconcile` in v1.
 - During pull planning, dotman should compare:
   - repo-side view output against live-side view output
   - default repo-side view: `raw`
-  - default live-side view: `capture` if available, otherwise `raw`
+  - default live-side view: `capture` if available via a capture command, otherwise `raw`
 - `pull_view_repo` and `pull_view_live` must stay non-interactive and side-effect free.
 - `reconcile` is the explicit reverse workflow. A `reconcile` command may open an editor or otherwise guide manual source reconciliation.
 - `reconcile_io` controls how the selected reconcile step is executed.

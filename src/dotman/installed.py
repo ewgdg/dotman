@@ -5,7 +5,7 @@ from typing import Any
 
 from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
-from dotman.projection import infer_target_kind
+from dotman.projection import default_pull_view_live, infer_target_kind
 from dotman.models import (
     Binding,
     InstalledBindingSummary,
@@ -168,7 +168,7 @@ def summarize_targets(
                 reconcile_command=reconcile_command,
                 reconcile_io=target.reconcile_io,
                 pull_view_repo=target.pull_view_repo or "raw",
-                pull_view_live=target.pull_view_live or ("capture" if capture_command else "raw"),
+                pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
                 push_ignore=merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ()),
                 pull_ignore=merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ()),
                 chmod=target.chmod,

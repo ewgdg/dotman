@@ -64,6 +64,27 @@ def add_full_path_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_jinja_context_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--profile",
+        metavar="<profile>",
+        help="Profile value to expose in template context",
+    )
+    parser.add_argument(
+        "--os",
+        dest="template_os",
+        metavar="<os>",
+        help="OS value to expose in template context",
+    )
+    parser.add_argument(
+        "--var",
+        action="append",
+        default=[],
+        metavar="<key=value>",
+        help="Additional template var assignment using dotted keys",
+    )
+
+
 def hide_subparser_from_help(subparsers, name: str) -> None:
     # Argparse has no public API for parseable-but-hidden subcommands.
     subparsers._choices_actions = [
@@ -186,6 +207,40 @@ def build_parser() -> argparse.ArgumentParser:
     add_package_argument(info_installed_parser)
     hide_subparser_from_help(info_subparsers, "installed")
 
+    capture_parser = subparsers.add_parser(
+        "capture",
+        help="Patch review content back into repo source",
+        description="Patch review content back into repo source",
+    )
+    capture_subparsers = capture_parser.add_subparsers(
+        dest="capture_command",
+        required=True,
+        title="capture commands",
+        metavar="<capture-command>",
+    )
+    capture_patch_parser = capture_subparsers.add_parser(
+        "patch",
+        help="Patch a rendered Jinja source file from review content",
+        description="Patch a rendered Jinja source file from review content",
+    )
+    capture_patch_parser.add_argument(
+        "--repo-path",
+        required=True,
+        metavar="<repo-path>",
+        help="Path to the repo source file",
+    )
+    capture_patch_parser.add_argument(
+        "--review-repo-path",
+        metavar="<review-repo-path>",
+        help="Prepared repo-side review file path",
+    )
+    capture_patch_parser.add_argument(
+        "--review-live-path",
+        metavar="<review-live-path>",
+        help="Prepared live-side review file path",
+    )
+    add_jinja_context_arguments(capture_patch_parser)
+
     reconcile_parser = subparsers.add_parser(
         "reconcile",
         help="Re-run a reconcile helper subcommand",
@@ -292,22 +347,5 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="<source-path>",
         help="Path to the Jinja source file",
     )
-    render_jinja_parser.add_argument(
-        "--profile",
-        metavar="<profile>",
-        help="Profile value to expose in template context",
-    )
-    render_jinja_parser.add_argument(
-        "--os",
-        dest="template_os",
-        metavar="<os>",
-        help="OS value to expose in template context",
-    )
-    render_jinja_parser.add_argument(
-        "--var",
-        action="append",
-        default=[],
-        metavar="<key=value>",
-        help="Additional template var assignment using dotted keys",
-    )
+    add_jinja_context_arguments(render_jinja_parser)
     return parser

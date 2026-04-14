@@ -11,9 +11,11 @@ from pathlib import Path
 from threading import Thread
 from typing import Iterator, Sequence
 
+from dotman.capture import BUILTIN_PATCH_CAPTURE, capture_patch
 from dotman.engine import HOOK_NAMES_BY_OPERATION
 from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
+from dotman.templates import build_template_context, render_template_string
 from dotman.terminal import preserve_terminal_state
 
 
@@ -430,11 +432,12 @@ def _execute_target_step(step: ExecutionStep) -> None:
         return
     if step.action in {"create_repo", "update_repo"}:
         repo_path = step.directory_item.repo_path if step.directory_item is not None else target_plan.repo_path
-        repo_bytes = (
-            step.directory_item.live_path.read_bytes()
-            if step.directory_item is not None
-            else _pull_desired_bytes(target_plan)
-        )
+        if step.directory_item is not None:
+            repo_bytes = step.directory_item.live_path.read_bytes()
+        elif target_plan.capture_command == BUILTIN_PATCH_CAPTURE:
+            repo_bytes = _pull_patch_capture_bytes(target_plan=target_plan, binding_plan=step.binding_plan)
+        else:
+            repo_bytes = _pull_desired_bytes(target_plan)
         _write_bytes(repo_path, repo_bytes)
         _restore_repo_path_access_for_invoking_user(repo_path, repo_root=step.binding_plan.repo_root)
         return
@@ -490,6 +493,44 @@ def _pull_desired_bytes(target_plan: TargetPlan) -> bytes:
     if exit_code != 0:
         raise ValueError(stderr.strip() or f"capture command exited with status {exit_code}")
     return stdout.encode("utf-8")
+
+
+@contextmanager
+def _materialize_patch_capture_review_env(target_plan: TargetPlan) -> Iterator[None]:
+    # Reverse capture needs the same review-side projection bytes the reviewer saw,
+    # not the raw repo and live files.
+    with _materialize_reconcile_review_env(target_plan) as review_env:
+        previous_env = {key: os.environ.get(key) for key in review_env}
+        os.environ.update(review_env)
+        try:
+            yield
+        finally:
+            for key, previous_value in previous_env.items():
+                if previous_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = previous_value
+
+
+def _pull_patch_capture_bytes(*, target_plan: TargetPlan, binding_plan: BindingPlan) -> bytes:
+    projector = _build_patch_capture_projector(target_plan=target_plan, binding_plan=binding_plan)
+    with _materialize_patch_capture_review_env(target_plan):
+        return capture_patch(repo_path=str(target_plan.repo_path), project_repo_bytes=projector)
+
+
+def _build_patch_capture_projector(*, target_plan: TargetPlan, binding_plan: BindingPlan):
+    context = build_template_context(
+        binding_plan.variables,
+        profile=binding_plan.binding.profile,
+        inferred_os=binding_plan.inferred_os or sys.platform,
+    )
+    base_dir = target_plan.repo_path.parent
+
+    def project(candidate_bytes: bytes) -> bytes:
+        candidate_text = candidate_bytes.decode("utf-8")
+        return render_template_string(candidate_text, context, base_dir=base_dir).encode("utf-8")
+
+    return project
 
 
 def write_bytes_atomic(path: Path, content: bytes) -> None:
@@ -672,8 +713,8 @@ def _materialize_reconcile_review_env(target_plan: TargetPlan) -> Iterator[dict[
         yield {}
         return
 
-    # Reconcile helpers, especially `dotman reconcile editor`, should review the
-    # same projected pull views the user selected from, not the raw repo/live files.
+    # Review helpers, especially `dotman reconcile editor` and reverse capture,
+    # should review the same projected pull views the user selected from, not the raw repo/live files.
     with tempfile.TemporaryDirectory(prefix="dotman-reconcile-review-") as temp_dir:
         temp_root = Path(temp_dir)
         review_repo_path = temp_root / f"review-repo-{target_plan.repo_path.name}"

@@ -263,6 +263,134 @@ def test_target_preset_jinja_editor_expands_default_workflow(
     assert pull_target.reconcile_io == "tty"
 
 
+def test_target_preset_jinja_patch_expands_default_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'preset = "jinja-patch"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
+        "{% include 'env.core.sh' %}\n",
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "env.core.sh").write_text(
+        "export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n",
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (home / ".profile").write_text("export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    push_plan = engine.plan_push_binding("fixture:shell@default")
+    pull_plan = engine.plan_pull_binding("fixture:shell@default")
+
+    push_target = push_plan.target_plans[0]
+    pull_target = pull_plan.target_plans[0]
+    assert push_target.render_command == "jinja"
+    assert push_target.capture_command == "patch"
+    assert pull_target.pull_view_repo == "render"
+    assert pull_target.pull_view_live == "raw"
+    assert pull_target.capture_command == "patch"
+
+
+def test_capture_patch_rejects_directory_targets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files" / "profile").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'preset = "jinja-patch"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    with pytest.raises(ValueError, match="capture = \"patch\" requires a file target"):
+        engine.plan_pull_binding("fixture:shell@default")
+
+
+def test_capture_patch_rejects_raw_review_views(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'render = "jinja"',
+                'capture = "patch"',
+                'pull_view_repo = "raw"',
+                'pull_view_live = "raw"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
+        "{% include 'env.core.sh' %}\n",
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "env.core.sh").write_text(
+        "export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n",
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (home / ".profile").write_text("export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    with pytest.raises(ValueError, match="pull_view_repo = \"render\" and pull_view_live = \"raw\""):
+        engine.plan_pull_binding("fixture:shell@default")
+
+
 
 def test_target_preset_values_can_be_overridden(
     tmp_path: Path,

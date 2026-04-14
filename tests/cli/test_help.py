@@ -49,6 +49,7 @@ def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     assert "usage: dotman [-h] [--config <config-path>] [--json] <command> ..." in output
     assert "commands:" in output
     assert "Track a binding in manager state" in output
+    assert "Patch review content back into repo source" in output
     assert "Re-run a reconcile helper subcommand" in output
     assert "Render built-in template helpers" in output
 
@@ -74,6 +75,24 @@ def test_reconcile_editor_help_uses_explicit_option_placeholders(capsys) -> None
     assert "--review-live-path <review-live-path>" in output
     assert "--additional-source <source-path>" in output
     assert "--editor <editor-command>" in output
+
+
+def test_capture_help_lists_patch_shortcut(capsys) -> None:
+    output = capture_parser_help(capsys, "capture")
+    assert "usage: dotman capture [-h] <capture-command> ..." in output
+    assert "capture commands:" in output
+    assert "patch" in output
+    assert "Patch review content back into repo source" in output
+
+
+def test_capture_patch_help_uses_explicit_option_placeholders(capsys) -> None:
+    output = capture_parser_help(capsys, "capture", "patch")
+    assert "usage: dotman capture patch [-h] --repo-path <repo-path>" in output
+    assert "--review-repo-path <review-repo-path>" in output
+    assert "--review-live-path <review-live-path>" in output
+    assert "--profile <profile>" in output
+    assert "--os <os>" in output
+    assert "--var <key=value>" in output
 
 
 def test_reconcile_help_lists_jinja_shortcut(capsys) -> None:
