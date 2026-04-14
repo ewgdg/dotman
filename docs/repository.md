@@ -129,7 +129,8 @@ chmod = "600"
 - Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow.
 - Targets may define `render` as a forward transform used during `push`.
 - `render` may be a built-in renderer such as `jinja`, or a non-interactive stdout-producing command string.
-- Built-in renderers are just shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` is equivalent to `dotman render jinja "$DOTMAN_SOURCE"`.
+- Built-in renderers are shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` means dotman runs the built-in Jinja renderer as if it had executed `dotman render jinja "$DOTMAN_SOURCE"` **with the current binding context already injected through `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`**.
+- Running `dotman render jinja ...` manually is different: it does not resolve repo/profile context by itself, so manual use must pass `--profile` / `--os` / `--var` or set the matching `DOTMAN_*` env vars.
 - Targets may define `capture` as a non-interactive live-to-repo projection used during pull planning.
 - `capture` should be a non-interactive stdout producer.
 - Targets may define `reconcile` as the actual reverse-sync action used during `pull`.
