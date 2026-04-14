@@ -1939,7 +1939,7 @@ def print_review_diff_header(review_item: ReviewItem, *, index: int, total: int)
         print(f"{separator} {header_text} {separator}")
         return
     repo_name = repo_name_from_binding_label(review_item.binding_label)
-    prefix_text = style_text(f"Diff {index}/{total}:", "1")
+    prefix_text = style_text(f"Diff {index}/{total}:", *MENU_HINT_STYLE)
     package_label = render_package_target_label(
         repo_name=repo_name,
         package_id=review_item.package_id,

@@ -455,6 +455,35 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
     assert "----- End Diff 1/1 -----" in output
 
 
+def test_print_review_diff_header_dims_metadata_prefix_when_colored(
+    monkeypatch,
+    capsys,
+) -> None:
+    review_item = cli.ReviewItem(
+        binding_label="example:git@basic",
+        package_id="git",
+        target_name="gitconfig",
+        action="update",
+        operation="push",
+        repo_path=Path("/repo/gitconfig"),
+        live_path=Path("/live/gitconfig"),
+        source_path="/repo/gitconfig",
+        destination_path="/live/gitconfig",
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+
+    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+
+    cli.print_review_diff_header(review_item, index=1, total=1)
+
+    output = capsys.readouterr().out
+    assert "\033[2m-----\033[0m \033[2mDiff 1/1:\033[0m " in output
+    assert "\033[2;34mexample\033[0m\033[2m:\033[0m\033[1mgit\033[0m \033[2m(gitconfig)\033[0m" in output
+    assert "\033[1;36m[update]\033[0m" in output
+    assert output.endswith(" \033[2m-----\033[0m\n")
+
+
 def test_run_diff_review_menu_default_command_views_next_diff(
     monkeypatch,
     capsys,
