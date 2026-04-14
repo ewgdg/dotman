@@ -22,6 +22,8 @@ If you run `dotman render jinja ...` manually in your shell, dotman does **not**
 
 The shortcut is preferred in manifests. The explicit command form is mainly useful for understanding what dotman runs internally and for manual debugging with explicit inputs.
 
+See [`repository.md`](./repository.md) for template var resolution.
+
 For pull, you usually also want:
 
 - `pull_view_repo = "render"`
