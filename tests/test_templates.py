@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from dotman.templates import discover_template_file_dependencies, render_template_file, render_template_string
+from dotman.templates import (
+    JinjaRenderError,
+    discover_template_file_dependencies,
+    render_template_file,
+    render_template_string,
+)
 
 
 def test_render_template_file_trims_standalone_control_block_lines(tmp_path: Path) -> None:
@@ -46,6 +51,21 @@ def test_render_template_string_preserves_default_block_whitespace(tmp_path: Pat
     )
 
     assert rendered == "alpha\n\nbeta\n\ngamma\n"
+
+
+def test_render_template_string_wraps_jinja_errors(tmp_path: Path) -> None:
+    source_path = tmp_path / "template.txt"
+
+    with pytest.raises(JinjaRenderError, match="jinja render failed") as exc_info:
+        render_template_string("{{ missing.value }}", {}, base_dir=tmp_path, source_path=source_path)
+
+    assert exc_info.value.path == source_path
+    assert "missing" in exc_info.value.detail
+
+
+def test_render_template_file_wraps_directory_inputs(tmp_path: Path) -> None:
+    with pytest.raises(JinjaRenderError, match="source path must be a file"):
+        render_template_file(tmp_path, {})
 
 
 def test_discover_template_file_dependencies_collects_recursive_static_refs(tmp_path: Path) -> None:

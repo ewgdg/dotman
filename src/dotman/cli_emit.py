@@ -10,7 +10,6 @@ from dotman import cli_style
 from dotman.diff_review import ReviewItem, display_review_path
 from dotman.execution import build_execution_session, execute_session
 from dotman.snapshot import execute_rollback
-from dotman.toml_utils import TomlLoadError
 
 
 @dataclass
@@ -840,17 +839,43 @@ def emit_rollback_result(*, result: Any, json_output: bool) -> int:
     return result.exit_code
 
 
-def emit_toml_load_error(error: TomlLoadError, *, use_color: bool) -> None:
-    _print_payload_header("invalid TOML", use_color=use_color, file=sys.stderr)
-    if error.package_repo is not None and error.package_id is not None:
-        print(
-            f"  {cli_style.render_error_metadata_label('package:', use_color=use_color)} "
-            f"{cli_style.render_package_label(repo_name=error.package_repo, package_id=error.package_id, use_color=use_color)}",
-            file=sys.stderr,
+def _emit_error_block(*, header_text: str, fields: Sequence[tuple[str, str]], use_color: bool) -> None:
+    _print_payload_header(header_text, use_color=use_color, file=sys.stderr)
+    for label, value in fields:
+        print(f"  {cli_style.render_error_metadata_label(label, use_color=use_color)} {value}", file=sys.stderr)
+
+
+def _structured_error_fields(error: Any, *, use_color: bool) -> list[tuple[str, str]]:
+    fields: list[tuple[str, str]] = []
+    package_repo = getattr(error, "package_repo", None)
+    package_id = getattr(error, "package_id", None)
+    if package_repo is not None and package_id is not None:
+        fields.append(
+            (
+                "package:",
+                cli_style.render_package_label(
+                    repo_name=package_repo,
+                    package_id=package_id,
+                    use_color=use_color,
+                ),
+            )
         )
-    if error.path is not None:
-        print(f"  {cli_style.render_error_metadata_label('path:', use_color=use_color)} {error.path}", file=sys.stderr)
-    print(f"  {cli_style.render_error_metadata_label('error:', use_color=use_color)} {error.detail}", file=sys.stderr)
+    path = getattr(error, "path", None)
+    if path is not None:
+        fields.append(("path:", str(path)))
+    detail = getattr(error, "detail", None)
+    if detail is None:
+        detail = str(error) or error.__class__.__name__
+    fields.append(("detail:", str(detail)))
+    return fields
+
+
+def emit_error(error: Exception, *, use_color: bool) -> None:
+    _emit_error_block(
+        header_text=error.__class__.__name__,
+        fields=_structured_error_fields(error, use_color=use_color),
+        use_color=use_color,
+    )
 
 
 def run_rollback_execution(

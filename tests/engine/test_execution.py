@@ -533,7 +533,7 @@ def test_execute_session_aborts_when_patch_capture_verification_fails(
     monkeypatch.setattr(
         "dotman.execution.capture_patch",
         lambda **kwargs: (_ for _ in ()).throw(
-            ValueError("patch capture verification mismatch: projected bytes do not match the review live bytes")
+            ValueError("capture verification mismatch: captured bytes do not match the review live bytes")
         ),
     )
 

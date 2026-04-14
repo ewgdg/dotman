@@ -257,7 +257,7 @@ def plan_hooks(
                     HookPlan(
                         package_id=package.id,
                         hook_name=hook_name,
-                        command=render_template_string(command, context, base_dir=hook_spec.declared_in).strip(),
+                        command=render_template_string(command, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
                         cwd=hook_spec.declared_in,
                     )
                 )

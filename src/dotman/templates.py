@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,15 @@ class DotmanUndefined(Undefined):
     def __str__(self) -> str:
         self._fail_with_undefined_error()
         return ""
+
+
+@dataclass(frozen=True)
+class JinjaRenderError(ValueError):
+    path: Path | None
+    detail: str
+
+    def __str__(self) -> str:
+        return format_jinja_render_error(self)
 
 
 def _base_environment(base_dir: Path) -> Environment:
@@ -81,9 +91,32 @@ def build_template_context(
     return context
 
 
-def render_template_string(value: str, context: dict[str, Any], *, base_dir: Path) -> str:
-    env = _string_environment(base_dir)
-    return env.from_string(value).render(context)
+def format_jinja_render_error(error: JinjaRenderError) -> str:
+    location = f" for {error.path}" if error.path is not None else ""
+    return f"jinja render failed{location}: {error.detail}"
+
+
+def _render_template(
+    env: Environment,
+    value: str,
+    context: dict[str, Any],
+    *,
+    source_path: Path | None = None,
+) -> str:
+    try:
+        return env.from_string(value).render(context)
+    except (TemplateNotFound, TemplateSyntaxError, UndefinedError, ValueError) as exc:
+        raise JinjaRenderError(path=source_path, detail=str(exc)) from exc
+
+
+def render_template_string(
+    value: str,
+    context: dict[str, Any],
+    *,
+    base_dir: Path,
+    source_path: Path | None = None,
+) -> str:
+    return _render_template(_string_environment(base_dir), value, context, source_path=source_path)
 
 
 def discover_template_file_dependencies(path: Path) -> tuple[Path, ...]:
@@ -132,12 +165,10 @@ def discover_template_file_dependencies(path: Path) -> tuple[Path, ...]:
 def render_template_file(path: Path, context: dict[str, Any]) -> tuple[bytes, str]:
     try:
         source_text = path.read_text(encoding="utf-8")
+    except IsADirectoryError as exc:
+        raise JinjaRenderError(path=path, detail="source path must be a file") from exc
     except UnicodeDecodeError as exc:
-        raise ValueError(f"jinja render requires a utf-8 text file: {path}") from exc
+        raise JinjaRenderError(path=path, detail="source file must be UTF-8 text") from exc
 
-    env = _file_environment(path.parent)
-    try:
-        template = env.from_string(source_text)
-        return template.render(context).encode("utf-8"), "template"
-    except (TemplateSyntaxError, UndefinedError, ValueError) as exc:
-        raise ValueError(f"jinja render failed for {path}: {exc}") from exc
+    rendered = _render_template(_file_environment(path.parent), source_text, context, source_path=path)
+    return rendered.encode("utf-8"), "template"

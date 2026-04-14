@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from dotman.capture import capture_patch
+from dotman.capture import CaptureError, capture_patch
 from dotman.templates import build_template_context, render_template_string
 
 
@@ -66,7 +66,7 @@ def test_capture_patch_rejects_review_repo_line_count_mismatches(tmp_path: Path)
     review_live_path.write_text("greeting = world\n", encoding="utf-8")
     context = build_template_context({"greeting": "hello"}, profile="default", inferred_os="linux")
 
-    with pytest.raises(ValueError, match="same line count"):
+    with pytest.raises(CaptureError, match="same line count"):
         capture_patch(
             repo_path=repo_path,
             review_repo_path=review_repo_path,
@@ -81,7 +81,7 @@ def test_capture_patch_requires_review_paths_from_env_when_not_provided(tmp_path
     monkeypatch.delenv("DOTMAN_REVIEW_REPO_PATH", raising=False)
     monkeypatch.delenv("DOTMAN_REVIEW_LIVE_PATH", raising=False)
 
-    with pytest.raises(ValueError, match="DOTMAN_REVIEW_REPO_PATH"):
+    with pytest.raises(CaptureError, match="DOTMAN_REVIEW_REPO_PATH"):
         capture_patch(
             repo_path=repo_path,
             project_repo_bytes=lambda candidate_bytes: candidate_bytes,
@@ -98,7 +98,7 @@ def test_capture_patch_reports_projection_mismatch(tmp_path: Path) -> None:
     review_live_path.write_text("greeting = world\n", encoding="utf-8")
     context = build_template_context({"greeting": "hello"}, profile="default", inferred_os="linux")
 
-    with pytest.raises(ValueError, match="verification mismatch"):
+    with pytest.raises(CaptureError, match="captured bytes do not match"):
         capture_patch(
             repo_path=repo_path,
             review_repo_path=review_repo_path,
@@ -108,3 +108,29 @@ def test_capture_patch_reports_projection_mismatch(tmp_path: Path) -> None:
                 context=context,
             )(candidate_bytes).replace(b"world", b"mismatch"),
         )
+
+
+def test_capture_patch_wraps_jinja_projection_errors_structurally(tmp_path: Path) -> None:
+    repo_path = tmp_path / "config.txt"
+    review_repo_path = tmp_path / "review-repo.txt"
+    review_live_path = tmp_path / "review-live.txt"
+
+    repo_path.write_text("greeting = {{ vars.greeting }}\n", encoding="utf-8")
+    review_repo_path.write_text("greeting = hello\n", encoding="utf-8")
+    review_live_path.write_text("greeting = world\n", encoding="utf-8")
+
+    with pytest.raises(CaptureError, match="capture failed") as exc_info:
+        capture_patch(
+            repo_path=repo_path,
+            review_repo_path=review_repo_path,
+            review_live_path=review_live_path,
+            project_repo_bytes=lambda _candidate_bytes: render_template_string(
+                "{{ missing.value }}",
+                {},
+                base_dir=repo_path.parent,
+                source_path=repo_path,
+            ).encode("utf-8"),
+        )
+
+    assert exc_info.value.path == repo_path
+    assert "missing" in exc_info.value.detail

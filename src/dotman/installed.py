@@ -138,22 +138,22 @@ def summarize_targets(
             continue
         if target.source is None or target.path is None:
             raise ValueError(f"target '{package.id}:{target.name}' must define source and path")
-        rendered_source = render_template_string(target.source, context, base_dir=target.declared_in)
-        rendered_path = render_template_string(target.path, context, base_dir=target.declared_in)
+        rendered_source = render_template_string(target.source, context, base_dir=target.declared_in, source_path=target.declared_in)
+        rendered_path = render_template_string(target.path, context, base_dir=target.declared_in, source_path=target.declared_in)
         repo_path = (target.declared_in / rendered_source).resolve()
         live_path = expand_path(rendered_path)
         render_command = (
-            render_template_string(target.render, context, base_dir=target.declared_in)
+            render_template_string(target.render, context, base_dir=target.declared_in, source_path=target.declared_in)
             if target.render is not None
             else None
         )
         capture_command = (
-            render_template_string(target.capture, context, base_dir=target.declared_in)
+            render_template_string(target.capture, context, base_dir=target.declared_in, source_path=target.declared_in)
             if target.capture is not None
             else None
         )
         reconcile_command = (
-            render_template_string(target.reconcile, context, base_dir=target.declared_in)
+            render_template_string(target.reconcile, context, base_dir=target.declared_in, source_path=target.declared_in)
             if target.reconcile is not None
             else None
         )

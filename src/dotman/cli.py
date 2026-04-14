@@ -25,7 +25,7 @@ from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_bindin
 from dotman.models import Binding, filter_hook_plans_for_targets, package_ref_text
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
-from dotman.templates import build_template_context, render_template_file, render_template_string
+from dotman.templates import JinjaRenderError, build_template_context, render_template_file, render_template_string
 from dotman.snapshot import (
     RollbackAction,
     SnapshotRecord,
@@ -47,7 +47,6 @@ from dotman.resolver import (
 )
 from dotman.cli_parser import build_parser as build_cli_parser
 from dotman import cli_emit, cli_commands
-from dotman.toml_utils import TomlLoadError
 
 
 MENU_HEADER_MARKER = cli_style.MENU_HEADER_MARKER
@@ -1507,7 +1506,7 @@ def prompt_for_new_package_id(*, default_package_id: str | None) -> str:
         try:
             validate_package_id(package_id)
         except ValueError as exc:
-            print(str(exc), file=sys.stderr)
+            cli_emit.emit_error(exc, use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None)
             continue
         return package_id
 
@@ -2096,7 +2095,7 @@ def run_jinja_render(*, source_path: str, profile: str | None, inferred_os: str 
     variables = _template_vars_from_dotman_env(dict(os.environ))
     _apply_template_var_assignments(variables, var_assignments)
     if not path.exists():
-        raise ValueError(f"jinja render failed for {path}: source path does not exist")
+        raise JinjaRenderError(path=path, detail="source path does not exist")
     context = build_template_context(
         variables,
         profile=profile or os.environ.get("DOTMAN_PROFILE") or "default",
@@ -2133,6 +2132,7 @@ def run_patch_capture(
             candidate_bytes.decode("utf-8"),
             context,
             base_dir=resolved_repo_path.parent,
+            source_path=resolved_repo_path,
         ).encode("utf-8"),
     )
     sys.stdout.buffer.write(captured)
@@ -2437,10 +2437,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         emit_interrupt_notice()
         return INTERRUPTED_EXIT_CODE
     except ValueError as exc:
-        if isinstance(exc, TomlLoadError):
-            cli_emit.emit_toml_load_error(exc, use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None)
-        else:
-            print(str(exc), file=sys.stderr)
+        cli_emit.emit_error(exc, use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None)
         return 2
     return 0
 

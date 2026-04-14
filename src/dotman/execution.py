@@ -528,7 +528,7 @@ def _build_patch_capture_projector(*, target_plan: TargetPlan, binding_plan: Bin
 
     def project(candidate_bytes: bytes) -> bytes:
         candidate_text = candidate_bytes.decode("utf-8")
-        return render_template_string(candidate_text, context, base_dir=base_dir).encode("utf-8")
+        return render_template_string(candidate_text, context, base_dir=base_dir, source_path=target_plan.repo_path).encode("utf-8")
 
     return project
 

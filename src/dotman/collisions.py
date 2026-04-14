@@ -164,7 +164,7 @@ def validate_reserved_path_conflicts(
     reserved_claims: list[tuple[str, Path]] = []
     for package in packages:
         for reserved_path in package.reserved_paths or ():
-            rendered_path = render_template_string(reserved_path, context, base_dir=package.package_root)
+            rendered_path = render_template_string(reserved_path, context, base_dir=package.package_root, source_path=package.package_root)
             reserved_claims.append((package.id, expand_path(rendered_path)))
 
     for package_id, reserved_path in reserved_claims:

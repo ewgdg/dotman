@@ -2,14 +2,31 @@ from __future__ import annotations
 
 import difflib
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+from dotman.templates import JinjaRenderError
 
 
 BUILTIN_PATCH_CAPTURE = "patch"
 
 
+@dataclass(frozen=True)
+class CaptureError(ValueError):
+    path: Path | None
+    detail: str
+
+    def __str__(self) -> str:
+        return format_capture_error(self)
+
+
 ProjectRepoBytes = Callable[[bytes], bytes]
+
+
+def format_capture_error(error: CaptureError) -> str:
+    location = f" for {error.path}" if error.path is not None else ""
+    return f"capture failed{location}: {error.detail}"
 
 
 def capture_patch(
@@ -39,31 +56,54 @@ def capture_patch(
     raw_bytes = resolved_repo_path.read_bytes()
     review_repo_bytes = resolved_review_repo_path.read_bytes()
     review_live_bytes = resolved_review_live_path.read_bytes()
-    candidate_bytes = apply_review_patch(raw_bytes, review_repo_bytes, review_live_bytes)
+    candidate_bytes = apply_review_patch(
+        raw_bytes,
+        review_repo_bytes,
+        review_live_bytes,
+        repo_path=resolved_repo_path,
+        review_repo_path=resolved_review_repo_path,
+        review_live_path=resolved_review_live_path,
+    )
 
     try:
         projected_bytes = project_repo_bytes(candidate_bytes)
-    except ValueError:
+    except CaptureError:
         raise
+    except JinjaRenderError as exc:
+        raise CaptureError(path=exc.path, detail=exc.detail) from exc
     except Exception as exc:  # noqa: BLE001 - the caller needs the original projection error text.
-        raise ValueError(f"patch capture verification projection failed: {exc}") from exc
+        raise CaptureError(path=resolved_repo_path, detail=f"capture projection failed: {exc}") from exc
 
     if projected_bytes != review_live_bytes:
-        raise ValueError("patch capture verification mismatch: projected bytes do not match the review live bytes")
+        raise CaptureError(
+            path=resolved_review_live_path,
+            detail="captured bytes do not match the review live bytes",
+        )
     return candidate_bytes
 
 
-def apply_review_patch(raw_bytes: bytes, review_repo_bytes: bytes, review_live_bytes: bytes) -> bytes:
-    raw_text = _decode_utf8(raw_bytes, label="repo source")
-    review_repo_text = _decode_utf8(review_repo_bytes, label="review repo view")
-    review_live_text = _decode_utf8(review_live_bytes, label="review live view")
+def apply_review_patch(
+    raw_bytes: bytes,
+    review_repo_bytes: bytes,
+    review_live_bytes: bytes,
+    *,
+    repo_path: Path | None = None,
+    review_repo_path: Path | None = None,
+    review_live_path: Path | None = None,
+) -> bytes:
+    raw_text = _decode_utf8(raw_bytes, label="repo source", path=repo_path)
+    review_repo_text = _decode_utf8(review_repo_bytes, label="review source", path=review_repo_path)
+    review_live_text = _decode_utf8(review_live_bytes, label="review live content", path=review_live_path)
 
     raw_lines = raw_text.splitlines(keepends=True)
     review_repo_lines = review_repo_text.splitlines(keepends=True)
     review_live_lines = review_live_text.splitlines(keepends=True)
 
     if len(raw_lines) != len(review_repo_lines):
-        raise ValueError("patch capture requires the repo source and review repo view to have the same line count")
+        raise CaptureError(
+            path=repo_path,
+            detail="repo source and review source must have the same line count",
+        )
 
     patched_lines = list(raw_lines)
     offset = 0
@@ -72,7 +112,7 @@ def apply_review_patch(raw_bytes: bytes, review_repo_bytes: bytes, review_live_b
         start = i1 + offset
         end = i2 + offset
         if start < 0 or end < start or end > len(patched_lines):
-            raise ValueError("patch capture could not be applied to the repo source")
+            raise CaptureError(path=repo_path, detail="review changes could not be applied to the repo source")
         if tag == "equal":
             continue
         replacement = review_live_lines[j1:j2]
@@ -82,11 +122,11 @@ def apply_review_patch(raw_bytes: bytes, review_repo_bytes: bytes, review_live_b
     return "".join(patched_lines).encode("utf-8")
 
 
-def _decode_utf8(content: bytes, *, label: str) -> str:
+def _decode_utf8(content: bytes, *, label: str, path: Path | None = None) -> str:
     try:
         return content.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise ValueError(f"patch capture requires UTF-8 text for {label}") from exc
+        raise CaptureError(path=path, detail=f"requires UTF-8 text for {label}") from exc
 
 
 def _resolve_existing_file(
@@ -99,19 +139,19 @@ def _resolve_existing_file(
     resolved_value = path_value
     if resolved_value is None:
         if env_name is None:
-            raise ValueError(f"patch capture requires {label}")
+            raise CaptureError(path=None, detail=f"requires {label}")
         resolved_value = os.environ.get(env_name)
         if resolved_value is None:
             if option_name is None:
-                raise ValueError(f"patch capture requires {label} via {env_name}")
-            raise ValueError(f"patch capture requires {label} via {env_name} or {option_name}")
+                raise CaptureError(path=None, detail=f"requires {label} via {env_name}")
+            raise CaptureError(path=None, detail=f"requires {label} via {env_name} or {option_name}")
 
     resolved_path = Path(resolved_value).expanduser().resolve()
     if not resolved_path.exists():
-        raise ValueError(f"patch capture requires an existing {label}: {resolved_path}")
+        raise CaptureError(path=resolved_path, detail=f"requires an existing {label}")
     if not resolved_path.is_file():
-        raise ValueError(f"patch capture requires a file {label}: {resolved_path}")
+        raise CaptureError(path=resolved_path, detail=f"requires a file {label}")
     return resolved_path
 
 
-__all__ = ["BUILTIN_PATCH_CAPTURE", "ProjectRepoBytes", "apply_review_patch", "capture_patch"]
+__all__ = ["BUILTIN_PATCH_CAPTURE", "CaptureError", "ProjectRepoBytes", "apply_review_patch", "capture_patch"]

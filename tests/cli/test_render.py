@@ -62,17 +62,30 @@ def test_render_jinja_cli_accepts_explicit_profile_os_and_vars(tmp_path: Path, c
 
 
 @pytest.mark.parametrize(
-    ("args", "expected_error"),
+    ("args", "expected_header", "expected_error"),
     [
-        (["render", "jinja", "--var", "missing_equals", "template.txt"], "invalid --var assignment"),
-        (["render", "jinja", "missing.txt"], "jinja render failed"),
+        (["render", "jinja", "--var", "missing_equals", "template.txt"], "ValueError", "invalid --var assignment"),
+        (["render", "jinja", "missing.txt"], "JinjaRenderError", "source path does not exist"),
     ],
 )
-def test_render_jinja_cli_reports_invalid_input(args: list[str], expected_error: str, capsys) -> None:
+def test_render_jinja_cli_reports_invalid_input(
+    args: list[str],
+    expected_header: str,
+    expected_error: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+
     exit_code = main(args)
+    error_output = capsys.readouterr().err
 
     assert exit_code == 2
-    assert expected_error in capsys.readouterr().err
+    assert expected_error in error_output
+    stripped_output = re.sub(r"\x1b\[[0-9;]*m", "", error_output)
+    assert f"\n:: {expected_header}\n" in stripped_output
+    assert "detail:" in stripped_output
+    assert "\x1b[" in error_output
 
 
 def test_main_formats_toml_load_error_with_package_path_and_error_fields(
@@ -103,12 +116,12 @@ def test_main_formats_toml_load_error_with_package_path_and_error_fields(
     error_output = capsys.readouterr().err
 
     assert exit_code == 2
-    assert "invalid TOML" in error_output
+    assert "TomlLoadError" in error_output
     assert "package:" in error_output
     assert "path:" in error_output
-    assert "error:" in error_output
+    assert "detail:" in error_output
     stripped_output = re.sub(r"\x1b\[[0-9;]*m", "", error_output)
-    assert "\n:: invalid TOML\n" in stripped_output
+    assert "\n:: TomlLoadError\n" in stripped_output
     assert "fixture:git" in stripped_output
     assert str(package_manifest_path) in error_output
     assert "\x1b[" in error_output
