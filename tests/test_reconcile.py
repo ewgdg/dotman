@@ -130,6 +130,43 @@ def test_run_basic_reconcile_opens_review_file_then_transactional_source_copies(
     assert include_path.read_text(encoding="utf-8") == "edited include\n"
 
 
+def test_run_basic_reconcile_reads_live_diff_through_sudo_aware_reader(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+    live_path.write_text("live\n", encoding="utf-8")
+    live_path.chmod(0o000)
+
+    def fake_read_bytes(path: Path) -> bytes:
+        if path == live_path.resolve():
+            return b"live\n"
+        return path.read_bytes()
+
+    def fake_run(command: list[str], check: bool):
+        review_path = Path(command[1])
+        assert "+live" in review_path.read_text(encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("dotman.reconcile.read_bytes", fake_read_bytes)
+    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+
+    try:
+        exit_code = run_basic_reconcile(
+            repo_path=str(repo_path),
+            live_path=str(live_path),
+            additional_sources=[],
+            editor="nvim",
+        )
+    finally:
+        live_path.chmod(0o644)
+
+    assert exit_code == 0
+
+
+
 def test_run_basic_reconcile_builds_review_file_from_provided_review_paths(
     tmp_path: Path,
     monkeypatch,

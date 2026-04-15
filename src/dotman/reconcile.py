@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotman.file_access import read_bytes
 from dotman.terminal import preserve_terminal_state
 
 
@@ -61,12 +62,14 @@ def _resolve_existing_path(path_value: str, *, label: str) -> Path:
     return resolved
 
 
-def _read_text(path: Path) -> str:
+def _read_text(path: Path, *, sudo_aware: bool = False) -> str:
+    if sudo_aware:
+        return read_bytes(path).decode("utf-8", errors="replace")
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def _read_diff_text(path: Path) -> list[str]:
-    return _read_text(path).splitlines()
+def _read_diff_text(path: Path, *, sudo_aware: bool = False) -> list[str]:
+    return _read_text(path, sudo_aware=sudo_aware).splitlines()
 
 
 def _dedupe_paths(paths: list[Path]) -> list[Path]:
@@ -82,11 +85,12 @@ def _build_review_content(
     repo_path: Path,
     live_path: Path,
     editable_sources: list[EditableSourceCopy],
+    live_path_sudo_aware: bool = False,
 ) -> str:
     diff_lines = list(
         difflib.unified_diff(
             _read_diff_text(repo_path),
-            _read_diff_text(live_path),
+            _read_diff_text(live_path, sudo_aware=live_path_sudo_aware),
             fromfile=str(repo_path),
             tofile=str(live_path),
             lineterm="",
@@ -127,6 +131,7 @@ def _write_review_file(
     repo_path: Path,
     live_path: Path,
     editable_sources: list[EditableSourceCopy],
+    live_path_sudo_aware: bool = False,
 ) -> Path:
     review_path = root / "reconcile-review.md"
     review_path.write_text(
@@ -134,6 +139,7 @@ def _write_review_file(
             repo_path=repo_path,
             live_path=live_path,
             editable_sources=editable_sources,
+            live_path_sudo_aware=live_path_sudo_aware,
         ),
         encoding="utf-8",
     )
@@ -239,6 +245,7 @@ def run_basic_reconcile(
             repo_path=resolved_review_repo_path,
             live_path=resolved_review_live_path,
             editable_sources=editable_sources,
+            live_path_sudo_aware=resolved_review_live_path == resolved_live_path,
         )
         with preserve_terminal_state():
             completed = subprocess.run(

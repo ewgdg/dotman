@@ -352,6 +352,14 @@ def execute_session(
     )
 
 
+def _reconcile_step_needs_sudo(target_plan: TargetPlan) -> bool:
+    # Custom reconcile commands are arbitrary user shell. Dotman should not
+    # silently run them as root; users can opt in by writing sudo into the
+    # reconcile command itself.
+    return target_plan.reconcile_command == BUILTIN_JINJA_RECONCILE and needs_sudo_for_read(target_plan.live_path)
+
+
+
 def _target_step_needs_sudo(
     *,
     operation: str,
@@ -471,7 +479,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
                 kind="reconcile",
                 action="reconcile",
                 target_plan=target_plan,
-                privileged=needs_sudo_for_read(target_plan.live_path),
+                privileged=_reconcile_step_needs_sudo(target_plan),
             )
         )
         return steps
@@ -560,7 +568,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                         command=target_plan.reconcile_command or "",
                         cwd=target_plan.command_cwd,
                         env=command_env,
-                        privileged=needs_sudo_for_read(target_plan.live_path),
+                        privileged=step.privileged,
                     )
                 else:
                     exit_code, stdout, stderr = _run_command(
@@ -569,7 +577,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                         env=command_env,
                         stream_output=stream_output,
                         interactive=False,
-                        privileged=needs_sudo_for_read(target_plan.live_path),
+                        privileged=step.privileged,
                     )
             return ExecutionStepResult(
                 step=step,

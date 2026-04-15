@@ -105,6 +105,40 @@ def test_build_execution_session_marks_hooks_privileged_when_package_needs_sudo(
     assert [step.privileged for step in session.packages[0].steps] == [True, True, True, True]
 
 
+def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged(monkeypatch) -> None:
+    monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: True)
+
+    plan = BindingPlan(
+        operation="pull",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={
+            "guard_pull": [HookPlan(package_id="app", hook_name="guard_pull", command="echo guard", cwd=Path("/repo"))],
+            "post_pull": [HookPlan(package_id="app", hook_name="post_pull", command="echo post", cwd=Path("/repo"))],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/etc/sddm.conf"),
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+                reconcile_command="sh hooks/reconcile.sh",
+            )
+        ],
+    )
+
+    session = build_execution_session([plan], operation="pull")
+
+    assert session.requires_privilege is False
+    assert [step.privileged for step in session.packages[0].steps] == [False, False, False]
+
+
+
 def test_build_execution_session_does_not_add_pull_chmod_steps() -> None:
     plan = BindingPlan(
         operation="pull",
@@ -922,6 +956,73 @@ def test_execute_session_keeps_batch_reconcile_on_piped_command_path(
     assert result.status == "ok"
     assert result.packages[0].steps[0].stdout == "batch reconcile\n"
     assert recorded["command"] == "printf 'batch reconcile\\n'"
+
+
+def test_execute_session_runs_custom_reconcile_without_auto_sudo(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+    live_path.write_text("live\n", encoding="utf-8")
+
+    plan = BindingPlan(
+        operation="pull",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path,
+                live_path=live_path,
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+                reconcile_command="printf 'batch reconcile\\n'",
+                command_env={
+                    "DOTMAN_REPO_PATH": str(repo_path),
+                    "DOTMAN_LIVE_PATH": str(live_path),
+                },
+            )
+        ],
+    )
+    monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: True)
+    session = build_execution_session([plan], operation="pull")
+
+    recorded: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "dotman.execution.request_sudo",
+        lambda reason=None: (_ for _ in ()).throw(AssertionError(f"unexpected sudo request: {reason}")),
+    )
+    monkeypatch.setattr(
+        "dotman.execution._run_command",
+        lambda *, command, cwd, env, stream_output, interactive, privileged=False: (
+            recorded.update(
+                {
+                    "command": command,
+                    "cwd": cwd,
+                    "env": env,
+                    "stream_output": stream_output,
+                    "interactive": interactive,
+                    "privileged": privileged,
+                }
+            )
+            or (0, "batch reconcile\n", "")
+        ),
+    )
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert recorded["command"] == "printf 'batch reconcile\\n'"
+    assert recorded["privileged"] is False
+
 
 
 def _write_patch_capture_execution_repo(repo_root: Path) -> None:
