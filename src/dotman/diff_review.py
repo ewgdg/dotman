@@ -102,12 +102,6 @@ def build_review_items(plans: Sequence[BindingPlan], *, operation: str) -> list[
     return review_items
 
 
-def diff_status(review_item: ReviewItem) -> str:
-    if review_item.diff_unavailable_reason is not None:
-        return "diff unavailable"
-    return "diff"
-
-
 def edit_status(review_item: ReviewItem) -> str:
     if review_item.operation == "pull" and review_item.reconcile_command is not None:
         return "reconcile"

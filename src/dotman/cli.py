@@ -18,7 +18,6 @@ from dotman.capture import capture_patch
 from dotman.diff_review import (
     ReviewItem,
     build_review_items,
-    diff_status as review_diff_status,
     run_review_item_diff,
 )
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text, parse_package_ref_text
@@ -1948,14 +1947,14 @@ def print_review_item(index: int, item: ReviewItem, *, full_paths: bool = False)
         package_id=item.package_id,
         target_name=item.target_name,
     )
-    diff_text = review_diff_status(item)
+    diff_badge = "[diff unavailable]" if item.diff_unavailable_reason is not None else None
     source_path = display_cli_path(item.source_path, full_paths=full_paths)
     destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
     if not colors_enabled():
-        item_text = (
-            f"[{item.action}] {package_target} "
-            f"[{diff_text}]: {source_path} -> {destination_path}"
-        )
+        item_text = f"[{item.action}] {package_target}"
+        if diff_badge is not None:
+            item_text += f" {diff_badge}"
+        item_text += f": {source_path} -> {destination_path}"
         print(f"  {index:>2}) {item_text}")
         return
 
@@ -1966,11 +1965,11 @@ def print_review_item(index: int, item: ReviewItem, *, full_paths: bool = False)
         package_id=item.package_id,
         target_name=item.target_name,
     )
-    status_label = style_text(f"[{diff_text}]", *MENU_HINT_STYLE)
+    badge_text = f" {style_text(diff_badge, *MENU_HINT_STYLE)}" if diff_badge is not None else ""
     arrow_text = style_text("->", *MENU_HINT_STYLE)
     print(
         f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
-        f"{action_text} {package_label} {status_label}: "
+        f"{action_text} {package_label}{badge_text}: "
         f"{source_path} {arrow_text} {destination_path}"
     )
 

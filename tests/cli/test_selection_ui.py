@@ -752,6 +752,32 @@ def test_print_review_item_compacts_long_paths(monkeypatch, capsys) -> None:
     cli.print_review_item(1, review_item)
 
     output = capsys.readouterr().out
-    assert "  1) [update] example:git (gitconfig) [diff]:" in output
+    assert "  1) [update] example:git (gitconfig):" in output
+    assert "[diff]" not in output
     assert "~/.../git/config -> ~/.../git/config" in output
     assert str(Path.home()) not in output
+
+
+def test_print_review_item_shows_unavailable_badge(monkeypatch, capsys) -> None:
+    review_item = cli.ReviewItem(
+        binding_label="example:git@basic",
+        package_id="git",
+        target_name="gitconfig",
+        action="update",
+        operation="push",
+        repo_path=Path.home() / ".config" / "git" / "config",
+        live_path=Path.home() / ".local" / "share" / "git" / "config",
+        source_path=str(Path.home() / ".config" / "git" / "config"),
+        destination_path=str(Path.home() / ".local" / "share" / "git" / "config"),
+        before_bytes=b"before\n",
+        after_bytes=None,
+        diff_unavailable_reason="diff preview is unavailable",
+    )
+
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    cli.print_review_item(1, review_item)
+
+    output = capsys.readouterr().out
+    assert "[diff unavailable]" in output
+    assert "~/.../git/config -> ~/.../git/config" in output
