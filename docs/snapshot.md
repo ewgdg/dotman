@@ -60,6 +60,8 @@ $XDG_DATA_HOME/dotman/snapshots/
   - whether the path existed before the push
   - the pre-push file content blob reference when the path existed
   - the pre-push file mode when relevant to restore
+  - the original symlink target when the live path itself was a symlink
+  - the symlink handling mode needed for rollback
   - the push action that triggered snapshot capture, for example `create`, `update`, or `delete`
 - Provenance such as repo, binding, package, and target labels may be recorded for human inspection, but rollback correctness must not depend on them.
 
@@ -67,6 +69,7 @@ $XDG_DATA_HOME/dotman/snapshots/
 
 - `rollback` should restore the selected snapshot state against the current live filesystem.
 - If a recorded path existed before the push, rollback should restore its recorded bytes and mode.
+- If a recorded path was a symlink before the push, rollback should either recreate the link target or restore the resolved target path, depending on the snapshot entry's recorded symlink handling mode.
 - If a recorded path did not exist before the push, rollback should remove it.
 - Rollback may prune empty parent directories left behind by deleting snapshot-created paths.
 - Rollback planning and diff review should compare current live content against the snapshot-recorded desired restore state.

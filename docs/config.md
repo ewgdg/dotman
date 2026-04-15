@@ -45,6 +45,15 @@ This document captures the user-level dotman manager configuration.
 - Local override data should participate only in variable resolution.
 - Local override data should not change tracked binding identity.
 
+## Symlink Handling
+
+- Dotman should declare symlink handling under `[symlinks]`.
+- `file_symlink_mode` defaults to `prompt` and accepts `prompt` or `follow`.
+- `dir_symlink_mode` defaults to `fail` and accepts `fail` or `follow`.
+- CLI flags `--file-symlink-mode` and `--dir-symlink-mode` should override the config file for a single run.
+- `prompt` means file symlinks can be replaced interactively; non-interactive runs still fail fast.
+- `follow` means dotman manages the resolved target instead of the symlink itself.
+
 ## Snapshots
 
 - Snapshot config is manager-level and applies to real `push` execution across the whole dotman run, even when that run spans multiple repos.
@@ -73,6 +82,10 @@ state_key = "test"
 [snapshots]
 enabled = true
 max_generations = 10
+
+[symlinks]
+file_symlink_mode = "prompt"
+dir_symlink_mode = "fail"
 ```
 
 Example per-repo local override:

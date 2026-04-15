@@ -12,7 +12,6 @@ from dotman.ignore import list_directory_files
 from dotman.manifest import flatten_vars, merge_ignore_patterns
 from dotman.models import Binding, DirectoryPlanItem, PackageSpec, TargetPlan, TargetSpec
 from dotman.repository import Repository
-from dotman.target_paths import ensure_declared_live_path_is_not_symlink
 from dotman.templates import render_template_file, render_template_string
 
 
@@ -27,7 +26,7 @@ def plan_targets(
     operation: str,
     inferred_os: str,
 ) -> list[TargetPlan]:
-    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...]]] = []
+    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]] = []
     for package in packages:
         for target in (package.targets or {}).values():
             if target.disabled:
@@ -38,11 +37,8 @@ def plan_targets(
             rendered_path = render_template_string(target.path, context, base_dir=target.declared_in, source_path=target.declared_in)
             repo_path = (target.declared_in / rendered_source).resolve()
             live_path = expand_path(rendered_path, dereference=False)
-            if operation in {"push", "upgrade"}:
-                ensure_declared_live_path_is_not_symlink(
-                    live_path=live_path,
-                    target_label=f"{package.id}:{target.name}",
-                )
+            live_path_is_symlink = operation in {"push", "upgrade"} and live_path.is_symlink()
+            live_path_symlink_target = os.readlink(live_path) if live_path_is_symlink else None
             rendered_targets.append(
                 (
                     package,
@@ -51,6 +47,8 @@ def plan_targets(
                     live_path,
                     merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ()),
                     merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ()),
+                    live_path_is_symlink,
+                    live_path_symlink_target,
                 )
             )
 
@@ -58,7 +56,7 @@ def plan_targets(
     validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
 
     plans: list[TargetPlan] = []
-    for package, target, repo_path, live_path, push_ignore, pull_ignore in rendered_targets:
+    for package, target, repo_path, live_path, push_ignore, pull_ignore, live_path_is_symlink, live_path_symlink_target in rendered_targets:
         target_kind = (
             infer_target_kind(repo_path=repo_path, live_path=live_path)
             if operation == "pull"
@@ -117,6 +115,10 @@ def plan_targets(
                     capture_command=capture_command,
                     reconcile_command=reconcile_command,
                     reconcile_io=target.reconcile_io,
+                    live_path_is_symlink=live_path_is_symlink,
+                    live_path_symlink_target=live_path_symlink_target,
+                    file_symlink_mode=engine.config.file_symlink_mode,
+                    dir_symlink_mode=engine.config.dir_symlink_mode,
                     pull_view_repo=target.pull_view_repo or "raw",
                     pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
                     push_ignore=push_ignore,
@@ -212,6 +214,10 @@ def plan_targets(
                 reconcile_command=reconcile_command,
                 reconcile_io=target.reconcile_io,
                 projection_error=projection_error,
+                live_path_is_symlink=live_path_is_symlink,
+                live_path_symlink_target=live_path_symlink_target,
+                file_symlink_mode=engine.config.file_symlink_mode,
+                dir_symlink_mode=engine.config.dir_symlink_mode,
                 pull_view_repo=pull_view_repo,
                 pull_view_live=pull_view_live,
                 push_ignore=push_ignore,

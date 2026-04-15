@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import stat
 import uuid
@@ -11,7 +12,7 @@ from typing import Sequence
 
 from dotman.config import default_snapshot_root
 from dotman.toml_utils import load_toml_file
-from dotman.execution import delete_path_and_prune_empty_parents, write_bytes_atomic
+from dotman.execution import delete_path_and_prune_empty_parents, write_bytes_atomic, write_symlink_atomic
 from dotman.models import BindingPlan, SnapshotConfig
 
 
@@ -26,23 +27,33 @@ class SnapshotEntry:
     content_path: Path | None
     mode: int | None
     push_action: str
+    path_kind: str = "file"
+    symlink_target: str | None = None
+    preserve_symlink_identity: bool = False
+    restore_path: Path | None = None
     repo_name: str | None = None
     binding_label: str | None = None
     package_id: str | None = None
     target_name: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "live_path": str(self.live_path),
             "existed_before": self.existed_before,
             "content_path": str(self.content_path) if self.content_path is not None else None,
             "mode": self.mode,
             "push_action": self.push_action,
+            "path_kind": self.path_kind,
+            "symlink_target": self.symlink_target,
+            "preserve_symlink_identity": self.preserve_symlink_identity,
             "repo_name": self.repo_name,
             "binding_label": self.binding_label,
             "package_id": self.package_id,
             "target_name": self.target_name,
         }
+        if self.restore_path is not None:
+            payload["restore_path"] = str(self.restore_path)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -80,14 +91,21 @@ class RollbackAction:
     before_bytes: bytes
     after_bytes: bytes
     desired_mode: int | None
+    after_link_target: str | None = None
+    restore_path: Path | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload = {
             "action": self.action,
             "live_path": str(self.live_path),
             "snapshot_path": str(self.snapshot_path),
             "desired_mode": self.desired_mode,
         }
+        if self.after_link_target is not None:
+            payload["after_link_target"] = self.after_link_target
+        if self.restore_path is not None:
+            payload["restore_path"] = str(self.restore_path)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -141,16 +159,27 @@ def create_push_snapshot(plans: Sequence[BindingPlan], snapshot_config: Snapshot
     entries: list[SnapshotEntry] = []
     for index, entry in enumerate(pending_entries, start=1):
         live_path = entry["live_path"]
-        if live_path.exists() and live_path.is_dir():
+        live_path_is_symlink = live_path.is_symlink()
+        if live_path.exists() and live_path.is_dir() and not live_path_is_symlink:
             raise ValueError(f"snapshot capture expects file path, got directory: {live_path}")
 
-        existed_before = live_path.exists()
+        file_symlink_mode = entry.get("file_symlink_mode", "prompt")
+        restore_path = live_path.resolve(strict=False) if live_path_is_symlink and file_symlink_mode == "follow" else None
+        managed_path = restore_path or live_path
+        current_is_symlink = managed_path.is_symlink()
+        if managed_path.exists() and managed_path.is_dir() and not current_is_symlink:
+            raise ValueError(f"snapshot capture expects file path, got directory: {managed_path}")
+
+        preserve_symlink_identity = live_path_is_symlink and file_symlink_mode != "follow"
+        existed_before = managed_path.exists() or (live_path_is_symlink and preserve_symlink_identity)
         content_path = None
         mode = None
-        if existed_before:
+        path_kind = "symlink" if live_path_is_symlink else "file"
+        symlink_target = os.readlink(live_path) if live_path_is_symlink else None
+        if existed_before and not preserve_symlink_identity:
             content_path = Path("entries") / f"{index:04d}.bin"
-            (snapshot_root / content_path).write_bytes(live_path.read_bytes())
-            mode = stat.S_IMODE(live_path.stat().st_mode)
+            (snapshot_root / content_path).write_bytes(managed_path.read_bytes())
+            mode = stat.S_IMODE(managed_path.stat().st_mode)
         entries.append(
             SnapshotEntry(
                 live_path=live_path,
@@ -158,6 +187,10 @@ def create_push_snapshot(plans: Sequence[BindingPlan], snapshot_config: Snapshot
                 content_path=content_path,
                 mode=mode,
                 push_action=entry["push_action"],
+                path_kind=path_kind,
+                symlink_target=symlink_target,
+                preserve_symlink_identity=preserve_symlink_identity,
+                restore_path=restore_path,
                 repo_name=entry["repo_name"],
                 binding_label=entry["binding_label"],
                 package_id=entry["package_id"],
@@ -258,12 +291,24 @@ def load_snapshot(snapshot_root: Path) -> SnapshotRecord:
         content_path = entry_payload.get("content_path")
         mode = entry_payload.get("mode")
         push_action = entry_payload.get("push_action")
+        path_kind = entry_payload.get("path_kind", "file")
+        symlink_target = entry_payload.get("symlink_target")
+        preserve_symlink_identity = entry_payload.get("preserve_symlink_identity", False)
+        restore_path = entry_payload.get("restore_path")
         if not isinstance(live_path, str) or not isinstance(existed_before, bool) or not isinstance(push_action, str):
             raise ValueError(f"invalid snapshot entry fields in manifest: {manifest_path}")
         if content_path is not None and not isinstance(content_path, str):
             raise ValueError(f"invalid snapshot content path in manifest: {manifest_path}")
         if mode is not None and not isinstance(mode, int):
             raise ValueError(f"invalid snapshot mode in manifest: {manifest_path}")
+        if not isinstance(path_kind, str) or path_kind not in {"file", "symlink"}:
+            raise ValueError(f"invalid snapshot path kind in manifest: {manifest_path}")
+        if symlink_target is not None and not isinstance(symlink_target, str):
+            raise ValueError(f"invalid snapshot symlink target in manifest: {manifest_path}")
+        if not isinstance(preserve_symlink_identity, bool):
+            raise ValueError(f"invalid snapshot symlink identity flag in manifest: {manifest_path}")
+        if restore_path is not None and not isinstance(restore_path, str):
+            raise ValueError(f"invalid snapshot restore path in manifest: {manifest_path}")
         entries.append(
             SnapshotEntry(
                 live_path=Path(live_path),
@@ -271,6 +316,10 @@ def load_snapshot(snapshot_root: Path) -> SnapshotRecord:
                 content_path=Path(content_path) if content_path is not None else None,
                 mode=mode,
                 push_action=push_action,
+                path_kind=path_kind,
+                symlink_target=symlink_target,
+                preserve_symlink_identity=preserve_symlink_identity,
+                restore_path=Path(restore_path) if restore_path is not None else None,
                 repo_name=entry_payload.get("repo_name") if isinstance(entry_payload.get("repo_name"), str) else None,
                 binding_label=(
                     entry_payload.get("binding_label")
@@ -304,12 +353,36 @@ def prune_snapshots(snapshot_root: Path, *, max_generations: int) -> list[str]:
 def build_rollback_actions(snapshot: SnapshotRecord) -> list[RollbackAction]:
     actions: list[RollbackAction] = []
     for entry in snapshot.entries:
-        current_exists = entry.live_path.exists()
-        if current_exists and entry.live_path.is_dir():
-            raise ValueError(f"rollback expects file path, got directory: {entry.live_path}")
-        current_bytes = entry.live_path.read_bytes() if current_exists else b""
-        current_mode = stat.S_IMODE(entry.live_path.stat().st_mode) if current_exists else None
+        restore_path = entry.restore_path or entry.live_path
+        current_exists = restore_path.exists()
+        current_is_symlink = restore_path.is_symlink()
+        if current_exists and restore_path.is_dir() and not current_is_symlink:
+            raise ValueError(f"rollback expects file path, got directory: {restore_path}")
         snapshot_path = _snapshot_restore_display_path(snapshot, entry.live_path)
+
+        if entry.preserve_symlink_identity and entry.path_kind == "symlink":
+            current_present = current_exists or current_is_symlink
+            current_link_target = os.readlink(restore_path) if current_is_symlink else None
+            if current_is_symlink and current_link_target == entry.symlink_target:
+                action = "noop"
+            else:
+                action = "update" if current_present else "create"
+            actions.append(
+                RollbackAction(
+                    live_path=entry.live_path,
+                    snapshot_path=snapshot_path,
+                    action=action,
+                    before_bytes=b"",
+                    after_bytes=b"",
+                    desired_mode=None,
+                    after_link_target=entry.symlink_target,
+                    restore_path=restore_path,
+                )
+            )
+            continue
+
+        current_bytes = restore_path.read_bytes() if current_exists else b""
+        current_mode = stat.S_IMODE(restore_path.stat().st_mode) if current_exists else None
 
         if entry.existed_before:
             if entry.content_path is None:
@@ -330,6 +403,7 @@ def build_rollback_actions(snapshot: SnapshotRecord) -> list[RollbackAction]:
                     before_bytes=current_bytes,
                     after_bytes=desired_bytes,
                     desired_mode=entry.mode,
+                    restore_path=restore_path,
                 )
             )
             continue
@@ -343,6 +417,7 @@ def build_rollback_actions(snapshot: SnapshotRecord) -> list[RollbackAction]:
                 before_bytes=current_bytes,
                 after_bytes=b"",
                 desired_mode=None,
+                restore_path=restore_path,
             )
         )
     return actions
@@ -355,12 +430,20 @@ def execute_rollback(snapshot: SnapshotRecord, actions: Sequence[RollbackAction]
         if action.action == "noop":
             continue
         try:
-            if action.action in {"create", "update"}:
-                write_bytes_atomic(action.live_path, action.after_bytes)
+            target_path = action.restore_path or action.live_path
+            if action.after_link_target is not None:
+                if action.action in {"create", "update"}:
+                    write_symlink_atomic(target_path, action.after_link_target)
+                elif action.action == "delete":
+                    delete_path_and_prune_empty_parents(target_path, root=target_path.parent)
+                else:
+                    raise ValueError(f"unsupported rollback action '{action.action}'")
+            elif action.action in {"create", "update"}:
+                write_bytes_atomic(target_path, action.after_bytes)
                 if action.desired_mode is not None:
-                    action.live_path.chmod(action.desired_mode)
+                    target_path.chmod(action.desired_mode)
             elif action.action == "delete":
-                delete_path_and_prune_empty_parents(action.live_path, root=action.live_path.parent)
+                delete_path_and_prune_empty_parents(target_path, root=target_path.parent)
             else:
                 raise ValueError(f"unsupported rollback action '{action.action}'")
             results.append(RollbackActionResult(action=action, status="ok"))
@@ -406,6 +489,7 @@ def _iter_push_snapshot_entries(plans: Sequence[BindingPlan]):
                 "binding_label": binding_label,
                 "package_id": target.package_id,
                 "target_name": target.target_name,
+                "file_symlink_mode": target.file_symlink_mode,
             }
 
 
@@ -429,8 +513,14 @@ def _write_snapshot_manifest(snapshot: SnapshotRecord) -> None:
                 f"live_path = {json.dumps(str(entry.live_path))}",
                 f"existed_before = {_toml_bool(entry.existed_before)}",
                 f"push_action = {json.dumps(entry.push_action)}",
+                f"path_kind = {json.dumps(entry.path_kind)}",
             ]
         )
+        if entry.symlink_target is not None:
+            lines.append(f"symlink_target = {json.dumps(entry.symlink_target)}")
+        lines.append(f"preserve_symlink_identity = {_toml_bool(entry.preserve_symlink_identity)}")
+        if entry.restore_path is not None:
+            lines.append(f"restore_path = {json.dumps(str(entry.restore_path))}")
         if entry.content_path is not None:
             lines.append(f"content_path = {json.dumps(str(entry.content_path))}")
         if entry.mode is not None:

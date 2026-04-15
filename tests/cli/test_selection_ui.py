@@ -654,6 +654,12 @@ def test_write_manifest_confirmation_prompt_uses_bracket_style(monkeypatch) -> N
     )
 
 
+def test_push_symlink_replacement_prompt_uses_bracket_style(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.push_symlink_replacement_prompt() == 'Replace symlinked live target(s) before push? [y/N] '
+
+
 def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
     monkeypatch.delenv("DOTMAN_MENU_BOTTOM_UP", raising=False)
     monkeypatch.setattr(cli, "prompt", lambda _message: "")

@@ -58,6 +58,16 @@ def validate_state_key(state_key: object, *, repo_name: str) -> str:
     return normalized
 
 
+def validate_symlink_mode(mode: object, *, field_name: str, allowed_values: tuple[str, ...]) -> str:
+    if not isinstance(mode, str):
+        raise ValueError(f"config {field_name} must be a string")
+    normalized = mode.strip()
+    if normalized not in allowed_values:
+        allowed_text = ", ".join(allowed_values)
+        raise ValueError(f"config {field_name} must be one of: {allowed_text}")
+    return normalized
+
+
 def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
     resolved_path = Path(config_path) if config_path is not None else default_config_path()
     resolved_path = resolved_path.expanduser().resolve()
@@ -104,6 +114,20 @@ def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
             local_override_path=default_local_override_path(repo_name).resolve(),
         )
 
+    symlinks_payload = payload.get("symlinks", {})
+    if not isinstance(symlinks_payload, dict):
+        raise ValueError("config [symlinks] must be a table")
+    file_symlink_mode = validate_symlink_mode(
+        symlinks_payload.get("file_symlink_mode", "prompt"),
+        field_name="symlinks.file_symlink_mode",
+        allowed_values=("prompt", "follow"),
+    )
+    dir_symlink_mode = validate_symlink_mode(
+        symlinks_payload.get("dir_symlink_mode", "fail"),
+        field_name="symlinks.dir_symlink_mode",
+        allowed_values=("fail", "follow"),
+    )
+
     snapshots_payload = payload.get("snapshots", {})
     if not isinstance(snapshots_payload, dict):
         raise ValueError("config [snapshots] must be a table")
@@ -128,4 +152,6 @@ def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
             path=snapshot_path,
             max_generations=max_generations_value,
         ),
+        file_symlink_mode=file_symlink_mode,
+        dir_symlink_mode=dir_symlink_mode,
     )

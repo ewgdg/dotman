@@ -5,6 +5,7 @@ import stat
 from pathlib import Path
 
 import dotman.cli as cli
+import dotman.cli_emit as cli_emit
 from dotman.cli import main
 from tests.helpers import write_named_manager_config
 
@@ -44,6 +45,39 @@ def _write_basic_execution_repo(
                 "guard_pull = \"printf 'guard pull\\n'\"",
                 "pre_pull = \"printf 'pre pull\\n'\"",
                 "post_pull = \"printf 'post pull\\n'\"",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+
+def _write_directory_execution_repo(
+    repo_root: Path,
+    *,
+    package_id: str = "app",
+    live_dir_name: str = "app",
+) -> None:
+    package_root = repo_root / "packages" / package_id
+    (package_root / "files" / "config").mkdir(parents=True)
+    (repo_root / "profiles").mkdir(parents=True)
+
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (package_root / "files" / "config" / "nested.txt").write_text("repo directory value\n", encoding="utf-8")
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                f'id = "{package_id}"',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                f'path = "~/.config/{live_dir_name}"',
+                "",
+                "[hooks]",
+                "guard_push = \"printf 'guard push\\n'\"",
+                "pre_push = \"printf 'pre push\\n'\"",
+                "post_push = \"printf 'post push\\n'\"",
                 "",
             ]
         ),
@@ -215,7 +249,7 @@ def test_push_cli_executes_tracked_binding_and_emits_json_results(
 
 
 
-def test_push_cli_dry_run_fails_for_symlinked_live_target(
+def test_push_cli_dry_run_emits_symlink_hazard_metadata(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -237,10 +271,121 @@ def test_push_cli_dry_run_fails_for_symlinked_live_target(
 
     exit_code = main(["--config", str(config_path), "--json", "push", "--dry-run"])
 
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    warning = payload["warnings"][0]
+    assert warning["replaceable"] is True
+    assert warning["live_path"] == str(live_root / "config.txt")
+    assert warning["symlink_target"] == str(symlink_target)
+    assert warning["target_kind"] == "file"
+    assert payload["bindings"][0]["selector"] == "app"
+
+
+
+def test_push_cli_dry_run_human_warning_uses_package_target_label(capsys) -> None:
+    cli_emit.print_push_live_symlink_hazard_warning(
+        [
+            cli_emit.PushSymlinkHazard(
+                binding_label="main:sunshine@host/linux",
+                package_id="sunshine",
+                target_name="f_config_sunshine_sunshine_conf",
+                live_path=Path("/live/config.txt"),
+                symlink_target="/real/config.txt",
+                target_kind="file",
+                replaceable=True,
+            )
+        ],
+        use_color=False,
+    )
+
+    output = capsys.readouterr().out
+    assert "[replaceable] main:sunshine (f_config_sunshine_sunshine_conf)" in output
+    assert ":f_config_sunshine_sunshine_conf" not in output
+
+
+
+def test_push_cli_fails_fast_for_symlinked_live_target_in_non_interactive_mode(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_root = home / ".config" / "app"
+    live_root.mkdir(parents=True)
+    symlink_target = live_root / "config-real.txt"
+    symlink_target.write_text("live value\n", encoding="utf-8")
+    (live_root / "config.txt").symlink_to(symlink_target)
+
+    exit_code = main(["--config", str(config_path), "push"])
+
     assert exit_code == 2
     error_output = capsys.readouterr().err
-    assert "live target path is a symlink" in error_output
-    assert str(live_root / "config.txt") in error_output
+    assert "refusing to replace symlinked live target(s) in non-interactive mode" in error_output
+    assert str(symlink_target) in error_output
+
+
+
+def test_push_cli_fails_fast_for_symlinked_directory_live_target_in_non_interactive_mode(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_root = home / ".config" / "app"
+    live_root.parent.mkdir(parents=True, exist_ok=True)
+    real_live_root = home / ".config" / "app-real"
+    real_live_root.mkdir(parents=True)
+    live_root.symlink_to(real_live_root, target_is_directory=True)
+
+    exit_code = main(["--config", str(config_path), "push"])
+
+    assert exit_code == 2
+    error_output = capsys.readouterr().err
+    assert "refusing to replace symlinked live target(s) in non-interactive mode" in error_output
+    assert str(live_root) in error_output
+
+
+
+def test_push_cli_follows_directory_symlink_when_configured(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_root = home / ".config" / "app"
+    live_root.parent.mkdir(parents=True, exist_ok=True)
+    real_live_root = home / ".config" / "app-real"
+    real_live_root.mkdir(parents=True)
+    live_root.symlink_to(real_live_root, target_is_directory=True)
+
+    exit_code = main(["--config", str(config_path), "--dir-symlink-mode", "follow", "push"])
+
+    assert exit_code == 0
+    assert live_root.is_symlink()
+    assert (real_live_root / "nested.txt").read_text(encoding="utf-8") == "repo directory value\n"
 
 
 

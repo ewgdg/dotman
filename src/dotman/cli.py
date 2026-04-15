@@ -522,6 +522,18 @@ def write_manifest_confirmation_prompt(*, repo_name: str, package_id: str) -> st
     )
 
 
+def push_symlink_replacement_prompt() -> str:
+    prompt_text = "Replace symlinked live target(s) before push?"
+    hint_text = "[y/N]"
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text} "
+    return (
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
+    )
+
+
 def review_continue_prompt() -> str:
     prompt_text = "Continue?"
     hint_text = "[Y/n]"
@@ -745,6 +757,16 @@ def confirm_add_manifest_write(*, repo_name: str, package_id: str) -> bool:
         answer = prompt(
             write_manifest_confirmation_prompt(repo_name=repo_name, package_id=package_id)
         ).strip().lower()
+        if answer in {"", "n", "no"}:
+            return False
+        if answer in {"y", "yes"}:
+            return True
+        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+
+
+def confirm_push_symlink_replacement() -> bool:
+    while True:
+        answer = prompt(push_symlink_replacement_prompt()).strip().lower()
         if answer in {"", "n", "no"}:
             return False
         if answer in {"y", "yes"}:
@@ -2048,6 +2070,50 @@ def review_plans_for_interactive_diffs(
     return run_diff_review_menu(review_items, operation=operation, full_paths=full_paths)
 
 
+def _push_symlink_hazard_description(hazard: cli_emit.PushSymlinkHazard, *, full_paths: bool) -> str:
+    live_path = cli_emit.display_cli_path(hazard.live_path, full_paths=full_paths)
+    symlink_target = hazard.symlink_target or "<unknown>"
+    return f"{hazard.binding_label} {hazard.package_id}:{hazard.target_name} ({live_path} -> {symlink_target})"
+
+
+def prepare_push_plans_for_execution(
+    *,
+    plans: Sequence,
+    json_output: bool,
+    full_paths: bool = False,
+) -> list | None:
+    hazards = cli_emit.collect_push_live_symlink_hazards(plans)
+    if not hazards:
+        return list(plans)
+
+    interactive = interactive_mode_enabled(json_output=json_output)
+    if interactive:
+        cli_emit.print_push_live_symlink_hazard_warning(hazards, use_color=colors_enabled(), full_paths=full_paths)
+
+    hazard_descriptions = ", ".join(
+        _push_symlink_hazard_description(hazard, full_paths=full_paths)
+        for hazard in hazards
+    )
+    unsupported = [hazard for hazard in hazards if not hazard.replaceable]
+    if unsupported:
+        unsupported_descriptions = ", ".join(
+            _push_symlink_hazard_description(hazard, full_paths=full_paths)
+            for hazard in unsupported
+        )
+        if interactive:
+            raise ValueError(
+                f"refusing to replace unsupported symlinked directory target(s): {unsupported_descriptions}"
+            )
+        raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
+
+    if not interactive:
+        raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
+
+    if not confirm_push_symlink_replacement():
+        return None
+    return cli_emit.allow_push_live_symlink_replacements(plans)
+
+
 def emit_interrupt_notice() -> None:
     sys.stderr.write("\ninterrupted\n")
 
@@ -2407,6 +2473,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         interrupted_exit_code=INTERRUPTED_EXIT_CODE,
         emit_payload=emit_payload,
         effective_execution_mode=effective_execution_mode,
+        prepare_push_plans_for_execution=prepare_push_plans_for_execution,
         execute_plans=execute_plans,
         emit_execution_result=emit_execution_result,
         run_execution=run_execution,
@@ -2430,7 +2497,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = build_parser().parse_args(list(argv) if argv is not None else None)
         return cli_commands.dispatch_command(
             args=args,
-            engine_factory=DotmanEngine.from_config_path,
+            engine_factory=lambda config_path: DotmanEngine.from_config_path(
+                config_path,
+                file_symlink_mode=args.file_symlink_mode,
+                dir_symlink_mode=args.dir_symlink_mode,
+            ),
             handlers=_build_command_handlers(),
         )
     except KeyboardInterrupt:

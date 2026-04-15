@@ -24,6 +24,119 @@ class PayloadPackageSection:
 CollectPendingSelectionItems = Callable[..., Sequence[Any]]
 
 
+@dataclass(frozen=True)
+class PushSymlinkHazard:
+    binding_label: str
+    package_id: str
+    target_name: str
+    live_path: Path
+    symlink_target: str
+    target_kind: str
+    replaceable: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "binding_label": self.binding_label,
+            "package_id": self.package_id,
+            "target_name": self.target_name,
+            "live_path": str(self.live_path),
+            "symlink_target": self.symlink_target,
+            "target_kind": self.target_kind,
+            "replaceable": self.replaceable,
+        }
+
+
+def collect_push_live_symlink_hazards(plans: Sequence[Any]) -> list[PushSymlinkHazard]:
+    hazards: list[PushSymlinkHazard] = []
+    for plan in plans:
+        binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
+        for target in plan.target_plans:
+            if target.action == "noop" or not target.live_path_is_symlink:
+                continue
+            if target.target_kind == "directory":
+                if target.dir_symlink_mode == "follow":
+                    continue
+                hazards.append(
+                    PushSymlinkHazard(
+                        binding_label=binding_label,
+                        package_id=target.package_id,
+                        target_name=target.target_name,
+                        live_path=target.live_path,
+                        symlink_target=target.live_path_symlink_target or "<unknown>",
+                        target_kind=target.target_kind,
+                        replaceable=False,
+                    )
+                )
+                continue
+            if target.file_symlink_mode == "follow":
+                continue
+            hazards.append(
+                PushSymlinkHazard(
+                    binding_label=binding_label,
+                    package_id=target.package_id,
+                    target_name=target.target_name,
+                    live_path=target.live_path,
+                    symlink_target=target.live_path_symlink_target or "<unknown>",
+                    target_kind=target.target_kind,
+                    replaceable=True,
+                )
+            )
+    return hazards
+
+
+def allow_push_live_symlink_replacements(plans: Sequence[Any]) -> list[Any]:
+    updated_plans: list[Any] = []
+    for plan in plans:
+        updated_targets = []
+        for target in plan.target_plans:
+            if (
+                target.action != "noop"
+                and target.live_path_is_symlink
+                and target.target_kind != "directory"
+                and target.file_symlink_mode == "prompt"
+            ):
+                updated_targets.append(replace(target, allow_live_path_symlink_replace=True))
+            else:
+                updated_targets.append(target)
+        updated_plans.append(replace(plan, target_plans=updated_targets))
+    return updated_plans
+
+
+def print_push_live_symlink_hazard_warning(
+    hazards: Sequence[PushSymlinkHazard],
+    *,
+    use_color: bool,
+    full_paths: bool = False,
+) -> None:
+    if not hazards:
+        return
+
+    replaceable_count = sum(1 for hazard in hazards if hazard.replaceable)
+    unsupported_count = len(hazards) - replaceable_count
+    print(f"  {cli_style.render_payload_section_label('warning: symlinked live targets detected', use_color=use_color)}")
+    print(
+        "  "
+        + " · ".join(
+            [
+                cli_style.render_summary_stat(label="replaceable", value=replaceable_count, use_color=use_color),
+                cli_style.render_summary_stat(label="unsupported", value=unsupported_count, use_color=use_color),
+            ]
+        )
+    )
+    for hazard in hazards:
+        status_label = "replaceable" if hazard.replaceable else "unsupported"
+        status_text = cli_style.render_menu_badge(f"[{status_label}]", use_color=use_color)
+        live_path = display_cli_path(hazard.live_path, full_paths=full_paths)
+        package_target_label = cli_style.render_package_target_label(
+            repo_name=hazard.binding_label.split(":", 1)[0],
+            package_id=hazard.package_id,
+            target_name=hazard.target_name,
+            use_color=use_color,
+        )
+        print(f"    {status_text} {package_target_label}")
+        print(f"      {live_path} -> {hazard.symlink_target}")
+
+
 def effective_execution_mode(*, dry_run_requested: bool) -> str:
     return "dry-run" if dry_run_requested else "execute"
 
@@ -135,11 +248,14 @@ def emit_payload(
         if not visible_targets:
             continue
         visible_plans.append(replace(plan, target_plans=visible_targets))
+    warnings = collect_push_live_symlink_hazards(visible_plans) if operation == "push" else []
     payload = {
         "mode": mode,
         "operation": operation,
         "bindings": [plan.to_dict() for plan in visible_plans],
     }
+    if warnings:
+        payload["warnings"] = [warning.to_dict() for warning in warnings]
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
@@ -151,6 +267,8 @@ def emit_payload(
     )
     target_items = [item for section in package_sections for item in section.targets]
     _print_payload_header(f"{mode} {operation}", use_color=use_color)
+    if warnings:
+        print_push_live_symlink_hazard_warning(warnings, use_color=use_color, full_paths=full_paths)
     print(
         "  "
         + cli_style.render_payload_section_label(

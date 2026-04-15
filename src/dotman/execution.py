@@ -15,7 +15,6 @@ from dotman.capture import BUILTIN_PATCH_CAPTURE, capture_patch
 from dotman.engine import HOOK_NAMES_BY_OPERATION
 from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
-from dotman.target_paths import ensure_declared_live_path_is_not_symlink
 from dotman.templates import build_template_context, render_template_string
 from dotman.terminal import preserve_terminal_state
 
@@ -134,6 +133,7 @@ _STEP_LABELS_BY_OPERATION = {
 
 
 def build_execution_session(plans: Sequence[BindingPlan], *, operation: str) -> ExecutionSession:
+    _ensure_no_unapproved_live_symlink_targets(plans, operation=operation)
     package_units: list[PackageExecutionUnit] = []
     hook_names = _STEP_LABELS_BY_OPERATION[operation]
     for plan in plans:
@@ -193,6 +193,58 @@ def build_execution_session(plans: Sequence[BindingPlan], *, operation: str) -> 
             )
 
     return ExecutionSession(operation=operation, packages=tuple(package_units))
+
+
+
+def _ensure_no_unapproved_live_symlink_targets(plans: Sequence[BindingPlan], *, operation: str) -> None:
+    if operation not in {"push", "upgrade"}:
+        return
+
+    hazards: list[str] = []
+    for plan in plans:
+        binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
+        for target in plan.target_plans:
+            if target.action == "noop" or not target.live_path_is_symlink:
+                continue
+            if target.target_kind == "directory":
+                if target.dir_symlink_mode == "follow":
+                    continue
+                symlink_target = target.live_path_symlink_target or "<unknown>"
+                hazards.append(
+                    f"{binding_label} {target.package_id}:{target.target_name} ({target.live_path} -> {symlink_target})"
+                )
+                continue
+            if target.file_symlink_mode == "follow" or target.allow_live_path_symlink_replace:
+                continue
+            symlink_target = target.live_path_symlink_target or "<unknown>"
+            hazards.append(
+                f"{binding_label} {target.package_id}:{target.target_name} ({target.live_path} -> {symlink_target})"
+            )
+
+    if hazards:
+        raise ValueError("refusing to execute through unresolved symlinked live target(s): " + ", ".join(hazards))
+
+
+def _push_live_path(target_plan: TargetPlan) -> Path:
+    live_path = target_plan.live_path
+    live_path_is_symlink = live_path.is_symlink()
+    if not live_path_is_symlink:
+        return live_path
+    if target_plan.target_kind == "directory":
+        if target_plan.dir_symlink_mode == "follow":
+            return live_path
+        raise ValueError(
+            f"live target path is a symlink for target '{target_plan.package_id}:{target_plan.target_name}': "
+            f"{live_path} -> {live_path.resolve(strict=False)}"
+        )
+    if target_plan.file_symlink_mode == "follow":
+        return live_path.resolve(strict=False)
+    if target_plan.allow_live_path_symlink_replace:
+        return live_path
+    raise ValueError(
+        f"live target path is a symlink for target '{target_plan.package_id}:{target_plan.target_name}': "
+        f"{live_path} -> {live_path.resolve(strict=False)}"
+    )
 
 
 def execute_session(
@@ -372,11 +424,12 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool) -> ExecutionStepR
             )
 
         target_plan = _require_target_plan(step)
-        if step.binding_plan.operation in {"push", "upgrade"}:
-            ensure_declared_live_path_is_not_symlink(
-                live_path=target_plan.live_path,
-                target_label=f"{target_plan.package_id}:{target_plan.target_name}",
-            )
+        if step.binding_plan.operation in {"push", "upgrade"} and target_plan.target_kind == "directory":
+            if target_plan.live_path.is_symlink() and target_plan.dir_symlink_mode != "follow":
+                raise ValueError(
+                    f"live target path is a symlink for target '{target_plan.package_id}:{target_plan.target_name}': "
+                    f"{target_plan.live_path} -> {target_plan.live_path.resolve(strict=False)}"
+                )
 
         if step.kind == "reconcile":
             with _materialize_reconcile_review_env(target_plan) as review_env:
@@ -432,11 +485,12 @@ def _execute_target_step(step: ExecutionStep) -> None:
             _write_bytes(step.directory_item.live_path, step.directory_item.repo_path.read_bytes())
             return
         desired_bytes = _push_desired_bytes(target_plan)
-        _write_bytes(target_plan.live_path, desired_bytes)
+        _write_bytes(_push_live_path(target_plan), desired_bytes)
         return
     if step.action == "delete":
-        delete_path = step.directory_item.live_path if step.directory_item is not None else target_plan.live_path
-        _delete_file(delete_path, root=target_plan.live_path)
+        delete_path = step.directory_item.live_path if step.directory_item is not None else _push_live_path(target_plan)
+        delete_root = target_plan.live_path if step.directory_item is not None else delete_path
+        _delete_file(delete_path, root=delete_root)
         return
     if step.action in {"create_repo", "update_repo"}:
         repo_path = step.directory_item.repo_path if step.directory_item is not None else target_plan.repo_path
@@ -462,7 +516,7 @@ def _execute_chmod_step(step: ExecutionStep) -> None:
         return
     chmod_mode = int(target_plan.chmod, 8)
     if step.binding_plan.operation == "push":
-        chmod_path = target_plan.live_path
+        chmod_path = _push_live_path(target_plan)
     else:
         chmod_path = target_plan.repo_path
     if chmod_path.exists():
@@ -549,8 +603,25 @@ def write_bytes_atomic(path: Path, content: bytes) -> None:
     temp_path.replace(path)
 
 
+def write_symlink_atomic(path: Path, target: str | Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temp_file:
+        temp_path = Path(temp_file.name)
+    try:
+        temp_path.unlink()
+        temp_path.symlink_to(target)
+        temp_path.replace(path)
+    except Exception:
+        try:
+            if temp_path.exists() or temp_path.is_symlink():
+                temp_path.unlink()
+        except Exception:
+            pass
+        raise
+
+
 def delete_path_and_prune_empty_parents(path: Path, *, root: Path) -> None:
-    if path.exists():
+    if path.exists() or path.is_symlink():
         path.unlink()
     prune_root = root if root.is_dir() else root.parent
     current = path.parent

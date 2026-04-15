@@ -46,7 +46,9 @@ def test_pull_help_lists_dry_run_and_full_path_flags(capsys) -> None:
 
 def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     output = capture_parser_help(capsys)
-    assert "usage: dotman [-h] [--config <config-path>] [--json] <command> ..." in output
+    assert "usage: dotman [-h] [--config <config-path>] [--json]" in output
+    assert "[--file-symlink-mode <mode>] [--dir-symlink-mode <mode>]" in output
+    assert "<command>" in output
     assert "commands:" in output
     assert "Track a binding in manager state" in output
     assert "Patch review content back into repo source" in output

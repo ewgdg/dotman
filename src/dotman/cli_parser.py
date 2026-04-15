@@ -96,6 +96,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dotman", description="dotman CLI")
     parser.add_argument("--config", metavar="<config-path>", help="Path to dotman config.toml")
     parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
+    parser.add_argument(
+        "--file-symlink-mode",
+        choices=("prompt", "follow"),
+        default=None,
+        metavar="<mode>",
+        help="Override file symlink handling for push/upgrade planning and execution",
+    )
+    parser.add_argument(
+        "--dir-symlink-mode",
+        choices=("fail", "follow"),
+        default=None,
+        metavar="<mode>",
+        help="Override directory symlink handling for push/upgrade planning and execution",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True, title="commands", metavar="<command>")
 

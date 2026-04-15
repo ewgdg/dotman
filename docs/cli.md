@@ -114,10 +114,12 @@ This document captures the current command and selector direction for `dotman`.
 - After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `push` should execute immediately in one package-oriented timeline.
 - Before the first live mutation of a real `push`, dotman should create one manager-level snapshot for the finalized selected plan.
-- That snapshot should capture the pre-push live state only for paths that the finalized plan will mutate.
+- That snapshot should record enough state to restore the mutated paths later.
+- `file_symlink_mode = prompt` means interactive replace is allowed; `follow` means dotman writes through to the resolved target.
+- `dir_symlink_mode = fail` rejects symlinked directory roots; `follow` means dotman manages the resolved tree.
 - `push --dry-run` should not create a snapshot.
-- Managed target paths should keep the declared pathname as identity instead of silently following a live symlink to a different path.
-- `push` should fail fast when the declared live target path is a symlink.
+- Default symlink policy should be `file_symlink_mode = prompt` and `dir_symlink_mode = fail`; CLI flags can override either one for a single run.
+- `push` should fail fast when the active mode does not allow the live symlink shape.
 - If a real `push` fails after snapshot creation, dotman should keep that snapshot so the user can inspect it or roll back manually.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.

@@ -33,6 +33,8 @@ class ManagerConfig:
     config_path: Path
     repos: dict[str, RepoConfig]
     snapshots: SnapshotConfig
+    file_symlink_mode: str = "prompt"
+    dir_symlink_mode: str = "fail"
 
     @property
     def ordered_repos(self) -> list[RepoConfig]:
@@ -289,6 +291,11 @@ class TargetPlan:
     reconcile_command: str | None = None
     reconcile_io: str | None = None
     projection_error: str | None = None
+    live_path_is_symlink: bool = field(default=False, repr=False)
+    live_path_symlink_target: str | None = field(default=None, repr=False)
+    allow_live_path_symlink_replace: bool = field(default=False, repr=False)
+    file_symlink_mode: str = field(default="prompt", repr=False)
+    dir_symlink_mode: str = field(default="fail", repr=False)
     pull_view_repo: str = "raw"
     pull_view_live: str = "raw"
     push_ignore: tuple[str, ...] = ()

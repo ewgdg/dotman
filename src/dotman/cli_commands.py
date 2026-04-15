@@ -47,6 +47,7 @@ class CliCommandHandlers:
     interrupted_exit_code: int
     emit_payload: Callable[..., int]
     effective_execution_mode: Callable[..., str]
+    prepare_push_plans_for_execution: Callable[..., Any]
     execute_plans: Callable[..., Any]
     emit_execution_result: Callable[..., int]
     run_execution: Callable[..., int]
@@ -280,6 +281,14 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
             mode=handlers.effective_execution_mode(dry_run_requested=True),
             full_paths=args.full_path,
         )
+    plans = handlers.prepare_push_plans_for_execution(
+        plans=plans,
+        json_output=args.json_output,
+        full_paths=args.full_path,
+    )
+    if plans is None:
+        handlers.emit_interrupt_notice()
+        return handlers.interrupted_exit_code
     snapshot = create_push_snapshot(plans, engine.config.snapshots)
     try:
         execution_result = handlers.execute_plans(

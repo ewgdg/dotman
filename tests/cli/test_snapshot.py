@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import dotman.cli as cli
 from dotman.cli import main
 from dotman.snapshot import list_snapshots
 from tests.helpers import capture_parser_help, write_named_manager_config
@@ -130,6 +131,146 @@ def test_push_execute_creates_snapshot_and_rollback_restores_latest_snapshot(
     assert restored_snapshots[0].restore_count == 1
     assert restored_snapshots[0].last_restored_at is not None
     assert "executing rollback" in capsys.readouterr().out
+
+
+def test_push_execute_replaces_symlinked_target_and_rollback_restores_link(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    repo_root = tmp_path / "repo"
+    _write_snapshot_execution_repo(repo_root)
+    config_path = _write_snapshot_config(tmp_path, repo_root)
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True, exist_ok=True)
+    real_live_path = live_path.parent / "config-real.txt"
+    real_live_path.write_text("before push\n", encoding="utf-8")
+    live_path.symlink_to(real_live_path)
+
+    answers = iter(["y"])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False: True)
+    monkeypatch.setattr(
+        cli,
+        "filter_plans_for_interactive_selection",
+        lambda *, plans, operation, json_output, full_paths=False: list(plans),
+    )
+
+    push_exit_code = main(["--config", str(config_path), "push"])
+
+    assert push_exit_code == 0
+    assert live_path.is_file()
+    assert not live_path.is_symlink()
+    assert live_path.read_text(encoding="utf-8") == "repo value\n"
+    snapshots = list_snapshots(tmp_path / "snapshots")
+    assert len(snapshots) == 1
+    assert snapshots[0].entries[0].path_kind == "symlink"
+    assert snapshots[0].entries[0].symlink_target == str(real_live_path)
+
+    rollback_exit_code = main(["--config", str(config_path), "--json", "rollback"])
+
+    assert rollback_exit_code == 0
+    assert live_path.is_symlink()
+    assert live_path.read_text(encoding="utf-8") == "before push\n"
+    capsys.readouterr()
+
+
+
+def test_push_execute_follows_symlinked_target_and_rollback_restores_target_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_snapshot_execution_repo(repo_root)
+    config_path = _write_snapshot_config(tmp_path, repo_root)
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True, exist_ok=True)
+    real_live_path = live_path.parent / "config-real.txt"
+    real_live_path.write_text("before push\n", encoding="utf-8")
+    live_path.symlink_to(real_live_path)
+
+    push_exit_code = main(["--config", str(config_path), "--file-symlink-mode", "follow", "push"])
+
+    assert push_exit_code == 0
+    assert live_path.is_symlink()
+    assert live_path.read_text(encoding="utf-8") == "repo value\n"
+    assert real_live_path.read_text(encoding="utf-8") == "repo value\n"
+    snapshots = list_snapshots(tmp_path / "snapshots")
+    assert len(snapshots) == 1
+    assert snapshots[0].entries[0].preserve_symlink_identity is False
+    assert snapshots[0].entries[0].restore_path == real_live_path.resolve()
+
+    rollback_exit_code = main(["--config", str(config_path), "rollback"])
+
+    assert rollback_exit_code == 0
+    assert live_path.is_symlink()
+    assert real_live_path.read_text(encoding="utf-8") == "before push\n"
+    assert live_path.read_text(encoding="utf-8") == "before push\n"
+
+
+
+def test_push_execute_replaces_broken_symlink_and_rollback_restores_link(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    repo_root = tmp_path / "repo"
+    _write_snapshot_execution_repo(repo_root)
+    config_path = _write_snapshot_config(tmp_path, repo_root)
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True, exist_ok=True)
+    broken_target = live_path.parent / "missing-config.txt"
+    live_path.symlink_to(broken_target)
+
+    answers = iter(["y"])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False: True)
+    monkeypatch.setattr(
+        cli,
+        "filter_plans_for_interactive_selection",
+        lambda *, plans, operation, json_output, full_paths=False: list(plans),
+    )
+
+    push_exit_code = main(["--config", str(config_path), "push"])
+
+    assert push_exit_code == 0
+    assert live_path.is_file()
+    assert live_path.read_text(encoding="utf-8") == "repo value\n"
+    snapshots = list_snapshots(tmp_path / "snapshots")
+    assert len(snapshots) == 1
+    entry = snapshots[0].entries[0]
+    assert entry.path_kind == "symlink"
+    assert entry.symlink_target == str(broken_target)
+    assert entry.content_path is None
+    assert entry.preserve_symlink_identity is True
+
+    rollback_exit_code = main(["--config", str(config_path), "--json", "rollback"])
+
+    assert rollback_exit_code == 0
+    assert live_path.is_symlink()
+    assert live_path.resolve(strict=False) == broken_target
+    capsys.readouterr()
+
 
 
 def test_push_execute_creates_missing_file_and_rollback_deletes_it(tmp_path: Path, monkeypatch) -> None:

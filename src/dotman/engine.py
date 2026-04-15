@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -68,8 +69,21 @@ class DotmanEngine:
         self.repos = {repo.name: Repository(repo) for repo in config.ordered_repos}
 
     @classmethod
-    def from_config_path(cls, config_path: str | Path | None = None) -> "DotmanEngine":
-        return cls(load_manager_config(config_path))
+    def from_config_path(
+        cls,
+        config_path: str | Path | None = None,
+        *,
+        file_symlink_mode: str | None = None,
+        dir_symlink_mode: str | None = None,
+    ) -> "DotmanEngine":
+        config = load_manager_config(config_path)
+        if file_symlink_mode is not None or dir_symlink_mode is not None:
+            config = replace(
+                config,
+                file_symlink_mode=file_symlink_mode or config.file_symlink_mode,
+                dir_symlink_mode=dir_symlink_mode or config.dir_symlink_mode,
+            )
+        return cls(config)
 
     def get_repo(self, repo_name: str) -> Repository:
         try:

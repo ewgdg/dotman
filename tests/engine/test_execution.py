@@ -143,6 +143,99 @@ def test_execute_session_fails_when_live_target_becomes_symlink_before_execution
     assert real_live_path.read_text(encoding="utf-8") == "live\n"
 
 
+def test_execute_session_allows_live_target_symlink_replacement_when_explicitly_approved(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    real_live_path = live_root / "config-real.txt"
+    real_live_path.write_text("live\n", encoding="utf-8")
+    live_path = live_root / "config.txt"
+    live_path.symlink_to(real_live_path)
+
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path,
+                live_path=live_path,
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"repo\n",
+                live_path_is_symlink=True,
+                live_path_symlink_target=str(real_live_path),
+                allow_live_path_symlink_replace=True,
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="push")
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert live_path.is_file()
+    assert not live_path.is_symlink()
+    assert live_path.read_text(encoding="utf-8") == "repo\n"
+    assert real_live_path.read_text(encoding="utf-8") == "live\n"
+
+
+
+def test_execute_session_follows_live_target_symlink_when_configured(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    real_live_path = live_root / "config-real.txt"
+    real_live_path.write_text("live\n", encoding="utf-8")
+    live_path = live_root / "config.txt"
+    live_path.symlink_to(real_live_path)
+
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path,
+                live_path=live_path,
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"repo\n",
+                live_path_is_symlink=True,
+                live_path_symlink_target=str(real_live_path),
+                file_symlink_mode="follow",
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="push")
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert live_path.is_symlink()
+    assert live_path.read_text(encoding="utf-8") == "repo\n"
+    assert real_live_path.read_text(encoding="utf-8") == "repo\n"
+
 
 def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
     tmp_path: Path,

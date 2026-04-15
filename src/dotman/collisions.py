@@ -115,9 +115,9 @@ def resolve_tracked_target_winners(
 
 
 def validate_target_collisions(
-    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...]]],
+    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
 ) -> None:
-    for index, (package, target, _repo_path, live_path, push_ignore, pull_ignore) in enumerate(rendered_targets):
+    for index, (package, target, _repo_path, live_path, push_ignore, pull_ignore, _live_path_is_symlink, _live_path_symlink_target) in enumerate(rendered_targets):
         for (
             other_package,
             other_target,
@@ -125,6 +125,8 @@ def validate_target_collisions(
             other_live_path,
             other_push_ignore,
             other_pull_ignore,
+            _other_live_path_is_symlink,
+            _other_live_path_symlink_target,
         ) in rendered_targets[index + 1 :]:
             if live_path == other_live_path:
                 raise ValueError(
@@ -154,12 +156,12 @@ def validate_target_collisions(
 def validate_reserved_path_conflicts(
     engine: Any,
     packages: list[PackageSpec],
-    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...]]],
+    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
     context: dict[str, Any],
 ) -> None:
     target_claims = [
         (package.id, f"{package.id}:{target.name}", live_path)
-        for package, target, _repo_path, live_path, _push_ignore, _pull_ignore in rendered_targets
+        for package, target, _repo_path, live_path, _push_ignore, _pull_ignore, _live_path_is_symlink, _live_path_symlink_target in rendered_targets
     ]
     reserved_claims: list[tuple[str, Path]] = []
     for package in packages:
