@@ -23,7 +23,7 @@ class _SudoLease:
         self._keepalive_thread: threading.Thread | None = None
         self._acquired = False
 
-    def request(self) -> None:
+    def request(self, reason: str | None = None) -> None:
         if os.geteuid() == 0:
             return
         if self._acquired:
@@ -39,6 +39,7 @@ class _SudoLease:
                     self._keepalive_thread.start()
                 return
             self.close()
+        _emit_sudo_notice(reason)
         try:
             subprocess.run(["sudo", "-v"], check=True)
         except subprocess.CalledProcessError as exc:
@@ -100,8 +101,18 @@ def sudo_session() -> Iterator[None]:
 
 
 
-def request_sudo() -> None:
-    _current_sudo_lease().request()
+def _emit_sudo_notice(reason: str | None) -> None:
+    from dotman import cli_style
+
+    detail = reason or "perform privileged operation"
+    use_color = sys.stderr.isatty() and os.environ.get("NO_COLOR") is None
+    badge = cli_style.render_sudo_badge(use_color=use_color)
+    print(f"{badge} password required to {detail}", file=sys.stderr)
+
+
+
+def request_sudo(reason: str | None = None) -> None:
+    _current_sudo_lease().request(reason)
 
 
 
@@ -162,7 +173,7 @@ def read_bytes(path: Path) -> bytes:
     try:
         return path.read_bytes()
     except PermissionError:
-        request_sudo()
+        request_sudo(f"read protected path: {path}")
         completed = subprocess.run(["sudo", "-n", "/bin/cat", str(path)], capture_output=True, check=False)
         if completed.returncode == 0:
             return completed.stdout
@@ -180,7 +191,7 @@ def write_bytes_atomic(path: Path, content: bytes, *, restore_root: Path | None 
             # Fall back to sudo if direct path check was too optimistic.
             pass
 
-    request_sudo()
+    request_sudo(f"write protected path: {path}")
     completed = _run_privileged_operation(
         "write-bytes-atomic",
         str(path),
@@ -202,7 +213,7 @@ def write_symlink_atomic(path: Path, target: str | Path) -> None:
             # Fall back to sudo if direct path check was too optimistic.
             pass
 
-    request_sudo()
+    request_sudo(f"write protected path: {path}")
     completed = _run_privileged_operation("write-symlink-atomic", str(path), str(target))
     if completed.returncode != 0:
         stderr = completed.stderr.decode("utf-8", errors="replace").strip()
@@ -215,7 +226,7 @@ def delete_path_and_prune_empty_parents(path: Path, *, root: Path) -> None:
         if path.exists() or path.is_symlink():
             path.unlink()
     except PermissionError:
-        request_sudo()
+        request_sudo(f"delete protected path: {path}")
         completed = _run_privileged_operation("delete-path-and-prune-empty-parents", str(path), str(root))
         if completed.returncode != 0:
             stderr = completed.stderr.decode("utf-8", errors="replace").strip()
@@ -239,7 +250,7 @@ def chmod(path: Path, mode: int) -> None:
     try:
         os.chmod(path, mode)
     except PermissionError:
-        request_sudo()
+        request_sudo(f"change mode on protected path: {path}")
         completed = _run_privileged_operation("chmod", str(path), str(mode))
         if completed.returncode != 0:
             stderr = completed.stderr.decode("utf-8", errors="replace").strip()

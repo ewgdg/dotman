@@ -374,7 +374,42 @@ def _target_step_needs_sudo(
 
 def _preflight_execution_session_sudo(session: ExecutionSession) -> None:
     if session.requires_privilege:
-        request_sudo()
+        request_sudo(_execution_session_sudo_reason(session))
+
+
+
+def _execution_session_sudo_reason(session: ExecutionSession) -> str:
+    for package in session.packages:
+        for step in package.steps:
+            if step.privileged and step.kind != "hook":
+                return _sudo_reason_for_step(step)
+    for package in session.packages:
+        for step in package.steps:
+            if step.privileged:
+                return _sudo_reason_for_step(step)
+    return "planned execution includes privileged operations"
+
+
+
+def _sudo_reason_for_step(step: ExecutionStep) -> str:
+    live_path = _step_live_path(step)
+    repo_path = _step_repo_path(step)
+    if step.action in {"create", "update", "delete"} and live_path is not None:
+        return f"write protected path: {live_path}"
+    if step.action == "chmod" and live_path is not None:
+        return f"change mode on protected path: {live_path}"
+    if step.action in {"create_repo", "update_repo", "reconcile"} and live_path is not None:
+        return f"read protected path: {live_path}"
+    if step.action == "delete_repo" and repo_path is not None:
+        return f"delete protected path: {repo_path}"
+    if step.kind == "hook":
+        return f"execute privileged hook for {step.package_id}"
+    if live_path is not None:
+        return f"access protected path: {live_path}"
+    if repo_path is not None:
+        return f"access protected path: {repo_path}"
+    return "planned execution includes privileged operations"
+
 
 
 def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation: str) -> list[ExecutionStep]:
@@ -731,7 +766,7 @@ def _run_command(
     privileged: bool = False,
 ) -> tuple[int, str, str]:
     if privileged and os.geteuid() != 0:
-        request_sudo()
+        request_sudo("run privileged command")
         command = sudo_prefix_command(command)
     if interactive and stream_output:
         return _run_command_with_terminal(command=command, cwd=cwd, env=env, privileged=False)
@@ -776,7 +811,7 @@ def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str,
     # and prefixing their output corrupts terminal control sequences and leaves
     # the shell looking broken after exit, so dotman must hand them the tty.
     if privileged and os.geteuid() != 0:
-        request_sudo()
+        request_sudo("run privileged command")
         command = sudo_prefix_command(command)
     with preserve_terminal_state():
         completed = subprocess.run(

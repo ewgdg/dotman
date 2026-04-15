@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 from pathlib import Path
 
 _TEMP_FILE_PREFIX = ".dotman-"
 _TEMP_FILE_SUFFIX = ".tmp"
+_DEFAULT_FILE_CREATION_MODE = 0o666
 
 
 def write_bytes_atomic(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_stale_atomic_temp_files(path.parent)
+    replacement_mode = target_replacement_mode(path)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -22,6 +25,10 @@ def write_bytes_atomic(path: Path, content: bytes) -> None:
         ) as temp_file:
             temp_file.write(content)
             temp_path = Path(temp_file.name)
+        # NamedTemporaryFile creates owner-only files for safety. Preserve the
+        # existing target mode, or apply normal file-creation semantics for new
+        # targets, so atomic replacement does not silently tighten permissions.
+        os.chmod(temp_path, replacement_mode)
         temp_path.replace(path)
     finally:
         cleanup_atomic_temp_file(temp_path)
@@ -46,6 +53,21 @@ def write_symlink_atomic(path: Path, target: str | Path) -> None:
     except Exception:
         cleanup_atomic_temp_file(temp_path)
         raise
+
+
+
+def target_replacement_mode(path: Path) -> int:
+    try:
+        return stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        return default_created_file_mode()
+
+
+
+def default_created_file_mode() -> int:
+    current_umask = os.umask(0)
+    os.umask(current_umask)
+    return _DEFAULT_FILE_CREATION_MODE & ~current_umask
 
 
 
@@ -92,7 +114,9 @@ def is_live_atomic_temp_file(temp_path: Path) -> bool:
 __all__ = [
     "cleanup_atomic_temp_file",
     "cleanup_stale_atomic_temp_files",
+    "default_created_file_mode",
     "is_live_atomic_temp_file",
+    "target_replacement_mode",
     "write_bytes_atomic",
     "write_symlink_atomic",
 ]

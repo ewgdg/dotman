@@ -36,6 +36,7 @@ SNAPSHOT_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "applied": ("1", "32"),
     "failed": ("1", "31"),
 }
+SUDO_BADGE_STYLE = ("1", "33")
 
 
 def colors_enabled() -> bool:
@@ -285,6 +286,14 @@ def render_menu_badge(text: str, *, use_color: bool) -> str:
     if not use_color:
         return text
     return style_text(text, *MENU_HINT_STYLE)
+
+
+
+def render_sudo_badge(*, use_color: bool) -> str:
+    if not use_color:
+        return "[sudo]"
+    return style_text("[sudo]", *SUDO_BADGE_STYLE)
+
 
 
 def join_menu_display_fields(*fields: str) -> str:

@@ -62,7 +62,7 @@ def _list_directory_files_without_sudo(root: Path, ignore_patterns: tuple[str, .
 def _list_directory_files_via_sudo(root: Path, ignore_patterns: tuple[str, ...]) -> dict[str, Path]:
     from dotman.file_access import request_sudo
 
-    request_sudo()
+    request_sudo(f"list protected directory: {root}")
     completed = subprocess.run(
         ["sudo", "-n", sys.executable, "-m", "dotman.privileged_ops", "list-directory-files", str(root)],
         input=json.dumps(ignore_patterns).encode("utf-8"),

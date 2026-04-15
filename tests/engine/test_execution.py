@@ -587,7 +587,7 @@ def test_execute_session_uses_sudo_writer_for_system_live_paths(
     session = build_execution_session([plan], operation="push")
 
     recorded_calls: list[tuple[Path, bytes, Path | None]] = []
-    monkeypatch.setattr("dotman.execution.request_sudo", lambda: None)
+    monkeypatch.setattr("dotman.execution.request_sudo", lambda reason=None: None)
     monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == live_path)
     monkeypatch.setattr(
         "dotman.execution.sudo_write_bytes_atomic",
@@ -605,6 +605,16 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
     monkeypatch,
 ) -> None:
     recorded_events: list[str] = []
+    target_plan = TargetPlan(
+        package_id="app",
+        target_name="config",
+        repo_path=Path("/repo/app.conf"),
+        live_path=Path("/etc/sddm.conf"),
+        action="update",
+        target_kind="file",
+        projection_kind="raw",
+        desired_bytes=b"repo\n",
+    )
 
     plan = execution.ExecutionSession(
         operation="push",
@@ -624,10 +634,11 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
                             package_ids=["app"],
                             variables={},
                             hooks={},
-                            target_plans=[],
+                            target_plans=[target_plan],
                         ),
                         kind="target",
                         action="update",
+                        target_plan=target_plan,
                         privileged=True,
                     ),
                 ),
@@ -636,7 +647,10 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
         requires_privilege=True,
     )
 
-    monkeypatch.setattr("dotman.execution.request_sudo", lambda: recorded_events.append("sudo"))
+    monkeypatch.setattr(
+        "dotman.execution.request_sudo",
+        lambda reason=None: recorded_events.append(f"sudo:{reason}"),
+    )
     monkeypatch.setattr(
         "dotman.execution._execute_step",
         lambda step, *, stream_output, assume_yes: (
@@ -652,7 +666,7 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
     )
 
     assert result.status == "ok"
-    assert recorded_events == ["sudo", "package", "step"]
+    assert recorded_events == ["sudo:write protected path: /etc/sddm.conf", "package", "step"]
 
 
 
@@ -686,7 +700,10 @@ def test_execute_session_runs_privileged_hooks_through_sudo(
     session = build_execution_session([plan], operation="push")
 
     recorded_events: list[tuple[str, bool]] = []
-    monkeypatch.setattr("dotman.execution.request_sudo", lambda: recorded_events.append(("sudo", True)))
+    monkeypatch.setattr(
+        "dotman.execution.request_sudo",
+        lambda reason=None: recorded_events.append((f"sudo:{reason}", True)),
+    )
     monkeypatch.setattr(
         "dotman.execution._run_command",
         lambda *, command, cwd, env, stream_output, interactive, privileged=False: (
@@ -699,7 +716,7 @@ def test_execute_session_runs_privileged_hooks_through_sudo(
     result = execute_session(session, stream_output=False)
 
     assert result.status == "ok"
-    assert ("sudo", True) in recorded_events
+    assert ("sudo:write protected path: /etc/sddm.conf", True) in recorded_events
     assert ("echo guard", True) in recorded_events
     assert ("echo pre", True) in recorded_events
     assert ("echo post", True) in recorded_events
@@ -757,6 +774,48 @@ def test_read_bytes_uses_sudo_when_direct_read_is_denied(tmp_path: Path, monkeyp
 
     with file_access.sudo_session():
         assert file_access.read_bytes(target_path) == b"payload\n"
+
+
+def test_request_sudo_emits_user_facing_reason_only_when_password_prompt_is_needed(monkeypatch, capsys) -> None:
+    def fake_run(command, *args, **kwargs):
+        if command[:2] == ["sudo", "-v"]:
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        if command[:3] == ["sudo", "-n", "true"]:
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        raise AssertionError(f"unexpected sudo command: {command}")
+
+    monkeypatch.setattr(file_access.subprocess, "run", fake_run)
+
+    with file_access.sudo_session():
+        file_access.request_sudo("list protected directory: /etc/sddm.conf.d")
+        file_access.request_sudo("write protected path: /etc/sddm.conf")
+
+    captured = capsys.readouterr()
+    assert captured.err == "[sudo] password required to list protected directory: /etc/sddm.conf.d\n"
+
+
+
+def test_request_sudo_emits_user_facing_reason_again_when_cached_lease_expires(monkeypatch, capsys) -> None:
+    keepalive_checks = iter((1,))
+
+    def fake_run(command, *args, **kwargs):
+        if command[:2] == ["sudo", "-v"]:
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        if command[:3] == ["sudo", "-n", "true"]:
+            return SimpleNamespace(returncode=next(keepalive_checks), stdout=b"", stderr=b"")
+        raise AssertionError(f"unexpected sudo command: {command}")
+
+    monkeypatch.setattr(file_access.subprocess, "run", fake_run)
+
+    with file_access.sudo_session():
+        file_access.request_sudo("list protected directory: /etc/sddm.conf.d")
+        file_access.request_sudo("write protected path: /etc/sddm.conf")
+
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "[sudo] password required to list protected directory: /etc/sddm.conf.d\n"
+        "[sudo] password required to write protected path: /etc/sddm.conf\n"
+    )
 
 
 def test_restore_repo_path_access_adds_owner_write_bits_for_repo_files_and_dirs(
