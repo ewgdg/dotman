@@ -127,7 +127,7 @@ chmod = "600"
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
 - Explicit target keys override preset defaults.
-- Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow and `jinja-patch` for the narrow Jinja reverse-capture workflow.
+- Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow, `jinja-patch` for the narrow Jinja reverse-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.
 - Targets may define `render` as a forward transform used during `push`.
 - `render` may be a built-in renderer such as `jinja`, or a non-interactive stdout-producing command string.
 - Built-in renderers are shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` means dotman runs the built-in Jinja renderer as if it had executed `dotman render jinja "$DOTMAN_SOURCE"` **with the current binding context already injected through `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`**.

@@ -294,6 +294,75 @@ def test_info_tracked_cli_shows_effective_values_for_target_preset(
     assert target["reconcile_io"] == "tty"
 
 
+def test_info_tracked_cli_shows_capture_and_editor_values_for_target_preset(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'preset = "jinja-patch-editor"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text("hello\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "shell"',
+                'profile = "default"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "info",
+            "tracked",
+            "shell",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    target = payload["package"]["owned_targets"][0]
+    assert target["render_command"] == "jinja"
+    assert target["capture_command"] == "patch"
+    assert target["pull_view_repo"] == "render"
+    assert target["pull_view_live"] == "raw"
+    assert target["reconcile_command"] == "jinja"
+    assert target["reconcile_io"] == "tty"
+
+
 
 def test_info_tracked_cli_emits_hooks_even_when_package_targets_are_noop(
     tmp_path: Path,

@@ -92,6 +92,15 @@ That preset supplies default values for:
 - `pull_view_repo = "render"`
 - `pull_view_live = "raw"`
 
+If you want the same patch-first workflow but also want built-in interactive fallback when patch capture fails, use:
+
+- `preset = "jinja-patch-editor"`
+
+That preset supplies the same defaults as `jinja-patch`, plus:
+
+- `reconcile = "jinja"`
+- `reconcile_io = "tty"`
+
 ## Example
 
 `package.toml`:
@@ -287,7 +296,7 @@ dotman render jinja --profile basic --os linux --var git.user_name='Example User
 ## Rules Of Thumb
 
 - No `template = true` flag or separate template target type exists
-- Jinja file rendering is explicit: use `render = "jinja"`, `preset = "jinja-editor"`, or `preset = "jinja-patch"`
+- Jinja file rendering is explicit: use `render = "jinja"`, `preset = "jinja-editor"`, `preset = "jinja-patch"`, or `preset = "jinja-patch-editor"`
 - `capture = "patch"` is the narrow automatic reverse-capture helper; it expects `render = "jinja"`, `pull_view_repo = "render"`, and `pull_view_live = "raw"`
 - dotman follows the configured `render`, `pull_view_*`, `capture`, and `reconcile` workflow
 - `.tmpl` is optional naming only

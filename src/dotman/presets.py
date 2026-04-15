@@ -19,6 +19,14 @@ BUILTIN_TARGET_PRESETS: dict[str, dict[str, Any]] = {
         "pull_view_repo": "render",
         "pull_view_live": "raw",
     },
+    "jinja-patch-editor": {
+        "render": "jinja",
+        "capture": BUILTIN_PATCH_CAPTURE,
+        "pull_view_repo": "render",
+        "pull_view_live": "raw",
+        "reconcile": "jinja",
+        "reconcile_io": "tty",
+    },
 }
 
 
