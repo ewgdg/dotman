@@ -781,3 +781,48 @@ def test_print_review_item_shows_unavailable_badge(monkeypatch, capsys) -> None:
     output = capsys.readouterr().out
     assert "[diff unavailable]" in output
     assert "~/.../git/config -> ~/.../git/config" in output
+
+
+def test_prompt_for_excluded_items_preserves_root_prefix_for_system_paths(monkeypatch, capsys) -> None:
+    selection_items = [
+        PendingSelectionItem(
+            binding_label="main:sddm@basic",
+            package_id="sddm",
+            target_name="kde_settings.conf",
+            action="delete",
+            source_path="/etc/sddm.conf.d/kde_settings.conf",
+            destination_path="/repo/sddm.conf.d/kde_settings.conf",
+        )
+    ]
+
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+
+    excluded = prompt_for_excluded_items(selection_items, operation="delete")
+    output = capsys.readouterr().out
+
+    assert excluded == set()
+    assert ": /etc/sddm.conf.d/kde_settings.conf -> /repo/sddm.conf.d/kde_settings.conf" in output
+
+
+def test_print_review_item_preserves_root_prefix_for_system_paths(monkeypatch, capsys) -> None:
+    review_item = cli.ReviewItem(
+        binding_label="main:sddm@basic",
+        package_id="sddm",
+        target_name="kde_settings.conf",
+        action="delete",
+        operation="push",
+        repo_path=Path("/etc/sddm.conf.d/kde_settings.conf"),
+        live_path=Path("/repo/sddm.conf.d/kde_settings.conf"),
+        source_path="/etc/sddm.conf.d/kde_settings.conf",
+        destination_path="/repo/sddm.conf.d/kde_settings.conf",
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    cli.print_review_item(1, review_item)
+
+    output = capsys.readouterr().out
+    assert ": /etc/sddm.conf.d/kde_settings.conf -> /repo/sddm.conf.d/kde_settings.conf" in output

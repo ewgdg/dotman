@@ -96,6 +96,42 @@ def test_run_review_item_diff_invokes_git_diff(monkeypatch) -> None:
     assert recorded["command"][5:] == ["live/~/.../share/live-file", "repo/~/.config/repo-file"]
 
 
+def test_run_review_item_diff_materializes_absolute_paths_under_temp_root(monkeypatch) -> None:
+    repo_path = Path("/etc/sddm.conf.d/kde_settings.conf")
+    live_path = Path("/var/lib/sddm.conf.d/kde_settings.conf")
+    review_item = ReviewItem(
+        binding_label="main:sddm@basic",
+        package_id="sddm",
+        target_name="kde_settings.conf",
+        action="update",
+        operation="push",
+        repo_path=repo_path,
+        live_path=live_path,
+        source_path=str(repo_path),
+        destination_path=str(live_path),
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+    recorded: dict[str, object] = {}
+
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr("dotman.diff_review._select_review_pager_command", lambda: None)
+
+    def fake_run(command: list[str], check: bool, env=None, cwd=None):
+        recorded["command"] = command
+        recorded["cwd"] = cwd
+        assert cwd is not None
+        assert Path(cwd, "live", "var", "...", "sddm.conf.d", "kde_settings.conf").read_text(encoding="utf-8") == "before\n"
+        assert Path(cwd, "repo", "etc", "sddm.conf.d", "kde_settings.conf").read_text(encoding="utf-8") == "after\n"
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
+
+    run_review_item_diff(review_item)
+
+    assert recorded["command"][5:] == ["live/var/.../sddm.conf.d/kde_settings.conf", "repo/etc/sddm.conf.d/kde_settings.conf"]
+
+
 def test_run_review_item_diff_uses_repo_and_live_labels_for_pull(monkeypatch) -> None:
     repo_path = Path.home() / ".gitconfig"
     live_path = Path.home() / ".config" / "git" / "config"
@@ -179,12 +215,16 @@ def test_review_display_path_compacts_long_home_relative_path() -> None:
     assert _review_display_path(Path.home() / ".local" / "share" / "nvim" / "init.lua") == Path("~/.../nvim/init.lua")
 
 
-def test_review_display_path_keeps_absolute_path_without_root_prefix() -> None:
-    assert _review_display_path(Path("/etc/gitconfig")) == Path("etc/gitconfig")
+def test_review_display_path_keeps_absolute_path_with_root_prefix() -> None:
+    assert _review_display_path(Path("/etc/gitconfig")) == Path("/etc/gitconfig")
+
+
+def test_review_display_path_keeps_short_absolute_system_path() -> None:
+    assert _review_display_path(Path("/etc/sddm.conf.d/kde_settings.conf")) == Path("/etc/sddm.conf.d/kde_settings.conf")
 
 
 def test_review_display_path_compacts_long_absolute_path() -> None:
-    assert _review_display_path(Path("/etc/xdg/nvim/init.lua")) == Path("etc/.../nvim/init.lua")
+    assert _review_display_path(Path("/etc/xdg/nvim/init.lua")) == Path("/etc/.../nvim/init.lua")
 
 
 def test_display_review_path_can_disable_compaction_and_home_collapse() -> None:

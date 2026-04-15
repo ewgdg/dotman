@@ -271,11 +271,21 @@ def _review_edit_reference_paths(*, review_item: ReviewItem) -> tuple[Path, Path
 
 
 def _write_review_file(*, root: Path, side: str, reference_path: Path, content: bytes) -> Path:
-    output_path = root / side / _review_display_path(reference_path)
+    # Review temp files must stay under the temp root even when the display path
+    # keeps an absolute slash for system files.
+    output_path = root / side / _review_materialized_display_path(reference_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(content)
     output_path.chmod(0o444)
     return output_path
+
+
+def _review_materialized_display_path(reference_path: Path) -> Path:
+    display_path = _review_display_path(reference_path)
+    if display_path.is_absolute():
+        relative_parts = display_path.parts[1:]
+        return Path(*relative_parts) if relative_parts else Path("content")
+    return display_path
 
 
 def display_review_path(reference_path: Path | str, *, compact: bool = True) -> str:
@@ -297,14 +307,21 @@ def _normalize_review_display_path(reference_path: Path) -> Path:
         home_relative_path = reference_path.relative_to(Path.home())
     except ValueError:
         if reference_path.is_absolute():
-            relative_parts = reference_path.parts[1:]
-            return Path(*relative_parts) if relative_parts else Path("content")
+            return reference_path
         return reference_path if reference_path.parts else Path("content")
     return Path("~") / home_relative_path if home_relative_path.parts else Path("~")
 
 
 def _compact_review_display_path(display_path: Path) -> Path:
     parts = display_path.parts
+    if not parts:
+        return Path("content")
+    if display_path.is_absolute():
+        if len(parts) <= MAX_UNCOMPACTED_REVIEW_PATH_PARTS + 1:
+            return display_path
+        # Absolute paths keep their root slash so system files stay clearly
+        # distinguished from repo-relative paths in review and selection menus.
+        return Path(parts[0], parts[1], "...", *parts[-REVIEW_PATH_TAIL_PARTS:])
     if len(parts) <= MAX_UNCOMPACTED_REVIEW_PATH_PARTS:
         return display_path
     # Keep the anchor and tail so long review labels stay short without
