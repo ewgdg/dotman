@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from dotman.file_access import read_bytes
 from dotman.templates import JinjaRenderError
 
 
@@ -53,7 +54,7 @@ def capture_patch(
         option_name="--review-live-path",
     )
 
-    raw_bytes = resolved_repo_path.read_bytes()
+    raw_bytes = read_bytes(resolved_repo_path)
     review_repo_bytes = resolved_review_repo_path.read_bytes()
     review_live_bytes = resolved_review_live_path.read_bytes()
     candidate_bytes = apply_review_patch(

@@ -4,7 +4,10 @@ import stat
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import dotman.execution as execution
+from dotman import file_access
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
 from dotman.models import Binding, BindingPlan, HookPlan, TargetPlan
@@ -69,6 +72,37 @@ def test_build_execution_session_orders_push_steps_per_package() -> None:
         "guard_push",
         "update",
     ]
+
+
+def test_build_execution_session_marks_hooks_privileged_when_package_needs_sudo() -> None:
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={
+            "guard_push": [HookPlan(package_id="app", hook_name="guard_push", command="echo guard", cwd=Path("/repo"))],
+            "pre_push": [HookPlan(package_id="app", hook_name="pre_push", command="echo pre", cwd=Path("/repo"))],
+            "post_push": [HookPlan(package_id="app", hook_name="post_push", command="echo post", cwd=Path("/repo"))],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/etc/sddm.conf"),
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"repo\n",
+            )
+        ],
+    )
+
+    session = build_execution_session([plan], operation="push")
+
+    assert [step.privileged for step in session.packages[0].steps] == [True, True, True, True]
 
 
 def test_build_execution_session_does_not_add_pull_chmod_steps() -> None:
@@ -518,6 +552,211 @@ def test_execute_session_restores_repo_path_access_for_pull_updates_run_via_sudo
         (repo_root, 1234, 5678),
     ]
 
+
+
+def test_execute_session_uses_sudo_writer_for_system_live_paths(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_path = repo_root / "packages" / "app" / "config.txt"
+    repo_path.parent.mkdir(parents=True)
+    repo_path.write_text("repo\n", encoding="utf-8")
+    live_path = Path("/etc/sddm.conf")
+
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path,
+                live_path=live_path,
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"repo\n",
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="push")
+
+    recorded_calls: list[tuple[Path, bytes, Path | None]] = []
+    monkeypatch.setattr("dotman.execution.request_sudo", lambda: None)
+    monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == live_path)
+    monkeypatch.setattr(
+        "dotman.execution.sudo_write_bytes_atomic",
+        lambda path, content, restore_root=None: recorded_calls.append((Path(path), content, restore_root)),
+    )
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert recorded_calls == [(live_path, b"repo\n", None)]
+
+
+
+def test_execute_session_requests_sudo_before_privileged_execution_steps(
+    monkeypatch,
+) -> None:
+    recorded_events: list[str] = []
+
+    plan = execution.ExecutionSession(
+        operation="push",
+        packages=(
+            execution.PackageExecutionUnit(
+                repo_name="fixture",
+                binding_selector="app",
+                profile="default",
+                package_id="app",
+                steps=(
+                    execution.ExecutionStep(
+                        package_id="app",
+                        binding_plan=BindingPlan(
+                            operation="push",
+                            binding=Binding(repo="fixture", selector="app", profile="default"),
+                            selector_kind="package",
+                            package_ids=["app"],
+                            variables={},
+                            hooks={},
+                            target_plans=[],
+                        ),
+                        kind="target",
+                        action="update",
+                        privileged=True,
+                    ),
+                ),
+            ),
+        ),
+        requires_privilege=True,
+    )
+
+    monkeypatch.setattr("dotman.execution.request_sudo", lambda: recorded_events.append("sudo"))
+    monkeypatch.setattr(
+        "dotman.execution._execute_step",
+        lambda step, *, stream_output, assume_yes: (
+            recorded_events.append("step")
+            or execution.ExecutionStepResult(step=step, status="ok")
+        ),
+    )
+
+    result = execute_session(
+        plan,
+        stream_output=False,
+        on_package_start=lambda _package: recorded_events.append("package"),
+    )
+
+    assert result.status == "ok"
+    assert recorded_events == ["sudo", "package", "step"]
+
+
+
+def test_execute_session_runs_privileged_hooks_through_sudo(
+    monkeypatch,
+) -> None:
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={
+            "guard_push": [HookPlan(package_id="app", hook_name="guard_push", command="echo guard", cwd=Path("/repo"))],
+            "pre_push": [HookPlan(package_id="app", hook_name="pre_push", command="echo pre", cwd=Path("/repo"))],
+            "post_push": [HookPlan(package_id="app", hook_name="post_push", command="echo post", cwd=Path("/repo"))],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/etc/sddm.conf"),
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"repo\n",
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="push")
+
+    recorded_events: list[tuple[str, bool]] = []
+    monkeypatch.setattr("dotman.execution.request_sudo", lambda: recorded_events.append(("sudo", True)))
+    monkeypatch.setattr(
+        "dotman.execution._run_command",
+        lambda *, command, cwd, env, stream_output, interactive, privileged=False: (
+            recorded_events.append((command, privileged))
+            or (0, "", "")
+        ),
+    )
+    monkeypatch.setattr("dotman.execution._execute_target_step", lambda step: recorded_events.append((step.action, False)))
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert ("sudo", True) in recorded_events
+    assert ("echo guard", True) in recorded_events
+    assert ("echo pre", True) in recorded_events
+    assert ("echo post", True) in recorded_events
+
+
+
+def test_write_bytes_atomic_cleans_up_temp_file_after_failed_replace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target_path = tmp_path / "config.txt"
+    temp_name_prefix = ".dotman-"
+    temp_name_suffix = ".tmp"
+
+    def failing_replace(self: Path, target: Path) -> Path:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(Path, "replace", failing_replace)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        execution.write_bytes_atomic(target_path, b"payload\n")
+
+    leftover_temp_files = list(tmp_path.glob(f"{temp_name_prefix}*{temp_name_suffix}"))
+    assert leftover_temp_files == []
+
+
+
+def test_write_bytes_atomic_removes_stale_dotman_temp_files_before_write(tmp_path: Path) -> None:
+    stale_temp_file = tmp_path / ".dotman-999999-deadbeef.tmp"
+    stale_temp_file.write_text("stale\n", encoding="utf-8")
+
+    target_path = tmp_path / "config.txt"
+    execution.write_bytes_atomic(target_path, b"payload\n")
+
+    assert target_path.read_text(encoding="utf-8") == "payload\n"
+    assert not stale_temp_file.exists()
+
+
+def test_read_bytes_uses_sudo_when_direct_read_is_denied(tmp_path: Path, monkeypatch) -> None:
+    target_path = tmp_path / "protected.txt"
+    target_path.write_text("payload\n", encoding="utf-8")
+    target_path.chmod(0o000)
+
+    def fake_run(command, *args, **kwargs):
+        if command[:2] == ["sudo", "-v"]:
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        if command[:3] == ["sudo", "-n", "/bin/cat"]:
+            assert command[3] == str(target_path)
+            return SimpleNamespace(returncode=0, stdout=b"payload\n", stderr=b"")
+        if command[:3] == ["sudo", "-n", "true"]:
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        raise AssertionError(f"unexpected sudo command: {command}")
+
+    monkeypatch.setattr(file_access.subprocess, "run", fake_run)
+
+    with file_access.sudo_session():
+        assert file_access.read_bytes(target_path) == b"payload\n"
 
 
 def test_restore_repo_path_access_adds_owner_write_bits_for_repo_files_and_dirs(

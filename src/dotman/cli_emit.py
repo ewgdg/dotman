@@ -8,7 +8,8 @@ from typing import Any, Callable, Sequence
 
 from dotman import cli_style
 from dotman.diff_review import ReviewItem, display_review_path
-from dotman.execution import build_execution_session, execute_session
+from dotman.execution import build_execution_session, execute_session, _preflight_execution_session_sudo
+from dotman.file_access import sudo_session
 from dotman.snapshot import execute_rollback
 
 
@@ -420,36 +421,38 @@ def execute_plans(
     assume_yes: bool = False,
 ):
     session = build_execution_session(plans, operation=operation, run_noop=run_noop)
-    if json_output:
-        return execute_session(session, stream_output=False, assume_yes=assume_yes)
-    _print_execution_header(session=session, use_color=use_color)
-    if not session.packages:
-        return execute_session(session, stream_output=True, assume_yes=assume_yes)
-    return execute_session(
-        session,
-        stream_output=True,
-        assume_yes=assume_yes,
-        on_package_start=lambda package: _print_execution_package_start(package, use_color=use_color),
-        on_step_start=lambda package, step, index, total: _print_execution_step_start(
-            package,
-            step,
-            index,
-            total,
-            full_paths=full_paths,
-            use_color=use_color,
-        ),
-        on_step_finish=lambda package, step_result, index, total: _print_execution_step_finish(
-            package,
-            step_result,
-            index,
-            total,
-            use_color=use_color,
-        ),
-        on_package_finish=lambda package_result: _print_execution_package_finish(
-            package_result,
-            use_color=use_color,
-        ),
-    )
+    with sudo_session():
+        _preflight_execution_session_sudo(session)
+        if json_output:
+            return execute_session(session, stream_output=False, assume_yes=assume_yes)
+        _print_execution_header(session=session, use_color=use_color)
+        if not session.packages:
+            return execute_session(session, stream_output=True, assume_yes=assume_yes)
+        return execute_session(
+            session,
+            stream_output=True,
+            assume_yes=assume_yes,
+            on_package_start=lambda package: _print_execution_package_start(package, use_color=use_color),
+            on_step_start=lambda package, step, index, total: _print_execution_step_start(
+                package,
+                step,
+                index,
+                total,
+                full_paths=full_paths,
+                use_color=use_color,
+            ),
+            on_step_finish=lambda package, step_result, index, total: _print_execution_step_finish(
+                package,
+                step_result,
+                index,
+                total,
+                use_color=use_color,
+            ),
+            on_package_finish=lambda package_result: _print_execution_package_finish(
+                package_result,
+                use_color=use_color,
+            ),
+        )
 
 
 def run_execution(

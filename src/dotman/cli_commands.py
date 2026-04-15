@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from dotman.add import prepare_add_to_package, write_add_result
 from dotman.engine import TrackedTargetConflictError
+from dotman.file_access import sudo_session
 from dotman.models import package_ref_text
 from dotman.snapshot import (
     build_rollback_actions,
@@ -266,102 +267,104 @@ def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, ope
 def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
-    plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="push")
-    if not handlers.review_plans_for_interactive_diffs(
-        plans=plans,
-        operation="push",
-        json_output=args.json_output,
-        full_paths=args.full_path,
-        assume_yes=assume_yes,
-    ):
-        handlers.emit_interrupt_notice()
-        return handlers.interrupted_exit_code
-    plans = handlers.filter_plans_for_interactive_selection(
-        plans=plans,
-        operation="push",
-        json_output=args.json_output,
-        full_paths=args.full_path,
-    )
-    if args.dry_run:
-        return handlers.emit_payload(
-            operation="push",
+    with sudo_session():
+        plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="push")
+        if not handlers.review_plans_for_interactive_diffs(
             plans=plans,
+            operation="push",
             json_output=args.json_output,
-            mode=handlers.effective_execution_mode(dry_run_requested=True),
+            full_paths=args.full_path,
+            assume_yes=assume_yes,
+        ):
+            handlers.emit_interrupt_notice()
+            return handlers.interrupted_exit_code
+        plans = handlers.filter_plans_for_interactive_selection(
+            plans=plans,
+            operation="push",
+            json_output=args.json_output,
             full_paths=args.full_path,
         )
-    plans = handlers.prepare_push_plans_for_execution(
-        plans=plans,
-        json_output=args.json_output,
-        full_paths=args.full_path,
-        assume_yes=assume_yes,
-    )
-    if plans is None:
-        handlers.emit_interrupt_notice()
-        return handlers.interrupted_exit_code
-    snapshot = create_push_snapshot(plans, engine.config.snapshots)
-    try:
-        execution_result = handlers.execute_plans(
-            operation="push",
+        if args.dry_run:
+            return handlers.emit_payload(
+                operation="push",
+                plans=plans,
+                json_output=args.json_output,
+                mode=handlers.effective_execution_mode(dry_run_requested=True),
+                full_paths=args.full_path,
+            )
+        plans = handlers.prepare_push_plans_for_execution(
             plans=plans,
             json_output=args.json_output,
             full_paths=args.full_path,
-            run_noop=run_noop,
             assume_yes=assume_yes,
         )
-    except Exception:
+        if plans is None:
+            handlers.emit_interrupt_notice()
+            return handlers.interrupted_exit_code
+        snapshot = create_push_snapshot(plans, engine.config.snapshots)
+        try:
+            execution_result = handlers.execute_plans(
+                operation="push",
+                plans=plans,
+                json_output=args.json_output,
+                full_paths=args.full_path,
+                run_noop=run_noop,
+                assume_yes=assume_yes,
+            )
+        except Exception:
+            if snapshot is not None:
+                mark_snapshot_status(snapshot, "failed")
+                prune_snapshots(
+                    engine.config.snapshots.path,
+                    max_generations=engine.config.snapshots.max_generations,
+                )
+            raise
         if snapshot is not None:
-            mark_snapshot_status(snapshot, "failed")
+            mark_snapshot_status(snapshot, "applied" if execution_result.exit_code == 0 else "failed")
             prune_snapshots(
                 engine.config.snapshots.path,
                 max_generations=engine.config.snapshots.max_generations,
             )
-        raise
-    if snapshot is not None:
-        mark_snapshot_status(snapshot, "applied" if execution_result.exit_code == 0 else "failed")
-        prune_snapshots(
-            engine.config.snapshots.path,
-            max_generations=engine.config.snapshots.max_generations,
-        )
-    return handlers.emit_execution_result(result=execution_result, json_output=args.json_output)
+        return handlers.emit_execution_result(result=execution_result, json_output=args.json_output)
 
 
 
 def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
-    plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="pull")
-    if not handlers.review_plans_for_interactive_diffs(
-        plans=plans,
-        operation="pull",
-        json_output=args.json_output,
-        full_paths=args.full_path,
-        assume_yes=assume_yes,
-    ):
-        handlers.emit_interrupt_notice()
-        return handlers.interrupted_exit_code
-    plans = handlers.filter_plans_for_interactive_selection(
-        plans=plans,
-        operation="pull",
-        json_output=args.json_output,
-        full_paths=args.full_path,
-    )
-    if args.dry_run:
-        return handlers.emit_payload(
+    with sudo_session():
+        plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="pull")
+        if not handlers.review_plans_for_interactive_diffs(
+            plans=plans,
+            operation="pull",
+            json_output=args.json_output,
+            full_paths=args.full_path,
+            assume_yes=assume_yes,
+        ):
+            handlers.emit_interrupt_notice()
+            return handlers.interrupted_exit_code
+        plans = handlers.filter_plans_for_interactive_selection(
+            plans=plans,
+            operation="pull",
+            json_output=args.json_output,
+            full_paths=args.full_path,
+        )
+        if args.dry_run:
+            return handlers.emit_payload(
+                operation="pull",
+                plans=plans,
+                json_output=args.json_output,
+                mode=handlers.effective_execution_mode(dry_run_requested=True),
+                full_paths=args.full_path,
+            )
+        return handlers.run_execution(
             operation="pull",
             plans=plans,
             json_output=args.json_output,
-            mode=handlers.effective_execution_mode(dry_run_requested=True),
             full_paths=args.full_path,
+            run_noop=run_noop,
+            assume_yes=assume_yes,
         )
-    return handlers.run_execution(
-        operation="pull",
-        plans=plans,
-        json_output=args.json_output,
-        full_paths=args.full_path,
-        run_noop=run_noop,
-        assume_yes=assume_yes,
-    )
 
 
 

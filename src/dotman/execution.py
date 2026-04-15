@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import stat
 import subprocess
 import sys
 import tempfile
@@ -11,9 +10,23 @@ from pathlib import Path
 from threading import Thread
 from typing import Iterator, Sequence
 
+from dotman.atomic_files import write_bytes_atomic as atomic_write_bytes_atomic
+from dotman.atomic_files import write_symlink_atomic as atomic_write_symlink_atomic
 from dotman.capture import BUILTIN_PATCH_CAPTURE, capture_patch
 from dotman.engine import HOOK_NAMES_BY_OPERATION
+from dotman.file_access import (
+    chmod as sudo_chmod,
+    delete_path_and_prune_empty_parents as sudo_delete_path_and_prune_empty_parents,
+    needs_sudo_for_chmod,
+    needs_sudo_for_read,
+    needs_sudo_for_write,
+    read_bytes,
+    request_sudo,
+    sudo_prefix_command,
+    write_bytes_atomic as sudo_write_bytes_atomic,
+)
 from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.repo_access import restore_repo_path_access_for_invoking_user
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_string
 from dotman.terminal import preserve_terminal_state
@@ -166,6 +179,11 @@ def build_execution_session(
             if not target_plans and run_noop:
                 package_hooks = raw_hooks_by_package.get(package_id, {}) or package_hooks
 
+            target_steps: list[ExecutionStep] = []
+            for target_plan in target_plans:
+                target_steps.extend(_build_target_steps(plan=plan, target_plan=target_plan, operation=operation))
+
+            package_requires_privilege = any(step.privileged for step in target_steps)
             package_steps: list[ExecutionStep] = []
             for hook_name in hook_names[:2]:
                 package_steps.extend(
@@ -175,12 +193,12 @@ def build_execution_session(
                         kind="hook",
                         action=hook_name,
                         hook_plan=hook_plan,
+                        privileged=package_requires_privilege,
                     )
                     for hook_plan in package_hooks.get(hook_name, [])
                 )
 
-            for target_plan in target_plans:
-                package_steps.extend(_build_target_steps(plan=plan, target_plan=target_plan, operation=operation))
+            package_steps.extend(target_steps)
 
             if target_plans or (run_noop and package_hooks):
                 package_steps.extend(
@@ -190,6 +208,7 @@ def build_execution_session(
                         kind="hook",
                         action=hook_names[2],
                         hook_plan=hook_plan,
+                        privileged=package_requires_privilege,
                     )
                     for hook_plan in package_hooks.get(hook_names[2], [])
                 )
@@ -206,7 +225,11 @@ def build_execution_session(
                 )
             )
 
-    return ExecutionSession(operation=operation, packages=tuple(package_units))
+    return ExecutionSession(
+        operation=operation,
+        packages=tuple(package_units),
+        requires_privilege=any(step.privileged for package in package_units for step in package.steps),
+    )
 
 
 
@@ -271,6 +294,7 @@ def execute_session(
     on_step_finish=None,
     on_package_finish=None,
 ) -> ExecutionResult:
+    _preflight_execution_session_sudo(session)
     package_results: list[PackageExecutionResult] = []
     failed = False
     for package_index, package in enumerate(session.packages):
@@ -328,6 +352,31 @@ def execute_session(
     )
 
 
+def _target_step_needs_sudo(
+    *,
+    operation: str,
+    target_plan: TargetPlan,
+    action: str,
+    directory_item: DirectoryPlanItem | None = None,
+) -> bool:
+    if operation == "push":
+        live_path = directory_item.live_path if directory_item is not None else target_plan.live_path
+        return action in {"create", "update", "delete"} and needs_sudo_for_write(live_path)
+
+    if action in {"create_repo", "update_repo"}:
+        source_path = directory_item.live_path if directory_item is not None else target_plan.live_path
+        return needs_sudo_for_read(source_path)
+    if action == "delete_repo":
+        repo_path = directory_item.repo_path if directory_item is not None else target_plan.repo_path
+        return needs_sudo_for_write(repo_path)
+    return False
+
+
+def _preflight_execution_session_sudo(session: ExecutionSession) -> None:
+    if session.requires_privilege:
+        request_sudo()
+
+
 def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation: str) -> list[ExecutionStep]:
     steps: list[ExecutionStep] = []
     if operation == "push":
@@ -340,6 +389,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
                     action=item.action,
                     target_plan=target_plan,
                     directory_item=item,
+                    privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=item.action, directory_item=item),
                 )
                 for item in target_plan.directory_items
             )
@@ -351,6 +401,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
                         kind="chmod",
                         action="chmod",
                         target_plan=target_plan,
+                        privileged=needs_sudo_for_chmod(target_plan.live_path),
                     )
                 )
             return steps
@@ -361,6 +412,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
                 kind="target",
                 action=target_plan.action,
                 target_plan=target_plan,
+                privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=target_plan.action),
             )
         )
         if target_plan.action in {"create", "update"} and target_plan.chmod is not None:
@@ -371,6 +423,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
                     kind="chmod",
                     action="chmod",
                     target_plan=target_plan,
+                    privileged=needs_sudo_for_chmod(target_plan.live_path),
                 )
             )
         return steps
@@ -383,6 +436,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
                 kind="reconcile",
                 action="reconcile",
                 target_plan=target_plan,
+                privileged=needs_sudo_for_read(target_plan.live_path),
             )
         )
         return steps
@@ -397,6 +451,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
                 action=action_map[item.action],
                 target_plan=target_plan,
                 directory_item=item,
+                privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=action_map[item.action], directory_item=item),
             )
             for item in target_plan.directory_items
         )
@@ -414,6 +469,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
             kind="target",
             action=direct_action,
             target_plan=target_plan,
+            privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=direct_action),
         )
     )
     return steps
@@ -428,6 +484,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                 env=_build_hook_env(step),
                 stream_output=stream_output,
                 interactive=False,
+                privileged=step.privileged,
             )
             return ExecutionStepResult(
                 step=step,
@@ -468,6 +525,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                         command=target_plan.reconcile_command or "",
                         cwd=target_plan.command_cwd,
                         env=command_env,
+                        privileged=needs_sudo_for_read(target_plan.live_path),
                     )
                 else:
                     exit_code, stdout, stderr = _run_command(
@@ -476,6 +534,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                         env=command_env,
                         stream_output=stream_output,
                         interactive=False,
+                        privileged=needs_sudo_for_read(target_plan.live_path),
                     )
             return ExecutionStepResult(
                 step=step,
@@ -498,30 +557,44 @@ def _execute_target_step(step: ExecutionStep) -> None:
     target_plan = _require_target_plan(step)
     if step.action in {"create", "update"}:
         if step.directory_item is not None:
-            _write_bytes(step.directory_item.live_path, step.directory_item.repo_path.read_bytes())
-            return
-        desired_bytes = _push_desired_bytes(target_plan)
-        _write_bytes(_push_live_path(target_plan), desired_bytes)
+            source_bytes = read_bytes(step.directory_item.repo_path)
+            live_path = step.directory_item.live_path
+        else:
+            source_bytes = _push_desired_bytes(target_plan)
+            live_path = _push_live_path(target_plan)
+        if needs_sudo_for_write(live_path):
+            sudo_write_bytes_atomic(live_path, source_bytes)
+        else:
+            _write_bytes(live_path, source_bytes)
         return
     if step.action == "delete":
         delete_path = step.directory_item.live_path if step.directory_item is not None else _push_live_path(target_plan)
         delete_root = target_plan.live_path if step.directory_item is not None else delete_path
-        _delete_file(delete_path, root=delete_root)
+        if needs_sudo_for_write(delete_path):
+            sudo_delete_path_and_prune_empty_parents(delete_path, root=delete_root)
+        else:
+            _delete_file(delete_path, root=delete_root)
         return
     if step.action in {"create_repo", "update_repo"}:
         repo_path = step.directory_item.repo_path if step.directory_item is not None else target_plan.repo_path
         if step.directory_item is not None:
-            repo_bytes = step.directory_item.live_path.read_bytes()
+            repo_bytes = read_bytes(step.directory_item.live_path)
         elif target_plan.capture_command == BUILTIN_PATCH_CAPTURE:
             repo_bytes = _pull_patch_capture_bytes(target_plan=target_plan, binding_plan=step.binding_plan)
         else:
             repo_bytes = _pull_desired_bytes(target_plan)
-        _write_bytes(repo_path, repo_bytes)
-        _restore_repo_path_access_for_invoking_user(repo_path, repo_root=step.binding_plan.repo_root)
+        if needs_sudo_for_write(repo_path):
+            sudo_write_bytes_atomic(repo_path, repo_bytes, restore_root=step.binding_plan.repo_root)
+        else:
+            _write_bytes(repo_path, repo_bytes)
+            _restore_repo_path_access_for_invoking_user(repo_path, repo_root=step.binding_plan.repo_root)
         return
     if step.action == "delete_repo":
         delete_path = step.directory_item.repo_path if step.directory_item is not None else target_plan.repo_path
-        _delete_file(delete_path, root=target_plan.repo_path)
+        if needs_sudo_for_write(delete_path):
+            sudo_delete_path_and_prune_empty_parents(delete_path, root=target_plan.repo_path)
+        else:
+            _delete_file(delete_path, root=target_plan.repo_path)
         return
     raise ValueError(f"unsupported execution action '{step.action}'")
 
@@ -536,7 +609,10 @@ def _execute_chmod_step(step: ExecutionStep) -> None:
     else:
         chmod_path = target_plan.repo_path
     if chmod_path.exists():
-        os.chmod(chmod_path, chmod_mode)
+        if needs_sudo_for_chmod(chmod_path):
+            sudo_chmod(chmod_path, chmod_mode)
+        else:
+            os.chmod(chmod_path, chmod_mode)
 
 
 def _push_desired_bytes(target_plan: TargetPlan) -> bytes:
@@ -560,13 +636,14 @@ def _push_desired_bytes(target_plan: TargetPlan) -> bytes:
 
 def _pull_desired_bytes(target_plan: TargetPlan) -> bytes:
     if target_plan.capture_command is None:
-        return target_plan.live_path.read_bytes()
+        return read_bytes(target_plan.live_path)
     exit_code, stdout, stderr = _run_command(
         command=target_plan.capture_command,
         cwd=target_plan.command_cwd,
         env=_build_target_env(target_plan),
         stream_output=False,
         interactive=False,
+        privileged=needs_sudo_for_read(target_plan.live_path),
     )
     if exit_code != 0:
         raise ValueError(stderr.strip() or f"capture command exited with status {exit_code}")
@@ -612,28 +689,11 @@ def _build_patch_capture_projector(*, target_plan: TargetPlan, binding_plan: Bin
 
 
 def write_bytes_atomic(path: Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temp_file:
-        temp_file.write(content)
-        temp_path = Path(temp_file.name)
-    temp_path.replace(path)
+    atomic_write_bytes_atomic(path, content)
 
 
 def write_symlink_atomic(path: Path, target: str | Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-    try:
-        temp_path.unlink()
-        temp_path.symlink_to(target)
-        temp_path.replace(path)
-    except Exception:
-        try:
-            if temp_path.exists() or temp_path.is_symlink():
-                temp_path.unlink()
-        except Exception:
-            pass
-        raise
+    atomic_write_symlink_atomic(path, target)
 
 
 def delete_path_and_prune_empty_parents(path: Path, *, root: Path) -> None:
@@ -658,54 +718,7 @@ def _delete_file(path: Path, *, root: Path) -> None:
 
 
 def _restore_repo_path_access_for_invoking_user(path: Path, *, repo_root: Path | None) -> None:
-    invoking_user = _invoking_user_ids()
-    if invoking_user is None or not path.exists():
-        return
-
-    target_uid, target_gid = invoking_user
-    for repo_path in _repo_access_paths(path, repo_root=repo_root):
-        os.chown(repo_path, target_uid, target_gid)
-        _ensure_owner_write_access(repo_path)
-
-
-def _invoking_user_ids() -> tuple[int, int] | None:
-    geteuid = getattr(os, "geteuid", None)
-    if geteuid is None or geteuid() != 0:
-        return None
-    sudo_uid = os.environ.get("SUDO_UID")
-    sudo_gid = os.environ.get("SUDO_GID")
-    if sudo_uid is None or sudo_gid is None:
-        return None
-    try:
-        return int(sudo_uid), int(sudo_gid)
-    except ValueError:
-        return None
-
-
-def _repo_access_paths(path: Path, *, repo_root: Path | None) -> tuple[Path, ...]:
-    if repo_root is None or (path != repo_root and repo_root not in path.parents):
-        return (path,)
-
-    access_paths: list[Path] = []
-    current = path
-    while True:
-        access_paths.append(current)
-        if current == repo_root:
-            return tuple(access_paths)
-        current = current.parent
-
-
-def _ensure_owner_write_access(path: Path) -> None:
-    mode = path.stat().st_mode
-    required_bits = stat.S_IWUSR
-    if path.is_dir():
-        # Pull may run under sudo to read protected live paths. When that happens,
-        # repo-side writes must still leave the repo tree editable by the invoking
-        # user instead of stranding files or newly created directories as root-only.
-        required_bits |= stat.S_IRUSR | stat.S_IXUSR
-    if mode & required_bits == required_bits:
-        return
-    os.chmod(path, mode | required_bits)
+    restore_repo_path_access_for_invoking_user(path, repo_root=repo_root)
 
 
 def _run_command(
@@ -715,9 +728,13 @@ def _run_command(
     env: dict[str, str],
     stream_output: bool,
     interactive: bool,
+    privileged: bool = False,
 ) -> tuple[int, str, str]:
+    if privileged and os.geteuid() != 0:
+        request_sudo()
+        command = sudo_prefix_command(command)
     if interactive and stream_output:
-        return _run_command_with_terminal(command=command, cwd=cwd, env=env)
+        return _run_command_with_terminal(command=command, cwd=cwd, env=env, privileged=False)
 
     process = subprocess.Popen(
         command,
@@ -754,10 +771,13 @@ def _run_command(
     return return_code, "".join(stdout_buffer), "".join(stderr_buffer)
 
 
-def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str, str]) -> tuple[int, str, str]:
+def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str, str], privileged: bool = False) -> tuple[int, str, str]:
     # TTY reconcile commands are allowed to launch full-screen editors. Piping
     # and prefixing their output corrupts terminal control sequences and leaves
     # the shell looking broken after exit, so dotman must hand them the tty.
+    if privileged and os.geteuid() != 0:
+        request_sudo()
+        command = sudo_prefix_command(command)
     with preserve_terminal_state():
         completed = subprocess.run(
             command,

@@ -8,6 +8,7 @@ from typing import Any
 from dotman.capture import BUILTIN_PATCH_CAPTURE
 from dotman.collisions import validate_reserved_path_conflicts, validate_target_collisions
 from dotman.config import expand_path
+from dotman.file_access import needs_sudo_for_read, read_bytes, sudo_prefix_command
 from dotman.ignore import list_directory_files
 from dotman.manifest import flatten_vars, merge_ignore_patterns
 from dotman.models import Binding, DirectoryPlanItem, PackageSpec, TargetPlan, TargetSpec
@@ -316,7 +317,7 @@ def project_repo_file(
                 ),
                 "command",
             )
-        return repo_path.read_bytes(), "raw"
+        return read_bytes(repo_path), "raw"
     except FileNotFoundError as exc:
         raise ValueError(
             f"repo source path does not exist for target '{package.id}:{target.name}': {repo_path}"
@@ -361,8 +362,8 @@ def plan_directory_action(
         for relative_path in sorted(desired_rel_paths & live_rel_paths):
             source_path = desired_files[relative_path]
             live_file = live_files[relative_path]
-            desired_bytes = source_path.read_bytes()
-            if desired_bytes != live_file.read_bytes():
+            desired_bytes = read_bytes(source_path)
+            if desired_bytes != read_bytes(live_file):
                 directory_items.append(
                     DirectoryPlanItem(
                         relative_path=relative_path,
@@ -397,8 +398,8 @@ def plan_directory_action(
     for relative_path in sorted(desired_rel_paths & live_rel_paths):
         source_path = desired_files[relative_path]
         live_file = live_files[relative_path]
-        desired_bytes = source_path.read_bytes()
-        if desired_bytes != live_file.read_bytes():
+        desired_bytes = read_bytes(source_path)
+        if desired_bytes != read_bytes(live_file):
             directory_items.append(
                 DirectoryPlanItem(
                     relative_path=relative_path,
@@ -438,7 +439,7 @@ def plan_file_action(
             return "create"
         if desired_bytes is None:
             return "unknown"
-        return "noop" if desired_bytes == live_path.read_bytes() else "update"
+        return "noop" if desired_bytes == read_bytes(live_path) else "update"
 
     repo_exists = repo_path.exists()
     live_exists = live_path.exists()
@@ -503,7 +504,10 @@ def build_file_review_bytes(
     pull_view_live: str,
 ) -> tuple[bytes | None, bytes | None]:
     if operation in {"upgrade", "push"}:
-        live_bytes = live_path.read_bytes() if live_path.exists() else b""
+        try:
+            live_bytes = read_bytes(live_path)
+        except FileNotFoundError:
+            live_bytes = b""
         return live_bytes, desired_bytes
 
     repo_bytes = pull_view_bytes(
@@ -565,7 +569,7 @@ def pull_view_bytes(
         if repo_side and not repo_path.exists():
             # Missing repo source during pull means "nothing captured yet", not an error.
             return b""
-        return repo_path.read_bytes() if repo_side else live_path.read_bytes()
+        return read_bytes(repo_path) if repo_side else read_bytes(live_path)
     if view == "render":
         desired_bytes, _projection = project_repo_file(
             engine,
@@ -646,6 +650,8 @@ def run_command_projection(
             context=context,
         )
     )
+    if needs_sudo_for_read(live_path):
+        command = sudo_prefix_command(command)
     completed = subprocess.run(
         command,
         cwd=str(target.declared_in),
