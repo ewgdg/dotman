@@ -471,7 +471,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
             )
         return steps
 
-    if target_plan.reconcile_command is not None and target_plan.action == "update":
+    if target_plan.reconcile_command is not None and target_plan.capture_command is None and target_plan.action == "update":
         steps.append(
             ExecutionStep(
                 package_id=target_plan.package_id,
@@ -547,38 +547,12 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                 )
 
         if step.kind == "reconcile":
-            with _materialize_reconcile_review_env(target_plan) as review_env:
-                command_env = {**_build_target_env(target_plan), **review_env}
-                if target_plan.reconcile_io == "tty":
-                    _require_interactive_terminal_for_reconcile()
-                if target_plan.reconcile_command == BUILTIN_JINJA_RECONCILE:
-                    # Keep built-in reconcile values declarative in plans/info
-                    # while still reusing the same helper as the CLI subcommand.
-                    exit_code = run_jinja_reconcile(
-                        repo_path=str(target_plan.repo_path),
-                        live_path=str(target_plan.live_path),
-                        review_repo_path=command_env.get("DOTMAN_REVIEW_REPO_PATH"),
-                        review_live_path=command_env.get("DOTMAN_REVIEW_LIVE_PATH"),
-                        assume_yes=assume_yes,
-                    )
-                    stdout = ""
-                    stderr = ""
-                elif target_plan.reconcile_io == "tty":
-                    exit_code, stdout, stderr = _run_command_with_terminal(
-                        command=target_plan.reconcile_command or "",
-                        cwd=target_plan.command_cwd,
-                        env=command_env,
-                        privileged=step.privileged,
-                    )
-                else:
-                    exit_code, stdout, stderr = _run_command(
-                        command=target_plan.reconcile_command or "",
-                        cwd=target_plan.command_cwd,
-                        env=command_env,
-                        stream_output=stream_output,
-                        interactive=False,
-                        privileged=step.privileged,
-                    )
+            exit_code, stdout, stderr = _run_reconcile_target_plan(
+                target_plan=target_plan,
+                stream_output=stream_output,
+                assume_yes=assume_yes,
+                privileged=step.privileged,
+            )
             return ExecutionStepResult(
                 step=step,
                 status="ok" if exit_code == 0 else "failed",
@@ -587,6 +561,12 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                 stderr=stderr,
                 error=None if exit_code == 0 else f"command exited with status {exit_code}",
             )
+        if _should_fallback_to_reconcile_after_capture(step):
+            return _execute_target_step_with_capture_fallback(
+                step,
+                stream_output=stream_output,
+                assume_yes=assume_yes,
+            )
         if step.kind == "chmod":
             _execute_chmod_step(step)
             return ExecutionStepResult(step=step, status="ok")
@@ -594,6 +574,51 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
         return ExecutionStepResult(step=step, status="ok")
     except Exception as exc:  # noqa: BLE001 - fail-fast execution should surface the original error text.
         return ExecutionStepResult(step=step, status="failed", error=str(exc))
+
+
+def _should_fallback_to_reconcile_after_capture(step: ExecutionStep) -> bool:
+    target_plan = step.target_plan
+    return (
+        step.kind == "target"
+        and step.action == "update_repo"
+        and step.directory_item is None
+        and target_plan is not None
+        and target_plan.capture_command is not None
+        and target_plan.reconcile_command is not None
+    )
+
+
+def _execute_target_step_with_capture_fallback(
+    step: ExecutionStep,
+    *,
+    stream_output: bool,
+    assume_yes: bool,
+) -> ExecutionStepResult:
+    target_plan = _require_target_plan(step)
+    try:
+        repo_bytes = _pull_repo_bytes(step)
+    except Exception as capture_exc:  # noqa: BLE001 - fallback should trigger on any capture failure.
+        try:
+            exit_code, stdout, stderr = _run_reconcile_target_plan(
+                target_plan=target_plan,
+                stream_output=stream_output,
+                assume_yes=assume_yes,
+                privileged=_reconcile_step_needs_sudo(target_plan),
+            )
+        except Exception as reconcile_exc:  # noqa: BLE001 - surface both failures together.
+            raise ValueError(f"capture failed ({capture_exc}); reconcile failed ({reconcile_exc})") from reconcile_exc
+        fallback_note = f"capture failed; falling back to reconcile: {capture_exc}"
+        combined_stderr = fallback_note if not stderr else f"{fallback_note}\n{stderr}"
+        return ExecutionStepResult(
+            step=step,
+            status="ok" if exit_code == 0 else "failed",
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=combined_stderr,
+            error=None if exit_code == 0 else f"command exited with status {exit_code}",
+        )
+    _write_pull_repo_bytes(step, repo_bytes)
+    return ExecutionStepResult(step=step, status="ok")
 
 
 def _execute_target_step(step: ExecutionStep) -> None:
@@ -619,18 +644,8 @@ def _execute_target_step(step: ExecutionStep) -> None:
             _delete_file(delete_path, root=delete_root)
         return
     if step.action in {"create_repo", "update_repo"}:
-        repo_path = step.directory_item.repo_path if step.directory_item is not None else target_plan.repo_path
-        if step.directory_item is not None:
-            repo_bytes = read_bytes(step.directory_item.live_path)
-        elif target_plan.capture_command == BUILTIN_PATCH_CAPTURE:
-            repo_bytes = _pull_patch_capture_bytes(target_plan=target_plan, binding_plan=step.binding_plan)
-        else:
-            repo_bytes = _pull_desired_bytes(target_plan)
-        if needs_sudo_for_write(repo_path):
-            sudo_write_bytes_atomic(repo_path, repo_bytes, restore_root=step.binding_plan.repo_root)
-        else:
-            _write_bytes(repo_path, repo_bytes)
-            _restore_repo_path_access_for_invoking_user(repo_path, repo_root=step.binding_plan.repo_root)
+        repo_bytes = _pull_repo_bytes(step)
+        _write_pull_repo_bytes(step, repo_bytes)
         return
     if step.action == "delete_repo":
         delete_path = step.directory_item.repo_path if step.directory_item is not None else target_plan.repo_path
@@ -640,6 +655,25 @@ def _execute_target_step(step: ExecutionStep) -> None:
             _delete_file(delete_path, root=target_plan.repo_path)
         return
     raise ValueError(f"unsupported execution action '{step.action}'")
+
+
+def _pull_repo_bytes(step: ExecutionStep) -> bytes:
+    target_plan = _require_target_plan(step)
+    if step.directory_item is not None:
+        return read_bytes(step.directory_item.live_path)
+    if target_plan.capture_command == BUILTIN_PATCH_CAPTURE:
+        return _pull_patch_capture_bytes(target_plan=target_plan, binding_plan=step.binding_plan)
+    return _pull_desired_bytes(target_plan)
+
+
+def _write_pull_repo_bytes(step: ExecutionStep, repo_bytes: bytes) -> None:
+    target_plan = _require_target_plan(step)
+    repo_path = step.directory_item.repo_path if step.directory_item is not None else target_plan.repo_path
+    if needs_sudo_for_write(repo_path):
+        sudo_write_bytes_atomic(repo_path, repo_bytes, restore_root=step.binding_plan.repo_root)
+        return
+    _write_bytes(repo_path, repo_bytes)
+    _restore_repo_path_access_for_invoking_user(repo_path, repo_root=step.binding_plan.repo_root)
 
 
 def _execute_chmod_step(step: ExecutionStep) -> None:
@@ -675,6 +709,45 @@ def _push_desired_bytes(target_plan: TargetPlan) -> bytes:
     if exit_code != 0:
         raise ValueError(stderr.strip() or f"render command exited with status {exit_code}")
     return stdout.encode("utf-8")
+
+
+def _run_reconcile_target_plan(
+    *,
+    target_plan: TargetPlan,
+    stream_output: bool,
+    assume_yes: bool,
+    privileged: bool,
+) -> tuple[int, str, str]:
+    with _materialize_reconcile_review_env(target_plan) as review_env:
+        command_env = {**_build_target_env(target_plan), **review_env}
+        if target_plan.reconcile_io == "tty":
+            _require_interactive_terminal_for_reconcile()
+        if target_plan.reconcile_command == BUILTIN_JINJA_RECONCILE:
+            # Keep built-in reconcile values declarative in plans/info
+            # while still reusing the same helper as the CLI subcommand.
+            exit_code = run_jinja_reconcile(
+                repo_path=str(target_plan.repo_path),
+                live_path=str(target_plan.live_path),
+                review_repo_path=command_env.get("DOTMAN_REVIEW_REPO_PATH"),
+                review_live_path=command_env.get("DOTMAN_REVIEW_LIVE_PATH"),
+                assume_yes=assume_yes,
+            )
+            return exit_code, "", ""
+        if target_plan.reconcile_io == "tty":
+            return _run_command_with_terminal(
+                command=target_plan.reconcile_command or "",
+                cwd=target_plan.command_cwd,
+                env=command_env,
+                privileged=privileged,
+            )
+        return _run_command(
+            command=target_plan.reconcile_command or "",
+            cwd=target_plan.command_cwd,
+            env=command_env,
+            stream_output=stream_output,
+            interactive=False,
+            privileged=privileged,
+        )
 
 
 def _pull_desired_bytes(target_plan: TargetPlan) -> bytes:

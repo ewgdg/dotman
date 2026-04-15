@@ -194,8 +194,9 @@ This document captures the current command and selector direction for `dotman`.
 - A `reconcile` command may be interactive, for example by opening an editor to reconcile repo source files against the current live output.
 - For editor-backed reconcile helpers, dotman should prefer transactional editing: review scratch files stay readonly, editable buffers should be temporary copies, and dotman should ask for confirmation before writing those edits back to repo sources.
 - `reconcile` should only run after the user selects a changed target for pull.
-- If both `capture` and `reconcile` are defined, `capture` should drive planning and `reconcile` should handle the actual selected pull step.
-- If a transformed target has no `reconcile`, dotman may still pull by writing repo-side content from `capture`, but `reconcile` is preferred when manual or custom merge logic is needed.
+- If both `capture` and `reconcile` are defined, `capture` should drive planning and dotman should attempt the actual pull through `capture` first.
+- If that capture attempt fails, dotman should retry the selected pull step through `reconcile` using the same review projections.
+- If a transformed target has no `reconcile`, dotman may still pull by writing repo-side content from `capture` alone.
 - `pull` should only touch sources owned by the current managed selection.
 - Managed target paths should keep the declared pathname as identity instead of silently following a live symlink to a different path.
 - `pull` may read through a symlinked declared live path, but it should still treat the declared pathname as the managed target identity.

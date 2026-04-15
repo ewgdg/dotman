@@ -193,6 +193,72 @@ def _write_reconcile_preview_execution_repo(repo_root: Path) -> None:
     )
 
 
+def _write_capture_fallback_execution_repo(repo_root: Path) -> None:
+    package_root = repo_root / "packages" / "app"
+    (package_root / "files").mkdir(parents=True)
+    (package_root / "hooks").mkdir(parents=True)
+    (repo_root / "profiles").mkdir(parents=True)
+
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (package_root / "files" / "config.txt").write_text("repo source value\n", encoding="utf-8")
+    (package_root / "hooks" / "render.sh").write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                "set -eu",
+                "printf 'rendered repo view\\n'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (package_root / "hooks" / "capture.sh").write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                "set -eu",
+                "printf 'capture failed\\n' >&2",
+                "exit 1",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (package_root / "hooks" / "reconcile.sh").write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                "set -eu",
+                "printf 'review:%s|%s\\n' \"$(tr -d '\\n' < \"$DOTMAN_REVIEW_REPO_PATH\")\" \"$(tr -d '\\n' < \"$DOTMAN_REVIEW_LIVE_PATH\")\"",
+                "cp \"$DOTMAN_LIVE_PATH\" \"$DOTMAN_REPO_PATH\"",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "app"',
+                "",
+                "[targets.config]",
+                'source = "files/config.txt"',
+                'path = "~/.config/app/config.txt"',
+                'render = "sh hooks/render.sh"',
+                'capture = "sh hooks/capture.sh"',
+                'pull_view_repo = "render"',
+                'pull_view_live = "raw"',
+                'reconcile = "sh hooks/reconcile.sh"',
+                "",
+                "[hooks]",
+                'guard_pull = "printf \'guard pull\\n\'"',
+                'post_pull = "printf \'post pull\\n\'"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
 
 def _write_tracked_binding(state_root: Path, *, repo_name: str = "fixture", selector: str = "app") -> None:
     state_dir = state_root / "dotman" / "repos" / repo_name
@@ -660,7 +726,7 @@ def test_pull_cli_uses_reconcile_command_for_selected_target_execution(
 
 
 
-def test_pull_cli_passes_projected_review_paths_to_reconcile_execution(
+def test_pull_cli_prefers_capture_over_reconcile_when_both_are_defined(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -683,14 +749,46 @@ def test_pull_cli_passes_projected_review_paths_to_reconcile_execution(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
+    assert repo_path.read_text(encoding="utf-8") == "captured live view\n"
+    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
+        "guard_pull",
+        "update_repo",
+        "post_pull",
+    ]
+    assert payload["packages"][0]["steps"][1]["stdout"] == ""
+
+
+def test_pull_cli_falls_back_to_reconcile_when_capture_fails(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_capture_fallback_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("raw live value\n", encoding="utf-8")
+
+    exit_code = main(["--config", str(config_path), "--json", "pull"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
     assert repo_path.read_text(encoding="utf-8") == "raw live value\n"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
         "guard_pull",
-        "reconcile",
+        "update_repo",
         "post_pull",
     ]
-    assert payload["packages"][0]["steps"][1]["stdout"] == "review:rendered repo view|captured live view\n"
-
+    assert payload["packages"][0]["steps"][1]["stdout"] == "review:rendered repo view|raw live value\n"
+    assert "capture failed; falling back to reconcile" in payload["packages"][0]["steps"][1]["stderr"]
 
 
 def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(

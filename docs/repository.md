@@ -233,8 +233,9 @@ pull = ["*.dotdropbak"]
 - `dotman reconcile editor` should only write those edited copies back to the repo after the editor exits and the user confirms the write.
 - CLI `--yes` may bypass that write confirmation when a safe default exists, but it does not auto-resolve any selector or profile ambiguity.
 - `reconcile` should run only after the target has already been selected for pull work.
-- If both `capture` and `reconcile` are defined, dotman should use `capture` for pull planning and `reconcile` for the actual selected pull step.
-- If a transformed file target has no `reconcile`, dotman may still pull by writing repo-side content from `capture`, but `reconcile` is preferred when interactive or custom logic is needed.
+- If both `capture` and `reconcile` are defined, dotman should use `capture` for pull planning and should attempt the actual pull through `capture` first.
+- If that capture attempt fails, dotman should retry the selected pull step through `reconcile` using the same review projections.
+- If a transformed file target has no `reconcile`, dotman may still pull by writing repo-side content from `capture` alone.
 - When `pull` writes repo-side files while dotman is running under `sudo`, dotman should restore ownership of the written repo path back to the invoking user so the repo does not get stranded as root-owned.
 - Live file mode checks should compare against target `chmod` after both `push` and `pull`.
 

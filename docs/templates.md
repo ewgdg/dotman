@@ -198,6 +198,8 @@ Use `capture = "patch"` for the narrow Jinja reverse-capture case where dotman c
 
 Use `reconcile` when a human needs to decide how the live change maps back to one or more template source files.
 
+If a target defines both `capture` and `reconcile`, dotman now tries `capture` first during pull execution and only falls back to `reconcile` when that capture step errors.
+
 Typical template target:
 
 - forward path: template source -> rendered live file

@@ -139,6 +139,34 @@ def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged
 
 
 
+def test_build_execution_session_prefers_capture_step_when_capture_and_reconcile_both_defined() -> None:
+    plan = BindingPlan(
+        operation="pull",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/live/app.conf"),
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+                capture_command="printf 'captured\\n'",
+                reconcile_command="printf 'reconcile\\n'",
+            )
+        ],
+    )
+
+    session = build_execution_session([plan], operation="pull")
+
+    assert [step.action for step in session.packages[0].steps] == ["update_repo"]
+
+
 def test_build_execution_session_does_not_add_pull_chmod_steps() -> None:
     plan = BindingPlan(
         operation="pull",
@@ -1023,6 +1051,73 @@ def test_execute_session_runs_custom_reconcile_without_auto_sudo(
     assert recorded["command"] == "printf 'batch reconcile\\n'"
     assert recorded["privileged"] is False
 
+
+
+def test_execute_session_falls_back_to_reconcile_when_capture_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+    live_path.write_text("live\n", encoding="utf-8")
+
+    plan = BindingPlan(
+        operation="pull",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path,
+                live_path=live_path,
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+                capture_command="capture-command",
+                reconcile_command="reconcile-command",
+                reconcile_io="pipe",
+                review_before_bytes=b"repo planning view\n",
+                review_after_bytes=b"capture live planning view\n",
+                command_env={
+                    "DOTMAN_REPO_PATH": str(repo_path),
+                    "DOTMAN_LIVE_PATH": str(live_path),
+                },
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="pull")
+
+    recorded: dict[str, object] = {}
+
+    def fake_run_command(*, command, cwd, env, stream_output, interactive, privileged=False):
+        if command == "capture-command":
+            return 1, "", "capture exploded"
+        if command == "reconcile-command":
+            assert env is not None
+            recorded["review_repo_text"] = Path(env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8")
+            recorded["review_live_text"] = Path(env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8")
+            recorded["reconcile_privileged"] = privileged
+            repo_path.write_text(live_path.read_text(encoding="utf-8"), encoding="utf-8")
+            return 0, "reconciled\n", ""
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("dotman.execution._run_command", fake_run_command)
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert result.packages[0].steps[0].step.action == "update_repo"
+    assert result.packages[0].steps[0].stdout == "reconciled\n"
+    assert "capture failed; falling back to reconcile: capture exploded" in result.packages[0].steps[0].stderr
+    assert repo_path.read_text(encoding="utf-8") == "live\n"
+    assert recorded["review_repo_text"] == "repo planning view\n"
+    assert recorded["review_live_text"] == "capture live planning view\n"
+    assert recorded["reconcile_privileged"] is False
 
 
 def _write_patch_capture_execution_repo(repo_root: Path) -> None:
