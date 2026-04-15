@@ -132,7 +132,12 @@ _STEP_LABELS_BY_OPERATION = {
 }
 
 
-def build_execution_session(plans: Sequence[BindingPlan], *, operation: str) -> ExecutionSession:
+def build_execution_session(
+    plans: Sequence[BindingPlan],
+    *,
+    operation: str,
+    run_noop: bool = False,
+) -> ExecutionSession:
     _ensure_no_unapproved_live_symlink_targets(plans, operation=operation)
     package_units: list[PackageExecutionUnit] = []
     hook_names = _STEP_LABELS_BY_OPERATION[operation]
@@ -143,14 +148,25 @@ def build_execution_session(plans: Sequence[BindingPlan], *, operation: str) -> 
                 continue
             targets_by_package.setdefault(target.package_id, []).append(target)
 
-        hooks_by_package: dict[str, dict[str, list[HookPlan]]] = {}
+        filtered_hooks_by_package: dict[str, dict[str, list[HookPlan]]] = {}
         for hook_name in hook_names:
             for hook_plan in plan.hooks.get(hook_name, []):
-                hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
+                filtered_hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
+
+        raw_hook_plans = getattr(plan, "hook_plans", None) or plan.hooks
+        raw_hooks_by_package: dict[str, dict[str, list[HookPlan]]] = {}
+        if run_noop:
+            for hook_name in hook_names:
+                for hook_plan in raw_hook_plans.get(hook_name, []):
+                    raw_hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
 
         for package_id in plan.package_ids:
+            target_plans = targets_by_package.get(package_id, [])
+            package_hooks = filtered_hooks_by_package.get(package_id, {})
+            if not target_plans and run_noop:
+                package_hooks = raw_hooks_by_package.get(package_id, {}) or package_hooks
+
             package_steps: list[ExecutionStep] = []
-            package_hooks = hooks_by_package.get(package_id, {})
             for hook_name in hook_names[:2]:
                 package_steps.extend(
                     ExecutionStep(
@@ -163,12 +179,10 @@ def build_execution_session(plans: Sequence[BindingPlan], *, operation: str) -> 
                     for hook_plan in package_hooks.get(hook_name, [])
                 )
 
-            target_steps: list[ExecutionStep] = []
-            for target_plan in targets_by_package.get(package_id, []):
-                target_steps.extend(_build_target_steps(plan=plan, target_plan=target_plan, operation=operation))
-            package_steps.extend(target_steps)
+            for target_plan in target_plans:
+                package_steps.extend(_build_target_steps(plan=plan, target_plan=target_plan, operation=operation))
 
-            if target_steps:
+            if target_plans or (run_noop and package_hooks):
                 package_steps.extend(
                     ExecutionStep(
                         package_id=package_id,
@@ -251,6 +265,7 @@ def execute_session(
     session: ExecutionSession,
     *,
     stream_output: bool,
+    assume_yes: bool = False,
     on_package_start=None,
     on_step_start=None,
     on_step_finish=None,
@@ -271,7 +286,7 @@ def execute_session(
                 continue
             if on_step_start is not None:
                 on_step_start(package, step, step_index, total_steps)
-            result = _execute_step(step, stream_output=stream_output)
+            result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
             step_results.append(result)
             if on_step_finish is not None:
                 on_step_finish(package, result, step_index, total_steps)
@@ -404,7 +419,7 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
     return steps
 
 
-def _execute_step(step: ExecutionStep, *, stream_output: bool) -> ExecutionStepResult:
+def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool) -> ExecutionStepResult:
     try:
         if step.kind == "hook":
             exit_code, stdout, stderr = _run_command(
@@ -444,6 +459,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool) -> ExecutionStepR
                         live_path=str(target_plan.live_path),
                         review_repo_path=command_env.get("DOTMAN_REVIEW_REPO_PATH"),
                         review_live_path=command_env.get("DOTMAN_REVIEW_LIVE_PATH"),
+                        assume_yes=assume_yes,
                     )
                     stdout = ""
                     stderr = ""

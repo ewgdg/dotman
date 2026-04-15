@@ -16,6 +16,7 @@ def run_jinja_reconcile(
     review_repo_path: str | None = None,
     review_live_path: str | None = None,
     editor: str | None = None,
+    assume_yes: bool = False,
 ) -> int:
     resolved_repo_path = Path(repo_path).expanduser().resolve()
     if not resolved_repo_path.exists():
@@ -31,6 +32,7 @@ def run_jinja_reconcile(
         review_repo_path=review_repo_path,
         review_live_path=review_live_path,
         editor=editor,
+        assume_yes=assume_yes,
     )
 
 

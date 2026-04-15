@@ -333,6 +333,35 @@ def test_push_cli_fails_fast_for_symlinked_live_target_in_non_interactive_mode(
 
 
 
+def test_push_cli_allows_symlinked_live_target_with_yes_in_non_interactive_mode(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_root = home / ".config" / "app"
+    live_root.mkdir(parents=True)
+    symlink_target = live_root / "config-real.txt"
+    symlink_target.write_text("live value\n", encoding="utf-8")
+    (live_root / "config.txt").symlink_to(symlink_target)
+
+    exit_code = main(["--config", str(config_path), "push", "--yes"])
+
+    assert exit_code == 0
+    live_path = live_root / "config.txt"
+    assert live_path.is_file()
+    assert not live_path.is_symlink()
+    assert live_path.read_text(encoding="utf-8") == "repo value\n"
+    assert symlink_target.read_text(encoding="utf-8") == "live value\n"
+
+
 def test_push_cli_fails_fast_for_symlinked_directory_live_target_in_non_interactive_mode(
     tmp_path: Path,
     monkeypatch,
@@ -662,6 +691,76 @@ def test_pull_cli_passes_projected_review_paths_to_reconcile_execution(
     ]
     assert payload["packages"][0]["steps"][1]["stdout"] == "review:rendered repo view|captured live view\n"
 
+
+
+def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo value\n", encoding="utf-8")
+
+    exit_code = main(["--config", str(config_path), "push", "--run-noop"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert ":: executing push" in output
+    assert "packages: 1" in output
+    assert "steps: 3" in output
+    assert "[1/3] guard_push" in output
+    assert "[2/3] pre_push" in output
+    assert "[3/3] post_push" in output
+    assert "guard push" in output
+    assert "pre push" in output
+    assert "post push" in output
+    assert "noop" not in output
+    assert "[1/3] create" not in output
+
+
+def test_pull_cli_run_noop_executes_hooks_for_all_noop_pull_plan(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo value\n", encoding="utf-8")
+
+    exit_code = main(["--config", str(config_path), "pull", "--run-noop"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert ":: executing pull" in output
+    assert "packages: 1" in output
+    assert "steps: 3" in output
+    assert "[1/3] guard_pull" in output
+    assert "[2/3] pre_pull" in output
+    assert "[3/3] post_pull" in output
+    assert "guard pull" in output
+    assert "pre pull" in output
+    assert "post pull" in output
+    assert "noop" not in output
+    assert "[1/3] update_repo" not in output
 
 
 def test_push_cli_fails_fast_and_skips_post_push_after_failed_guard(

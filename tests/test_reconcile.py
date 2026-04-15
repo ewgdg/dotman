@@ -232,6 +232,38 @@ def test_run_basic_reconcile_reports_no_changes_when_editor_makes_no_edits(
 
 
 
+def test_run_basic_reconcile_accepts_assume_yes_without_prompting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+    live_path.write_text("live\n", encoding="utf-8")
+
+    def fake_run(command: list[str], check: bool):
+        Path(command[2]).write_text("edited repo\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        reconcile_module,
+        "prompt",
+        lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run when assume_yes is set")),
+    )
+
+    exit_code = run_basic_reconcile(
+        repo_path=str(repo_path),
+        live_path=str(live_path),
+        additional_sources=[],
+        editor="nvim",
+        assume_yes=True,
+    )
+
+    assert exit_code == 0
+    assert repo_path.read_text(encoding="utf-8") == "edited repo\n"
+
+
 def test_run_basic_reconcile_lists_only_changed_repo_sources_before_prompt(
     tmp_path: Path,
     monkeypatch,

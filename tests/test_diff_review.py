@@ -345,6 +345,7 @@ def test_run_review_item_edit_uses_planning_views_for_plain_pull_editor(monkeypa
         review_repo_path: str | None = None,
         review_live_path: str | None = None,
         editor: str | None = None,
+        assume_yes: bool = False,
     ) -> int:
         recorded["repo_path"] = repo_path
         recorded["live_path"] = live_path

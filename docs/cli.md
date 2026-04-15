@@ -21,6 +21,11 @@ This document captures the current command and selector direction for `dotman`.
 - Slash-qualified repo input such as `repo/selector@profile` may remain accepted as a lookup alias for convenience, but dotman should normalize displays back to `repo:selector@profile`.
 - `\` is not a valid selector separator or menu-display form.
 
+## Confirmation and execution flags
+
+- `--yes` skips confirmation prompts that already have a safe default, but it does not auto-resolve ambiguous selector/profile menus.
+- `--run-noop` is only meaningful for `push` and `pull`; it keeps hook-bearing packages alive when the final selected plan is all-noop, so hooks rerun, but it does not change planning, selection, or fabricate target writes.
+
 ## Selectors
 
 - Normal CLI usage should accept a type-less selector.
@@ -101,6 +106,8 @@ This document captures the current command and selector direction for `dotman`.
 - `push` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
 - Plain `push` should perform real execution after planning, interactive exclusion, and diff review.
 - `push` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
+- `push` should accept `--yes` for the confirmation prompts that already have a safe default.
+- `push` should accept `--run-noop` so hook-bearing packages still execute when the finalized selected plan has only noop target steps.
 - `push <selector>` should resolve only within tracked state and reuse the tracked profile instead of prompting for a fresh profile.
 - Because groups are not tracked identities, tracked-state selector lookup for `push`, `pull`, `info tracked`, and `untrack` should resolve against tracked packages, not historical group names.
 - `push <package>` should also work when that package is currently included through a tracked higher-level binding; dotman should reuse the owning tracked profile in that case.
@@ -145,6 +152,8 @@ This document captures the current command and selector direction for `dotman`.
 - `pull` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
 - Plain `pull` should perform real execution after planning, interactive exclusion, and diff review.
 - `pull` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
+- `pull` should accept `--yes` for the confirmation prompts that already have a safe default.
+- `pull` should accept `--run-noop` so hook-bearing packages still execute when the finalized selected plan has only noop target steps.
 - `pull <binding>` should resolve against tracked bindings and reuse the tracked profile/local context instead of prompting for a fresh profile choice.
 - `pull <package>` should also work when that package is currently included through a tracked higher-level binding; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.

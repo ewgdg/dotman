@@ -133,6 +133,7 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
             review_repo_path=args.review_repo_path,
             review_live_path=args.review_live_path,
             editor=args.editor,
+            assume_yes=getattr(args, "assume_yes", False),
         )
     if args.command == "reconcile" and args.reconcile_command == "jinja":
         return handlers.run_jinja_reconcile(
@@ -141,6 +142,7 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
             review_repo_path=args.review_repo_path,
             review_live_path=args.review_live_path,
             editor=args.editor,
+            assume_yes=getattr(args, "assume_yes", False),
         )
     if args.command == "render" and args.render_command == "jinja":
         return handlers.run_jinja_render(
@@ -154,6 +156,7 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
 
 
 def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
+    assume_yes = getattr(args, "assume_yes", False)
     binding_text, profile = handlers.resolve_binding_text(engine, args.binding, json_output=args.json_output)
     _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=profile)
     while True:
@@ -161,6 +164,7 @@ def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> in
             engine,
             binding=binding,
             json_output=args.json_output,
+            assume_yes=assume_yes,
         ):
             existing_bindings = handlers.find_recorded_bindings_for_scope(engine, binding)
             if len(existing_bindings) == 1:
@@ -193,6 +197,7 @@ def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> in
             engine,
             binding=binding,
             json_output=args.json_output,
+            assume_yes=assume_yes,
         ):
             existing_binding = handlers.find_recorded_binding_exact(engine, binding)
             if existing_binding is not None:
@@ -209,6 +214,7 @@ def _handle_add(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
         args.package_query,
         json_output=args.json_output,
     )
+    assume_yes = getattr(args, "assume_yes", False)
     result = prepare_add_to_package(
         repo_root=engine.get_repo(repo_name).root,
         repo_name=repo_name,
@@ -228,7 +234,7 @@ def _handle_add(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
             return review_result.exit_code
         if review_result.manifest_text == result.before_text:
             return handlers.emit_noop_add_result(json_output=args.json_output)
-        if not handlers.confirm_add_manifest_write(repo_name=repo_name, package_id=package_id):
+        if not handlers.confirm_add_manifest_write(repo_name=repo_name, package_id=package_id, assume_yes=assume_yes):
             return handlers.emit_kept_add_result(
                 repo_name=repo_name,
                 package_id=package_id,
@@ -258,12 +264,15 @@ def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, ope
 
 
 def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
+    assume_yes = getattr(args, "assume_yes", False)
+    run_noop = getattr(args, "run_noop", False)
     plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="push")
     if not handlers.review_plans_for_interactive_diffs(
         plans=plans,
         operation="push",
         json_output=args.json_output,
         full_paths=args.full_path,
+        assume_yes=assume_yes,
     ):
         handlers.emit_interrupt_notice()
         return handlers.interrupted_exit_code
@@ -285,6 +294,7 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
         plans=plans,
         json_output=args.json_output,
         full_paths=args.full_path,
+        assume_yes=assume_yes,
     )
     if plans is None:
         handlers.emit_interrupt_notice()
@@ -296,6 +306,8 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
             plans=plans,
             json_output=args.json_output,
             full_paths=args.full_path,
+            run_noop=run_noop,
+            assume_yes=assume_yes,
         )
     except Exception:
         if snapshot is not None:
@@ -316,12 +328,15 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
 
 
 def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
+    assume_yes = getattr(args, "assume_yes", False)
+    run_noop = getattr(args, "run_noop", False)
     plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="pull")
     if not handlers.review_plans_for_interactive_diffs(
         plans=plans,
         operation="pull",
         json_output=args.json_output,
         full_paths=args.full_path,
+        assume_yes=assume_yes,
     ):
         handlers.emit_interrupt_notice()
         return handlers.interrupted_exit_code
@@ -344,6 +359,8 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
         plans=plans,
         json_output=args.json_output,
         full_paths=args.full_path,
+        run_noop=run_noop,
+        assume_yes=assume_yes,
     )
 
 
@@ -360,6 +377,7 @@ def _handle_rollback(*, args: Any, engine: Any, handlers: CliCommandHandlers) ->
         actions=rollback_actions,
         json_output=args.json_output,
         full_paths=args.full_path,
+        assume_yes=getattr(args, "assume_yes", False),
     ):
         handlers.emit_interrupt_notice()
         return handlers.interrupted_exit_code

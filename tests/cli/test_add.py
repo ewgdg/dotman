@@ -23,7 +23,7 @@ def _write_repo(repo_root: Path, packages: dict[str, str] | None = None) -> None
 def test_add_help_uses_live_path_then_optional_package_query(capsys) -> None:
     output = capture_parser_help(capsys, "add")
 
-    assert "usage: dotman add [-h] <live-path> [<package-query>]" in output
+    assert "usage: dotman add [-h] [--yes] <live-path> [<package-query>]" in output
     assert "<live-path>" in output
     assert "[<package-query>]" in output
 

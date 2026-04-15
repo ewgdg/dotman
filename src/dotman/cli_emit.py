@@ -416,16 +416,19 @@ def execute_plans(
     json_output: bool,
     full_paths: bool = False,
     use_color: bool,
+    run_noop: bool = False,
+    assume_yes: bool = False,
 ):
-    session = build_execution_session(plans, operation=operation)
+    session = build_execution_session(plans, operation=operation, run_noop=run_noop)
     if json_output:
-        return execute_session(session, stream_output=False)
+        return execute_session(session, stream_output=False, assume_yes=assume_yes)
     _print_execution_header(session=session, use_color=use_color)
     if not session.packages:
-        return execute_session(session, stream_output=True)
+        return execute_session(session, stream_output=True, assume_yes=assume_yes)
     return execute_session(
         session,
         stream_output=True,
+        assume_yes=assume_yes,
         on_package_start=lambda package: _print_execution_package_start(package, use_color=use_color),
         on_step_start=lambda package, step, index, total: _print_execution_step_start(
             package,
@@ -456,6 +459,8 @@ def run_execution(
     json_output: bool,
     full_paths: bool = False,
     use_color: bool,
+    run_noop: bool = False,
+    assume_yes: bool = False,
 ) -> int:
     return emit_execution_result(
         result=execute_plans(
@@ -464,6 +469,8 @@ def run_execution(
             json_output=json_output,
             full_paths=full_paths,
             use_color=use_color,
+            run_noop=run_noop,
+            assume_yes=assume_yes,
         ),
         json_output=json_output,
     )

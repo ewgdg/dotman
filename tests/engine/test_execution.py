@@ -98,6 +98,48 @@ def test_build_execution_session_does_not_add_pull_chmod_steps() -> None:
     assert [step.action for step in session.packages[0].steps] == ["update_repo"]
 
 
+def test_build_execution_session_keeps_hook_only_packages_when_run_noop_is_enabled() -> None:
+    for operation, hook_name_prefix in (("push", "push"), ("pull", "pull")):
+        plan = BindingPlan(
+            operation=operation,
+            binding=Binding(repo="fixture", selector="app", profile="default"),
+            selector_kind="package",
+            package_ids=["app"],
+            variables={},
+            hooks={
+                f"guard_{hook_name_prefix}": [
+                    HookPlan(package_id="app", hook_name=f"guard_{hook_name_prefix}", command=f"echo guard {hook_name_prefix}", cwd=Path("/repo")),
+                ],
+                f"pre_{hook_name_prefix}": [
+                    HookPlan(package_id="app", hook_name=f"pre_{hook_name_prefix}", command=f"echo pre {hook_name_prefix}", cwd=Path("/repo")),
+                ],
+                f"post_{hook_name_prefix}": [
+                    HookPlan(package_id="app", hook_name=f"post_{hook_name_prefix}", command=f"echo post {hook_name_prefix}", cwd=Path("/repo")),
+                ],
+            },
+            target_plans=[
+                TargetPlan(
+                    package_id="app",
+                    target_name="config",
+                    repo_path=Path("/repo/config"),
+                    live_path=Path("/live/config"),
+                    action="noop",
+                    target_kind="file",
+                    projection_kind="raw",
+                )
+            ],
+        )
+
+        session = build_execution_session([plan], operation=operation, run_noop=True)
+
+        assert [unit.package_id for unit in session.packages] == ["app"]
+        assert [step.action for step in session.packages[0].steps] == [
+            f"guard_{hook_name_prefix}",
+            f"pre_{hook_name_prefix}",
+            f"post_{hook_name_prefix}",
+        ]
+
+
 def test_execute_session_fails_when_live_target_becomes_symlink_before_execution(
     tmp_path: Path,
 ) -> None:
@@ -347,12 +389,14 @@ def test_execute_session_runs_builtin_jinja_reconcile_helper(
         review_repo_path: str | None = None,
         review_live_path: str | None = None,
         editor: str | None = None,
+        assume_yes: bool = False,
     ) -> int:
         recorded["repo_path"] = repo_path
         recorded["live_path"] = live_path
         recorded["review_repo_path"] = review_repo_path
         recorded["review_live_path"] = review_live_path
         recorded["editor"] = editor
+        recorded["assume_yes"] = assume_yes
         assert review_repo_path is not None
         assert review_live_path is not None
         assert Path(review_repo_path).read_text(encoding="utf-8") == "repo planning view\n"
@@ -364,13 +408,14 @@ def test_execute_session_runs_builtin_jinja_reconcile_helper(
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.setattr("sys.stderr.isatty", lambda: True)
 
-    result = execute_session(session, stream_output=True)
+    result = execute_session(session, stream_output=True, assume_yes=True)
 
     assert result.status == "ok"
     assert result.packages[0].steps[0].step.action == "reconcile"
     assert recorded["repo_path"] == str(repo_path)
     assert recorded["live_path"] == str(live_path)
     assert recorded["editor"] is None
+    assert recorded["assume_yes"] is True
 
 
 

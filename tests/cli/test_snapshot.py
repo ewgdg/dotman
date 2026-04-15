@@ -68,7 +68,7 @@ def _write_snapshot_config(tmp_path: Path, repo_root: Path, *, max_generations: 
 
 def test_rollback_help_lists_dry_run_and_full_path_flags(capsys) -> None:
     output = capture_parser_help(capsys, "rollback")
-    assert "usage: dotman rollback [-h] [-d] [--full-path] [<snapshot>]" in output
+    assert "usage: dotman rollback [-h] [-d] [--full-path] [--yes] [<snapshot>]" in output
     assert "-d, --dry-run" in output
     assert "--full-path" in output
 
@@ -156,7 +156,7 @@ def test_push_execute_replaces_symlinked_target_and_rollback_restores_link(
 
     answers = iter(["y"])
     monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
-    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False: True)
+    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False, assume_yes=False: True)
     monkeypatch.setattr(
         cli,
         "filter_plans_for_interactive_selection",
@@ -244,7 +244,7 @@ def test_push_execute_replaces_broken_symlink_and_rollback_restores_link(
 
     answers = iter(["y"])
     monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
-    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False: True)
+    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False, assume_yes=False: True)
     monkeypatch.setattr(
         cli,
         "filter_plans_for_interactive_selection",

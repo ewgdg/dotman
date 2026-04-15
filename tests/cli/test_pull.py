@@ -101,7 +101,13 @@ def test_pull_cli_reviews_diffs_before_selection(
     order: list[str] = []
     recorded: dict[str, object] = {}
 
-    def fake_run_diff_review_menu(review_items, *, operation: str, full_paths: bool = False) -> bool:
+    def fake_run_diff_review_menu(
+        review_items,
+        *,
+        operation: str,
+        full_paths: bool = False,
+        assume_yes: bool = False,
+    ) -> bool:
         order.append("diff")
         recorded["operation"] = operation
         recorded["item_count"] = len(review_items)
@@ -176,7 +182,7 @@ def test_pull_cli_returns_130_when_diff_review_aborts(
     monkeypatch.setattr(
         cli,
         "run_diff_review_menu",
-        lambda review_items, *, operation, full_paths=False: False,
+        lambda review_items, *, operation, full_paths=False, assume_yes=False: False,
     )
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
@@ -240,7 +246,7 @@ def test_pull_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_
     monkeypatch.setattr(
         cli,
         "review_plans_for_interactive_diffs",
-        lambda *, plans, operation, json_output, full_paths=False: True,
+        lambda *, plans, operation, json_output, full_paths=False, assume_yes=False: True,
     )
 
     config_path = write_manager_config(tmp_path)
@@ -309,7 +315,7 @@ def test_pull_cli_accepts_partial_owned_package_match(
     monkeypatch.setattr(
         cli,
         "review_plans_for_interactive_diffs",
-        lambda *, plans, operation, json_output, full_paths=False: True,
+        lambda *, plans, operation, json_output, full_paths=False, assume_yes=False: True,
     )
 
     config_path = write_manager_config(tmp_path)

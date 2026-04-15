@@ -660,6 +660,50 @@ def test_push_symlink_replacement_prompt_uses_bracket_style(monkeypatch) -> None
     assert cli.push_symlink_replacement_prompt() == 'Replace symlinked live target(s) before push? [y/N] '
 
 
+def test_confirm_review_continue_skips_prompt_when_assume_yes(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
+
+    assert cli.confirm_review_continue(assume_yes=True) is True
+
+
+def test_confirm_add_manifest_write_skips_prompt_when_assume_yes(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
+
+    assert cli.confirm_add_manifest_write(repo_name="fixture", package_id="git", assume_yes=True) is True
+
+
+def test_confirm_push_symlink_replacement_skips_prompt_when_assume_yes(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
+
+    assert cli.confirm_push_symlink_replacement(assume_yes=True) is True
+
+
+def test_ensure_track_binding_replacement_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
+    binding = Binding(repo="fixture", selector="stack", profile="current")
+    existing_binding = Binding(repo="fixture", selector="stack", profile="existing")
+    replacement_binding = Binding(repo="fixture", selector="stack", profile="replacement")
+    engine = SimpleNamespace(get_repo=lambda _repo_name: SimpleNamespace(packages={}), expand_binding_for_tracking=lambda _binding: [replacement_binding])
+    monkeypatch.setattr(cli, "find_recorded_bindings_for_scope", lambda _engine, _binding: [existing_binding])
+    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
+
+    assert cli.ensure_track_binding_replacement_confirmed(engine, binding=binding, json_output=False, assume_yes=True) is True
+
+
+def test_ensure_track_binding_implicit_overrides_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
+    binding = Binding(repo="fixture", selector="stack", profile="current")
+    engine = SimpleNamespace(
+        preview_binding_implicit_overrides=lambda _binding: [
+            SimpleNamespace(
+                winner=SimpleNamespace(binding_label="fixture:stack@current", package_id="stack"),
+                overridden=(SimpleNamespace(binding_label="fixture:stack@implicit", package_id="implicit"),),
+            )
+        ]
+    )
+    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
+
+    assert cli.ensure_track_binding_implicit_overrides_confirmed(engine, binding=binding, json_output=False, assume_yes=True) is True
+
+
 def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
     monkeypatch.delenv("DOTMAN_MENU_BOTTOM_UP", raising=False)
     monkeypatch.setattr(cli, "prompt", lambda _message: "")

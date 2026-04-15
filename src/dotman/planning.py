@@ -61,7 +61,7 @@ def build_plan(
     variables = deep_merge(deep_merge(package_vars, profile_vars), repo.local_vars)
     inferred_os = infer_profile_os(binding.profile, lineage, variables)
     context = build_template_context(variables, profile=binding.profile, inferred_os=inferred_os)
-    hooks = engine._plan_hooks(repo, resolved_packages, context, operation=operation)
+    hook_plans = engine._plan_hooks(repo, resolved_packages, context, operation=operation)
     target_plans = engine._plan_targets(
         repo=repo,
         packages=resolved_packages,
@@ -70,7 +70,7 @@ def build_plan(
         operation=operation,
         inferred_os=inferred_os,
     )
-    hooks = filter_hook_plans_for_targets(hooks, target_plans)
+    hooks = filter_hook_plans_for_targets(hook_plans, target_plans)
     return BindingPlan(
         operation=operation,
         binding=binding,
@@ -79,6 +79,7 @@ def build_plan(
         variables=variables,
         hooks=hooks,
         target_plans=target_plans,
+        hook_plans=hook_plans,
         repo_root=repo.root,
         state_path=repo.config.state_path,
         inferred_os=inferred_os,

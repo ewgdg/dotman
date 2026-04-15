@@ -108,7 +108,7 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
     monkeypatch.setattr(
         cli,
         "review_plans_for_interactive_diffs",
-        lambda *, plans, operation, json_output, full_paths=False: True,
+        lambda *, plans, operation, json_output, full_paths=False, assume_yes=False: True,
     )
 
     config_path = write_named_manager_config(
@@ -185,7 +185,7 @@ def test_push_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_
     monkeypatch.setattr(
         cli,
         "review_plans_for_interactive_diffs",
-        lambda *, plans, operation, json_output, full_paths=False: True,
+        lambda *, plans, operation, json_output, full_paths=False, assume_yes=False: True,
     )
 
     config_path = write_manager_config(tmp_path)
@@ -254,7 +254,7 @@ def test_push_cli_accepts_partial_owned_package_match(
     monkeypatch.setattr(
         cli,
         "review_plans_for_interactive_diffs",
-        lambda *, plans, operation, json_output, full_paths=False: True,
+        lambda *, plans, operation, json_output, full_paths=False, assume_yes=False: True,
     )
 
     config_path = write_manager_config(tmp_path)
@@ -585,11 +585,18 @@ def test_push_cli_reviews_diffs_before_selection(
     order: list[str] = []
     recorded: dict[str, object] = {}
 
-    def fake_run_diff_review_menu(review_items, *, operation: str, full_paths: bool = False) -> bool:
+    def fake_run_diff_review_menu(
+        review_items,
+        *,
+        operation: str,
+        full_paths: bool = False,
+        assume_yes: bool = False,
+    ) -> bool:
         order.append("diff")
         recorded["operation"] = operation
         recorded["item_count"] = len(review_items)
         recorded["full_paths"] = full_paths
+        recorded["assume_yes"] = assume_yes
         return True
 
     monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
@@ -641,6 +648,7 @@ def test_push_cli_reviews_diffs_before_selection(
         "operation": "push",
         "item_count": 1,
         "full_paths": False,
+        "assume_yes": False,
     }
 
 def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
@@ -654,11 +662,18 @@ def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
     recorded: dict[str, object] = {}
 
-    def fake_run_diff_review_menu(review_items, *, operation: str, full_paths: bool = False) -> bool:
+    def fake_run_diff_review_menu(
+        review_items,
+        *,
+        operation: str,
+        full_paths: bool = False,
+        assume_yes: bool = False,
+    ) -> bool:
         recorded["operation"] = operation
         recorded["item_count"] = len(review_items)
         recorded["first_action"] = review_items[0].action
         recorded["full_paths"] = full_paths
+        recorded["assume_yes"] = assume_yes
         return True
 
     monkeypatch.setattr(cli, "run_diff_review_menu", fake_run_diff_review_menu)
@@ -696,6 +711,7 @@ def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
         "item_count": 1,
         "first_action": "create",
         "full_paths": False,
+        "assume_yes": False,
     }
 
 def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
@@ -766,7 +782,7 @@ def test_push_cli_skips_diff_review_for_json_output(
     monkeypatch.setattr(
         cli,
         "run_diff_review_menu",
-        lambda review_items, *, operation: (_ for _ in ()).throw(AssertionError("review menu should not run")),
+        lambda review_items, *, operation, assume_yes=False: (_ for _ in ()).throw(AssertionError("review menu should not run")),
     )
 
     config_path = write_manager_config(tmp_path)

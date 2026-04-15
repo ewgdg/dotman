@@ -546,7 +546,9 @@ def review_continue_prompt() -> str:
     )
 
 
-def confirm_review_continue() -> bool:
+def confirm_review_continue(*, assume_yes: bool = False) -> bool:
+    if assume_yes:
+        return True
     while True:
         answer = prompt(review_continue_prompt()).strip().lower()
         if answer in {"", "y", "yes"}:
@@ -629,6 +631,7 @@ def confirm_tracked_binding_replacement(
     *,
     existing_binding: Binding,
     replacement_binding: Binding,
+    assume_yes: bool = False,
 ) -> bool:
     binding_scope = f"{replacement_binding.repo}:{replacement_binding.selector}"
     print_selection_header(f"Confirm tracked binding replacement for {binding_scope}:")
@@ -648,6 +651,8 @@ def confirm_tracked_binding_replacement(
             profile=replacement_binding.profile,
         )
     )
+    if assume_yes:
+        return True
     while True:
         answer = prompt(confirmation_prompt()).strip().lower()
         if answer in {"", "n", "no"}:
@@ -662,6 +667,7 @@ def ensure_track_binding_replacement_confirmed(
     *,
     binding: Binding,
     json_output: bool,
+    assume_yes: bool = False,
 ) -> bool:
     expanded_bindings = engine.expand_binding_for_tracking(binding)
     existing_bindings = find_recorded_bindings_for_scope(engine, binding)
@@ -674,6 +680,19 @@ def ensure_track_binding_replacement_confirmed(
     ]
     if not replacements:
         return True
+    if assume_yes:
+        if len(replacements) == 1:
+            existing_binding, replacement_binding = replacements[0]
+            return confirm_tracked_binding_replacement(
+                existing_binding=existing_binding,
+                replacement_binding=replacement_binding,
+                assume_yes=True,
+            )
+        print_selection_header(f"Confirm tracked binding replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
+        for existing_binding, replacement_binding in replacements:
+            print(f"  existing: {render_binding_reference(existing_binding)}")
+            print(f"  new:      {render_binding_reference(replacement_binding)}")
+        return True
     if len(replacements) == 1:
         existing_binding, replacement_binding = replacements[0]
         if not interactive_mode_enabled(json_output=json_output):
@@ -685,6 +704,7 @@ def ensure_track_binding_replacement_confirmed(
         return confirm_tracked_binding_replacement(
             existing_binding=existing_binding,
             replacement_binding=replacement_binding,
+            assume_yes=False,
         )
     replacement_labels = ", ".join(
         f"{existing.repo}:{existing.selector}@{existing.profile} -> {replacement.repo}:{replacement.selector}@{replacement.profile}"
@@ -718,7 +738,7 @@ def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
-def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Sequence) -> bool:
+def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Sequence, assume_yes: bool = False) -> bool:
     binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
     print_selection_header(f"Confirm explicit override for {binding_label}:")
     print("  this explicit binding will replace implicitly tracked package owners:")
@@ -726,6 +746,8 @@ def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Seq
         print(f"    new: {override.winner.binding_label} ({override.winner.package_id})")
         for contender in override.overridden:
             print(f"      implicit: {contender.binding_label} ({contender.package_id})")
+    if assume_yes:
+        return True
     while True:
         answer = prompt(confirmation_prompt()).strip().lower()
         if answer in {"", "n", "no"}:
@@ -740,10 +762,17 @@ def ensure_track_binding_implicit_overrides_confirmed(
     *,
     binding: Binding,
     json_output: bool,
+    assume_yes: bool = False,
 ) -> bool:
     overrides = engine.preview_binding_implicit_overrides(binding)
     if not overrides:
         return True
+    if assume_yes:
+        return confirm_track_binding_implicit_overrides(
+            binding=binding,
+            overrides=overrides,
+            assume_yes=True,
+        )
     if not interactive_mode_enabled(json_output=json_output):
         raise ValueError(
             f"refusing to let '{binding.repo}:{binding.selector}@{binding.profile}' explicitly override implicitly tracked targets "
@@ -752,7 +781,9 @@ def ensure_track_binding_implicit_overrides_confirmed(
     return confirm_track_binding_implicit_overrides(binding=binding, overrides=overrides)
 
 
-def confirm_add_manifest_write(*, repo_name: str, package_id: str) -> bool:
+def confirm_add_manifest_write(*, repo_name: str, package_id: str, assume_yes: bool = False) -> bool:
+    if assume_yes:
+        return True
     while True:
         answer = prompt(
             write_manifest_confirmation_prompt(repo_name=repo_name, package_id=package_id)
@@ -764,7 +795,9 @@ def confirm_add_manifest_write(*, repo_name: str, package_id: str) -> bool:
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
-def confirm_push_symlink_replacement() -> bool:
+def confirm_push_symlink_replacement(*, assume_yes: bool = False) -> bool:
+    if assume_yes:
+        return True
     while True:
         answer = prompt(push_symlink_replacement_prompt()).strip().lower()
         if answer in {"", "n", "no"}:
@@ -1999,6 +2032,7 @@ def run_diff_review_menu(
     *,
     operation: str,
     full_paths: bool = False,
+    assume_yes: bool = False,
 ) -> bool:
     print_selection_header(f"Review pending diffs for {operation}:")
     for index, item in enumerate(review_items, start=1):
@@ -2033,7 +2067,7 @@ def run_diff_review_menu(
         if command_name == "next":
             selected_index = 0 if last_viewed_index is None else last_viewed_index + 1
             if selected_index >= len(review_items):
-                if confirm_review_continue():
+                if confirm_review_continue(assume_yes=assume_yes):
                     return True
                 continue
         if selected_index is None:
@@ -2061,13 +2095,14 @@ def review_plans_for_interactive_diffs(
     operation: str,
     json_output: bool,
     full_paths: bool = False,
+    assume_yes: bool = False,
 ) -> bool:
     if not interactive_mode_enabled(json_output=json_output):
         return True
     review_items = build_review_items(plans, operation=operation)
     if not review_items:
         return True
-    return run_diff_review_menu(review_items, operation=operation, full_paths=full_paths)
+    return run_diff_review_menu(review_items, operation=operation, full_paths=full_paths, assume_yes=assume_yes)
 
 
 def _push_symlink_hazard_description(hazard: cli_emit.PushSymlinkHazard, *, full_paths: bool) -> str:
@@ -2081,6 +2116,7 @@ def prepare_push_plans_for_execution(
     plans: Sequence,
     json_output: bool,
     full_paths: bool = False,
+    assume_yes: bool = False,
 ) -> list | None:
     hazards = cli_emit.collect_push_live_symlink_hazards(plans)
     if not hazards:
@@ -2106,10 +2142,12 @@ def prepare_push_plans_for_execution(
             )
         raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
 
+    if assume_yes:
+        return cli_emit.allow_push_live_symlink_replacements(plans)
     if not interactive:
         raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
 
-    if not confirm_push_symlink_replacement():
+    if not confirm_push_symlink_replacement(assume_yes=assume_yes):
         return None
     return cli_emit.allow_push_live_symlink_replacements(plans)
 
@@ -2233,24 +2271,44 @@ emit_execution_result = cli_emit.emit_execution_result
 
 
 
-def execute_plans(*, operation: str, plans: Sequence, json_output: bool, full_paths: bool = False):
+def execute_plans(
+    *,
+    operation: str,
+    plans: Sequence,
+    json_output: bool,
+    full_paths: bool = False,
+    run_noop: bool = False,
+    assume_yes: bool = False,
+):
     return cli_emit.execute_plans(
         operation=operation,
         plans=plans,
         json_output=json_output,
         full_paths=full_paths,
         use_color=colors_enabled(),
+        run_noop=run_noop,
+        assume_yes=assume_yes,
     )
 
 
 
-def run_execution(*, operation: str, plans: Sequence, json_output: bool, full_paths: bool = False) -> int:
+def run_execution(
+    *,
+    operation: str,
+    plans: Sequence,
+    json_output: bool,
+    full_paths: bool = False,
+    run_noop: bool = False,
+    assume_yes: bool = False,
+) -> int:
     return cli_emit.run_execution(
         operation=operation,
         plans=plans,
         json_output=json_output,
         full_paths=full_paths,
         use_color=colors_enabled(),
+        run_noop=run_noop,
+        assume_yes=assume_yes,
     )
 
 
@@ -2369,13 +2427,14 @@ def review_rollback_actions_for_interactive_diffs(
     actions: Sequence[RollbackAction],
     json_output: bool,
     full_paths: bool = False,
+    assume_yes: bool = False,
 ) -> bool:
     if not interactive_mode_enabled(json_output=json_output):
         return True
     review_items = build_rollback_review_items(snapshot, actions)
     if not review_items:
         return True
-    return run_diff_review_menu(review_items, operation="rollback", full_paths=full_paths)
+    return run_diff_review_menu(review_items, operation="rollback", full_paths=full_paths, assume_yes=assume_yes)
 
 
 

@@ -361,6 +361,7 @@ class BindingPlan:
     variables: dict[str, Any]
     hooks: dict[str, list[HookPlan]]
     target_plans: list[TargetPlan]
+    hook_plans: dict[str, list[HookPlan]] | None = field(default=None, repr=False)
     repo_root: Path | None = None
     state_path: Path | None = None
     inferred_os: str | None = None
