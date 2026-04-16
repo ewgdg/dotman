@@ -64,8 +64,24 @@ def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     assert "commands:" in output
     assert "Track a binding in manager state" in output
     assert "Patch review content back into repo source" in output
+    assert "Open a tracked package directory" in output
     assert "Re-run a reconcile helper subcommand" in output
     assert "Render built-in template helpers" in output
+
+
+def test_edit_help_lists_package_subcommand(capsys) -> None:
+    output = capture_parser_help(capsys, "edit")
+    assert "usage: dotman edit [-h] <edit-command> ..." in output
+    assert "edit commands:" in output
+    assert "package" in output
+    assert "Open a tracked package directory in an editor" in output
+
+
+def test_edit_package_help_uses_explicit_package_placeholder(capsys) -> None:
+    output = capture_parser_help(capsys, "edit", "package")
+    assert "usage: dotman edit package [-h] <package>" in output
+    assert "--help" in output
+    assert "<package>" in output
 
 def test_info_help_uses_nested_command_placeholder_and_summaries(capsys) -> None:
     output = capture_parser_help(capsys, "info")

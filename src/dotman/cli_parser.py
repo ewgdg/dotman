@@ -160,6 +160,24 @@ def build_parser() -> argparse.ArgumentParser:
     add_package_query_argument(add_parser, required=False)
     add_assume_yes_argument(add_parser)
 
+    edit_parser = subparsers.add_parser(
+        "edit",
+        help="Open a tracked package directory",
+        description="Open a tracked package directory",
+    )
+    edit_subparsers = edit_parser.add_subparsers(
+        dest="edit_command",
+        required=True,
+        title="edit commands",
+        metavar="<edit-command>",
+    )
+    edit_package_parser = edit_subparsers.add_parser(
+        "package",
+        help="Open a tracked package directory in an editor",
+        description="Open a tracked package directory in an editor",
+    )
+    add_package_argument(edit_package_parser)
+
     push_parser = subparsers.add_parser(
         "push",
         help="Push tracked changes from repo to live paths",

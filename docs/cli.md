@@ -309,6 +309,12 @@ This document captures the current command and selector direction for `dotman`.
   - `dotman add ~/.config/foo.conf`
 - `import` should stay unused as a top-level command.
 
+## Edit
+
+- `edit package <package>` should open the tracked package directory in `$VISUAL` or `$EDITOR`.
+- If no editor is configured, `edit` should print the package directory path and exit successfully.
+- `edit` should use the tracked-package selector flow, so bare and repo-qualified package queries follow the same ambiguity rules as `info tracked`.
+
 ## Untrack
 
 - `untrack <binding>` should remove one tracked root binding from persisted state.

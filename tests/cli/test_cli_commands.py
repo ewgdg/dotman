@@ -43,6 +43,7 @@ def test_dispatch_command_uses_parsed_full_path_default() -> None:
         emit_add_result=lambda **kwargs: 0,
         emit_noop_add_result=lambda **kwargs: 0,
         emit_kept_add_result=lambda **kwargs: 0,
+        open_package_directory=lambda **kwargs: 0,
         resolve_tracked_binding_text=lambda **kwargs: None,
         filter_plans_for_interactive_selection=lambda **kwargs: [],
         review_plans_for_interactive_diffs=lambda **kwargs: True,

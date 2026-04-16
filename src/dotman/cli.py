@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -191,6 +192,29 @@ def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: 
         return engine.describe_tracked_package(f"{binding.repo}:{binding.selector}")
     except ValueError:
         return None
+
+
+def edit_package_directory(package_root: Path) -> int:
+    if not add_editor_available():
+        print(package_root)
+        return 0
+
+    editor_command = _resolve_package_editor_command()
+    try:
+        completed = subprocess.run([*editor_command, str(package_root)], check=False)
+    except FileNotFoundError as exc:
+        raise ValueError("editor command was not found") from exc
+    return completed.returncode
+
+
+def _resolve_package_editor_command() -> list[str]:
+    editor_value = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if not editor_value:
+        raise ValueError("edit requires $VISUAL or $EDITOR")
+    editor_command = [argument for argument in shlex.split(editor_value) if argument != "-d"]
+    if not editor_command:
+        raise ValueError("edit requires a non-empty $VISUAL or $EDITOR")
+    return editor_command
 
 
 def render_tracked_reason(reason: str) -> str:
@@ -2598,6 +2622,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_add_result=emit_add_result,
         emit_noop_add_result=emit_noop_add_result,
         emit_kept_add_result=emit_kept_add_result,
+        open_package_directory=edit_package_directory,
         resolve_tracked_binding_text=resolve_tracked_binding_text,
         filter_plans_for_interactive_selection=filter_plans_for_interactive_selection,
         review_plans_for_interactive_diffs=review_plans_for_interactive_diffs,
