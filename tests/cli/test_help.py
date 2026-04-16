@@ -72,13 +72,21 @@ def test_info_help_uses_nested_command_placeholder_and_summaries(capsys) -> None
     assert "usage: dotman info [-h] <info-command> ..." in output
     assert "info commands:" in output
     assert "Show tracked package details" in output
+    assert "Show resolved variable details" in output
     assert "==SUPPRESS==" not in output
+
+
+def test_info_var_help_uses_explicit_variable_placeholder(capsys) -> None:
+    output = capture_parser_help(capsys, "info", "var")
+    assert "usage: dotman info var [-h] <var>" in output
+    assert "Show resolved variable details" in output
 
 def test_list_help_hides_hidden_installed_subcommand(capsys) -> None:
     output = capture_parser_help(capsys, "list")
     assert "usage: dotman list [-h] <list-command> ..." in output
     assert "list commands:" in output
     assert "List tracked packages" in output
+    assert "List resolved variables" in output
     assert "==SUPPRESS==" not in output
 
 def test_reconcile_editor_help_uses_explicit_option_placeholders(capsys) -> None:

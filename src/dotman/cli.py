@@ -221,6 +221,32 @@ def render_info_section_header(label: str) -> str:
     return cli_style.render_info_section_header(label, use_color=colors_enabled())
 
 
+def resolve_variable_text(
+    engine: DotmanEngine,
+    variable_text: str,
+    *,
+    json_output: bool,
+) -> str:
+    query_text = variable_text.strip().removeprefix("vars.")
+    exact_matches, partial_matches = engine.find_variable_matches(variable_text)
+    return resolve_candidate_match(
+        exact_matches=exact_matches,
+        partial_matches=partial_matches,
+        query_text=query_text,
+        interactive=interactive_mode_enabled(json_output=json_output),
+        exact_header_text=f"Select a variable for '{variable_text}':",
+        partial_header_text=f"Select a variable for '{variable_text}':",
+        option_resolver=lambda match: ResolverOption(
+            display_label=match,
+            match_fields=(match,),
+            field_kinds=("variable",),
+        ),
+        exact_error_text=f"variable '{variable_text}' is ambiguous: " + ", ".join(exact_matches),
+        partial_error_text=f"variable '{variable_text}' is ambiguous: " + ", ".join(partial_matches),
+        not_found_text=f"variable '{variable_text}' did not match any resolved variable",
+    )
+
+
 def format_snapshot_timestamp(timestamp: str | None) -> str:
     return cli_style.format_snapshot_timestamp(timestamp)
 
@@ -2322,6 +2348,22 @@ def emit_tracked_packages(*, engine: DotmanEngine, packages: Sequence, invalid_b
     )
 
 
+def emit_variables(*, variables: Sequence, json_output: bool) -> int:
+    return cli_emit.emit_variables(
+        variables=variables,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
+
+
+def emit_variable_detail(*, variable_detail, json_output: bool) -> int:
+    return cli_emit.emit_variable_detail(
+        variable_detail=variable_detail,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
+
+
 
 def emit_forgotten_binding(*, binding, still_tracked_package, json_output: bool) -> int:
     return cli_emit.emit_forgotten_binding(
@@ -2544,6 +2586,9 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_tracked_packages=emit_tracked_packages,
         resolve_tracked_package_text=resolve_tracked_package_text,
         emit_tracked_package_detail=emit_tracked_package_detail,
+        resolve_variable_text=resolve_variable_text,
+        emit_variables=emit_variables,
+        emit_variable_detail=emit_variable_detail,
         emit_snapshot_list=emit_snapshot_list,
         emit_snapshot_detail=emit_snapshot_detail,
     )

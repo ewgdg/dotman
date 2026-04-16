@@ -61,6 +61,9 @@ class CliCommandHandlers:
     emit_tracked_packages: Callable[..., int]
     resolve_tracked_package_text: Callable[..., Any]
     emit_tracked_package_detail: Callable[..., int]
+    resolve_variable_text: Callable[..., Any]
+    emit_variables: Callable[..., int]
+    emit_variable_detail: Callable[..., int]
     emit_snapshot_list: Callable[..., int]
     emit_snapshot_detail: Callable[..., int]
 
@@ -94,6 +97,11 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
             invalid_bindings=tracked_state.invalid_bindings,
             json_output=args.json_output,
         )
+    if args.command == "list" and args.list_command == "vars":
+        return handlers.emit_variables(
+            variables=engine.list_variables(),
+            json_output=args.json_output,
+        )
     if args.command == "list" and args.list_command == "snapshots":
         return handlers.emit_snapshot_list(
             snapshots=list_snapshots(engine.config.snapshots.path),
@@ -102,6 +110,16 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
         )
     if args.command == "info" and args.info_command in {"tracked", "installed"}:
         return _handle_info_tracked(args=args, engine=engine, handlers=handlers)
+    if args.command == "info" and args.info_command == "var":
+        resolved_variable = handlers.resolve_variable_text(
+            engine,
+            args.variable,
+            json_output=args.json_output,
+        )
+        return handlers.emit_variable_detail(
+            variable_detail=engine.describe_variable(resolved_variable),
+            json_output=args.json_output,
+        )
     if args.command == "info" and args.info_command == "snapshot":
         return handlers.emit_snapshot_detail(
             snapshot=handlers.resolve_snapshot_record(

@@ -25,6 +25,17 @@ class PayloadPackageSection:
 CollectPendingSelectionItems = Callable[..., Sequence[Any]]
 
 
+def _format_variable_value(value: Any) -> str:
+    if isinstance(value, str):
+        if not value or value.strip() != value or "\n" in value or "\t" in value:
+            return json.dumps(value)
+        return value
+    try:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+    except TypeError:
+        return str(value)
+
+
 @dataclass(frozen=True)
 class PushSymlinkHazard:
     binding_label: str
@@ -529,6 +540,70 @@ def emit_tracked_packages(
         print(
             f"{_render_tracked_issue_label(engine, binding, use_color=use_color)} "
             f"{cli_style.render_tracked_state(binding.state, use_color=use_color)}"
+        )
+    return 0
+
+
+def emit_variables(*, variables: Sequence[Any], json_output: bool, use_color: bool) -> int:
+    payload = {
+        "mode": "dry-run",
+        "operation": "list-vars",
+        "variables": [variable.to_dict() for variable in variables],
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    for variable in variables:
+        binding_label = cli_style.render_binding_label(
+            repo_name=variable.repo,
+            selector=variable.selector,
+            profile=variable.profile,
+            use_color=use_color,
+        )
+        print(f"{cli_style.render_variable_name(variable.variable, use_color=use_color)} ({binding_label})")
+    return 0
+
+
+def emit_variable_detail(*, variable_detail: Any, json_output: bool, use_color: bool) -> int:
+    payload = {
+        "mode": "dry-run",
+        "operation": "info-var",
+        "variable": variable_detail.to_dict(),
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    header_text = variable_detail.variable
+    if use_color:
+        print(cli_style.style_text(header_text, "1"))
+    else:
+        print(header_text)
+
+    for index, occurrence in enumerate(variable_detail.occurrences):
+        if index > 0:
+            print()
+        binding_label = cli_style.render_binding_label(
+            repo_name=occurrence.repo,
+            selector=occurrence.selector,
+            profile=occurrence.profile,
+            use_color=use_color,
+        )
+        print()
+        print(cli_style.render_info_section_header("reason", use_color=use_color))
+        print(f"      {binding_label}")
+        print()
+        print(cli_style.render_info_section_header("resolved value", use_color=use_color))
+        print(f"      {_format_variable_value(occurrence.value)}")
+        print()
+        print(cli_style.render_info_section_header("provenance", use_color=use_color))
+        provenance_label = occurrence.provenance.source_label
+        if occurrence.provenance.source_kind in {"package", "profile"}:
+            provenance_label = f"{occurrence.provenance.source_kind} {provenance_label}"
+        print(
+            f"      {cli_style.render_payload_section_label(provenance_label, use_color=use_color)}: "
+            f"{occurrence.provenance.source_path}"
         )
     return 0
 

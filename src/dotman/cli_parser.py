@@ -37,6 +37,14 @@ def add_package_query_argument(parser: argparse.ArgumentParser, *, required: boo
     )
 
 
+def add_variable_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "variable",
+        metavar="<var>",
+        help="Resolved variable name in dotted form",
+    )
+
+
 def add_snapshot_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:
     parser.add_argument(
         "snapshot",
@@ -211,6 +219,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="List tracked packages",
     )
     list_subparsers.add_parser(
+        "vars",
+        help="List resolved variables",
+        description="List resolved variables",
+    )
+    list_subparsers.add_parser(
         "snapshots",
         help="List available snapshots",
         description="List available snapshots",
@@ -235,6 +248,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Show tracked package details",
     )
     add_package_argument(info_tracked_parser)
+    info_var_parser = info_subparsers.add_parser(
+        "var",
+        help="Show resolved variable details",
+        description="Show resolved variable details",
+    )
+    add_variable_argument(info_var_parser)
     info_snapshot_parser = info_subparsers.add_parser(
         "snapshot",
         help="Show snapshot details",

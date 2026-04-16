@@ -141,6 +141,112 @@ def test_list_tracked_cli_emits_readable_text_output(
         ]
     )
 
+
+def test_list_vars_cli_emits_resolved_values_and_provenance_in_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main([
+        "--config",
+        str(config_path),
+        "--json",
+        "list",
+        "vars",
+    ])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "list-vars"
+    variables = {item["variable"]: item for item in payload["variables"]}
+    assert variables["git.user_name"]["value"] == "Example User"
+    assert variables["git.user_name"]["provenance"] == {
+        "source_kind": "package",
+        "source_label": "git",
+        "source_path": str(EXAMPLE_REPO / "packages" / "git" / "package.toml"),
+    }
+    assert variables["git.user_email"]["value"] == "local@example.test"
+    assert variables["git.user_email"]["provenance"] == {
+        "source_kind": "local",
+        "source_label": "repo local override",
+        "source_path": str(tmp_path / "xdg-config" / "dotman" / "repos" / "example" / "local.toml"),
+    }
+    assert variables["nvim.leader"]["value"] == " "
+    assert variables["nvim.leader"]["provenance"] == {
+        "source_kind": "profile",
+        "source_label": "basic",
+        "source_path": str(EXAMPLE_REPO / "profiles" / "basic.toml"),
+    }
+
+
+def test_list_vars_cli_emits_readable_text_output(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main([
+        "--config",
+        str(config_path),
+        "list",
+        "vars",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "git.user_name (example:core-cli-meta@basic)" in output
+    assert "nvim.leader (example:core-cli-meta@basic)" in output
+    assert output.count("git.user_email (") == 1
+
 def test_list_tracked_cli_lists_multi_instance_packages_per_bound_profile(
     tmp_path: Path,
     monkeypatch,

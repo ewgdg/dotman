@@ -348,6 +348,10 @@ This document captures the current command and selector direction for `dotman`.
 - `dotman list tracked` should list tracked package identities, not collapse `multi_instance` package instances by package definition.
 - `singleton` packages should be listed once by package ID.
 - `multi_instance` packages should be listed once per bound instance using `package<bound-profile>`.
+- `dotman list vars` should list only the winning variable occurrence per repo.
+- Human `list vars` output should keep the binding context visible, for example `name (repo:selector@profile)`.
+- `dotman info var <var>` should show every resolved occurrence of that variable key and its provenance.
+- Variable provenance should identify the winning source layer for the resolved value, such as a package, profile, or repo-local override.
 - `dotman info tracked <package>` should show detailed information for one currently tracked package identity.
 - `dotman info tracked package<bound-profile>` should address one tracked `multi_instance` package instance.
 - Package detail should include the owning repo, description, provenance entries with explicit or implicit reasons, owned targets after tracked-target winner resolution, the bound profile for `multi_instance` instances, and the effective hook commands for that package instance, even when the current push plan would be all-noop.

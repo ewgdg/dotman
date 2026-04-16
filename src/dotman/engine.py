@@ -31,7 +31,7 @@ from dotman.tracking import (
     PersistedBindingRecord,
     TrackedStateSummary,
 )
-from dotman import installed, tracking
+from dotman import installed, tracking, variable_inspection
 
 def parse_binding_text(binding_text: str) -> tuple[str | None, str, str | None]:
     repo_name: str | None = None
@@ -281,6 +281,15 @@ class DotmanEngine:
 
     def describe_installed_package(self, package_text: str) -> InstalledPackageDetail:
         return self._tracking_helpers().describe_installed_package(self, package_text)
+
+    def list_variables(self) -> list[Any]:
+        return variable_inspection.list_winning_variables(self)
+
+    def describe_variable(self, variable_text: str) -> Any:
+        return variable_inspection.describe_resolved_variable(self, variable_text)
+
+    def find_variable_matches(self, variable_text: str) -> tuple[list[str], list[str]]:
+        return variable_inspection.find_variable_matches(self, variable_text)
 
     def _read_bindings_file(self, state_path: Path) -> list[Binding]:
         return self._tracking_helpers().read_bindings_file(state_path)

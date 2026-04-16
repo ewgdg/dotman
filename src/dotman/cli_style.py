@@ -173,6 +173,12 @@ def render_binding_reference(binding: Binding, *, use_color: bool) -> str:
     )
 
 
+def render_variable_name(variable_name: str, *, use_color: bool) -> str:
+    if not use_color:
+        return variable_name
+    return style_text(variable_name, "1")
+
+
 def render_tracked_reason(reason: str, *, use_color: bool) -> str:
     if not use_color:
         return reason

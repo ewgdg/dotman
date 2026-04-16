@@ -226,6 +226,115 @@ def test_info_tracked_cli_emits_readable_text_output(
         ]
     )
 
+
+def test_info_var_cli_emits_provenance_for_resolved_variable(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "info",
+            "var",
+            "vars.git.user_email",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "info-var"
+    variable = payload["variable"]
+    assert variable["variable"] == "git.user_email"
+    assert variable["occurrences"] == [
+        {
+            "profile": "basic",
+            "provenance": {
+                "source_kind": "local",
+                "source_label": "repo local override",
+                "source_path": str(tmp_path / "xdg-config" / "dotman" / "repos" / "example" / "local.toml"),
+            },
+            "repo": "example",
+            "selector": "core-cli-meta",
+            "selector_kind": "package",
+            "value": "local@example.test",
+            "variable": "git.user_email",
+        }
+    ]
+
+
+def test_info_var_cli_emits_readable_text_output(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "example"',
+                'selector = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "info",
+            "var",
+            "vars.git.user_email",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert output.splitlines()[0] == "git.user_email"
+    assert "  :: reason" in output
+    assert "      example:core-cli-meta@basic" in output
+    assert "  :: resolved value" in output
+    assert "      local@example.test" in output
+    assert "  :: provenance" in output
+    assert f"repo local override: {tmp_path / 'xdg-config' / 'dotman' / 'repos' / 'example' / 'local.toml'}" in output
+
 def test_info_tracked_cli_shows_effective_values_for_target_preset(
     tmp_path: Path,
     monkeypatch,
