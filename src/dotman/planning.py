@@ -39,7 +39,6 @@ from dotman.templates import build_template_context, render_template_string
 HOOK_NAMES_BY_OPERATION = {
     "push": ("guard_push", "pre_push", "post_push"),
     "pull": ("guard_pull", "pre_pull", "post_pull"),
-    "upgrade": ("guard_push", "pre_push", "post_push"),
 }
 
 

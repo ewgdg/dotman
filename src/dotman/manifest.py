@@ -10,6 +10,7 @@ from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 
 
 VALID_RECONCILE_IO_VALUES = ("pipe", "tty")
+VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both")
 
 
 def _copy_map(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -100,6 +101,24 @@ def normalize_optional_string_enum(value: Any, *, key: str, allowed: tuple[str, 
     return value
 
 
+def normalize_sync_policy(value: Any) -> str | None:
+    return normalize_optional_string_enum(value, key="sync_policy", allowed=VALID_SYNC_POLICY_VALUES)
+
+
+def resolve_sync_policy(*, package: PackageSpec, target: TargetSpec) -> str:
+    return target.sync_policy or package.sync_policy or "both"
+
+
+def sync_policy_allows_operation(sync_policy: str, *, operation: str) -> bool:
+    if sync_policy == "both":
+        return True
+    if sync_policy == "push-only":
+        return operation == "push"
+    if sync_policy == "pull-only":
+        return operation == "pull"
+    raise ValueError(f"unsupported sync policy '{sync_policy}'")
+
+
 def read_schema_alias(payload: dict[str, Any], primary_key: str, legacy_key: str) -> Any:
     primary_value = payload.get(primary_key)
     legacy_value = payload.get(legacy_key)
@@ -175,6 +194,9 @@ def build_target_spec(
         declared_in=manifest_path.parent,
         source=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="source"),
         path=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path"),
+        sync_policy=normalize_sync_policy(
+            get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="sync_policy")
+        ),
         chmod=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="chmod"),
         render=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="render"),
         capture=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="capture"),
@@ -259,6 +281,7 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         declared_in=override.declared_in,
         source=override.source if override.source is not None else base.source,
         path=override.path if override.path is not None else base.path,
+        sync_policy=override.sync_policy if override.sync_policy is not None else base.sync_policy,
         chmod=override.chmod if override.chmod is not None else base.chmod,
         render=override.render if override.render is not None else base.render,
         capture=override.capture if override.capture is not None else base.capture,
@@ -285,6 +308,7 @@ def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec
         package_root=override.package_root,
         description=override.description if override.description is not None else base.description,
         binding_mode=override.binding_mode,
+        sync_policy=override.sync_policy if override.sync_policy is not None else base.sync_policy,
         depends=override.depends if override.depends is not None else base.depends,
         extends=None,
         reserved_paths=override.reserved_paths if override.reserved_paths is not None else base.reserved_paths,

@@ -66,6 +66,10 @@ This document captures the current repository structure and configuration schema
 - Parent packages resolve in declaration order.
 - The child package is applied last.
 - The selected package is still resolved into one final package before `push` or `pull`.
+- A package may define `sync_policy = "push-only" | "pull-only" | "both"` to gate target participation by operation.
+- `sync_policy` defaults to `both` when omitted.
+- Target-level `sync_policy` overrides the package default for that target.
+- Package inheritance should merge `sync_policy` with last-wins behavior, just like other scalar fields.
 - Target and reserved-path collision rules apply across all resolved package instances, including instances that come from the same `multi_instance` package definition.
 
 ## Package Binding Modes
@@ -125,6 +129,8 @@ chmod = "600"
 - `path` may use `~/...` for home-relative destinations or an absolute path otherwise.
 - Targets may define `chmod` when the installed root path needs an explicit mode.
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
+- Targets may define `sync_policy` to narrow or widen the package-level operation gate for that target.
+- Use `push-only` for forward-managed targets, `pull-only` for reverse-only targets, and `both` for targets that can participate in both operations.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
 - Explicit target keys override preset defaults.
 - Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow, `jinja-patch` for the narrow Jinja reverse-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.
@@ -182,6 +188,22 @@ Example repo defaults:
 ```toml
 [ignore]
 pull = ["*.dotdropbak"]
+```
+
+Example sync policy split:
+
+```toml
+id = "shell"
+sync_policy = "push-only"
+
+[targets.profile]
+source = "files/profile"
+path = "~/.profile"
+
+[targets.history]
+source = "files/history"
+path = "~/.local/share/history.txt"
+sync_policy = "pull-only"
 ```
 
 ## Hooks And Commands

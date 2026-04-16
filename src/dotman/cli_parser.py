@@ -119,14 +119,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("prompt", "follow"),
         default=None,
         metavar="<mode>",
-        help="Override file symlink handling for push/upgrade planning and execution",
+        help="Override file symlink handling for push planning and execution",
     )
     parser.add_argument(
         "--dir-symlink-mode",
         choices=("fail", "follow"),
         default=None,
         metavar="<mode>",
-        help="Override directory symlink handling for push/upgrade planning and execution",
+        help="Override directory symlink handling for push planning and execution",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True, title="commands", metavar="<command>")

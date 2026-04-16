@@ -47,6 +47,7 @@ class TargetSpec:
     declared_in: Path
     source: str | None = None
     path: str | None = None
+    sync_policy: str | None = None
     chmod: str | None = None
     render: str | None = None
     capture: str | None = None
@@ -72,6 +73,7 @@ class PackageSpec:
     package_root: Path
     description: str | None = None
     binding_mode: str = "singleton"
+    sync_policy: str | None = None
     depends: tuple[str, ...] | None = None
     extends: tuple[str, ...] | None = None
     reserved_paths: tuple[str, ...] | None = None

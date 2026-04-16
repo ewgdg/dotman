@@ -17,6 +17,79 @@ from tests.helpers import (
 )
 
 
+def write_sync_policy_repo(
+    tmp_path: Path,
+    *,
+    package_manifest: list[str],
+    target_manifest: list[str] | None = None,
+    hook_manifest: list[str] | None = None,
+    package_id: str = "app",
+) -> Path:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / package_id / "files").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / package_id / "files" / "config.txt").write_text("config\n", encoding="utf-8")
+    (repo_root / "packages" / package_id / "package.toml").write_text(
+        "\n".join(
+            [
+                f'id = "{package_id}"',
+                *package_manifest,
+                *(hook_manifest or []),
+                "",
+                "[targets.config]",
+                'source = "files/config.txt"',
+                'path = "~/.config/app/config.txt"',
+                *(target_manifest or []),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return repo_root
+
+
+def write_sync_policy_repo_with_extends(
+    tmp_path: Path,
+    *,
+    base_manifest: list[str],
+    child_manifest: list[str],
+) -> Path:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "base" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "child" / "files").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "base" / "files" / "config.txt").write_text("base\n", encoding="utf-8")
+    (repo_root / "packages" / "child" / "files" / "config.txt").write_text("child\n", encoding="utf-8")
+    (repo_root / "packages" / "base" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "base"',
+                *base_manifest,
+                "",
+                "[targets.config]",
+                'source = "files/config.txt"',
+                'path = "~/.config/base/config.txt"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "child" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "child"',
+                'extends = ["base"]',
+                *child_manifest,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return repo_root
+
+
 def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -47,6 +120,115 @@ def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
     assert "email = local@example.test" in target.desired_text
     assert "editor = nvim" in target.desired_text
     assert "[include]" not in target.desired_text
+
+
+def test_default_sync_policy_keeps_targets_in_both_push_and_pull_plans(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(tmp_path, package_manifest=[])
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    push_plan = engine.plan_push_binding("fixture:app@default")
+    pull_plan = engine.plan_pull_binding("fixture:app@default")
+
+    assert [target.target_name for target in push_plan.target_plans] == ["config"]
+    assert [target.target_name for target in pull_plan.target_plans] == ["config"]
+
+
+def test_target_sync_policy_overrides_package_sync_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=['sync_policy = "push-only"'],
+        target_manifest=['sync_policy = "pull-only"'],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    push_plan = engine.plan_push_binding("fixture:app@default")
+    pull_plan = engine.plan_pull_binding("fixture:app@default")
+
+    assert engine.get_repo("fixture").resolve_package("app").sync_policy == "push-only"
+    assert push_plan.target_plans == []
+    assert push_plan.hooks == {}
+    assert [target.target_name for target in pull_plan.target_plans] == ["config"]
+
+
+def test_hook_filtering_stays_quiet_when_no_targets_are_eligible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=['sync_policy = "pull-only"'],
+        hook_manifest=['[hooks]', 'pre_push = ["echo push"]'],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    push_plan = engine.plan_push_binding("fixture:app@default")
+
+    assert push_plan.target_plans == []
+    assert push_plan.hooks == {}
+
+
+def test_package_sync_policy_is_inherited_through_extends(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo_with_extends(
+        tmp_path,
+        base_manifest=['sync_policy = "pull-only"'],
+        child_manifest=[],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    child_package = engine.get_repo("fixture").resolve_package("child")
+    push_plan = engine.plan_push_binding("fixture:child@default")
+    pull_plan = engine.plan_pull_binding("fixture:child@default")
+
+    assert child_package.sync_policy == "pull-only"
+    assert push_plan.target_plans == []
+    assert [target.target_name for target in pull_plan.target_plans] == ["config"]
+
+
+@pytest.mark.parametrize(
+    ("package_manifest", "target_manifest"),
+    [
+        (['sync_policy = "sideways"'], None),
+        ([], ['sync_policy = "sideways"']),
+    ],
+)
+def test_sync_policy_rejects_invalid_values(
+    tmp_path: Path,
+    package_manifest: list[str],
+    target_manifest: list[str] | None,
+) -> None:
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=package_manifest,
+        target_manifest=target_manifest,
+    )
+
+    with pytest.raises(ValueError, match="sync_policy"):
+        DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
 def test_example_group_push_plan_expands_depends_and_render_target(
     tmp_path: Path,

@@ -135,7 +135,7 @@ def test_info_tracked_drops_hooks_for_non_effective_provenance_binding(
     assert package_detail.bindings[0].hooks == {}
     assert set(package_detail.bindings[1].hooks) == {"guard_push", "pre_push", "post_push"}
 
-def test_upgrade_uses_persisted_bindings_without_writing_new_state(
+def test_upgrade_is_deprecated_alias_for_push_without_writing_new_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -163,9 +163,11 @@ def test_upgrade_uses_persisted_bindings_without_writing_new_state(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plans = engine.plan_upgrade()
+    with pytest.warns(DeprecationWarning, match=r"plan_upgrade\(\) is deprecated"):
+        plans = engine.plan_upgrade()
 
     assert len(plans) == 1
+    assert plans[0].operation == "push"
     assert plans[0].binding.selector == "core-cli-meta"
     assert plans[0].package_ids == ["core-cli-meta", "git", "nvim"]
     assert not (state_dir / "bindings.toml").with_suffix(".tmp").exists()

@@ -234,7 +234,7 @@ def build_execution_session(
 
 
 def _ensure_no_unapproved_live_symlink_targets(plans: Sequence[BindingPlan], *, operation: str) -> None:
-    if operation not in {"push", "upgrade"}:
+    if operation != "push":
         return
 
     hazards: list[str] = []
@@ -539,7 +539,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
             )
 
         target_plan = _require_target_plan(step)
-        if step.binding_plan.operation in {"push", "upgrade"} and target_plan.target_kind == "directory":
+        if step.binding_plan.operation == "push" and target_plan.target_kind == "directory":
             if target_plan.live_path.is_symlink() and target_plan.dir_symlink_mode != "follow":
                 raise ValueError(
                     f"live target path is a symlink for target '{target_plan.package_id}:{target_plan.target_name}': "

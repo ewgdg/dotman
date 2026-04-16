@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -246,14 +247,24 @@ class DotmanEngine:
         return selector, profile, exact_matches, list(unique_partials.values()), list(unique_owners.values())
 
     def plan_upgrade(self) -> list[BindingPlan]:
-        return self._build_tracked_plans(operation="upgrade")
+        warnings.warn(
+            "plan_upgrade() is deprecated; use plan_push() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._build_tracked_plans(operation="push")
 
     def plan_push(self) -> list[BindingPlan]:
         return self._build_tracked_plans(operation="push")
 
     def plan_upgrade_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
         repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
-        return self._build_plan(repo, binding, selector_kind, operation="upgrade")
+        warnings.warn(
+            "plan_upgrade_binding() is deprecated; use plan_push_binding() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._build_plan(repo, binding, selector_kind, operation="push")
 
     def plan_pull(self) -> list[BindingPlan]:
         return self._build_tracked_plans(operation="pull")

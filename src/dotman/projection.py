@@ -10,7 +10,7 @@ from dotman.collisions import validate_reserved_path_conflicts, validate_target_
 from dotman.config import expand_path
 from dotman.file_access import needs_sudo_for_read, read_bytes, sudo_prefix_command
 from dotman.ignore import list_directory_files
-from dotman.manifest import flatten_vars, merge_ignore_patterns
+from dotman.manifest import flatten_vars, merge_ignore_patterns, resolve_sync_policy, sync_policy_allows_operation
 from dotman.models import Binding, DirectoryPlanItem, PackageSpec, TargetPlan, TargetSpec
 from dotman.repository import Repository
 from dotman.templates import render_template_file, render_template_string
@@ -32,13 +32,16 @@ def plan_targets(
         for target in (package.targets or {}).values():
             if target.disabled:
                 continue
+            sync_policy = resolve_sync_policy(package=package, target=target)
+            if not sync_policy_allows_operation(sync_policy, operation=operation):
+                continue
             if target.source is None or target.path is None:
                 raise ValueError(f"target '{package.id}:{target.name}' must define source and path")
             rendered_source = render_template_string(target.source, context, base_dir=target.declared_in, source_path=target.declared_in)
             rendered_path = render_template_string(target.path, context, base_dir=target.declared_in, source_path=target.declared_in)
             repo_path = (target.declared_in / rendered_source).resolve()
             live_path = expand_path(rendered_path, dereference=False)
-            live_path_is_symlink = operation in {"push", "upgrade"} and live_path.is_symlink()
+            live_path_is_symlink = operation == "push" and live_path.is_symlink()
             live_path_symlink_target = os.readlink(live_path) if live_path_is_symlink else None
             rendered_targets.append(
                 (
@@ -136,7 +139,7 @@ def plan_targets(
         desired_bytes: bytes | None = None
         projection_kind = "raw"
         try:
-            if operation in {"upgrade", "push"} or repo_path.exists():
+            if operation == "push" or repo_path.exists():
                 desired_bytes, projection_kind = project_repo_file(
                     engine,
                     repo=repo,
@@ -153,7 +156,7 @@ def plan_targets(
         except ValueError as exc:
             if render_command == "jinja":
                 raise
-            if render_command is not None and operation in {"upgrade", "push"} and not live_path.exists():
+            if render_command is not None and operation == "push" and not live_path.exists():
                 projection_error = str(exc)
                 projection_kind = "command"
             else:
@@ -340,7 +343,7 @@ def plan_directory_action(
     live_rel_paths = set(live_files)
     directory_items: list[DirectoryPlanItem] = []
 
-    if operation in {"upgrade", "push"}:
+    if operation == "push":
         for relative_path in sorted(desired_rel_paths - live_rel_paths):
             directory_items.append(
                 DirectoryPlanItem(
@@ -434,7 +437,7 @@ def plan_file_action(
     pull_view_repo: str,
     pull_view_live: str,
 ) -> str:
-    if operation in {"upgrade", "push"}:
+    if operation == "push":
         if not live_path.exists():
             return "create"
         if desired_bytes is None:
@@ -503,7 +506,7 @@ def build_file_review_bytes(
     pull_view_repo: str,
     pull_view_live: str,
 ) -> tuple[bytes | None, bytes | None]:
-    if operation in {"upgrade", "push"}:
+    if operation == "push":
         try:
             live_bytes = read_bytes(live_path)
         except FileNotFoundError:
