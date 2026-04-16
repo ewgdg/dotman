@@ -102,7 +102,6 @@ This document captures the current command and selector direction for `dotman`.
 ## Push
 
 - `push` is the repo-to-live command.
-- `upgrade` is a deprecated alias for `push`; new callers should use `push`.
 - `push` should operate only on tracked state.
 - `push` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
 - Plain `push` should perform real execution after planning, interactive exclusion, and diff review.
