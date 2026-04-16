@@ -50,10 +50,34 @@ def test_config_defaults_snapshot_settings(tmp_path: Path) -> None:
     assert engine.config.snapshots.enabled is True
     assert engine.config.snapshots.path == default_snapshot_root()
     assert engine.config.snapshots.max_generations == 10
+    assert engine.config.selection_menu.full_paths is False
+    assert engine.config.selection_menu.bottom_up is True
     assert engine.config.file_symlink_mode == "prompt"
     assert engine.config.dir_symlink_mode == "fail"
 
 
+def test_config_reads_selection_menu_overrides(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.example]",
+                f'path = "{EXAMPLE_REPO}"',
+                "order = 10",
+                "",
+                "[selection_menu]",
+                "full_paths = true",
+                "bottom_up = false",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    assert engine.config.selection_menu.full_paths is True
+    assert engine.config.selection_menu.bottom_up is False
 
 def test_config_reads_symlink_mode_overrides(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"

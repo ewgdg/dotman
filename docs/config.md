@@ -66,6 +66,16 @@ This document captures the user-level dotman manager configuration.
 - `max_generations` is count-based retention. Dotman should prune the oldest snapshots when the retained snapshot count exceeds that limit.
 - Snapshot storage is distinct from repo binding state. Snapshots belong under data home, while tracked binding state stays under state home.
 
+## Selection Menu
+
+- Selection menu behavior is manager-level and applies across interactive selector pickers, exclusion menus, and diff review screens.
+- Selection menu settings should be declared under `[selection_menu]`.
+- `full_paths` is optional and defaults to `false`.
+- When `full_paths` is `true`, dotman should show unabridged absolute paths in the human-readable selection, review, and execution output that uses the shared menu path renderer.
+- `bottom_up` is optional and defaults to `true`.
+- When `bottom_up` is `true`, dotman should render interactive selector menus from bottom to top.
+- The `DOTMAN_MENU_BOTTOM_UP` environment variable should continue to override the bottom-up setting for a single run.
+
 Example:
 
 ```toml
@@ -82,6 +92,10 @@ state_key = "test"
 [snapshots]
 enabled = true
 max_generations = 10
+
+[selection_menu]
+full_paths = false
+bottom_up = true
 
 [symlinks]
 file_symlink_mode = "prompt"

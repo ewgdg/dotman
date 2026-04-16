@@ -7,6 +7,7 @@ from dotman.add import prepare_add_to_package, write_add_result
 from dotman.engine import TrackedTargetConflictError
 from dotman.file_access import sudo_session
 from dotman.models import package_ref_text
+from dotman.selection_menu_context import selection_menu_config_scope
 from dotman.snapshot import (
     build_rollback_actions,
     create_push_snapshot,
@@ -77,60 +78,62 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
         return pre_engine_result
 
     engine = engine_factory(args.config)
-    if args.command == "track":
-        return _handle_track(args=args, engine=engine, handlers=handlers)
-    if args.command == "add":
-        return _handle_add(args=args, engine=engine, handlers=handlers)
-    if args.command == "push":
-        return _handle_push(args=args, engine=engine, handlers=handlers)
-    if args.command == "pull":
-        return _handle_pull(args=args, engine=engine, handlers=handlers)
-    if args.command == "rollback":
-        return _handle_rollback(args=args, engine=engine, handlers=handlers)
-    if args.command in {"untrack", "forget"}:
-        return _handle_untrack(args=args, engine=engine, handlers=handlers)
-    if args.command == "list" and args.list_command in {"tracked", "installed"}:
-        tracked_state = engine.list_tracked_state()
-        return handlers.emit_tracked_packages(
-            engine=engine,
-            packages=tracked_state.packages,
-            invalid_bindings=tracked_state.invalid_bindings,
-            json_output=args.json_output,
-        )
-    if args.command == "list" and args.list_command == "vars":
-        return handlers.emit_variables(
-            variables=engine.list_variables(),
-            json_output=args.json_output,
-        )
-    if args.command == "list" and args.list_command == "snapshots":
-        return handlers.emit_snapshot_list(
-            snapshots=list_snapshots(engine.config.snapshots.path),
-            json_output=args.json_output,
-            max_generations=engine.config.snapshots.max_generations,
-        )
-    if args.command == "info" and args.info_command in {"tracked", "installed"}:
-        return _handle_info_tracked(args=args, engine=engine, handlers=handlers)
-    if args.command == "info" and args.info_command == "var":
-        resolved_variable = handlers.resolve_variable_text(
-            engine,
-            args.variable,
-            json_output=args.json_output,
-        )
-        return handlers.emit_variable_detail(
-            variable_detail=engine.describe_variable(resolved_variable),
-            json_output=args.json_output,
-        )
-    if args.command == "info" and args.info_command == "snapshot":
-        return handlers.emit_snapshot_detail(
-            snapshot=handlers.resolve_snapshot_record(
-                engine.config.snapshots.path,
-                args.snapshot,
+    full_paths = args.full_path if args.full_path is not None else engine.config.selection_menu.full_paths
+    with selection_menu_config_scope(engine.config.selection_menu):
+        if args.command == "track":
+            return _handle_track(args=args, engine=engine, handlers=handlers)
+        if args.command == "add":
+            return _handle_add(args=args, engine=engine, handlers=handlers)
+        if args.command == "push":
+            return _handle_push(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
+        if args.command == "pull":
+            return _handle_pull(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
+        if args.command == "rollback":
+            return _handle_rollback(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
+        if args.command in {"untrack", "forget"}:
+            return _handle_untrack(args=args, engine=engine, handlers=handlers)
+        if args.command == "list" and args.list_command in {"tracked", "installed"}:
+            tracked_state = engine.list_tracked_state()
+            return handlers.emit_tracked_packages(
+                engine=engine,
+                packages=tracked_state.packages,
+                invalid_bindings=tracked_state.invalid_bindings,
                 json_output=args.json_output,
-            ),
-            json_output=args.json_output,
-            full_paths=args.full_path,
-        )
-    return 0
+            )
+        if args.command == "list" and args.list_command == "vars":
+            return handlers.emit_variables(
+                variables=engine.list_variables(),
+                json_output=args.json_output,
+            )
+        if args.command == "list" and args.list_command == "snapshots":
+            return handlers.emit_snapshot_list(
+                snapshots=list_snapshots(engine.config.snapshots.path),
+                json_output=args.json_output,
+                max_generations=engine.config.snapshots.max_generations,
+            )
+        if args.command == "info" and args.info_command in {"tracked", "installed"}:
+            return _handle_info_tracked(args=args, engine=engine, handlers=handlers)
+        if args.command == "info" and args.info_command == "var":
+            resolved_variable = handlers.resolve_variable_text(
+                engine,
+                args.variable,
+                json_output=args.json_output,
+            )
+            return handlers.emit_variable_detail(
+                variable_detail=engine.describe_variable(resolved_variable),
+                json_output=args.json_output,
+            )
+        if args.command == "info" and args.info_command == "snapshot":
+            return handlers.emit_snapshot_detail(
+                snapshot=handlers.resolve_snapshot_record(
+                    engine.config.snapshots.path,
+                    args.snapshot,
+                    json_output=args.json_output,
+                ),
+                json_output=args.json_output,
+                full_paths=full_paths,
+            )
+        return 0
 
 
 
@@ -282,7 +285,7 @@ def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, ope
 
 
 
-def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
+def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
     with sudo_session():
@@ -291,7 +294,7 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
             plans=plans,
             operation="push",
             json_output=args.json_output,
-            full_paths=args.full_path,
+            full_paths=full_paths,
             assume_yes=assume_yes,
         ):
             handlers.emit_interrupt_notice()
@@ -300,7 +303,7 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
             plans=plans,
             operation="push",
             json_output=args.json_output,
-            full_paths=args.full_path,
+            full_paths=full_paths,
         )
         if args.dry_run:
             return handlers.emit_payload(
@@ -308,12 +311,12 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
                 plans=plans,
                 json_output=args.json_output,
                 mode=handlers.effective_execution_mode(dry_run_requested=True),
-                full_paths=args.full_path,
+                full_paths=full_paths,
             )
         plans = handlers.prepare_push_plans_for_execution(
             plans=plans,
             json_output=args.json_output,
-            full_paths=args.full_path,
+            full_paths=full_paths,
             assume_yes=assume_yes,
         )
         if plans is None:
@@ -325,7 +328,7 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
                 operation="push",
                 plans=plans,
                 json_output=args.json_output,
-                full_paths=args.full_path,
+                full_paths=full_paths,
                 run_noop=run_noop,
                 assume_yes=assume_yes,
             )
@@ -347,7 +350,7 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
 
 
 
-def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
+def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
     with sudo_session():
@@ -356,7 +359,7 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
             plans=plans,
             operation="pull",
             json_output=args.json_output,
-            full_paths=args.full_path,
+            full_paths=full_paths,
             assume_yes=assume_yes,
         ):
             handlers.emit_interrupt_notice()
@@ -365,7 +368,7 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
             plans=plans,
             operation="pull",
             json_output=args.json_output,
-            full_paths=args.full_path,
+            full_paths=full_paths,
         )
         if args.dry_run:
             return handlers.emit_payload(
@@ -373,20 +376,20 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
                 plans=plans,
                 json_output=args.json_output,
                 mode=handlers.effective_execution_mode(dry_run_requested=True),
-                full_paths=args.full_path,
+                full_paths=full_paths,
             )
         return handlers.run_execution(
             operation="pull",
             plans=plans,
             json_output=args.json_output,
-            full_paths=args.full_path,
+            full_paths=full_paths,
             run_noop=run_noop,
             assume_yes=assume_yes,
         )
 
 
 
-def _handle_rollback(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
+def _handle_rollback(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
     snapshot = handlers.resolve_snapshot_record(
         engine.config.snapshots.path,
         args.snapshot,
@@ -397,7 +400,7 @@ def _handle_rollback(*, args: Any, engine: Any, handlers: CliCommandHandlers) ->
         snapshot=snapshot,
         actions=rollback_actions,
         json_output=args.json_output,
-        full_paths=args.full_path,
+        full_paths=full_paths,
         assume_yes=getattr(args, "assume_yes", False),
     ):
         handlers.emit_interrupt_notice()
@@ -408,13 +411,13 @@ def _handle_rollback(*, args: Any, engine: Any, handlers: CliCommandHandlers) ->
             actions=rollback_actions,
             json_output=args.json_output,
             mode=handlers.effective_execution_mode(dry_run_requested=True),
-            full_paths=args.full_path,
+            full_paths=full_paths,
         )
     exit_code = handlers.run_rollback_execution(
         snapshot=snapshot,
         actions=rollback_actions,
         json_output=args.json_output,
-        full_paths=args.full_path,
+        full_paths=full_paths,
     )
     if exit_code == 0:
         record_snapshot_restore(snapshot)

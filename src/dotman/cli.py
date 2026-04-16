@@ -46,6 +46,7 @@ from dotman.resolver import (
 )
 from dotman.cli_parser import build_parser as build_cli_parser
 from dotman import cli_emit, cli_commands
+from dotman.selection_menu_context import current_selection_menu_config
 
 
 MENU_HEADER_MARKER = cli_style.MENU_HEADER_MARKER
@@ -281,6 +282,13 @@ def render_menu_badge(text: str) -> str:
     return cli_style.render_menu_badge(text, use_color=colors_enabled())
 
 
+def selection_menu_full_paths_enabled() -> bool:
+    selection_menu_config = current_selection_menu_config()
+    if selection_menu_config is not None:
+        return selection_menu_config.full_paths
+    return False
+
+
 def join_menu_display_fields(*fields: str) -> str:
     return cli_style.join_menu_display_fields(*fields)
 
@@ -394,9 +402,18 @@ def _fzf_available() -> bool:
 
 def selection_menu_bottom_up_enabled() -> bool:
     raw_value = os.environ.get("DOTMAN_MENU_BOTTOM_UP")
-    if raw_value is None:
-        return True
-    return raw_value.strip().lower() not in {"0", "false", "no", "off"}
+    if raw_value is not None:
+        return raw_value.strip().lower() not in {"0", "false", "no", "off"}
+    selection_menu_config = current_selection_menu_config()
+    if selection_menu_config is not None:
+        return selection_menu_config.bottom_up
+    return True
+
+
+def _effective_full_paths(full_paths: bool | None) -> bool:
+    if full_paths is not None:
+        return full_paths
+    return selection_menu_full_paths_enabled()
 
 
 def _should_use_fzf_for_selection(option_labels: Sequence[str]) -> bool:
@@ -1839,7 +1856,8 @@ def collect_pending_selection_items_for_operation(plans: Sequence, *, operation:
     return selection_items
 
 
-def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full_paths: bool = False) -> None:
+def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full_paths: bool | None = None) -> None:
+    full_paths = _effective_full_paths(full_paths)
     repo_name = repo_name_from_binding_label(item.binding_label)
     package_target = package_label_text(
         repo_name=repo_name,
@@ -1874,8 +1892,9 @@ def prompt_for_excluded_items(
     selection_items: Sequence[PendingSelectionItem],
     *,
     operation: str,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
 ) -> set[int]:
+    full_paths = _effective_full_paths(full_paths)
     print_selection_header(f"Select items to exclude from {operation}:")
     for index, item in enumerate(selection_items, start=1):
         print_pending_selection_item(index, item, full_paths=full_paths)
@@ -1895,8 +1914,9 @@ def filter_plans_for_interactive_selection(
     plans: Sequence,
     operation: str,
     json_output: bool,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
 ) -> list:
+    full_paths = _effective_full_paths(full_paths)
     if not interactive_mode_enabled(json_output=json_output):
         return list(plans)
     selection_items = collect_pending_selection_items_for_operation(plans, operation=operation)
@@ -1966,7 +1986,8 @@ def filter_plans_for_interactive_selection(
     return filtered_plans
 
 
-def print_review_item(index: int, item: ReviewItem, *, full_paths: bool = False) -> None:
+def print_review_item(index: int, item: ReviewItem, *, full_paths: bool | None = None) -> None:
+    full_paths = _effective_full_paths(full_paths)
     repo_name = repo_name_from_binding_label(item.binding_label)
     package_target = package_label_text(
         repo_name=repo_name,
@@ -2056,9 +2077,10 @@ def run_diff_review_menu(
     review_items: Sequence[ReviewItem],
     *,
     operation: str,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
     assume_yes: bool = False,
 ) -> bool:
+    full_paths = _effective_full_paths(full_paths)
     print_selection_header(f"Review pending diffs for {operation}:")
     for index, item in enumerate(review_items, start=1):
         print_review_item(index, item, full_paths=full_paths)
@@ -2119,9 +2141,10 @@ def review_plans_for_interactive_diffs(
     plans: Sequence,
     operation: str,
     json_output: bool,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
     assume_yes: bool = False,
 ) -> bool:
+    full_paths = _effective_full_paths(full_paths)
     if not interactive_mode_enabled(json_output=json_output):
         return True
     review_items = build_review_items(plans, operation=operation)
@@ -2130,7 +2153,8 @@ def review_plans_for_interactive_diffs(
     return run_diff_review_menu(review_items, operation=operation, full_paths=full_paths, assume_yes=assume_yes)
 
 
-def _push_symlink_hazard_description(hazard: cli_emit.PushSymlinkHazard, *, full_paths: bool) -> str:
+def _push_symlink_hazard_description(hazard: cli_emit.PushSymlinkHazard, *, full_paths: bool | None) -> str:
+    full_paths = _effective_full_paths(full_paths)
     live_path = cli_emit.display_cli_path(hazard.live_path, full_paths=full_paths)
     symlink_target = hazard.symlink_target or "<unknown>"
     return f"{hazard.binding_label} {hazard.package_id}:{hazard.target_name} ({live_path} -> {symlink_target})"
@@ -2140,9 +2164,10 @@ def prepare_push_plans_for_execution(
     *,
     plans: Sequence,
     json_output: bool,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
     assume_yes: bool = False,
 ) -> list | None:
+    full_paths = _effective_full_paths(full_paths)
     hazards = cli_emit.collect_push_live_symlink_hazards(plans)
     if not hazards:
         return list(plans)
@@ -2280,7 +2305,8 @@ def display_cli_path(reference_path: Path | str, *, full_paths: bool) -> str:
     return cli_emit.display_cli_path(reference_path, full_paths=full_paths)
 
 
-def emit_payload(*, operation: str, plans: Sequence, json_output: bool, mode: str, full_paths: bool = False) -> int:
+def emit_payload(*, operation: str, plans: Sequence, json_output: bool, mode: str, full_paths: bool | None = None) -> int:
+    full_paths = _effective_full_paths(full_paths)
     return cli_emit.emit_payload(
         operation=operation,
         plans=plans,
@@ -2301,10 +2327,11 @@ def execute_plans(
     operation: str,
     plans: Sequence,
     json_output: bool,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
     run_noop: bool = False,
     assume_yes: bool = False,
 ):
+    full_paths = _effective_full_paths(full_paths)
     return cli_emit.execute_plans(
         operation=operation,
         plans=plans,
@@ -2322,10 +2349,11 @@ def run_execution(
     operation: str,
     plans: Sequence,
     json_output: bool,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
     run_noop: bool = False,
     assume_yes: bool = False,
 ) -> int:
+    full_paths = _effective_full_paths(full_paths)
     return cli_emit.run_execution(
         operation=operation,
         plans=plans,
@@ -2467,9 +2495,10 @@ def review_rollback_actions_for_interactive_diffs(
     snapshot: SnapshotRecord,
     actions: Sequence[RollbackAction],
     json_output: bool,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
     assume_yes: bool = False,
 ) -> bool:
+    full_paths = _effective_full_paths(full_paths)
     if not interactive_mode_enabled(json_output=json_output):
         return True
     review_items = build_rollback_review_items(snapshot, actions)
@@ -2494,7 +2523,8 @@ def emit_snapshot_list(
 
 
 
-def emit_snapshot_detail(*, snapshot: SnapshotRecord, json_output: bool, full_paths: bool = False) -> int:
+def emit_snapshot_detail(*, snapshot: SnapshotRecord, json_output: bool, full_paths: bool | None = None) -> int:
+    full_paths = _effective_full_paths(full_paths)
     return cli_emit.emit_snapshot_detail(
         snapshot=snapshot,
         json_output=json_output,
@@ -2510,8 +2540,9 @@ def emit_rollback_payload(
     actions: Sequence[RollbackAction],
     json_output: bool,
     mode: str,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
 ) -> int:
+    full_paths = _effective_full_paths(full_paths)
     return cli_emit.emit_rollback_payload(
         snapshot=snapshot,
         actions=actions,
@@ -2531,8 +2562,9 @@ def run_rollback_execution(
     snapshot: SnapshotRecord,
     actions: Sequence[RollbackAction],
     json_output: bool,
-    full_paths: bool = False,
+    full_paths: bool | None = None,
 ) -> int:
+    full_paths = _effective_full_paths(full_paths)
     return cli_emit.run_rollback_execution(
         snapshot=snapshot,
         actions=actions,

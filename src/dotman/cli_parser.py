@@ -85,8 +85,9 @@ def add_full_path_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--full-path",
         action="store_true",
+        default=None,
         dest="full_path",
-        help="Show unabridged absolute paths in human-readable push/pull output",
+        help="Show unabridged absolute paths in human-readable selection, review, and execution output",
     )
 
 

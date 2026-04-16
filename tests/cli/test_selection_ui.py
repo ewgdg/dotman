@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, SelectionMenuConfig, TargetPlan
+from dotman.selection_menu_context import selection_menu_config_scope
 
 from tests.helpers import (
     EXAMPLE_REPO,
@@ -731,6 +732,46 @@ def test_select_menu_option_can_disable_bottom_up_with_env(monkeypatch, capsys) 
     output = capsys.readouterr().out
     assert selected_index == 0
     assert output.index("  1) basic") < output.index("  2) work") < output.index("  3) host/linux")
+
+
+def test_select_menu_option_uses_manager_bottom_up_default(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("DOTMAN_MENU_BOTTOM_UP", raising=False)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    with selection_menu_config_scope(SelectionMenuConfig(bottom_up=False)):
+        selected_index = cli.select_menu_option(
+            header_text="Select a profile:",
+            option_labels=["basic", "work", "host/linux"],
+        )
+
+    output = capsys.readouterr().out
+    assert selected_index == 0
+    assert output.index("  1) basic") < output.index("  2) work") < output.index("  3) host/linux")
+
+
+def test_prompt_for_excluded_items_uses_manager_full_path_default(monkeypatch, capsys) -> None:
+    selection_items = [
+        PendingSelectionItem(
+            binding_label="example:git@basic",
+            package_id="git",
+            target_name="gitconfig",
+            action="update",
+            source_path=str(Path.home() / ".config" / "git" / "config"),
+            destination_path=str(Path.home() / ".local" / "share" / "git" / "config"),
+        )
+    ]
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    with selection_menu_config_scope(SelectionMenuConfig(full_paths=True)):
+        excluded = prompt_for_excluded_items(selection_items, operation="push")
+
+    output = capsys.readouterr().out
+    assert excluded == set()
+    assert str(Path.home()) in output
+    assert "~/.../git/config" not in output
 
 def test_print_review_item_compacts_long_paths(monkeypatch, capsys) -> None:
     review_item = cli.ReviewItem(

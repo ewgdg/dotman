@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dotman.models import ManagerConfig, RepoConfig, SnapshotConfig
+from dotman.models import ManagerConfig, RepoConfig, SelectionMenuConfig, SnapshotConfig
 from dotman.toml_utils import load_toml_file
 
 
@@ -144,6 +144,16 @@ def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
     if not isinstance(max_generations_value, int) or max_generations_value <= 0:
         raise ValueError("config snapshots.max_generations must be a positive integer")
 
+    selection_menu_payload = payload.get("selection_menu", {})
+    if not isinstance(selection_menu_payload, dict):
+        raise ValueError("config [selection_menu] must be a table")
+    full_paths_value = selection_menu_payload.get("full_paths", False)
+    if not isinstance(full_paths_value, bool):
+        raise ValueError("config selection_menu.full_paths must be a boolean")
+    bottom_up_value = selection_menu_payload.get("bottom_up", True)
+    if not isinstance(bottom_up_value, bool):
+        raise ValueError("config selection_menu.bottom_up must be a boolean")
+
     return ManagerConfig(
         config_path=resolved_path,
         repos=repos,
@@ -151,6 +161,10 @@ def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
             enabled=enabled_value,
             path=snapshot_path,
             max_generations=max_generations_value,
+        ),
+        selection_menu=SelectionMenuConfig(
+            full_paths=full_paths_value,
+            bottom_up=bottom_up_value,
         ),
         file_symlink_mode=file_symlink_mode,
         dir_symlink_mode=dir_symlink_mode,
