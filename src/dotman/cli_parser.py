@@ -121,6 +121,9 @@ def hide_subparser_from_help(subparsers, name: str) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dotman", description="dotman CLI")
+    # Keep optional command flags present on every parsed namespace so command
+    # dispatch can read a consistent attribute shape.
+    parser.set_defaults(full_path=None)
     parser.add_argument("--config", metavar="<config-path>", help="Path to dotman config.toml")
     parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
     parser.add_argument(
