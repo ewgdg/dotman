@@ -20,6 +20,7 @@ from tests.helpers import (
     write_named_manager_config,
     write_package_override_preview_repo,
     write_profile_switch_repo,
+    write_single_repo_config,
     write_untrack_conflict_repo,
 )
 
@@ -224,6 +225,64 @@ def test_info_tracked_cli_emits_readable_text_output(
             f"    gitconfig -> {home / '.gitconfig'}",
             "",
         ]
+    )
+
+
+def test_info_tracked_cli_handles_empty_directory_targets_when_repo_source_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "claude").mkdir(parents=True)
+    (repo_root / "packages" / "claude" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "claude"',
+                "",
+                "[targets.hooks]",
+                'source = "files/claude/hooks"',
+                'path = "~/.config/claude/hooks"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "claude" / "hooks"
+    live_root.mkdir(parents=True)
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bindings.toml").write_text(
+        "\n".join(
+            [
+                "version = 1",
+                "",
+                "[[bindings]]",
+                'repo = "fixture"',
+                'selector = "claude"',
+                'profile = "default"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["--config", str(config_path), "--json", "info", "tracked", "claude"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["package"]["owned_targets"][0]["target_kind"] == "directory"
+    assert payload["package"]["owned_targets"][0]["repo_path"] == str(
+        repo_root / "packages" / "claude" / "files" / "claude" / "hooks"
     )
 
 

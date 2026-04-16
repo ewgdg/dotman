@@ -180,6 +180,11 @@ chmod = "600"
 - Dotman does not read package-local `.gitignore` files here; use `push_ignore` and `pull_ignore` instead.
 - For directory targets, `push` should install everything under the source tree except paths matched by `push_ignore`.
 - For directory targets, `push` should also remove stale live paths that are no longer present in the repo source, except paths matched by `pull_ignore`.
+- For directory targets, dotman should infer the target kind from either side:
+  - if the repo source root exists and is a directory, treat it as a directory target
+  - if the repo source root is missing but the live path is a directory, still treat it as a directory target
+  - if both repo and live paths are missing, treat the target as `unknown` and plan it as noop rather than guessing file vs directory
+- Empty directory targets may therefore remain absent from the repo on disk; git cannot store empty directories directly, so dotman should not create placeholder repo directories just to represent them.
 - Source files can follow a default reverse-sync convention by mirroring the live path under `files/`.
 - Template suffixes such as `.tmpl` are optional conventions, not the source of truth.
 

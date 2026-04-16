@@ -61,11 +61,7 @@ def plan_targets(
 
     plans: list[TargetPlan] = []
     for package, target, repo_path, live_path, push_ignore, pull_ignore, live_path_is_symlink, live_path_symlink_target in rendered_targets:
-        target_kind = (
-            infer_target_kind(repo_path=repo_path, live_path=live_path)
-            if operation == "pull"
-            else ("directory" if repo_path.is_dir() else "file")
-        )
+        target_kind = infer_target_kind(repo_path=repo_path, live_path=live_path)
         render_command = (
             render_template_string(target.render, context, base_dir=target.declared_in, source_path=target.declared_in)
             if target.render is not None
@@ -92,6 +88,35 @@ def plan_targets(
             inferred_os=inferred_os,
             context=context,
         )
+        if target_kind == "unknown":
+            plans.append(
+                TargetPlan(
+                    package_id=package.id,
+                    target_name=target.name,
+                    repo_path=repo_path,
+                    live_path=live_path,
+                    action="noop",
+                    target_kind="unknown",
+                    projection_kind="unknown",
+                    render_command=render_command,
+                    capture_command=capture_command,
+                    reconcile_command=reconcile_command,
+                    reconcile_io=target.reconcile_io,
+                    live_path_is_symlink=live_path_is_symlink,
+                    live_path_symlink_target=live_path_symlink_target,
+                    file_symlink_mode=engine.config.file_symlink_mode,
+                    dir_symlink_mode=engine.config.dir_symlink_mode,
+                    pull_view_repo=target.pull_view_repo or "raw",
+                    pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
+                    push_ignore=push_ignore,
+                    pull_ignore=pull_ignore,
+                    chmod=target.chmod,
+                    command_cwd=target.declared_in,
+                    command_env=command_env,
+                )
+            )
+            continue
+
         validate_patch_capture_target(
             package=package,
             target=target,
@@ -241,13 +266,13 @@ def plan_targets(
 def infer_target_kind(*, repo_path: Path, live_path: Path) -> str:
     if repo_path.is_dir():
         return "directory"
-    if repo_path.exists():
-        return "file"
     if live_path.is_dir():
-        # Pull must still recognize directory targets before the repo source tree
-        # exists, otherwise a missing source directory gets misclassified as a file.
+        # Directory targets should still be recognized when the repo source tree
+        # does not exist yet but the live path clearly shows a directory.
         return "directory"
-    return "file"
+    if repo_path.exists() or live_path.exists():
+        return "file"
+    return "unknown"
 
 
 

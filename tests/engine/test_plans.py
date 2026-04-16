@@ -1048,7 +1048,7 @@ def test_pull_plan_infers_directory_target_from_live_path_when_repo_source_is_mi
     ]
 
 
-def test_push_plan_fails_fast_when_repo_source_directory_is_missing_even_if_live_directory_exists(
+def test_push_plan_infers_directory_target_from_live_path_when_repo_source_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1093,8 +1093,63 @@ def test_push_plan_fails_fast_when_repo_source_directory_is_missing_even_if_live
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    with pytest.raises(ValueError, match="repo source path does not exist"):
-        engine.plan_push_binding("fixture:sample@default")
+    plan = engine.plan_push_binding("fixture:sample@default")
+
+    target = plan.target_plans[0]
+    assert target.target_kind == "directory"
+    assert target.action == "delete"
+    assert [(item.action, item.relative_path) for item in target.directory_items] == [
+        ("delete", "alpha.toml"),
+    ]
+
+
+def test_push_plan_marks_directory_target_unknown_when_repo_and_live_paths_are_both_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.fixture]",
+                f'path = "{repo_root}"',
+                "order = 10",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = engine.plan_push_binding("fixture:sample@default")
+
+    target = plan.target_plans[0]
+    assert target.target_kind == "unknown"
+    assert target.action == "noop"
+    assert target.directory_items == ()
 
 
 def test_pull_plan_exposes_file_level_items_for_directory_targets(
