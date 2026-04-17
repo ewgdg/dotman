@@ -403,6 +403,9 @@ def plan_directory_action(
         if not directory_items:
             return "noop", ()
         ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))
+        if not desired_rel_paths:
+            # Push has no repo-side files to keep, so any tracked live files are being removed.
+            return "delete", ordered_items
         return ("create" if not live_exists else "update"), ordered_items
 
     for relative_path in sorted(desired_rel_paths - live_rel_paths):
