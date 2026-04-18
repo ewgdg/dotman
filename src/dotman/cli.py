@@ -22,7 +22,12 @@ from dotman.diff_review import (
     run_review_item_diff,
 )
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text, parse_package_ref_text
-from dotman.models import Binding, filter_hook_plans_for_targets, package_ref_text
+from dotman.models import (
+    Binding,
+    finalize_hook_plans_for_targets,
+    package_ref_text,
+    standalone_hook_package_summaries,
+)
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
 from dotman.templates import JinjaRenderError, build_template_context, render_template_file, render_template_string
@@ -69,10 +74,12 @@ SelectableItem = TypeVar("SelectableItem")
 class PendingSelectionItem:
     binding_label: str
     package_id: str
-    target_name: str
     action: str
-    source_path: str
-    destination_path: str
+    target_name: str | None = None
+    source_path: str | None = None
+    destination_path: str | None = None
+    kind: str = "target"
+    hook_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2080,7 +2087,13 @@ def selection_item_identity(
     )
 
 
-def collect_pending_selection_items_for_operation(plans: Sequence, *, operation: str) -> list[PendingSelectionItem]:
+def collect_pending_selection_items_for_operation(
+    plans: Sequence,
+    *,
+    operation: str,
+    run_noop: bool = False,
+    use_raw_hook_plans: bool = False,
+) -> list[PendingSelectionItem]:
     selection_items: list[PendingSelectionItem] = []
     for plan in plans:
         binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
@@ -2114,10 +2127,31 @@ def collect_pending_selection_items_for_operation(plans: Sequence, *, operation:
                 PendingSelectionItem(
                     binding_label=binding_label,
                     package_id=target.package_id,
-                    target_name=target.target_name,
                     action=selection_item_action(operation=operation, action=target.action),
+                    target_name=target.target_name,
                     source_path=source_path,
                     destination_path=destination_path,
+                )
+            )
+        hook_source = (getattr(plan, "hook_plans", None) or plan.hooks) if use_raw_hook_plans else plan.hooks
+        standalone_hook_packages = standalone_hook_package_summaries(
+            finalize_hook_plans_for_targets(
+                hook_source,
+                plan.target_plans,
+                allow_standalone_noop_hooks=run_noop,
+            )
+            if use_raw_hook_plans
+            else hook_source,
+            plan.target_plans,
+        )
+        for package_id, hook_names in standalone_hook_packages.items():
+            selection_items.append(
+                PendingSelectionItem(
+                    binding_label=binding_label,
+                    package_id=package_id,
+                    action="hooks",
+                    kind="package_hook_noop",
+                    hook_names=hook_names,
                 )
             )
     return selection_items
@@ -2126,6 +2160,28 @@ def collect_pending_selection_items_for_operation(plans: Sequence, *, operation:
 def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full_paths: bool | None = None) -> None:
     full_paths = _effective_full_paths(full_paths)
     repo_name = repo_name_from_binding_label(item.binding_label)
+    if item.kind == "package_hook_noop":
+        package_label = package_label_text(
+            repo_name=repo_name,
+            package_id=item.package_id,
+        )
+        hook_summary = ", ".join(item.hook_names)
+        if not colors_enabled():
+            item_text = f"[hooks] {package_label}"
+            if hook_summary:
+                item_text += f": {hook_summary}"
+            print(f"  {index:>2}) {item_text}")
+            return
+
+        badge_text = style_text("[hooks]", *MENU_ACTION_STYLE_BY_NAME.get("update", ("1",)))
+        package_text = render_package_label(repo_name=repo_name, package_id=item.package_id)
+        summary_text = f": {style_text(hook_summary, *MENU_HINT_STYLE)}" if hook_summary else ""
+        print(
+            f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+            f"{badge_text} {package_text}{summary_text}"
+        )
+        return
+
     package_target = package_label_text(
         repo_name=repo_name,
         package_id=item.package_id,
@@ -2182,31 +2238,37 @@ def filter_plans_for_interactive_selection(
     operation: str,
     json_output: bool,
     full_paths: bool | None = None,
+    run_noop: bool = False,
 ) -> list:
     full_paths = _effective_full_paths(full_paths)
-    if not interactive_mode_enabled(json_output=json_output):
-        return list(plans)
-    selection_items = collect_pending_selection_items_for_operation(plans, operation=operation)
-    if not selection_items:
-        return list(plans)
-    excluded_indexes = prompt_for_excluded_items(
-        selection_items,
+    selection_items = collect_pending_selection_items_for_operation(
+        plans,
         operation=operation,
-        full_paths=full_paths,
+        run_noop=run_noop,
+        use_raw_hook_plans=True,
     )
-    if not excluded_indexes:
-        return list(plans)
+    excluded_indexes: set[int] = set()
+    if interactive_mode_enabled(json_output=json_output) and selection_items:
+        excluded_indexes = prompt_for_excluded_items(
+            selection_items,
+            operation=operation,
+            full_paths=full_paths,
+        )
 
     excluded_targets: set[tuple[str, str, str, str, str]] = set()
+    excluded_standalone_packages: set[tuple[str, str]] = set()
     for excluded_index in excluded_indexes:
         item = selection_items[excluded_index - 1]
+        if item.kind == "package_hook_noop":
+            excluded_standalone_packages.add((item.binding_label, item.package_id))
+            continue
         excluded_targets.add(
             (
                 item.binding_label,
                 item.package_id,
-                item.target_name,
-                item.source_path,
-                item.destination_path,
+                item.target_name or "",
+                item.source_path or "",
+                item.destination_path or "",
             )
         )
 
@@ -2243,10 +2305,20 @@ def filter_plans_for_interactive_selection(
                 live_path=target.live_path,
             ) not in excluded_targets:
                 filtered_targets.append(target)
+        raw_hook_plans = getattr(plan, "hook_plans", None) or plan.hooks
         filtered_plans.append(
             replace(
                 plan,
-                hooks=filter_hook_plans_for_targets(plan.hooks, filtered_targets),
+                hooks=finalize_hook_plans_for_targets(
+                    raw_hook_plans,
+                    filtered_targets,
+                    allow_standalone_noop_hooks=run_noop,
+                    excluded_standalone_package_ids={
+                        package_id
+                        for current_binding_label, package_id in excluded_standalone_packages
+                        if current_binding_label == binding_label
+                    },
+                ),
                 target_plans=filtered_targets,
             )
         )

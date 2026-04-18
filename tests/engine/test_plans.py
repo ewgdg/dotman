@@ -90,6 +90,29 @@ def write_sync_policy_repo_with_extends(
     return repo_root
 
 
+def write_hook_metadata_repo(
+    tmp_path: Path,
+    *,
+    package_manifest: list[str],
+    package_id: str = "app",
+) -> Path:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / package_id).mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / package_id / "package.toml").write_text(
+        "\n".join(
+            [
+                f'id = "{package_id}"',
+                *package_manifest,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return repo_root
+
+
 def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -183,6 +206,128 @@ def test_hook_filtering_stays_quiet_when_no_targets_are_eligible(
 
     assert push_plan.target_plans == []
     assert push_plan.hooks == {}
+
+
+def test_package_hook_table_form_parses_run_noop_metadata(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_hook_metadata_repo(
+        tmp_path,
+        package_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo pre"]',
+            "run_noop = true",
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    hook = engine.get_repo("fixture").resolve_package("app").hooks["pre_push"]
+    assert hook.commands == ("echo pre",)
+    assert hook.run_noop is True
+
+
+def test_package_hook_shorthand_defaults_run_noop_false(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_hook_metadata_repo(
+        tmp_path,
+        package_manifest=[
+            "[hooks]",
+            'pre_push = ["echo pre"]',
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    hook = engine.get_repo("fixture").resolve_package("app").hooks["pre_push"]
+    assert hook.commands == ("echo pre",)
+    assert hook.run_noop is False
+
+
+def test_package_hook_table_form_allows_empty_commands_and_skips_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=[],
+        hook_manifest=[
+            "[hooks.post_push]",
+            "commands = []",
+            "run_noop = true",
+        ],
+    )
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    hook = engine.get_repo("fixture").resolve_package("app").hooks["post_push"]
+    assert hook.commands == ()
+    assert hook.run_noop is True
+
+    push_plan = engine.plan_push_binding("fixture:app@default")
+    assert push_plan.hooks == {}
+
+
+def test_package_hook_empty_override_disables_inherited_hook(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_sync_policy_repo_with_extends(
+        tmp_path,
+        base_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo base"]',
+            "run_noop = true",
+        ],
+        child_manifest=[
+            "[hooks.pre_push]",
+            "commands = []",
+            "run_noop = false",
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    hook = engine.get_repo("fixture").resolve_package("child").hooks["pre_push"]
+    assert hook.commands == ()
+    assert hook.run_noop is False
+
+
+def test_package_hook_override_replaces_metadata_when_merging_extends(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_sync_policy_repo_with_extends(
+        tmp_path,
+        base_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo base"]',
+            "run_noop = false",
+        ],
+        child_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo child"]',
+            "run_noop = true",
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    hook = engine.get_repo("fixture").resolve_package("child").hooks["pre_push"]
+    assert hook.commands == ("echo child",)
+    assert hook.run_noop is True
 
 
 def test_package_sync_policy_is_inherited_through_extends(

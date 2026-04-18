@@ -151,6 +151,7 @@ def build_execution_session(
     operation: str,
     run_noop: bool = False,
 ) -> ExecutionSession:
+    del run_noop
     _ensure_no_unapproved_live_symlink_targets(plans, operation=operation)
     package_units: list[PackageExecutionUnit] = []
     hook_names = _STEP_LABELS_BY_OPERATION[operation]
@@ -166,18 +167,9 @@ def build_execution_session(
             for hook_plan in plan.hooks.get(hook_name, []):
                 filtered_hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
 
-        raw_hook_plans = getattr(plan, "hook_plans", None) or plan.hooks
-        raw_hooks_by_package: dict[str, dict[str, list[HookPlan]]] = {}
-        if run_noop:
-            for hook_name in hook_names:
-                for hook_plan in raw_hook_plans.get(hook_name, []):
-                    raw_hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
-
         for package_id in plan.package_ids:
             target_plans = targets_by_package.get(package_id, [])
             package_hooks = filtered_hooks_by_package.get(package_id, {})
-            if not target_plans and run_noop:
-                package_hooks = raw_hooks_by_package.get(package_id, {}) or package_hooks
 
             target_steps: list[ExecutionStep] = []
             for target_plan in target_plans:
@@ -200,7 +192,7 @@ def build_execution_session(
 
             package_steps.extend(target_steps)
 
-            if target_plans or (run_noop and package_hooks):
+            if target_plans or package_hooks:
                 package_steps.extend(
                     ExecutionStep(
                         package_id=package_id,

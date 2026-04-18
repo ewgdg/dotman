@@ -7,6 +7,7 @@ from dotman.toml_utils import load_toml_file
 
 from dotman.manifest import (
     _copy_map,
+    build_hook_spec,
     build_target_spec,
     deep_merge,
     merge_package_specs,
@@ -98,10 +99,10 @@ class Repository:
                         f"package manifest {manifest_path} uses unsupported hook names: {unknown_text}"
                     )
                 hooks = {
-                    hook_name: HookSpec(
-                        name=hook_name,
-                        commands=normalize_string_list(hook_value) or (),
-                        declared_in=manifest_path.parent,
+                    hook_name: build_hook_spec(
+                        hook_name=hook_name,
+                        hook_payload=hook_value,
+                        manifest_path=manifest_path,
                     )
                     for hook_name, hook_value in hooks_payload.items()
                 }

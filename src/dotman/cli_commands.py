@@ -335,12 +335,15 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
         ):
             handlers.emit_interrupt_notice()
             return handlers.interrupted_exit_code
-        plans = handlers.filter_plans_for_interactive_selection(
-            plans=plans,
-            operation="push",
-            json_output=args.json_output,
-            full_paths=full_paths,
-        )
+        filter_kwargs = {
+            "plans": plans,
+            "operation": "push",
+            "json_output": args.json_output,
+            "full_paths": full_paths,
+        }
+        if run_noop:
+            filter_kwargs["run_noop"] = True
+        plans = handlers.filter_plans_for_interactive_selection(**filter_kwargs)
         if args.dry_run:
             return handlers.emit_payload(
                 operation="push",
@@ -400,12 +403,15 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
         ):
             handlers.emit_interrupt_notice()
             return handlers.interrupted_exit_code
-        plans = handlers.filter_plans_for_interactive_selection(
-            plans=plans,
-            operation="pull",
-            json_output=args.json_output,
-            full_paths=full_paths,
-        )
+        filter_kwargs = {
+            "plans": plans,
+            "operation": "pull",
+            "json_output": args.json_output,
+            "full_paths": full_paths,
+        }
+        if run_noop:
+            filter_kwargs["run_noop"] = True
+        plans = handlers.filter_plans_for_interactive_selection(**filter_kwargs)
         if args.dry_run:
             return handlers.emit_payload(
                 operation="pull",

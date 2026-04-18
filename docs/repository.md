@@ -215,12 +215,32 @@ sync_policy = "pull-only"
 
 - Supported hook names are `guard_push`, `pre_push`, `post_push`, `guard_pull`, `pre_pull`, and `post_pull`.
 - `check` is removed; there is no backward-compatibility alias.
-- Hook entries may be a single item or an ordered list.
+- Hook entries may be a single item, an ordered list, or a table with `commands` and optional metadata.
+- Package hook table form supports `run_noop = true | false`.
+- `run_noop` defaults to `false`.
+- Package hook shorthand still works and normalizes to `run_noop = false`.
+- Empty hook command lists are allowed and mean the hook is effectively disabled at that package layer.
+
+Example:
+
+```toml
+[hooks]
+pre_push = "echo hi"
+post_pull = ["echo one", "echo two"]
+
+[hooks.pre_pull]
+commands = ["echo pull"]
+run_noop = true
+```
+
 - Hook lists run in declaration order and stop on first failure.
 - `guard_*` runs before package target work for that operation.
 - `pre_*` runs immediately before the package's selected target steps.
-- `post_*` runs only when the package still owns at least one selected target execution step and all selected target steps succeed.
-- Package hooks are executable only when the package still owns at least one non-noop effective target after tracked-target winner resolution and any interactive target exclusion.
+- `post_*` runs only when earlier steps for that package succeed.
+- Package hooks normally run when the package still owns at least one non-noop effective target after tracked-target winner resolution and any interactive target exclusion.
+- If a package hook declares `run_noop = true`, dotman may retain that hook as standalone hook-only package work when the package has no executable target steps for the active operation.
+- Standalone noop retention is package-hook only in this phase. Target-level hook metadata is out of scope.
+- Standalone hook-only package execution must not fabricate target writes or snapshots.
 - Provenance alone should not cause hooks to execute.
 - Repo-wide helper scripts live under `scripts/`.
 - Package-specific scripts live inside the package, for example `hooks/`.

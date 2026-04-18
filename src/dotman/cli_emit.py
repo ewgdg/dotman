@@ -257,9 +257,10 @@ def emit_payload(
     visible_plans = []
     for plan in plans:
         visible_targets = [target for target in plan.target_plans if target.action != "noop"]
-        if not visible_targets:
+        visible_hooks = {name: items for name, items in plan.hooks.items() if items}
+        if not visible_targets and not visible_hooks:
             continue
-        visible_plans.append(replace(plan, target_plans=visible_targets))
+        visible_plans.append(replace(plan, target_plans=visible_targets, hooks=visible_hooks))
     warnings = collect_push_live_symlink_hazards(visible_plans) if operation == "push" else []
     payload = {
         "mode": mode,
@@ -318,8 +319,11 @@ def emit_payload(
         )
 
         print(f"    {cli_style.render_payload_section_label('targets:', use_color=use_color)}")
-        for item in section.targets:
-            _print_payload_target_item(item, full_paths=full_paths, use_color=use_color)
+        if section.targets:
+            for item in section.targets:
+                _print_payload_target_item(item, full_paths=full_paths, use_color=use_color)
+        else:
+            print(f"      {cli_style.render_payload_section_label('none', use_color=use_color)}")
 
         if section.hooks:
             print(f"    {cli_style.render_payload_section_label('hooks:', use_color=use_color)}")

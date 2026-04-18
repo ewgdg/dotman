@@ -24,7 +24,10 @@ This document captures the current command and selector direction for `dotman`.
 ## Confirmation and execution flags
 
 - `--yes` skips confirmation prompts that already have a safe default, but it does not auto-resolve ambiguous selector/profile menus.
-- `--run-noop` is only meaningful for `push` and `pull`; it keeps hook-bearing packages alive when the final selected plan is all-noop, so hooks rerun, but it does not change planning, selection, or fabricate target writes.
+- `--run-noop` is only meaningful for `push` and `pull`.
+- `--run-noop` now feeds normal planning and selection instead of reviving hooks late in execution.
+- For the active operation, `--run-noop` temporarily treats all package hooks as noop-eligible, even if they do not declare `run_noop = true` in the manifest.
+- `--run-noop` still does not fabricate target writes or snapshots.
 
 ## Selectors
 
@@ -116,13 +119,15 @@ This document captures the current command and selector direction for `dotman`.
 - `push` with no binding should replay the current tracked bindings from persisted state without changing the tracked binding set.
 - If group membership or package `depends` change in the repo, `push` should pick up newly introduced managed packages and files.
 - `push` should only touch files within the current managed selection.
-- In interactive mode, `push` should present one combined selection menu for pending non-noop target actions so the user can exclude specific items before execution.
+- In interactive mode, `push` should present one combined selection menu for pending non-noop target actions plus synthetic package hook-only rows when a package has noop-eligible hooks but no executable target rows.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
-- A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks.
+- A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
+- Synthetic hook-only selection rows should be package-scoped, not per-hook command rows.
 - After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `push` should execute immediately in one package-oriented timeline.
 - Before the first live mutation of a real `push`, dotman should create one manager-level snapshot for the finalized selected plan.
 - That snapshot should record enough state to restore the mutated paths later.
+- If the finalized `push` work is hook-only, dotman should not create a snapshot.
 - `file_symlink_mode = prompt` means interactive replace is allowed; `follow` means dotman writes through to the resolved target.
 - `dir_symlink_mode = fail` rejects symlinked directory roots; `follow` means dotman manages the resolved tree.
 - `push --dry-run` should not create a snapshot.
@@ -161,9 +166,10 @@ This document captures the current command and selector direction for `dotman`.
 - `pull` with no binding should replay the current tracked bindings from persisted state.
 - If the requested selector is not currently tracked, `pull` should fail instead of implicitly creating state. The user should use `track` first.
 - `pull` should first build a reverse-sync plan before changing any sources.
-- In interactive mode, `pull` should present one combined selection menu for pending non-noop target actions so the user can exclude specific items before execution.
+- In interactive mode, `pull` should present one combined selection menu for pending non-noop target actions plus synthetic package hook-only rows when a package has noop-eligible hooks but no executable target rows.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
-- A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks.
+- A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
+- Synthetic hook-only selection rows should be package-scoped, not per-hook command rows.
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `pull` should execute immediately in one package-oriented timeline.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.

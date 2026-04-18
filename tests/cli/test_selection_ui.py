@@ -225,6 +225,182 @@ def test_filter_plans_for_interactive_selection_recomputes_hooks_from_remaining_
     assert [target.package_id for target in filtered_plan.target_plans] == ["beta"]
     assert [hook.package_id for hook in filtered_plan.hooks["pre_push"]] == ["beta"]
 
+
+def test_collect_pending_selection_items_adds_synthetic_hook_only_row() -> None:
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="sandbox", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        hook_plans={
+            "guard_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="guard_push",
+                    command="echo guard",
+                    cwd=Path("/repo/app"),
+                    run_noop=True,
+                )
+            ],
+            "pre_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="pre_push",
+                    command="echo pre",
+                    cwd=Path("/repo/app"),
+                    run_noop=True,
+                )
+            ],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/live/app.conf"),
+                action="noop",
+                target_kind="file",
+                projection_kind="file",
+            )
+        ],
+    )
+
+    selection_items = cli.collect_pending_selection_items_for_operation(
+        [plan],
+        operation="push",
+        use_raw_hook_plans=True,
+    )
+
+    assert len(selection_items) == 1
+    assert selection_items[0].kind == "package_hook_noop"
+    assert selection_items[0].action == "hooks"
+    assert selection_items[0].hook_names == ("guard_push", "pre_push")
+
+
+def test_filter_plans_for_interactive_selection_excludes_synthetic_hook_only_row(monkeypatch) -> None:
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="sandbox", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        hook_plans={
+            "guard_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="guard_push",
+                    command="echo guard",
+                    cwd=Path("/repo/app"),
+                    run_noop=True,
+                )
+            ],
+            "post_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="post_push",
+                    command="echo post",
+                    cwd=Path("/repo/app"),
+                    run_noop=True,
+                )
+            ],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/live/app.conf"),
+                action="noop",
+                target_kind="file",
+                projection_kind="file",
+            )
+        ],
+    )
+
+    monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: True)
+    monkeypatch.setattr(
+        cli,
+        "prompt_for_excluded_items",
+        lambda selection_items, *, operation, full_paths=False: {1},
+    )
+
+    filtered_plan = cli.filter_plans_for_interactive_selection(
+        plans=[plan],
+        operation="push",
+        json_output=False,
+    )[0]
+
+    assert filtered_plan.target_plans[0].action == "noop"
+    assert filtered_plan.hooks == {}
+
+
+def test_filter_plans_for_interactive_selection_run_noop_broadens_hook_only_eligibility(monkeypatch) -> None:
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="sandbox", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        hook_plans={
+            "guard_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="guard_push",
+                    command="echo guard",
+                    cwd=Path("/repo/app"),
+                )
+            ],
+            "pre_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="pre_push",
+                    command="echo pre",
+                    cwd=Path("/repo/app"),
+                )
+            ],
+            "post_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="post_push",
+                    command="echo post",
+                    cwd=Path("/repo/app"),
+                )
+            ],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/live/app.conf"),
+                action="noop",
+                target_kind="file",
+                projection_kind="file",
+            )
+        ],
+    )
+
+    monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: False)
+
+    filtered_plan = cli.filter_plans_for_interactive_selection(
+        plans=[plan],
+        operation="push",
+        json_output=False,
+        run_noop=True,
+    )[0]
+
+    assert [hook.hook_name for hook in filtered_plan.hooks["guard_push"]] == ["guard_push"]
+    assert [hook.hook_name for hook in filtered_plan.hooks["pre_push"]] == ["pre_push"]
+    assert [hook.hook_name for hook in filtered_plan.hooks["post_push"]] == ["post_push"]
+
+    selection_items = cli.collect_pending_selection_items_for_operation([filtered_plan], operation="push")
+    assert len(selection_items) == 1
+    assert selection_items[0].kind == "package_hook_noop"
+
 def test_collect_pending_selection_items_for_push_uses_repo_to_live_paths() -> None:
     target_plan = TargetPlan(
         package_id="sandbox/bin",

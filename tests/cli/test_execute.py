@@ -826,6 +826,64 @@ def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(
     assert "[1/3] create" not in output
 
 
+def test_push_cli_run_noop_dry_run_json_shows_hook_only_package(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    data_home = tmp_path / "data"
+    home.mkdir()
+    data_home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo value\n", encoding="utf-8")
+
+    exit_code = main(["--config", str(config_path), "--json", "push", "--dry-run", "--run-noop"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["bindings"][0]["targets"] == []
+    assert set(payload["bindings"][0]["hooks"]) == {"guard_push", "pre_push", "post_push"}
+
+
+def test_push_cli_run_noop_hook_only_plan_does_not_create_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    data_home = tmp_path / "data"
+    home.mkdir()
+    data_home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo value\n", encoding="utf-8")
+
+    exit_code = main(["--config", str(config_path), "push", "--run-noop"])
+
+    assert exit_code == 0
+    capsys.readouterr()
+    snapshots_root = data_home / "dotman" / "snapshots"
+    assert not snapshots_root.exists() or list(snapshots_root.iterdir()) == []
+
+
 def test_pull_cli_run_noop_executes_hooks_for_all_noop_pull_plan(
     tmp_path: Path,
     monkeypatch,

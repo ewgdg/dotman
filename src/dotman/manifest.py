@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from dotman.models import PackageSpec, TargetSpec
+from dotman.models import HookSpec, PackageSpec, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 
 
@@ -235,6 +235,45 @@ def build_target_spec(
             )
         ),
         disabled=bool(get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="disabled") or False),
+    )
+
+
+def build_hook_spec(
+    *,
+    hook_name: str,
+    hook_payload: Any,
+    manifest_path: Path,
+) -> HookSpec:
+    commands_payload = hook_payload
+    run_noop = False
+    if isinstance(hook_payload, dict):
+        unknown_keys = sorted(key for key in hook_payload if key not in {"commands", "run_noop"})
+        if unknown_keys:
+            unknown_text = ", ".join(unknown_keys)
+            raise ValueError(
+                f"package manifest {manifest_path} hook '{hook_name}' has unsupported keys: {unknown_text}"
+            )
+        if "commands" not in hook_payload:
+            raise ValueError(
+                f"package manifest {manifest_path} hook '{hook_name}' must define 'commands'"
+            )
+        commands_payload = hook_payload.get("commands")
+        run_noop_value = hook_payload.get("run_noop", False)
+        if not isinstance(run_noop_value, bool):
+            raise ValueError(
+                f"package manifest {manifest_path} hook '{hook_name}' run_noop must be a boolean"
+            )
+        run_noop = run_noop_value
+    commands = normalize_string_list(commands_payload)
+    if commands is None:
+        raise ValueError(
+            f"package manifest {manifest_path} hook '{hook_name}' commands must be a string or list[str]"
+        )
+    return HookSpec(
+        name=hook_name,
+        commands=commands,
+        declared_in=manifest_path.parent,
+        run_noop=run_noop,
     )
 
 

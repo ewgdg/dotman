@@ -72,6 +72,7 @@ class HookSpec:
     name: str
     commands: tuple[str, ...]
     declared_in: Path
+    run_noop: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,7 @@ class HookPlan:
     hook_name: str
     command: str
     cwd: Path
+    run_noop: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -344,11 +346,7 @@ def filter_hook_plans_for_targets(
     hooks: dict[str, list[HookPlan]],
     target_plans: list[TargetPlan],
 ) -> dict[str, list[HookPlan]]:
-    executable_package_ids = {
-        target.package_id
-        for target in target_plans
-        if target.action != "noop"
-    }
+    executable_package_ids = executable_package_ids_for_targets(target_plans)
     filtered_hooks: dict[str, list[HookPlan]] = {}
     for hook_name, hook_plans in hooks.items():
         matching_hooks = [
@@ -359,6 +357,59 @@ def filter_hook_plans_for_targets(
         if matching_hooks:
             filtered_hooks[hook_name] = matching_hooks
     return filtered_hooks
+
+
+def executable_package_ids_for_targets(target_plans: list[TargetPlan]) -> set[str]:
+    executable_package_ids = {
+        target.package_id
+        for target in target_plans
+        if target.action != "noop"
+    }
+    return executable_package_ids
+
+
+def finalize_hook_plans_for_targets(
+    hooks: dict[str, list[HookPlan]],
+    target_plans: list[TargetPlan],
+    *,
+    allow_standalone_noop_hooks: bool = False,
+    excluded_standalone_package_ids: set[str] | None = None,
+) -> dict[str, list[HookPlan]]:
+    executable_package_ids = executable_package_ids_for_targets(target_plans)
+    excluded_package_ids = excluded_standalone_package_ids or set()
+    filtered_hooks: dict[str, list[HookPlan]] = {}
+    for hook_name, hook_plans in hooks.items():
+        matching_hooks = [
+            hook_plan
+            for hook_plan in hook_plans
+            if hook_plan.package_id in executable_package_ids
+            or (
+                hook_plan.package_id not in excluded_package_ids
+                and (allow_standalone_noop_hooks or hook_plan.run_noop)
+            )
+        ]
+        if matching_hooks:
+            filtered_hooks[hook_name] = matching_hooks
+    return filtered_hooks
+
+
+def standalone_hook_package_summaries(
+    hooks: dict[str, list[HookPlan]],
+    target_plans: list[TargetPlan],
+) -> dict[str, tuple[str, ...]]:
+    executable_package_ids = executable_package_ids_for_targets(target_plans)
+    hook_names_by_package: dict[str, list[str]] = {}
+    for hook_name, hook_plans in hooks.items():
+        for hook_plan in hook_plans:
+            if hook_plan.package_id in executable_package_ids:
+                continue
+            package_hook_names = hook_names_by_package.setdefault(hook_plan.package_id, [])
+            if hook_name not in package_hook_names:
+                package_hook_names.append(hook_name)
+    return {
+        package_id: tuple(hook_names)
+        for package_id, hook_names in hook_names_by_package.items()
+    }
 
 
 @dataclass(frozen=True)

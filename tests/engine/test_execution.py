@@ -194,7 +194,7 @@ def test_build_execution_session_does_not_add_pull_chmod_steps() -> None:
     assert [step.action for step in session.packages[0].steps] == ["update_repo"]
 
 
-def test_build_execution_session_keeps_hook_only_packages_when_run_noop_is_enabled() -> None:
+def test_build_execution_session_keeps_hook_only_packages_when_hooks_are_finalized() -> None:
     for operation, hook_name_prefix in (("push", "push"), ("pull", "pull")):
         plan = BindingPlan(
             operation=operation,
@@ -226,7 +226,7 @@ def test_build_execution_session_keeps_hook_only_packages_when_run_noop_is_enabl
             ],
         )
 
-        session = build_execution_session([plan], operation=operation, run_noop=True)
+        session = build_execution_session([plan], operation=operation)
 
         assert [unit.package_id for unit in session.packages] == ["app"]
         assert [step.action for step in session.packages[0].steps] == [

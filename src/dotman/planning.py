@@ -259,6 +259,7 @@ def plan_hooks(
                         hook_name=hook_name,
                         command=render_template_string(command, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
                         cwd=hook_spec.declared_in,
+                        run_noop=hook_spec.run_noop,
                     )
                 )
     return dict(hooks)
