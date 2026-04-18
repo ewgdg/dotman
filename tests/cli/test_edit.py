@@ -172,6 +172,76 @@ def test_edit_cli_opens_tracked_package_directory_with_editor(
     assert recorded["command"] == ["nvim", str(repo_root / "packages" / "git")]
 
 
+def test_edit_cli_sugar_opens_tracked_package_directory_with_editor(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    _write_edit_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding_state(tmp_path / "state", repo_name="fixture", selector="git", profile="basic")
+
+    monkeypatch.setenv("EDITOR", "nvim -d")
+    recorded: dict[str, object] = {}
+
+    def fake_run(command: list[str], check: bool):
+        recorded["command"] = command
+        recorded["check"] = check
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+
+    exit_code = main(["--config", str(config_path), "edit", "git"])
+
+    assert exit_code == 0
+    assert recorded["check"] is False
+    assert recorded["command"] == ["nvim", str(repo_root / "packages" / "git")]
+
+
+def test_edit_cli_sugar_keeps_repo_qualified_target_query_target_intent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    alpha_root = tmp_path / "alpha"
+    beta_root = tmp_path / "beta"
+    _write_edit_repo(alpha_root)
+    _write_edit_repo(beta_root)
+    (beta_root / "packages" / "nvim" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "nvim"',
+                "",
+                '[targets."init.lua"]',
+                'source = "files/config/nvim/init.lua"',
+                'path = "~/.config/nvim-beta/init.lua"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config_path = write_named_manager_config(tmp_path, {"alpha": alpha_root, "beta": beta_root})
+    _write_tracked_binding_state(tmp_path / "state", repo_name="alpha", selector="nvim", profile="basic")
+    _write_tracked_binding_state(tmp_path / "state", repo_name="beta", selector="nvim", profile="basic")
+
+    monkeypatch.setenv("EDITOR", "nvim")
+    recorded: dict[str, object] = {}
+
+    def fake_run(command: list[str], check: bool):
+        recorded["command"] = command
+        recorded["check"] = check
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+
+    exit_code = main(["--config", str(config_path), "edit", "beta:nvim.init.lua"])
+
+    assert exit_code == 0
+    assert recorded["command"] == [
+        "nvim",
+        str(beta_root / "packages" / "nvim" / "files" / "config" / "nvim" / "init.lua"),
+    ]
+
+
 def test_edit_target_cli_prints_repo_file_path_when_no_editor_is_configured(
     tmp_path: Path,
     monkeypatch,
@@ -197,6 +267,28 @@ def test_edit_target_cli_prints_repo_file_path_when_no_editor_is_configured(
         == "No editor configured. Source path: "
         f"{repo_root / 'packages' / 'nvim' / 'files' / 'config' / 'nvim' / 'init.lua'}\n"
     )
+
+
+def test_edit_cli_sugar_rejects_cross_kind_exact_ambiguity(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    repo_root = tmp_path / "repo"
+    _write_edit_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding_states(
+        tmp_path / "state",
+        repo_name="fixture",
+        bindings=[("note", "basic")],
+    )
+
+    exit_code = main(["--config", str(config_path), "edit", "note"])
+
+    assert exit_code == 2
+    err = capsys.readouterr().err
+    assert "edit query 'note' is ambiguous:" in err
+    assert "package fixture:note" in err
+    assert "target fixture:note.note" in err
 
 
 def test_edit_target_cli_opens_tracked_file_target_repo_path_with_editor(

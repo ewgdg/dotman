@@ -191,6 +191,19 @@ def build_parser() -> argparse.ArgumentParser:
         description="Open a tracked target repo path in an editor",
     )
     add_target_argument(edit_target_parser)
+    edit_query_parser = edit_subparsers.add_parser(
+        "query",
+        help=argparse.SUPPRESS,
+        description=argparse.SUPPRESS,
+    )
+    edit_query_parser.add_argument(
+        "query",
+        metavar="<query>",
+        help=argparse.SUPPRESS,
+    )
+    # Bare `dotman edit <query>` sugar is wired through this hidden subcommand so
+    # explicit `edit package` / `edit target` help stays canonical.
+    hide_subparser_from_help(edit_subparsers, "query")
 
     push_parser = subparsers.add_parser(
         "push",

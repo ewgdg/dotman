@@ -267,35 +267,6 @@ def test_select_menu_option_prefers_fzf_for_long_lists(monkeypatch) -> None:
 
     assert cli.select_menu_option(header_text="Select a package:", option_labels=["alpha", "beta"]) == 1
 
-def test_select_menu_option_passes_search_terms_to_fzf(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    monkeypatch.setattr(cli, "_should_use_fzf_for_selection", lambda _option_labels: True)
-    monkeypatch.setattr(cli, "_fzf_available", lambda: True)
-    monkeypatch.setattr(cli, "_select_menu_option_with_prompt", lambda **_kwargs: pytest.fail("prompt fallback should not run"))
-
-    def fake_fzf(**kwargs):
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(cli, "_select_menu_option_with_fzf", fake_fzf)
-
-    assert (
-        cli.select_menu_option(
-            header_text="Select a package:",
-            option_labels=["alpha/sunshine", "beta/sunshine"],
-            option_search_fields=[
-                ("sunshine", "alpha/sunshine"),
-                ("sunshine", "beta/sunshine"),
-            ],
-        )
-        == 0
-    )
-    assert captured["option_search_fields"] == [
-        ("sunshine", "alpha/sunshine"),
-        ("sunshine", "beta/sunshine"),
-    ]
-
 def test_resolve_candidate_match_ranks_leftmost_selector_segments_first(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -357,10 +328,6 @@ def test_select_menu_option_with_fzf_uses_structured_display_fields(monkeypatch)
     selected_index = cli._select_menu_option_with_fzf(
         header_text="Select a package:",
         option_labels=["sandbox/sunshine [package]", "sandbox/host/linux-meta [group]"],
-        option_search_fields=[
-            ("sunshine", "sandbox/sunshine"),
-            ("host/linux-meta", "sandbox/host/linux-meta"),
-        ],
         option_display_fields=[
             ("sandbox/sunshine", "[package]"),
             ("sandbox/host/linux-meta", "[group]"),
@@ -368,14 +335,14 @@ def test_select_menu_option_with_fzf_uses_structured_display_fields(monkeypatch)
     )
 
     assert selected_index == 1
-    assert f"--delimiter={cli.FZF_FIELD_DELIMITER}" in captured["command"]
-    assert "--nth=1" in captured["command"]
-    assert "--with-nth=2..3" in captured["command"]
+    assert "--wrap" in captured["command"]
+    assert "--with-nth=2.." in captured["command"]
     assert "--accept-nth=1" in captured["command"]
-    assert "--layout=reverse-list" in captured["command"]
+    assert "--layout=reverse-list" not in captured["command"]
+    assert "--layout=reverse" not in captured["command"]
     assert captured["input"] == (
-        f"1{cli.FZF_FIELD_DELIMITER}sandbox/sunshine{cli.FZF_FIELD_DELIMITER}[package]\n"
-        f"2{cli.FZF_FIELD_DELIMITER}sandbox/host/linux-meta{cli.FZF_FIELD_DELIMITER}[group]\n"
+        "1 sandbox/sunshine [package]\n"
+        "2 sandbox/host/linux-meta [group]\n"
     )
 
 def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(

@@ -44,6 +44,7 @@ def test_dispatch_command_uses_parsed_full_path_default() -> None:
         emit_noop_add_result=lambda **kwargs: 0,
         emit_kept_add_result=lambda **kwargs: 0,
         open_editor_path=lambda **kwargs: 0,
+        resolve_edit_query_text=lambda **kwargs: None,
         resolve_tracked_binding_text=lambda **kwargs: None,
         resolve_tracked_target_text=lambda **kwargs: None,
         filter_plans_for_interactive_selection=lambda **kwargs: [],

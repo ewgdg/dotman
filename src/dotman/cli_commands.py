@@ -43,6 +43,7 @@ class CliCommandHandlers:
     emit_noop_add_result: Callable[..., int]
     emit_kept_add_result: Callable[..., int]
     open_editor_path: Callable[..., int]
+    resolve_edit_query_text: Callable[..., Any]
     resolve_tracked_binding_text: Callable[..., Any]
     resolve_tracked_target_text: Callable[..., Any]
     filter_plans_for_interactive_selection: Callable[..., Any]
@@ -86,7 +87,7 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
             return _handle_track(args=args, engine=engine, handlers=handlers)
         if args.command == "add":
             return _handle_add(args=args, engine=engine, handlers=handlers)
-        if args.command == "edit" and args.edit_command in {"package", "target"}:
+        if args.command == "edit" and args.edit_command in {"package", "target", "query"}:
             return _handle_edit(args=args, engine=engine, handlers=handlers)
         if args.command == "push":
             return _handle_push(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
@@ -281,6 +282,16 @@ def _handle_edit(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
         )
         return handlers.open_editor_path(
             path=repo.resolve_package(package_id).package_root,
+            missing_editor_label="Source path",
+        )
+
+    if args.edit_command == "query":
+        return handlers.open_editor_path(
+            path=handlers.resolve_edit_query_text(
+                engine,
+                args.query,
+                json_output=args.json_output,
+            ),
             missing_editor_label="Source path",
         )
 

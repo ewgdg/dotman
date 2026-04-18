@@ -35,7 +35,6 @@ from dotman.resolver import (
     ResolverOption,
     build_binding_field_kinds,
     build_binding_match_fields,
-    build_fzf_search_fields,
     build_package_field_kinds,
     build_package_match_fields,
     build_profile_field_kinds,
@@ -62,6 +61,7 @@ MENU_ACTION_STYLE_BY_NAME = cli_style.MENU_ACTION_STYLE_BY_NAME
 EXECUTION_STATUS_STYLE_BY_NAME = cli_style.EXECUTION_STATUS_STYLE_BY_NAME
 INTERRUPTED_EXIT_CODE = 130
 MENU_SELECTION_OVERHEAD_LINES = 6
+_EDIT_SUGAR_TOP_LEVEL_OPTIONS_WITH_VALUES = {"--config", "--file-symlink-mode", "--dir-symlink-mode"}
 SelectableItem = TypeVar("SelectableItem")
 
 
@@ -73,6 +73,24 @@ class PendingSelectionItem:
     action: str
     source_path: str
     destination_path: str
+
+
+@dataclass(frozen=True)
+class _EditQueryCandidate:
+    kind: str
+    repo_name: str
+    package_id: str
+    target_name: str | None
+    bound_profile: str | None
+    path: Path
+    option: ResolverOption
+
+    @property
+    def ref_text(self) -> str:
+        package_ref = package_ref_text(package_id=self.package_id, bound_profile=self.bound_profile)
+        if self.target_name is None:
+            return f"{self.repo_name}:{package_ref}"
+        return f"{self.repo_name}:{package_ref}.{self.target_name}"
 
 def prompt(message: str) -> str:
     sys.stdout.write(message)
@@ -451,49 +469,32 @@ def _should_use_fzf_for_selection(option_labels: Sequence[str]) -> bool:
     return len(option_labels) > max(1, terminal_lines - MENU_SELECTION_OVERHEAD_LINES)
 
 
-# Use an invisible delimiter plus a literal space so fzf can keep badge fields
-# separate from the searchable label while rendering `label [badge]` compactly.
-FZF_FIELD_DELIMITER = "\x1f "
-
-
 def _select_menu_option_with_fzf(
     *,
     header_text: str,
     option_labels: Sequence[str],
-    option_search_fields: Sequence[Sequence[str]],
     option_display_fields: Sequence[Sequence[str]] | None = None,
 ) -> int:
-    del option_search_fields
     if option_display_fields is not None and len(option_display_fields) != len(option_labels):
         raise ValueError("fzf display fields must align with option labels")
     display_fields_by_option = [
         tuple(field for field in fields if field)
         for fields in (option_display_fields or [(label,) for label in option_labels])
     ]
-    field_count = max((len(fields) for fields in display_fields_by_option), default=1)
     entries = [
-        FZF_FIELD_DELIMITER.join(
-            [
-                str(index),
-                *display_fields,
-                *("" for _ in range(field_count - len(display_fields))),
-            ]
-        )
+        " ".join([str(index), *display_fields])
         for index, display_fields in enumerate(display_fields_by_option, start=1)
     ]
-    visible_field_range = f"2..{field_count + 1}"
     completed = subprocess.run(
         [
             "fzf",
             "--prompt=Select> ",
             f"--header={header_text}",
-            f"--delimiter={FZF_FIELD_DELIMITER}",
             "--ansi",
-            "--nth=1",
-            f"--with-nth={visible_field_range}",
+            "--wrap",
+            "--with-nth=2..",
             "--accept-nth=1",
             "--no-sort",
-            "--layout=reverse-list" if selection_menu_bottom_up_enabled() else "--layout=reverse",
         ],
         input="\n".join(entries) + "\n",
         text=True,
@@ -509,15 +510,12 @@ def select_menu_option(
     *,
     header_text: str,
     option_labels: Sequence[str],
-    option_search_fields: Sequence[Sequence[str]] | None = None,
     option_display_fields: Sequence[Sequence[str]] | None = None,
 ) -> int:
-    search_fields = option_search_fields or [(label,) for label in option_labels]
     if _fzf_available() and _should_use_fzf_for_selection(option_labels):
         return _select_menu_option_with_fzf(
             header_text=header_text,
             option_labels=option_labels,
-            option_search_fields=search_fields,
             option_display_fields=option_display_fields,
         )
     return _select_menu_option_with_prompt(header_text=header_text, option_labels=option_labels)
@@ -918,7 +916,6 @@ def prompt_for_conflicting_package_binding(
     selected_index = select_menu_option(
         header_text=f"Select a conflicting package to track explicitly for {binding_label}:",
         option_labels=package_ids,
-        option_search_fields=[(package_id,) for package_id in package_ids],
     )
     return Binding(repo=binding.repo, selector=package_ids[selected_index], profile=binding.profile)
 
@@ -977,10 +974,6 @@ def resolve_candidate_match(
         selected_index = select_menu_option(
             header_text=exact_header_text,
             option_labels=[option.display_label for option in resolved_options],
-            option_search_fields=[
-                build_fzf_search_fields(match_fields=option.match_fields)
-                for option in resolved_options
-            ],
             option_display_fields=[option.display_fields or (option.display_label,) for option in resolved_options],
         )
         return ranked_exact_matches[selected_index]
@@ -1001,10 +994,6 @@ def resolve_candidate_match(
         selected_index = select_menu_option(
             header_text=partial_header_text,
             option_labels=[option.display_label for option in resolved_options],
-            option_search_fields=[
-                build_fzf_search_fields(match_fields=option.match_fields)
-                for option in resolved_options
-            ],
             option_display_fields=[option.display_fields or (option.display_label,) for option in resolved_options],
         )
         return ranked_partial_matches[selected_index]
@@ -1592,6 +1581,230 @@ def resolve_tracked_target_text(
     )
 
 
+def _parse_edit_query_text(query_text: str) -> tuple[str, str | None, str, str | None]:
+    if any(marker in query_text for marker in ("@", "<", ">")):
+        raise ValueError("edit query does not accept binding syntax; use explicit edit package or edit target")
+
+    explicit_repo, selector, selector_profile = parse_binding_text(query_text)
+    if selector_profile is not None:
+        raise ValueError("edit query does not accept binding syntax; use explicit edit package or edit target")
+
+    if "." in selector:
+        package_id, separator, target_name = selector.partition(".")
+        if not separator or not package_id or not target_name:
+            raise ValueError(
+                f"invalid edit target query '{query_text}'; expected [<repo>:]<package>.<target>"
+            )
+        return "target", explicit_repo, package_id, target_name
+
+    return "package", explicit_repo, selector, None
+
+
+def _build_edit_query_candidate_option(
+    *,
+    kind: str,
+    repo_name: str,
+    package_id: str,
+    target_name: str | None,
+    bound_profile: str | None,
+) -> ResolverOption:
+    ref_text = package_ref_text(package_id=package_id, bound_profile=bound_profile)
+    if kind == "package":
+        label_display = f"{repo_name}:{ref_text} [package]"
+        display_fields = (
+            cli_style.join_menu_display_fields(
+                cli_style.render_package_label(
+                    repo_name=repo_name,
+                    package_id=package_id,
+                    bound_profile=bound_profile,
+                    package_first=True,
+                    include_repo_context=True,
+                    use_color=colors_enabled(),
+                ),
+                cli_style.render_menu_badge("[package]", use_color=colors_enabled()),
+            ),
+        )
+        return ResolverOption(
+            display_label=label_display,
+            display_fields=display_fields,
+            match_fields=build_package_match_fields(
+                repo_name=repo_name,
+                package_id=package_id,
+                bound_profile=bound_profile,
+            ),
+            field_kinds=build_package_field_kinds(has_bound_profile=bound_profile is not None),
+        )
+    if target_name is None:
+        raise ValueError("target candidates require a target name")
+    label_display = f"{repo_name}:{ref_text}.{target_name} [target]"
+    display_fields = (
+        cli_style.join_menu_display_fields(
+            cli_style.render_package_label(
+                repo_name=repo_name,
+                package_id=package_id,
+                target_name=target_name,
+                package_first=True,
+                include_repo_context=True,
+                use_color=colors_enabled(),
+            ),
+            cli_style.render_menu_badge("[target]", use_color=colors_enabled()),
+        ),
+    )
+    return ResolverOption(
+        display_label=label_display,
+        display_fields=display_fields,
+        match_fields=build_target_match_fields(
+            repo_name=repo_name,
+            package_id=package_id,
+            target_name=target_name,
+            bound_profile=bound_profile,
+        ),
+        field_kinds=build_target_field_kinds(has_bound_profile=bound_profile is not None),
+    )
+
+
+def _make_edit_query_candidate(
+    *,
+    kind: str,
+    repo_name: str,
+    package_id: str,
+    target_name: str | None,
+    bound_profile: str | None,
+    path: Path,
+) -> _EditQueryCandidate:
+    return _EditQueryCandidate(
+        kind=kind,
+        repo_name=repo_name,
+        package_id=package_id,
+        target_name=target_name,
+        bound_profile=bound_profile,
+        path=path,
+        option=_build_edit_query_candidate_option(
+            kind=kind,
+            repo_name=repo_name,
+            package_id=package_id,
+            target_name=target_name,
+            bound_profile=bound_profile,
+        ),
+    )
+
+
+def _edit_query_candidate_sort_key(query_text: str, candidate: _EditQueryCandidate) -> tuple[int, int, int, int, str, str]:
+    return (
+        *rank_resolver_option(query=query_text, option=candidate.option),
+        candidate.kind,
+        candidate.ref_text.lower(),
+    )
+
+
+def _format_edit_query_candidates(candidates: Sequence[_EditQueryCandidate]) -> str:
+    return ", ".join(f"{candidate.kind} {candidate.ref_text}" for candidate in candidates)
+
+
+def resolve_edit_query_text(
+    engine: DotmanEngine,
+    query_text: str,
+    *,
+    json_output: bool,
+) -> Path:
+    intent, explicit_repo, selector, _target_name = _parse_edit_query_text(query_text)
+    if intent == "target":
+        tracked_target = resolve_tracked_target_text(
+            engine,
+            query_text,
+            json_output=json_output,
+        )
+        return tracked_target.repo_path
+
+    query = selector if explicit_repo is None else f"{explicit_repo}:{selector}"
+    _package_query, _package_bound_profile, package_exact_matches, package_partial_matches = engine.find_installed_package_matches(query)
+    _target_query, target_exact_matches, target_partial_matches = engine.find_tracked_target_matches(query)
+
+    exact_candidates: list[_EditQueryCandidate] = []
+    partial_candidates: list[_EditQueryCandidate] = []
+
+    for repo, package_id, bound_profile in package_exact_matches:
+        exact_candidates.append(
+            _make_edit_query_candidate(
+                kind="package",
+                repo_name=repo.config.name,
+                package_id=package_id,
+                target_name=None,
+                bound_profile=bound_profile,
+                path=repo.resolve_package(package_id).package_root,
+            )
+        )
+    for match in target_exact_matches:
+        exact_candidates.append(
+            _make_edit_query_candidate(
+                kind="target",
+                repo_name=match.repo_name,
+                package_id=match.package_id,
+                target_name=match.target_name,
+                bound_profile=match.bound_profile,
+                path=match.repo_path,
+            )
+        )
+    for repo, package_id, bound_profile in package_partial_matches:
+        partial_candidates.append(
+            _make_edit_query_candidate(
+                kind="package",
+                repo_name=repo.config.name,
+                package_id=package_id,
+                target_name=None,
+                bound_profile=bound_profile,
+                path=repo.resolve_package(package_id).package_root,
+            )
+        )
+    for match in target_partial_matches:
+        partial_candidates.append(
+            _make_edit_query_candidate(
+                kind="target",
+                repo_name=match.repo_name,
+                package_id=match.package_id,
+                target_name=match.target_name,
+                bound_profile=match.bound_profile,
+                path=match.repo_path,
+            )
+        )
+
+    exact_candidates = sorted(exact_candidates, key=lambda candidate: _edit_query_candidate_sort_key(query_text, candidate))
+    partial_candidates = sorted(partial_candidates, key=lambda candidate: _edit_query_candidate_sort_key(query_text, candidate))
+
+    if len(exact_candidates) == 1:
+        return exact_candidates[0].path
+
+    interactive = interactive_mode_enabled(json_output=json_output)
+    if len(exact_candidates) > 1:
+        if interactive:
+            selected_index = select_menu_option(
+                header_text=f"Select an edit target for '{query_text}':",
+                option_labels=[candidate.option.display_label for candidate in exact_candidates],
+                option_display_fields=[candidate.option.display_fields or (candidate.option.display_label,) for candidate in exact_candidates],
+            )
+            return exact_candidates[selected_index].path
+        raise ValueError(f"edit query '{query_text}' is ambiguous: " + _format_edit_query_candidates(exact_candidates))
+
+    if not partial_candidates:
+        raise ValueError(f"edit query '{query_text}' did not match any tracked package or target")
+
+    if interactive:
+        # This wording looks odd outside edit context, so keep comment nearby.
+        selected_index = select_menu_option(
+            header_text=f"Select an edit target for '{query_text}':",
+            option_labels=[candidate.option.display_label for candidate in partial_candidates],
+            option_display_fields=[candidate.option.display_fields or (candidate.option.display_label,) for candidate in partial_candidates],
+        )
+        return partial_candidates[selected_index].path
+
+    if len(partial_candidates) == 1:
+        raise ValueError(
+            f"no exact match for '{query_text}'; use exact name '{partial_candidates[0].kind} {partial_candidates[0].ref_text}'"
+        )
+
+    raise ValueError(f"edit query '{query_text}' is ambiguous: " + _format_edit_query_candidates(partial_candidates))
+
+
 def parse_add_package_query(
     engine: DotmanEngine,
     package_query: str,
@@ -1695,7 +1908,6 @@ def prompt_for_add_repo_name(engine: DotmanEngine, *, repo_query: str | None) ->
     selected_index = select_menu_option(
         header_text="Select a repo for the new package:",
         option_labels=repo_names,
-        option_search_fields=[(repo_name,) for repo_name in repo_names],
     )
     return repo_names[selected_index]
 
@@ -1724,19 +1936,9 @@ def resolve_add_package_text(
             )
             for repo, package_id in package_matches
         ]
-        option_search_fields = [("create", "new", "package")] + [
-            build_fzf_search_fields(
-                match_fields=build_package_match_fields(
-                    repo_name=repo.config.name,
-                    package_id=package_id,
-                )
-            )
-            for repo, package_id in package_matches
-        ]
         selected_index = select_menu_option(
             header_text="Select a package for add:",
             option_labels=option_labels,
-            option_search_fields=option_search_fields,
         )
         if selected_index == 0:
             return (
@@ -1771,19 +1973,9 @@ def resolve_add_package_text(
             )
             for repo, package_id in menu_matches
         ]
-        option_search_fields = [("create", package_query)] + [
-            build_fzf_search_fields(
-                match_fields=build_package_match_fields(
-                    repo_name=repo.config.name,
-                    package_id=package_id,
-                )
-            )
-            for repo, package_id in menu_matches
-        ]
         selected_index = select_menu_option(
             header_text=f"Select a package for '{package_query}':",
             option_labels=option_labels,
-            option_search_fields=option_search_fields,
         )
         if selected_index == 0:
             return (
@@ -2674,6 +2866,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_noop_add_result=emit_noop_add_result,
         emit_kept_add_result=emit_kept_add_result,
         open_editor_path=open_editor_path,
+        resolve_edit_query_text=resolve_edit_query_text,
         resolve_tracked_binding_text=resolve_tracked_binding_text,
         resolve_tracked_target_text=resolve_tracked_target_text,
         filter_plans_for_interactive_selection=filter_plans_for_interactive_selection,
@@ -2703,10 +2896,43 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
     )
 
 
+def _command_index(argv: Sequence[str]) -> int | None:
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            return None
+        if token in _EDIT_SUGAR_TOP_LEVEL_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
+        if any(token.startswith(f"{option}=") for option in _EDIT_SUGAR_TOP_LEVEL_OPTIONS_WITH_VALUES):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return index
+    return None
+
+
+def _rewrite_edit_query_argv(argv: Sequence[str]) -> list[str]:
+    normalized_argv = list(argv)
+    command_index = _command_index(normalized_argv)
+    if command_index is None or normalized_argv[command_index] != "edit":
+        return normalized_argv
+    if command_index + 1 >= len(normalized_argv):
+        return normalized_argv
+    next_token = normalized_argv[command_index + 1]
+    if next_token in {"package", "target", "query"} or next_token.startswith("-"):
+        return normalized_argv
+    return [*normalized_argv[: command_index + 1], "query", *normalized_argv[command_index + 1 :]]
+
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     try:
-        args = build_parser().parse_args(list(argv) if argv is not None else None)
+        raw_argv = list(argv) if argv is not None else sys.argv[1:]
+        args = build_parser().parse_args(_rewrite_edit_query_argv(raw_argv))
         return cli_commands.dispatch_command(
             args=args,
             engine_factory=lambda config_path: DotmanEngine.from_config_path(
