@@ -335,3 +335,43 @@ def test_repository_reports_toml_parse_error_with_package_context(tmp_path: Path
         match=rf"invalid TOML in package manifest for 'fixture:git' {re.escape(str(package_manifest_path))}:",
     ):
         DotmanEngine.from_config_path(config_path)
+
+
+def test_repository_rejects_package_ids_with_dots(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    package_manifest_path = repo_root / "packages" / "git" / "package.toml"
+    package_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    package_manifest_path.write_text('id = "git.ui"\n', encoding="utf-8")
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"package manifest {re.escape(str(package_manifest_path))}: invalid package id 'git\.ui'",
+    ):
+        DotmanEngine.from_config_path(config_path)
+
+
+def test_repository_rejects_target_names_with_dots(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    package_manifest_path = repo_root / "packages" / "git" / "package.toml"
+    package_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    package_manifest_path.write_text(
+        "\n".join(
+            [
+                'id = "git"',
+                "",
+                '[targets."git.config"]',
+                'source = "files/gitconfig"',
+                'path = "~/.gitconfig"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"package manifest {re.escape(str(package_manifest_path))}: invalid target name 'git\.config'",
+    ):
+        DotmanEngine.from_config_path(config_path)

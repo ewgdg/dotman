@@ -76,6 +76,7 @@ class PendingSelectionItem:
     package_id: str
     action: str
     target_name: str | None = None
+    bound_profile: str | None = None
     source_path: str | None = None
     destination_path: str | None = None
     kind: str = "target"
@@ -161,11 +162,12 @@ def render_package_label(
     )
 
 
-def render_package_target_label(*, repo_name: str, package_id: str, target_name: str) -> str:
+def render_package_target_label(*, repo_name: str, package_id: str, target_name: str, bound_profile: str | None = None) -> str:
     return cli_style.render_package_target_label(
         repo_name=repo_name,
         package_id=package_id,
         target_name=target_name,
+        bound_profile=bound_profile,
         use_color=colors_enabled(),
     )
 
@@ -2164,18 +2166,18 @@ def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full
         package_label = package_label_text(
             repo_name=repo_name,
             package_id=item.package_id,
+            bound_profile=item.bound_profile,
         )
-        hook_summary = ", ".join(item.hook_names)
+        hook_summary = cli_style.hook_summary_text(item.hook_names)
         if not colors_enabled():
             item_text = f"[hooks] {package_label}"
-            if hook_summary:
-                item_text += f": {hook_summary}"
+            item_text += cli_style.render_annotation_parentheses(hook_summary, use_color=False)
             print(f"  {index:>2}) {item_text}")
             return
 
         badge_text = style_text("[hooks]", *MENU_ACTION_STYLE_BY_NAME.get("update", ("1",)))
-        package_text = render_package_label(repo_name=repo_name, package_id=item.package_id)
-        summary_text = f": {style_text(hook_summary, *MENU_HINT_STYLE)}" if hook_summary else ""
+        package_text = render_package_label(repo_name=repo_name, package_id=item.package_id, bound_profile=item.bound_profile)
+        summary_text = cli_style.render_annotation_parentheses(hook_summary, use_color=True)
         print(
             f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
             f"{badge_text} {package_text}{summary_text}"
@@ -2185,6 +2187,7 @@ def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full
     package_target = package_label_text(
         repo_name=repo_name,
         package_id=item.package_id,
+        bound_profile=item.bound_profile,
         target_name=item.target_name,
     )
     source_path = display_cli_path(item.source_path, full_paths=full_paths)
@@ -2203,6 +2206,7 @@ def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full
         repo_name=repo_name,
         package_id=item.package_id,
         target_name=item.target_name,
+        bound_profile=item.bound_profile,
     )
     arrow_text = style_text("->", *MENU_HINT_STYLE)
     print(
@@ -2328,9 +2332,11 @@ def filter_plans_for_interactive_selection(
 def print_review_item(index: int, item: ReviewItem, *, full_paths: bool | None = None) -> None:
     full_paths = _effective_full_paths(full_paths)
     repo_name = repo_name_from_binding_label(item.binding_label)
+    bound_profile = getattr(item, "bound_profile", None)
     package_target = package_label_text(
         repo_name=repo_name,
         package_id=item.package_id,
+        bound_profile=bound_profile,
         target_name=item.target_name,
     )
     diff_badge = "[diff unavailable]" if item.diff_unavailable_reason is not None else None
@@ -2350,6 +2356,7 @@ def print_review_item(index: int, item: ReviewItem, *, full_paths: bool | None =
         repo_name=repo_name,
         package_id=item.package_id,
         target_name=item.target_name,
+        bound_profile=bound_profile,
     )
     badge_text = f" {style_text(diff_badge, *MENU_HINT_STYLE)}" if diff_badge is not None else ""
     arrow_text = style_text("->", *MENU_HINT_STYLE)
@@ -2496,7 +2503,11 @@ def _push_symlink_hazard_description(hazard: cli_emit.PushSymlinkHazard, *, full
     full_paths = _effective_full_paths(full_paths)
     live_path = cli_emit.display_cli_path(hazard.live_path, full_paths=full_paths)
     symlink_target = hazard.symlink_target or "<unknown>"
-    return f"{hazard.binding_label} {hazard.package_id}:{hazard.target_name} ({live_path} -> {symlink_target})"
+    return (
+        f"{hazard.binding_label} "
+        f"{cli_style.package_label_text(repo_name=hazard.binding_label.split(':', 1)[0], package_id=hazard.package_id, target_name=hazard.target_name)} "
+        f"({live_path} -> {symlink_target})"
+    )
 
 
 def prepare_push_plans_for_execution(

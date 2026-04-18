@@ -154,7 +154,7 @@ def test_record_binding_rejects_conflicting_explicit_targets(
 
     with pytest.raises(
         ValueError,
-        match=r"conflicting explicit tracked targets for .+\.gitconfig: example:git@basic \(git:gitconfig\), example:work/git@work \(work/git:gitconfig\)",
+        match=r"conflicting explicit tracked targets for .+\.gitconfig: example:git@basic -> example:git\.gitconfig, example:work/git@work -> example:work/git\.gitconfig",
     ):
         engine.record_binding(engine.resolve_binding("example:work/git@work")[1])
 
@@ -201,7 +201,7 @@ def test_remove_binding_rejects_removal_that_exposes_implicit_conflict(
         match=(
             r"cannot untrack 'fixture:shared@direct': removing this binding would expose "
             r"conflicting implicit tracked targets for .+shared\.conf: "
-            r"fixture:stack-a@work \(shared:shared\), fixture:stack-b@personal \(shared:shared\)"
+            r"fixture:stack-a@work -> fixture:shared\.shared, fixture:stack-b@personal -> fixture:shared\.shared"
         ),
     ):
         engine.remove_binding("fixture:shared@direct")

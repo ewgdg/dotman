@@ -151,7 +151,7 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
     assert "Select a tracked binding for 'sunshine':" in output
     assert "alpha:sunshine@host/linux" in output
     assert "beta:sunshine@host/linux" in output
-    assert "sunshine:selected_config -> create" in output
+    assert "sunshine.selected_config -> create" in output
 
 
 def test_push_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_and_owned_package(
@@ -227,7 +227,7 @@ def test_push_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_
     assert any("example:git@basic" in label for label in selected_menu["option_labels"])
     assert any("example:work/git@work" in label for label in selected_menu["option_labels"])
     assert ":: example:git@basic" in output
-    assert "git:gitconfig -> create" in output
+    assert "git.gitconfig -> create" in output
 
 
 def test_push_cli_accepts_partial_owned_package_match(
@@ -290,7 +290,7 @@ def test_push_cli_accepts_partial_owned_package_match(
     assert prompts
     assert "nvim@basic" in prompts[0]
     assert ":: example:nvim@basic" in output
-    assert "nvim:init_lua -> create" in output
+    assert "nvim.init_lua -> create" in output
 
 
 def test_push_cli_accepts_short_dry_run_flag(
@@ -431,7 +431,7 @@ def test_push_cli_human_dry_run_output_includes_context_and_hooks(
     assert "[pre_push]" in output
     assert "[post_push]" in output
     assert "targets:" in output
-    assert "git:gitconfig -> create" in output
+    assert "git.gitconfig -> create" in output
     assert output.index("targets:") < output.index("hooks:")
 
 
@@ -570,9 +570,9 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
     output = capsys.readouterr().out
     assert "Select items to exclude from push:" in output
     assert ":: example:git@basic" not in output
-    assert "git:gitconfig -> add" not in output
+    assert "git.gitconfig -> add" not in output
     assert ":: example:nvim@basic" in output
-    assert "nvim:init_lua -> create" in output
+    assert "nvim.init_lua -> create" in output
 
 def test_push_cli_reviews_diffs_before_selection(
     tmp_path: Path,
@@ -768,8 +768,8 @@ def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
     assert "Select items to exclude from push:" in output
     assert ":: example:git@basic" not in output
     assert ":: example:nvim@basic" not in output
-    assert "git:gitconfig -> create" not in output
-    assert "nvim:init_lua -> noop" not in output
+    assert "git.gitconfig -> create" not in output
+    assert "nvim.init_lua -> noop" not in output
     assert "no pending target actions" in output
 
 def test_push_cli_skips_diff_review_for_json_output(

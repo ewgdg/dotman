@@ -15,8 +15,11 @@ This document captures the current command and selector direction for `dotman`.
 - The canonical repo-qualified selector form is `repo:selector`.
 - The canonical repo-qualified binding form is `repo:selector@profile`.
 - The canonical tracked package-instance form for a `multi_instance` package is `repo:package<profile>`.
+- The canonical human-facing target form is `repo:package.target`.
+- The canonical human-facing package-instance target form is `repo:package<profile>.target`.
 - `/` belongs inside selector IDs for namespacing, for example `work/git` or `os/arch`.
 - `<...>` is reserved for resolved tracked package instances, not root bindings or manifest IDs.
+- `.` is reserved as the package/target separator in human-facing target labels.
 - When a menu, confirmation, diff banner, list output, or info view includes repo context, it should print the canonical colon-qualified form.
 - Slash-qualified repo input such as `repo/selector@profile` may remain accepted as a lookup alias for convenience, but dotman should normalize displays back to `repo:selector@profile`.
 - `\` is not a valid selector separator or menu-display form.

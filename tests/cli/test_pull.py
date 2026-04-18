@@ -288,7 +288,7 @@ def test_pull_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_
     assert any("example:git@basic" in label for label in selected_menu["option_labels"])
     assert any("example:work/git@work" in label for label in selected_menu["option_labels"])
     assert ":: example:git@basic" in output
-    assert "git:gitconfig -> delete" in output
+    assert "git.gitconfig -> delete" in output
 
 
 def test_pull_cli_accepts_partial_owned_package_match(
@@ -351,7 +351,7 @@ def test_pull_cli_accepts_partial_owned_package_match(
     assert prompts
     assert "nvim@basic" in prompts[0]
     assert ":: example:nvim@basic" in output
-    assert "nvim:init_lua -> delete" in output
+    assert "nvim.init_lua -> delete" in output
 
 
 def test_pull_cli_accepts_long_dry_run_flag(
@@ -500,7 +500,7 @@ def test_pull_cli_human_dry_run_output_includes_header_and_context(
     assert "hook commands: 1" in output
     assert ":: example:nvim@basic" in output
     assert "targets:" in output
-    assert "nvim:init_lua -> update" in output
+    assert "nvim.init_lua -> update" in output
 
 def test_pull_cli_uses_tracked_binding_profile_without_prompting(
     tmp_path: Path,

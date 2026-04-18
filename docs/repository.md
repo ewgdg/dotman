@@ -18,6 +18,8 @@ This document captures the current repository structure and configuration schema
 - `binding_mode` defaults to `singleton`.
 - `singleton` means the package has one tracked identity regardless of bound profile.
 - `multi_instance` means the package definition may produce multiple independent package instances, keyed by bound profile.
+- Human-facing target labels use `repo:package.target` and `repo:package<profile>.target`.
+- `.` is reserved for the package/target separator and must not appear inside package IDs or target names.
 - Packages may declare `depends` for hard requirements.
 - `depends` entries may reference either package IDs or group selectors.
 - Group dependencies expand to their member packages during dependency resolution.

@@ -199,7 +199,15 @@ def _print_payload_target_item(item: Any, *, full_paths: bool, use_color: bool) 
     source_path = display_cli_path(item.source_path, full_paths=full_paths)
     destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
     arrow_text = cli_style.style_text("->", *cli_style.MENU_HINT_STYLE) if use_color else "->"
-    print(f"      {item.package_id}:{item.target_name} -> {_render_payload_action(item.action, use_color=use_color)}")
+    repo_name = item.binding_label.split(":", 1)[0]
+    target_label = cli_style.render_package_target_label(
+        repo_name=repo_name,
+        package_id=item.package_id,
+        target_name=item.target_name,
+        bound_profile=getattr(item, "bound_profile", None),
+        use_color=use_color,
+    )
+    print(f"      {target_label} -> {_render_payload_action(item.action, use_color=use_color)}")
     print(f"        {source_path} {arrow_text} {destination_path}")
 
 

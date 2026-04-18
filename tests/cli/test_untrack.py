@@ -257,8 +257,8 @@ def test_untrack_cli_rejects_removal_that_would_expose_implicit_conflict(
     assert exit_code == 2
     error_output = capsys.readouterr().err
     assert "cannot untrack 'fixture:shared@direct': removing this binding would expose conflicting implicit tracked targets" in error_output
-    assert "fixture:stack-a@work (shared:shared)" in error_output
-    assert "fixture:stack-b@personal (shared:shared)" in error_output
+    assert "fixture:stack-a@work -> fixture:shared.shared" in error_output
+    assert "fixture:stack-b@personal -> fixture:shared.shared" in error_output
     assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == original_state
 
 def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(

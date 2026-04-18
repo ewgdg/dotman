@@ -98,7 +98,7 @@ def resolve_tracked_target_winners(
                 live_path=live_path,
                 precedence=first.precedence_name,
                 contenders=[
-                    f"{candidate.binding_label} ({candidate.target_label})"
+                    f"{candidate.binding_label} -> {candidate.target_label}"
                     for candidate in sorted(contenders, key=lambda item: (item.binding_label, item.target_label))
                 ],
                 candidates=sorted(

@@ -10,6 +10,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from dotman.manifest import validate_package_id, validate_target_name
 from dotman.toml_utils import load_toml_text
 
 
@@ -138,18 +139,6 @@ def package_manifest_path(*, repo_root: Path, package_id: str) -> Path:
     return repo_root / "packages" / Path(*package_id.split("/")) / "package.toml"
 
 
-def validate_package_id(package_id: str) -> None:
-    if not package_id.strip():
-        raise ValueError("package id must not be empty")
-    if package_id.startswith("/") or package_id.endswith("/"):
-        raise ValueError(f"invalid package id '{package_id}'")
-    if any(character in package_id for character in ("\\", ":", "@", "<", ">")):
-        raise ValueError(f"invalid package id '{package_id}'")
-    parts = package_id.split("/")
-    if any(not part or part in {".", ".."} or any(character.isspace() for character in part) for part in parts):
-        raise ValueError(f"invalid package id '{package_id}'")
-
-
 def prepare_add_to_package(*, repo_root: Path, repo_name: str, package_id: str, live_path_text: str) -> AddOperationResult:
     live_spec = resolve_live_path_spec(live_path_text)
     manifest_path = package_manifest_path(repo_root=repo_root, package_id=package_id)
@@ -224,10 +213,15 @@ def validate_manifest_text(
     manifest_id = payload.get("id")
     if not isinstance(manifest_id, str):
         raise ValueError("edited package manifest must define string id")
+    validate_package_id(manifest_id)
     if manifest_id != package_id:
         raise ValueError(
             f"edited package manifest id must stay '{package_id}', got '{manifest_id}'"
         )
+    targets_payload = payload.get("targets")
+    if isinstance(targets_payload, dict):
+        for target_name in targets_payload:
+            validate_target_name(target_name)
 
 
 def read_existing_target_metadata(
@@ -248,6 +242,8 @@ def read_existing_target_metadata(
     if not isinstance(targets_payload, dict):
         return set(), set()
     target_names = set(targets_payload)
+    for target_name in target_names:
+        validate_target_name(target_name)
     target_paths = {
         target_payload["path"]
         for target_payload in targets_payload.values()

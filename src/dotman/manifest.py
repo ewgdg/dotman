@@ -13,6 +13,23 @@ VALID_RECONCILE_IO_VALUES = ("pipe", "tty")
 VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both")
 
 
+def validate_package_id(package_id: str) -> None:
+    if not package_id.strip():
+        raise ValueError("package id must not be empty")
+    if package_id.startswith("/") or package_id.endswith("/"):
+        raise ValueError(f"invalid package id '{package_id}'")
+    if any(character in package_id for character in ("\\", ":", "@", "<", ">", ".")):
+        raise ValueError(f"invalid package id '{package_id}'")
+    parts = package_id.split("/")
+    if any(not part or part in {".", ".."} or any(character.isspace() for character in part) for part in parts):
+        raise ValueError(f"invalid package id '{package_id}'")
+
+
+def validate_target_name(target_name: str) -> None:
+    if not target_name.strip() or "." in target_name or any(character.isspace() for character in target_name):
+        raise ValueError(f"invalid target name '{target_name}'")
+
+
 def _copy_map(value: dict[str, Any] | None) -> dict[str, Any]:
     if value is None:
         return {}
@@ -184,6 +201,10 @@ def build_target_spec(
     target_payload: dict[str, Any],
     manifest_path: Path,
 ) -> TargetSpec:
+    try:
+        validate_target_name(target_name)
+    except ValueError as exc:
+        raise ValueError(f"package manifest {manifest_path}: {exc}") from None
     preset_payload = resolve_target_preset(
         target_payload=target_payload,
         manifest_path=manifest_path,

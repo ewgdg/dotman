@@ -11,6 +11,14 @@ def package_ref_text(*, package_id: str, bound_profile: str | None = None) -> st
     return f"{package_id}<{bound_profile}>"
 
 
+def target_ref_text(*, package_id: str, target_name: str, bound_profile: str | None = None) -> str:
+    return f"{package_ref_text(package_id=package_id, bound_profile=bound_profile)}.{target_name}"
+
+
+def repo_qualified_target_text(*, repo_name: str, package_id: str, target_name: str, bound_profile: str | None = None) -> str:
+    return f"{repo_name}:{target_ref_text(package_id=package_id, target_name=target_name, bound_profile=bound_profile)}"
+
+
 @dataclass(frozen=True)
 class RepoConfig:
     name: str

@@ -16,6 +16,7 @@ from dotman.manifest import (
     patch_remove_and_append,
     read_schema_alias,
     strip_package_extensions,
+    validate_package_id,
 )
 from dotman.models import GroupSpec, HookSpec, PackageSpec, ProfileSpec, RepoConfig, RepoIgnoreDefaults
 
@@ -70,6 +71,10 @@ class Repository:
             package_id = payload.get("id")
             if not isinstance(package_id, str):
                 raise ValueError(f"package manifest {manifest_path} must define string id")
+            try:
+                validate_package_id(package_id)
+            except ValueError as exc:
+                raise ValueError(f"package manifest {manifest_path}: {exc}") from None
             binding_mode = str(payload.get("binding_mode", "singleton"))
             if binding_mode not in {"singleton", "multi_instance"}:
                 raise ValueError(

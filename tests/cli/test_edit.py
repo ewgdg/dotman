@@ -71,7 +71,7 @@ def _write_edit_repo(repo_root: Path) -> None:
             [
                 'id = "nvim"',
                 "",
-                '[targets."init.lua"]',
+                "[targets.init_lua]",
                 'source = "files/config/nvim/init.lua"',
                 'path = "~/.config/nvim/init.lua"',
                 "",
@@ -211,7 +211,7 @@ def test_edit_cli_sugar_keeps_repo_qualified_target_query_target_intent(
             [
                 'id = "nvim"',
                 "",
-                '[targets."init.lua"]',
+                "[targets.init_lua]",
                 'source = "files/config/nvim/init.lua"',
                 'path = "~/.config/nvim-beta/init.lua"',
                 "",
@@ -233,7 +233,7 @@ def test_edit_cli_sugar_keeps_repo_qualified_target_query_target_intent(
 
     monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
 
-    exit_code = main(["--config", str(config_path), "edit", "beta:nvim.init.lua"])
+    exit_code = main(["--config", str(config_path), "edit", "beta:nvim.init_lua"])
 
     assert exit_code == 0
     assert recorded["command"] == [
@@ -259,7 +259,7 @@ def test_edit_target_cli_prints_repo_file_path_when_no_editor_is_configured(
         bindings=[("git", "basic"), ("ssh", "basic"), ("nvim", "basic"), ("altgit", "basic")],
     )
 
-    exit_code = main(["--config", str(config_path), "edit", "target", "nvim.init.lua"])
+    exit_code = main(["--config", str(config_path), "edit", "target", "nvim.init_lua"])
 
     assert exit_code == 0
     assert (
@@ -314,7 +314,7 @@ def test_edit_target_cli_opens_tracked_file_target_repo_path_with_editor(
 
     monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
 
-    exit_code = main(["--config", str(config_path), "edit", "target", "nvim.init.lua"])
+    exit_code = main(["--config", str(config_path), "edit", "target", "nvim.init_lua"])
 
     assert exit_code == 0
     assert recorded["check"] is False
@@ -367,7 +367,7 @@ def test_edit_target_cli_resolves_repo_qualified_target_query(
             [
                 'id = "nvim"',
                 "",
-                '[targets."init.lua"]',
+                "[targets.init_lua]",
                 'source = "files/config/nvim/init.lua"',
                 'path = "~/.config/nvim-beta/init.lua"',
                 "",
@@ -389,7 +389,7 @@ def test_edit_target_cli_resolves_repo_qualified_target_query(
 
     monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
 
-    exit_code = main(["--config", str(config_path), "edit", "target", "beta:nvim.init.lua"])
+    exit_code = main(["--config", str(config_path), "edit", "target", "beta:nvim.init_lua"])
 
     assert exit_code == 0
     assert recorded["command"] == [
@@ -432,8 +432,8 @@ def test_edit_target_cli_interactively_selects_ambiguous_target(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select a tracked target for 'gitconfig':" in output
-    assert "fixture:altgit (gitconfig)" in output
-    assert "fixture:git (gitconfig)" in output
+    assert "fixture:altgit.gitconfig" in output
+    assert "fixture:git.gitconfig" in output
     assert recorded["command"] == ["nvim", str(repo_root / "packages" / "git" / "files" / "gitconfig")]
 
 

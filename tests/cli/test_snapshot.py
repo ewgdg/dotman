@@ -511,7 +511,7 @@ def test_info_snapshot_cli_uses_full_paths_when_requested(tmp_path: Path, monkey
     assert ".../very-long-app/config.txt" not in output
     assert "reason: before update (push)" in output
     assert "provenance:" in output
-    assert "fixture:very-long-app@default (config)" in output
+    assert "fixture:very-long-app.config" in output
     assert "target:" not in output
     assert "binding:" not in output
     assert "[update]" not in output

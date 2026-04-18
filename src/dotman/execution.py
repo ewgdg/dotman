@@ -25,7 +25,7 @@ from dotman.file_access import (
     sudo_prefix_command,
     write_bytes_atomic as sudo_write_bytes_atomic,
 )
-from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan, repo_qualified_target_text
 from dotman.repo_access import restore_repo_path_access_for_invoking_user
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_string
@@ -240,14 +240,14 @@ def _ensure_no_unapproved_live_symlink_targets(plans: Sequence[BindingPlan], *, 
                     continue
                 symlink_target = target.live_path_symlink_target or "<unknown>"
                 hazards.append(
-                    f"{binding_label} {target.package_id}:{target.target_name} ({target.live_path} -> {symlink_target})"
+                    f"{binding_label} {repo_qualified_target_text(repo_name=plan.binding.repo, package_id=target.package_id, target_name=target.target_name)} ({target.live_path} -> {symlink_target})"
                 )
                 continue
             if target.file_symlink_mode == "follow" or target.allow_live_path_symlink_replace:
                 continue
             symlink_target = target.live_path_symlink_target or "<unknown>"
             hazards.append(
-                f"{binding_label} {target.package_id}:{target.target_name} ({target.live_path} -> {symlink_target})"
+                f"{binding_label} {repo_qualified_target_text(repo_name=plan.binding.repo, package_id=target.package_id, target_name=target.target_name)} ({target.live_path} -> {symlink_target})"
             )
 
     if hazards:

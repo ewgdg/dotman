@@ -53,7 +53,7 @@ def test_prompt_for_excluded_items_uses_archived_colored_style(
     assert "\033[2;34mexample\033[0m" in output
     assert "\033[2m:\033[0m" in output
     assert "\033[1mgit\033[0m" in output
-    assert "\033[2m(gitconfig)\033[0m" in output
+    assert "\033[2m.\033[0m\033[2;33mgitconfig\033[0m" in output
     assert "\033[2m->\033[0m" in output
     assert "(example:git@basic)" not in output
     assert "example:git@basic \033[1;32m[create]\033[0m" not in output
@@ -88,6 +88,46 @@ def test_render_binding_label_can_prioritize_selector_name(monkeypatch) -> None:
         profile="basic",
         selector_first=True,
     ) == "example:git@basic"
+
+
+def test_render_package_target_label_uses_dot_separator_and_target_style(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+
+    assert cli.render_package_target_label(repo_name="example", package_id="git", target_name="gitconfig") == (
+        "\033[2;34mexample\033[0m"
+        "\033[2m:\033[0m"
+        "\033[1mgit\033[0m"
+        "\033[2m.\033[0m"
+        "\033[2;33mgitconfig\033[0m"
+    )
+
+
+def test_render_package_target_label_renders_package_instance_targets(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.render_package_target_label(
+        repo_name="example",
+        package_id="profiled",
+        bound_profile="work",
+        target_name="managed",
+    ) == "example:profiled<work>.managed"
+
+
+def test_print_pending_selection_item_renders_hook_summary_in_parentheses(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    cli.print_pending_selection_item(
+        1,
+        PendingSelectionItem(
+            binding_label="example:git@basic",
+            package_id="git",
+            action="hooks",
+            kind="package_hook_noop",
+            hook_names=("guard_push", "pre_push"),
+        ),
+    )
+
+    assert capsys.readouterr().out == "   1) [hooks] example:git (guard_push, pre_push)\n"
 
 def test_filter_plans_for_interactive_selection_excludes_directory_child_pull_item(
     monkeypatch,
@@ -564,9 +604,9 @@ def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(
 
     output = capsys.readouterr().out
     assert inspected == ["gitconfig", "zshrc"]
-    assert "----- Diff 1/2: example:git (gitconfig) [update] -----" in output
+    assert "----- Diff 1/2: example:git.gitconfig [update] -----" in output
     assert "----- End Diff 1/2 -----" in output
-    assert "----- Diff 2/2: example:zsh (zshrc) [update] -----" in output
+    assert "----- Diff 2/2: example:zsh.zshrc [update] -----" in output
     assert "----- End Diff 2/2 -----" in output
 
 def test_run_diff_review_menu_prints_footer_after_single_inspect(
@@ -595,7 +635,7 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
     assert cli.run_diff_review_menu([review_item], operation="push") is True
 
     output = capsys.readouterr().out
-    assert "----- Diff 1/1: example:git (gitconfig) [update] -----" in output
+    assert "----- Diff 1/1: example:git.gitconfig [update] -----" in output
     assert "----- End Diff 1/1 -----" in output
 
 
@@ -623,7 +663,7 @@ def test_print_review_diff_header_dims_metadata_prefix_when_colored(
 
     output = capsys.readouterr().out
     assert "\033[2m-----\033[0m \033[2mDiff 1/1:\033[0m " in output
-    assert "\033[2;34mexample\033[0m\033[2m:\033[0m\033[1mgit\033[0m \033[2m(gitconfig)\033[0m" in output
+    assert "\033[2;34mexample\033[0m\033[2m:\033[0m\033[1mgit\033[0m\033[2m.\033[0m\033[2;33mgitconfig\033[0m" in output
     assert "\033[1;36m[update]\033[0m" in output
     assert output.endswith(" \033[2m-----\033[0m\n")
 
@@ -671,8 +711,8 @@ def test_run_diff_review_menu_default_command_views_next_diff(
 
     assert inspected == ["gitconfig", "zshrc"]
     output = capsys.readouterr().out
-    assert "----- Diff 1/2: example:git (gitconfig) [update] -----" in output
-    assert "----- Diff 2/2: example:zsh (zshrc) [update] -----" in output
+    assert "----- Diff 1/2: example:git.gitconfig [update] -----" in output
+    assert "----- Diff 2/2: example:zsh.zshrc [update] -----" in output
 
 
 def test_run_diff_review_menu_next_command_uses_last_viewed_file(
@@ -709,7 +749,7 @@ def test_run_diff_review_menu_next_command_uses_last_viewed_file(
         cli.ReviewItem(
             binding_label="example:nvim@basic",
             package_id="nvim",
-            target_name="init.lua",
+            target_name="init_lua",
             action="update",
             operation="push",
             repo_path=Path("/repo/init.lua"),
@@ -729,10 +769,10 @@ def test_run_diff_review_menu_next_command_uses_last_viewed_file(
 
     assert cli.run_diff_review_menu(review_items, operation="push") is True
 
-    assert inspected == ["zshrc", "init.lua"]
+    assert inspected == ["zshrc", "init_lua"]
     output = capsys.readouterr().out
-    assert "----- Diff 2/3: example:zsh (zshrc) [update] -----" in output
-    assert "----- Diff 3/3: example:nvim (init.lua) [update] -----" in output
+    assert "----- Diff 2/3: example:zsh.zshrc [update] -----" in output
+    assert "----- Diff 3/3: example:nvim.init_lua [update] -----" in output
 
 
 def test_run_diff_review_menu_next_command_at_end_prompts_for_continue(monkeypatch) -> None:
@@ -936,7 +976,7 @@ def test_print_review_item_compacts_long_paths(monkeypatch, capsys) -> None:
     cli.print_review_item(1, review_item)
 
     output = capsys.readouterr().out
-    assert "  1) [update] example:git (gitconfig):" in output
+    assert "  1) [update] example:git.gitconfig:" in output
     assert "[diff]" not in output
     assert "~/.../git/config -> ~/.../git/config" in output
     assert str(Path.home()) not in output

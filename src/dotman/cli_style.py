@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime, timezone
+from typing import Sequence
 
 from dotman.engine import parse_binding_text
-from dotman.models import Binding, package_ref_text
+from dotman.models import Binding, package_ref_text, repo_qualified_target_text, target_ref_text
 
 
 ANSI_RESET = "\033[0m"
@@ -15,6 +16,9 @@ MENU_INDEX_STYLE = ("1", "36")
 MENU_PROMPT_STYLE = ("1",)
 MENU_HINT_STYLE = ("2",)
 MENU_REPO_STYLE = ("2", "34")
+# Target segment needs stronger contrast than repo + separator, and should not
+# reuse cyan already used for indices/update actions.
+MENU_TARGET_STYLE = ("2", "33")
 TRACKED_STATE_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "explicit": ("2",),
     "implicit": ("2",),
@@ -77,7 +81,14 @@ def package_label_text(
         package_text = repo_qualified_selector_text(repo_name=repo_name, selector=package_ref)
     if target_name is None:
         return package_text
-    return f"{package_text} ({target_name})"
+    if package_first and not include_repo_context:
+        return target_ref_text(package_id=package_id, target_name=target_name, bound_profile=bound_profile)
+    return repo_qualified_target_text(
+        repo_name=repo_name,
+        package_id=package_id,
+        target_name=target_name,
+        bound_profile=bound_profile,
+    )
 
 
 def render_package_label(
@@ -117,13 +128,25 @@ def render_package_label(
         )
     if target_name is None:
         return package_label
-    return f"{package_label} {style_text(f'({target_name})', *MENU_HINT_STYLE)}"
+    return (
+        f"{package_label}"
+        f"{style_text('.', *MENU_HINT_STYLE)}"
+        f"{style_text(target_name, *MENU_TARGET_STYLE)}"
+    )
 
 
-def render_package_target_label(*, repo_name: str, package_id: str, target_name: str, use_color: bool) -> str:
+def render_package_target_label(
+    *,
+    repo_name: str,
+    package_id: str,
+    target_name: str,
+    bound_profile: str | None = None,
+    use_color: bool,
+) -> str:
     return render_package_label(
         repo_name=repo_name,
         package_id=package_id,
+        bound_profile=bound_profile,
         target_name=target_name,
         use_color=use_color,
     )
@@ -242,25 +265,29 @@ def render_snapshot_provenance(
 ) -> str | None:
     if repo_name is None or package_id is None or target_name is None:
         return binding_label
-    profile = None
     if binding_label is not None:
-        binding_repo, _binding_selector, binding_profile = parse_binding_text(binding_label)
+        binding_repo, _binding_selector, _binding_profile = parse_binding_text(binding_label)
         if binding_repo is not None:
             repo_name = binding_repo
-        profile = binding_profile
-    if profile is not None:
-        return render_package_profile_label(
-            repo_name=repo_name,
-            package_id=package_id,
-            profile=profile,
-            use_color=use_color,
-        ) + (f" {style_text(f'({target_name})', *MENU_HINT_STYLE)}" if use_color else f" ({target_name})")
     return render_package_target_label(
         repo_name=repo_name,
         package_id=package_id,
         target_name=target_name,
         use_color=use_color,
     )
+
+
+def hook_summary_text(hook_names: Sequence[str]) -> str:
+    return ", ".join(hook_names)
+
+
+def render_annotation_parentheses(annotation_text: str, *, use_color: bool) -> str:
+    if not annotation_text:
+        return ""
+    annotation = f" ({annotation_text})"
+    if not use_color:
+        return annotation
+    return style_text(annotation, *MENU_HINT_STYLE)
 
 
 def render_payload_section_label(label: str, *, use_color: bool) -> str:

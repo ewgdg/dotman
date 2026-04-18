@@ -365,7 +365,7 @@ def test_push_cli_dry_run_human_warning_uses_package_target_label(capsys) -> Non
     )
 
     output = capsys.readouterr().out
-    assert "[replaceable] main:sunshine (f_config_sunshine_sunshine_conf)" in output
+    assert "[replaceable] main:sunshine.f_config_sunshine_sunshine_conf" in output
     assert ":f_config_sunshine_sunshine_conf" not in output
 
 

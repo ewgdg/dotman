@@ -22,6 +22,7 @@ from dotman.models import (
     filter_hook_plans_for_targets,
     HookPlan,
     PackageSpec,
+    repo_qualified_target_text,
 )
 from dotman.projection import (
     build_file_review_bytes,
@@ -146,7 +147,11 @@ def collect_tracked_candidates(
                         binding_label=f"{binding.repo}:{binding.selector}@{binding.profile}",
                         package_id=target.package_id,
                         target_name=target.target_name,
-                        target_label=f"{target.package_id}:{target.target_name}",
+                        target_label=repo_qualified_target_text(
+                            repo_name=binding.repo,
+                            package_id=target.package_id,
+                            target_name=target.target_name,
+                        ),
                         signature=engine._tracked_target_signature(target),
                     )
                 )
