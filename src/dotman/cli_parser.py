@@ -20,6 +20,14 @@ def add_package_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_target_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "target",
+        metavar="<target>",
+        help="Tracked target argument in the form [<repo>:]<package>.<target> or <target>",
+    )
+
+
 def add_live_path_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "live_path",
@@ -162,8 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     edit_parser = subparsers.add_parser(
         "edit",
-        help="Open a tracked package directory",
-        description="Open a tracked package directory",
+        help="Open a tracked package or target path",
+        description="Open a tracked package or target path",
     )
     edit_subparsers = edit_parser.add_subparsers(
         dest="edit_command",
@@ -177,6 +185,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Open a tracked package directory in an editor",
     )
     add_package_argument(edit_package_parser)
+    edit_target_parser = edit_subparsers.add_parser(
+        "target",
+        help="Open a tracked target repo path in an editor",
+        description="Open a tracked target repo path in an editor",
+    )
+    add_target_argument(edit_target_parser)
 
     push_parser = subparsers.add_parser(
         "push",

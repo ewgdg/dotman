@@ -42,8 +42,9 @@ class CliCommandHandlers:
     emit_add_result: Callable[..., int]
     emit_noop_add_result: Callable[..., int]
     emit_kept_add_result: Callable[..., int]
-    open_package_directory: Callable[..., int]
+    open_editor_path: Callable[..., int]
     resolve_tracked_binding_text: Callable[..., Any]
+    resolve_tracked_target_text: Callable[..., Any]
     filter_plans_for_interactive_selection: Callable[..., Any]
     review_plans_for_interactive_diffs: Callable[..., bool]
     emit_interrupt_notice: Callable[[], None]
@@ -85,7 +86,7 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
             return _handle_track(args=args, engine=engine, handlers=handlers)
         if args.command == "add":
             return _handle_add(args=args, engine=engine, handlers=handlers)
-        if args.command == "edit" and args.edit_command == "package":
+        if args.command == "edit" and args.edit_command in {"package", "target"}:
             return _handle_edit(args=args, engine=engine, handlers=handlers)
         if args.command == "push":
             return _handle_push(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
@@ -272,13 +273,23 @@ def _handle_add(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
 
 
 def _handle_edit(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
-    repo, package_id, _bound_profile = handlers.resolve_tracked_package_text(
+    if args.edit_command == "package":
+        repo, package_id, _bound_profile = handlers.resolve_tracked_package_text(
+            engine,
+            args.package,
+            json_output=args.json_output,
+        )
+        return handlers.open_editor_path(
+            path=repo.resolve_package(package_id).package_root,
+            missing_editor_label="Source path",
+        )
+
+    tracked_target = handlers.resolve_tracked_target_text(
         engine,
-        args.package,
+        args.target,
         json_output=args.json_output,
     )
-    package_root = repo.resolve_package(package_id).package_root
-    return handlers.open_package_directory(package_root=package_root)
+    return handlers.open_editor_path(path=tracked_target.repo_path, missing_editor_label="Source path")
 
 
 

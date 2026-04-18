@@ -117,6 +117,47 @@ def build_package_field_kinds(*, has_bound_profile: bool = False) -> tuple[str, 
     )
 
 
+def build_target_match_fields(
+    *,
+    repo_name: str,
+    package_id: str,
+    target_name: str,
+    bound_profile: str | None = None,
+) -> tuple[str, ...]:
+    package_ref = package_id if bound_profile is None else f"{package_id}<{bound_profile}>"
+    if bound_profile is None:
+        return normalize_match_fields(
+            target_name,
+            f"{package_ref}.{target_name}",
+            f"{repo_name}:{package_ref}.{target_name}",
+            f"{repo_name}/{package_ref}.{target_name}",
+        )
+    return normalize_match_fields(
+        target_name,
+        f"{package_ref}.{target_name}",
+        f"{repo_name}:{package_ref}.{target_name}",
+        f"{repo_name}/{package_ref}.{target_name}",
+        bound_profile,
+    )
+
+
+def build_target_field_kinds(*, has_bound_profile: bool = False) -> tuple[str, ...]:
+    if not has_bound_profile:
+        return normalize_field_kinds(
+            "selector",
+            "selector",
+            "selector",
+            "selector",
+        )
+    return normalize_field_kinds(
+        "selector",
+        "selector",
+        "selector",
+        "selector",
+        "profile",
+    )
+
+
 def build_profile_match_fields(*, profile: str) -> tuple[str, ...]:
     return normalize_match_fields(profile)
 

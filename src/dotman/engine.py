@@ -470,6 +470,14 @@ class DotmanEngine:
             parse_package_ref_text=parse_package_ref_text,
         )
 
+    def find_tracked_target_matches(self, target_text: str) -> tuple[str, list[Any], list[Any]]:
+        return self._installed_helpers().find_tracked_target_matches(
+            self,
+            target_text,
+            parse_binding_text=parse_binding_text,
+            parse_package_ref_text=parse_package_ref_text,
+        )
+
     def _describe_package_binding(
         self,
         repo: Repository,

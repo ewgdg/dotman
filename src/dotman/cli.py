@@ -42,6 +42,8 @@ from dotman.resolver import (
     build_profile_match_fields,
     build_selector_field_kinds,
     build_selector_match_fields,
+    build_target_field_kinds,
+    build_target_match_fields,
     parse_slash_qualified_query,
     rank_resolver_option,
 )
@@ -194,20 +196,24 @@ def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: 
         return None
 
 
-def edit_package_directory(package_root: Path) -> int:
+def open_editor_path(path: Path, *, missing_editor_label: str = "path") -> int:
     if not add_editor_available():
-        print(package_root)
+        print(f"No editor configured. {missing_editor_label}: {path}")
         return 0
 
-    editor_command = _resolve_package_editor_command()
+    editor_command = _resolve_editor_command()
     try:
-        completed = subprocess.run([*editor_command, str(package_root)], check=False)
+        completed = subprocess.run([*editor_command, str(path)], check=False)
     except FileNotFoundError as exc:
         raise ValueError("editor command was not found") from exc
     return completed.returncode
 
 
-def _resolve_package_editor_command() -> list[str]:
+def edit_package_directory(package_root: Path) -> int:
+    return open_editor_path(package_root, missing_editor_label="package path")
+
+
+def _resolve_editor_command() -> list[str]:
     editor_value = os.environ.get("VISUAL") or os.environ.get("EDITOR")
     if not editor_value:
         raise ValueError("edit requires $VISUAL or $EDITOR")
@@ -1541,6 +1547,51 @@ def resolve_tracked_package_text(
     )
 
 
+def resolve_tracked_target_text(
+    engine: DotmanEngine,
+    target_text: str,
+    *,
+    json_output: bool,
+):
+    query_text, exact_matches, partial_matches = engine.find_tracked_target_matches(target_text)
+    return resolve_candidate_match(
+        exact_matches=exact_matches,
+        partial_matches=partial_matches,
+        query_text=query_text,
+        interactive=interactive_mode_enabled(json_output=json_output),
+        exact_header_text=f"Select a tracked target for '{query_text}':",
+        partial_header_text=f"Select a tracked target for '{query_text}':",
+        option_resolver=lambda match: ResolverOption(
+            display_label=render_package_label(
+                repo_name=match.repo_name,
+                package_id=match.package_id,
+                bound_profile=match.bound_profile,
+                target_name=match.target_name,
+                package_first=True,
+                include_repo_context=True,
+            ),
+            match_fields=build_target_match_fields(
+                repo_name=match.repo_name,
+                package_id=match.package_id,
+                target_name=match.target_name,
+                bound_profile=match.bound_profile,
+            ),
+            field_kinds=build_target_field_kinds(has_bound_profile=match.bound_profile is not None),
+        ),
+        exact_error_text=f"tracked target '{query_text}' is ambiguous: "
+        + ", ".join(
+            f"{match.repo_name}:{package_ref_text(package_id=match.package_id, bound_profile=match.bound_profile)}.{match.target_name}"
+            for match in exact_matches
+        ),
+        partial_error_text=f"tracked target '{query_text}' is ambiguous: "
+        + ", ".join(
+            f"{match.repo_name}:{package_ref_text(package_id=match.package_id, bound_profile=match.bound_profile)}.{match.target_name}"
+            for match in partial_matches
+        ),
+        not_found_text=f"tracked target '{query_text}' did not match any tracked target",
+    )
+
+
 def parse_add_package_query(
     engine: DotmanEngine,
     package_query: str,
@@ -2622,8 +2673,9 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_add_result=emit_add_result,
         emit_noop_add_result=emit_noop_add_result,
         emit_kept_add_result=emit_kept_add_result,
-        open_package_directory=edit_package_directory,
+        open_editor_path=open_editor_path,
         resolve_tracked_binding_text=resolve_tracked_binding_text,
+        resolve_tracked_target_text=resolve_tracked_target_text,
         filter_plans_for_interactive_selection=filter_plans_for_interactive_selection,
         review_plans_for_interactive_diffs=review_plans_for_interactive_diffs,
         emit_interrupt_notice=emit_interrupt_notice,

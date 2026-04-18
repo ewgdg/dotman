@@ -312,8 +312,15 @@ This document captures the current command and selector direction for `dotman`.
 ## Edit
 
 - `edit package <package>` should open the tracked package directory in `$VISUAL` or `$EDITOR`.
-- If no editor is configured, `edit` should print the package directory path and exit successfully.
-- `edit` should use the tracked-package selector flow, so bare and repo-qualified package queries follow the same ambiguity rules as `info tracked`.
+- `edit target <target>` should open the tracked target repo-side source path in `$VISUAL` or `$EDITOR`.
+- `edit target` should resolve tracked targets only.
+- `edit target` should open the repo-side source file for file targets and the repo-side source directory for directory targets.
+- If no editor is configured, `edit package` should print the package directory path and exit successfully.
+- If no editor is configured, `edit target` should print the resolved repo-side source path and exit successfully.
+- `edit package` should use the tracked-package selector flow, so bare and repo-qualified package queries follow the same ambiguity rules as `info tracked`.
+- `edit target` should accept explicit target queries in the form `[<repo>:]<package>.<target>`.
+- `edit target` may also accept bare target-name queries when they resolve uniquely among tracked targets.
+- `edit target` should treat target identity as package-scoped, so ambiguous target-name queries must prompt interactively and fail in non-interactive or JSON mode.
 
 ## Untrack
 

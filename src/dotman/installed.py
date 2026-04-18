@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,18 @@ from dotman.models import (
     package_ref_text,
 )
 from dotman.repository import Repository
+from dotman.resolver import build_target_match_fields
 from dotman.templates import build_template_context, render_template_string
+
+
+@dataclass(frozen=True)
+class TrackedTargetMatch:
+    repo_name: str
+    package_id: str
+    target_name: str
+    repo_path: Path
+    target_kind: str
+    bound_profile: str | None = None
 
 
 def resolve_installed_package(
@@ -50,6 +62,70 @@ def resolve_installed_package(
         raise ValueError(f"tracked package '{selector}' is ambiguous: {candidates}")
     raise ValueError(f"tracked package '{selector}' did not match any tracked package")
 
+
+def find_tracked_target_matches(
+    engine: Any,
+    target_text: str,
+    *,
+    parse_binding_text: Any,
+    parse_package_ref_text: Any,
+) -> tuple[str, list[TrackedTargetMatch], list[TrackedTargetMatch]]:
+    _explicit_repo, selector, profile = parse_binding_text(target_text)
+    if profile is not None:
+        raise ValueError("tracked target lookup expects a target selector, not a binding")
+    if "." in selector:
+        package_query, separator, target_name = selector.partition(".")
+        if not separator or not package_query or not target_name:
+            raise ValueError(
+                f"invalid tracked target selector '{target_text}'; expected [<repo>:]<package>.<target>"
+            )
+        parse_package_ref_text(package_query)
+
+    tracked_targets = list_tracked_targets(engine)
+    exact_matches: list[TrackedTargetMatch] = []
+    partial_matches: list[TrackedTargetMatch] = []
+    for candidate in tracked_targets:
+        match_fields = build_target_match_fields(
+            repo_name=candidate.repo_name,
+            package_id=candidate.package_id,
+            target_name=candidate.target_name,
+            bound_profile=candidate.bound_profile,
+        )
+        if any(field == target_text for field in match_fields):
+            exact_matches.append(candidate)
+            continue
+        if any(target_text in field for field in match_fields):
+            partial_matches.append(candidate)
+    return target_text, exact_matches, partial_matches
+
+
+def list_tracked_targets(engine: Any) -> list[TrackedTargetMatch]:
+    tracked_targets: dict[tuple[str, str, str | None, str], TrackedTargetMatch] = {}
+    for plan in engine.plan_push():
+        repo = engine.get_repo(plan.binding.repo)
+        for target in plan.target_plans:
+            bound_profile = engine._bound_profile_for_package(repo, target.package_id, plan.binding.profile)
+            key = (plan.binding.repo, target.package_id, bound_profile, target.target_name)
+            tracked_targets.setdefault(
+                key,
+                TrackedTargetMatch(
+                    repo_name=plan.binding.repo,
+                    package_id=target.package_id,
+                    target_name=target.target_name,
+                    repo_path=target.repo_path,
+                    target_kind=target.target_kind,
+                    bound_profile=bound_profile,
+                ),
+            )
+    return sorted(
+        tracked_targets.values(),
+        key=lambda item: (
+            item.target_name,
+            item.repo_name,
+            item.package_id,
+            "" if item.bound_profile is None else item.bound_profile,
+        ),
+    )
 
 
 def find_installed_package_matches(
