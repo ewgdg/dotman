@@ -23,7 +23,7 @@ This document captures the current repository structure and configuration schema
 - Packages may declare `depends` for hard requirements.
 - `depends` entries may reference either package IDs or group selectors.
 - Group dependencies expand to their member packages during dependency resolution.
-- Dependency resolution must reject cycles, including mixed package/group cycles.
+- Dependency resolution de-duplicates revisits and truncates cycles, including mixed package/group cycles, so traversal stays finite.
 - Packages that exist only for hard dependency aggregation should use a `-meta` suffix by convention.
 - A package's target live paths are implicitly reserved.
 - Packages may define `reserved_paths = [...]` for additional live paths that must stay exclusive to that package.

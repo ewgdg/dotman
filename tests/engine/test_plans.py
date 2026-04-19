@@ -569,29 +569,39 @@ def test_meta_package_depends_on_group_expands_group_members(
     assert {target.package_id for target in plan.target_plans} == {"git", "nvim"}
 
 
-def test_dependency_cycle_detection_reports_mixed_package_and_group_cycles(
+def test_dependency_resolution_allows_mixed_package_and_group_cycles_without_revisiting_packages(
     tmp_path: Path,
 ) -> None:
     repo_root = tmp_path / "fixture-repo"
     (repo_root / "profiles").mkdir(parents=True)
     (repo_root / "groups").mkdir(parents=True)
-    (repo_root / "packages" / "alpha").mkdir(parents=True)
-    (repo_root / "packages" / "beta").mkdir(parents=True)
+    (repo_root / "packages" / "alpha" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "beta" / "files").mkdir(parents=True)
 
     (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
     (repo_root / "groups" / "bundle.toml").write_text('members = ["beta"]\n', encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "files" / "alpha.txt").write_text("alpha\n", encoding="utf-8")
     (repo_root / "packages" / "alpha" / "package.toml").write_text(
         '\n'.join([
             'id = "alpha"',
             'depends = ["bundle"]',
             '',
+            '[targets.alpha]',
+            'source = "files/alpha.txt"',
+            'path = "~/.config/alpha.txt"',
+            '',
         ]),
         encoding="utf-8",
     )
+    (repo_root / "packages" / "beta" / "files" / "beta.txt").write_text("beta\n", encoding="utf-8")
     (repo_root / "packages" / "beta" / "package.toml").write_text(
         '\n'.join([
             'id = "beta"',
             'depends = ["alpha"]',
+            '',
+            '[targets.beta]',
+            'source = "files/beta.txt"',
+            'path = "~/.config/beta.txt"',
             '',
         ]),
         encoding="utf-8",
@@ -601,11 +611,11 @@ def test_dependency_cycle_detection_reports_mixed_package_and_group_cycles(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"dependency cycle detected in repo 'fixture': alpha -> bundle -> beta -> alpha",
-    ):
-        engine.plan_push_binding("fixture:alpha@basic")
+    plan = engine.plan_push_binding("fixture:alpha@basic")
+
+    assert plan.selector_kind == "package"
+    assert plan.package_ids == ["alpha", "beta"]
+    assert {target.package_id for target in plan.target_plans} == {"alpha", "beta"}
 
 
 def test_example_extends_preserves_child_values_after_local_merge(

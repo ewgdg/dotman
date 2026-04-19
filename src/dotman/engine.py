@@ -505,11 +505,6 @@ class DotmanEngine:
         seen_packages: set[str] = set()
         completed_nodes: set[tuple[str, str]] = set()
 
-        def format_cycle(stack: tuple[tuple[str, str], ...], node: tuple[str, str]) -> str:
-            cycle_start = stack.index(node)
-            cycle_nodes = [*stack[cycle_start:], node]
-            return " -> ".join(node_id for _node_kind, node_id in cycle_nodes)
-
         def visit_selector(current_selector: str, stack: tuple[tuple[str, str], ...], *, source: str) -> None:
             package_exists = current_selector in repo.packages
             group_exists = current_selector in repo.groups
@@ -523,7 +518,10 @@ class DotmanEngine:
             node_kind = "package" if package_exists else "group"
             node = (node_kind, current_selector)
             if node in stack:
-                raise ValueError(f"dependency cycle detected in repo '{repo.config.name}': {format_cycle(stack, node)}")
+                # Dependency graphs may be cyclic. Treat active-node revisits as back-edges
+                # and stop descending so resolution stays finite while still collecting each
+                # reachable package exactly once.
+                return
             if node in completed_nodes:
                 return
 
