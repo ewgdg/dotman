@@ -80,30 +80,36 @@ class RepoExecutionUnit:
 class ExecutionSession:
     operation: str
     repos: tuple[RepoExecutionUnit, ...] = ()
-    packages: InitVar[tuple[PackageExecutionUnit, ...] | None] = None
+    package_units: InitVar[tuple[PackageExecutionUnit, ...] | None] = None
     requires_privilege: bool = False
 
-    def __post_init__(self, packages: tuple[PackageExecutionUnit, ...] | None) -> None:
-        if packages is None or self.repos:
+    def __post_init__(self, package_units: tuple[PackageExecutionUnit, ...] | None) -> None:
+        if package_units is None or self.repos:
             return
-        repo_units: list[RepoExecutionUnit] = []
-        packages_by_repo: dict[str, list[PackageExecutionUnit]] = {}
-        for package in packages:
-            packages_by_repo.setdefault(package.repo_name, []).append(package)
-        for repo_name, repo_packages in packages_by_repo.items():
-            repo_units.append(
-                RepoExecutionUnit(
-                    repo_name=repo_name,
-                    pre_steps=(),
-                    packages=tuple(repo_packages),
-                    post_steps=(),
-                )
-            )
-        object.__setattr__(self, "repos", tuple(repo_units))
+        object.__setattr__(self, "repos", _build_repo_units_from_packages(package_units))
 
     @property
     def packages(self) -> tuple[PackageExecutionUnit, ...]:
         return tuple(package for repo in self.repos for package in repo.packages)
+
+
+def _build_repo_units_from_packages(packages: tuple[PackageExecutionUnit, ...] | None) -> tuple[RepoExecutionUnit, ...]:
+    if packages is None:
+        return ()
+    repo_units: list[RepoExecutionUnit] = []
+    packages_by_repo: dict[str, list[PackageExecutionUnit]] = {}
+    for package in packages:
+        packages_by_repo.setdefault(package.repo_name, []).append(package)
+    for repo_name, repo_packages in packages_by_repo.items():
+        repo_units.append(
+            RepoExecutionUnit(
+                repo_name=repo_name,
+                pre_steps=(),
+                packages=tuple(repo_packages),
+                post_steps=(),
+            )
+        )
+    return tuple(repo_units)
 
 
 @dataclass(frozen=True)

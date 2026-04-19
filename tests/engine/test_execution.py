@@ -75,6 +75,50 @@ def test_build_execution_session_orders_push_steps_per_package() -> None:
     ]
 
 
+def test_execution_session_accepts_repo_units_without_touching_package_property() -> None:
+    repo_unit = execution.RepoExecutionUnit(
+        repo_name="fixture",
+        pre_steps=(),
+        packages=(),
+        post_steps=(),
+    )
+
+    session = execution.ExecutionSession(
+        operation="push",
+        repos=(repo_unit,),
+        requires_privilege=False,
+    )
+
+    assert session.repos == (repo_unit,)
+    assert session.packages == ()
+
+
+def test_execution_session_groups_package_units_into_repo_units() -> None:
+    alpha = execution.PackageExecutionUnit(
+        repo_name="fixture",
+        binding_selector="alpha",
+        profile="default",
+        package_id="alpha",
+        steps=(),
+    )
+    beta = execution.PackageExecutionUnit(
+        repo_name="fixture",
+        binding_selector="beta",
+        profile="default",
+        package_id="beta",
+        steps=(),
+    )
+
+    session = execution.ExecutionSession(
+        operation="push",
+        package_units=(alpha, beta),
+    )
+
+    assert [repo.repo_name for repo in session.repos] == ["fixture"]
+    assert session.repos[0].packages == (alpha, beta)
+    assert session.packages == (alpha, beta)
+
+
 def test_build_execution_session_orders_repo_package_and_target_scopes() -> None:
     plan = BindingPlan(
         operation="push",
@@ -1087,7 +1131,7 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
 
     plan = execution.ExecutionSession(
         operation="push",
-        packages=(
+        package_units=(
             execution.PackageExecutionUnit(
                 repo_name="fixture",
                 binding_selector="app",
