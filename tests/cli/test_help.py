@@ -63,6 +63,7 @@ def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     assert "<command>" in output
     assert "commands:" in output
     assert "Track a binding in manager state" in output
+    assert "Diagnose manager config and tracked state" in output
     assert "Patch review content back into repo source" in output
     assert "Open a tracked package or target path" in output
     assert "Re-run a reconcile helper subcommand" in output

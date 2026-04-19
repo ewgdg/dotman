@@ -227,6 +227,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_assume_yes_argument(pull_parser)
     add_run_noop_argument(pull_parser)
 
+    subparsers.add_parser(
+        "doctor",
+        help="Diagnose manager config and tracked state",
+        description="Diagnose manager config and tracked state",
+    )
+
     rollback_parser = subparsers.add_parser(
         "rollback",
         help="Restore managed live paths from a recorded snapshot",

@@ -716,6 +716,88 @@ def emit_tracked_packages(
     return 0
 
 
+_DOCTOR_CHECK_CATEGORY_ORDER = {
+    "dependencies": 0,
+    "environment": 1,
+    "repository": 2,
+    "state": 3,
+    "other": 4,
+}
+
+
+def _doctor_check_category(check: Any) -> str:
+    if check.key.startswith("dependency_"):
+        return "dependencies"
+    if check.key == "editor":
+        return "environment"
+    if check.key in {"repo_path", "profiles"}:
+        return "repository"
+    if check.key in {"state_dir", "bindings_file", "orphan_bindings_file", "snapshots"}:
+        return "state"
+    return "other"
+
+
+def _group_doctor_checks(checks: Sequence[Any]) -> list[tuple[str, list[Any]]]:
+    grouped: dict[str, list[Any]] = {}
+    for check in checks:
+        grouped.setdefault(_doctor_check_category(check), []).append(check)
+    return [
+        (category, grouped[category])
+        for category in sorted(grouped, key=lambda category: (_DOCTOR_CHECK_CATEGORY_ORDER.get(category, 999), category))
+    ]
+
+
+def _print_doctor_check_list(*, checks: Sequence[Any], use_color: bool) -> None:
+    for category, category_checks in _group_doctor_checks(checks):
+        print(f"    {cli_style.render_payload_section_label(f'{category}:', use_color=use_color)}")
+        for check in category_checks:
+            owner_label = f"[{check.repo_name}] " if check.repo_name is not None else ""
+            print(f"    - {owner_label}{check.detail}")
+            if check.path is not None:
+                print(f"        {cli_style.render_error_metadata_label('path:', use_color=use_color)} {check.path}")
+            if check.hint is not None:
+                print(f"        {cli_style.render_error_metadata_label('hint:', use_color=use_color)} {check.hint}")
+
+
+def emit_doctor_summary(*, engine: Any, summary: Any, json_output: bool, use_color: bool) -> int:
+    payload = summary.to_dict()
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if summary.ok else 2
+
+    _print_payload_header("Doctor", use_color=use_color)
+    print(f"  {cli_style.render_error_metadata_label('status:', use_color=use_color)} {'ok' if summary.ok else 'failed'}")
+    print(f"  {cli_style.render_error_metadata_label('config:', use_color=use_color)} {summary.config_path}")
+    print(f"  {cli_style.render_error_metadata_label('repos:', use_color=use_color)} {summary.repo_count}")
+    print(f"  {cli_style.render_error_metadata_label('checks:', use_color=use_color)} {len(summary.checks)}")
+    if summary.failed_checks:
+        print(
+            f"  {cli_style.render_error_metadata_label('failed checks:', use_color=use_color)} {len(summary.failed_checks)}"
+        )
+        _print_doctor_check_list(checks=summary.failed_checks, use_color=use_color)
+    if summary.warning_checks:
+        print(
+            f"  {cli_style.render_error_metadata_label('warnings:', use_color=use_color)} {len(summary.warning_checks)}"
+        )
+        _print_doctor_check_list(checks=summary.warning_checks, use_color=use_color)
+    if summary.invalid_bindings:
+        print(
+            f"  {cli_style.render_error_metadata_label('invalid bindings:', use_color=use_color)} {len(summary.invalid_bindings)}"
+        )
+        print(
+            "  issues:"
+        )
+        for issue in summary.invalid_bindings:
+            print(
+                "  - "
+                f"{_render_tracked_issue_label(engine, issue, use_color=use_color)} "
+                f"{cli_style.render_tracked_state(issue.state, use_color=use_color)} — {issue.message}"
+            )
+    if summary.ok:
+        print("  no issues found")
+    return 0 if summary.ok else 2
+
+
 def emit_variables(*, variables: Sequence[Any], json_output: bool, use_color: bool) -> int:
     payload = {
         "mode": "dry-run",
@@ -1243,6 +1325,9 @@ def _structured_error_fields(error: Any, *, use_color: bool) -> list[tuple[str, 
     if detail is None:
         detail = str(error) or error.__class__.__name__
     fields.append(("detail:", str(detail)))
+    hint = getattr(error, "hint", None)
+    if hint is not None:
+        fields.append(("hint:", str(hint)))
     return fields
 
 

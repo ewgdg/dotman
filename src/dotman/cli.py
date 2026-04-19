@@ -59,6 +59,7 @@ from dotman.cli_parser import build_parser as build_cli_parser
 from dotman import cli_emit, cli_commands
 from dotman.planning import finalize_repo_hook_plans, standalone_repo_hook_summary
 from dotman.selection_menu_context import current_selection_menu_config
+from dotman.doctor import DoctorSummary
 
 
 MENU_HEADER_MARKER = cli_style.MENU_HEADER_MARKER
@@ -2832,6 +2833,15 @@ def emit_tracked_packages(*, engine: DotmanEngine, packages: Sequence, invalid_b
     )
 
 
+def emit_doctor_summary(*, engine: DotmanEngine, summary: DoctorSummary, json_output: bool) -> int:
+    return cli_emit.emit_doctor_summary(
+        engine=engine,
+        summary=summary,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
+
+
 def emit_variables(*, variables: Sequence, json_output: bool) -> int:
     return cli_emit.emit_variables(
         variables=variables,
@@ -3082,6 +3092,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_variable_detail=emit_variable_detail,
         emit_snapshot_list=emit_snapshot_list,
         emit_snapshot_detail=emit_snapshot_detail,
+        emit_doctor_summary=emit_doctor_summary,
     )
 
 

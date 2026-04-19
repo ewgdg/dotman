@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotman.models import ManagerConfig, RepoConfig, SelectionMenuConfig, SnapshotConfig
 from dotman.toml_utils import load_toml_file
+
+
+@dataclass(frozen=True)
+class ManagerConfigLoadError(ValueError):
+    path: Path
+    detail: str
+    hint: str | None = None
+
+    def __str__(self) -> str:
+        return self.detail
 
 
 def default_repo_state_dir(state_key: str) -> Path:
@@ -71,6 +82,19 @@ def validate_symlink_mode(mode: object, *, field_name: str, allowed_values: tupl
 def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
     resolved_path = Path(config_path) if config_path is not None else default_config_path()
     resolved_path = resolved_path.expanduser().resolve()
+    missing_config_hint = "Create config.toml with at least one [repos.<name>] entry, or pass --config <config-path>."
+    if not resolved_path.exists():
+        raise ManagerConfigLoadError(
+            path=resolved_path,
+            detail="manager config file does not exist",
+            hint=missing_config_hint,
+        )
+    if not resolved_path.is_file():
+        raise ManagerConfigLoadError(
+            path=resolved_path,
+            detail="manager config path is not a file",
+            hint=missing_config_hint,
+        )
     payload = load_toml_file(resolved_path, context="manager config")
     repos_payload = payload.get("repos")
     if not isinstance(repos_payload, dict) or not repos_payload:

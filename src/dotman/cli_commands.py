@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from dotman.add import prepare_add_to_package, write_add_result
@@ -13,6 +13,7 @@ from dotman.snapshot import (
     list_snapshots,
     record_snapshot_restore,
 )
+from dotman.doctor import doctor_engine
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class CliCommandHandlers:
     emit_variable_detail: Callable[..., int]
     emit_snapshot_list: Callable[..., int]
     emit_snapshot_detail: Callable[..., int]
+    emit_doctor_summary: Callable[..., int] = field(default=lambda **kwargs: 0)
 
 
 EngineFactory = Callable[[str | None], Any]
@@ -80,6 +82,12 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
     engine = engine_factory(args.config)
     full_paths = args.full_path if args.full_path is not None else engine.config.selection_menu.full_paths
     with selection_menu_config_scope(engine.config.selection_menu):
+        if args.command == "doctor":
+            return handlers.emit_doctor_summary(
+                engine=engine,
+                summary=doctor_engine(engine),
+                json_output=args.json_output,
+            )
         if args.command == "track":
             return _handle_track(args=args, engine=engine, handlers=handlers)
         if args.command == "add":

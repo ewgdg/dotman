@@ -41,7 +41,17 @@ uv tool install git+https://github.com/ewgdg/dotman.git
 ### Optional dependencies
 
 - `fzf` for long interactive selector lists
+- `less` for paged diff review fallback
 - `nvim` for review and reconciliation flows; set `VISUAL=nvim` or `EDITOR=nvim` to use it
+- `sudo` for managing protected system paths
+
+### Diagnose setup
+
+```sh
+dotman doctor
+```
+
+This checks manager config, repo paths, tracked-state files, and external dependencies such as `git`, with optional dependency hints for tools like `fzf`.
 
 ## Quick start
 
