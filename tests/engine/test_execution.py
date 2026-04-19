@@ -236,6 +236,190 @@ def test_build_execution_session_keeps_hook_only_packages_when_hooks_are_finaliz
         ]
 
 
+def test_execute_session_soft_skips_push_package_on_guard_exit_100_and_continues_next_package(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    alpha_repo_path = tmp_path / "alpha.repo"
+    beta_repo_path = tmp_path / "beta.repo"
+    alpha_live_path = tmp_path / "alpha.live"
+    beta_live_path = tmp_path / "beta.live"
+    alpha_repo_path.write_text("alpha repo\n", encoding="utf-8")
+    beta_repo_path.write_text("beta repo\n", encoding="utf-8")
+
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="stack", profile="default"),
+        selector_kind="group",
+        package_ids=["alpha", "beta"],
+        variables={},
+        hooks={
+            "guard_push": [
+                HookPlan(package_id="alpha", hook_name="guard_push", command="echo alpha guard 1", cwd=Path("/repo")),
+                HookPlan(package_id="alpha", hook_name="guard_push", command="echo alpha guard 2", cwd=Path("/repo")),
+                HookPlan(package_id="beta", hook_name="guard_push", command="echo beta guard", cwd=Path("/repo")),
+            ],
+            "pre_push": [
+                HookPlan(package_id="alpha", hook_name="pre_push", command="echo alpha pre", cwd=Path("/repo")),
+                HookPlan(package_id="beta", hook_name="pre_push", command="echo beta pre", cwd=Path("/repo")),
+            ],
+            "post_push": [
+                HookPlan(package_id="alpha", hook_name="post_push", command="echo alpha post", cwd=Path("/repo")),
+                HookPlan(package_id="beta", hook_name="post_push", command="echo beta post", cwd=Path("/repo")),
+            ],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="alpha",
+                target_name="config",
+                repo_path=alpha_repo_path,
+                live_path=alpha_live_path,
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"alpha live\n",
+            ),
+            TargetPlan(
+                package_id="beta",
+                target_name="config",
+                repo_path=beta_repo_path,
+                live_path=beta_live_path,
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"beta live\n",
+            ),
+        ],
+    )
+    session = build_execution_session([plan], operation="push")
+
+    recorded_commands: list[str] = []
+
+    def fake_run_command(*, command, cwd, env, stream_output, interactive, privileged=False):
+        recorded_commands.append(command)
+        stdout_by_command = {
+            "echo alpha guard 1": (100, "alpha guard 1\n", ""),
+            "echo alpha guard 2": (0, "alpha guard 2\n", ""),
+            "echo beta guard": (0, "beta guard\n", ""),
+            "echo beta pre": (0, "beta pre\n", ""),
+            "echo beta post": (0, "beta post\n", ""),
+        }
+        if command not in stdout_by_command:
+            raise AssertionError(f"unexpected command: {command}")
+        return stdout_by_command[command]
+
+    monkeypatch.setattr("dotman.execution._run_command", fake_run_command)
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    alpha_result, beta_result = result.packages
+    assert alpha_result.status == "skipped"
+    assert alpha_result.skip_reason == "guard"
+    assert [step.status for step in alpha_result.steps] == ["skipped", "skipped", "skipped", "skipped", "skipped"]
+    assert alpha_result.steps[0].skip_reason == "guard"
+    assert alpha_result.steps[1].skip_reason == "guard"
+    assert "echo alpha guard 2" not in recorded_commands
+    assert "echo alpha pre" not in recorded_commands
+    assert "echo alpha post" not in recorded_commands
+    assert beta_result.status == "ok"
+    assert [step.status for step in beta_result.steps] == ["ok", "ok", "ok", "ok"]
+    assert beta_live_path.read_text(encoding="utf-8") == "beta live\n"
+    assert not alpha_live_path.exists()
+
+
+def test_execute_session_soft_skips_pull_package_on_guard_exit_100_and_continues_next_package(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    alpha_repo_path = tmp_path / "alpha.repo"
+    beta_repo_path = tmp_path / "beta.repo"
+    alpha_live_path = tmp_path / "alpha.live"
+    beta_live_path = tmp_path / "beta.live"
+    alpha_repo_path.write_text("alpha repo\n", encoding="utf-8")
+    beta_repo_path.write_text("beta repo\n", encoding="utf-8")
+    alpha_live_path.write_text("alpha live\n", encoding="utf-8")
+    beta_live_path.write_text("beta live\n", encoding="utf-8")
+
+    plan = BindingPlan(
+        operation="pull",
+        binding=Binding(repo="fixture", selector="stack", profile="default"),
+        selector_kind="group",
+        package_ids=["alpha", "beta"],
+        variables={},
+        hooks={
+            "guard_pull": [
+                HookPlan(package_id="alpha", hook_name="guard_pull", command="echo alpha guard 1", cwd=Path("/repo")),
+                HookPlan(package_id="alpha", hook_name="guard_pull", command="echo alpha guard 2", cwd=Path("/repo")),
+                HookPlan(package_id="beta", hook_name="guard_pull", command="echo beta guard", cwd=Path("/repo")),
+            ],
+            "pre_pull": [
+                HookPlan(package_id="alpha", hook_name="pre_pull", command="echo alpha pre", cwd=Path("/repo")),
+                HookPlan(package_id="beta", hook_name="pre_pull", command="echo beta pre", cwd=Path("/repo")),
+            ],
+            "post_pull": [
+                HookPlan(package_id="alpha", hook_name="post_pull", command="echo alpha post", cwd=Path("/repo")),
+                HookPlan(package_id="beta", hook_name="post_pull", command="echo beta post", cwd=Path("/repo")),
+            ],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="alpha",
+                target_name="config",
+                repo_path=alpha_repo_path,
+                live_path=alpha_live_path,
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+            ),
+            TargetPlan(
+                package_id="beta",
+                target_name="config",
+                repo_path=beta_repo_path,
+                live_path=beta_live_path,
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+            ),
+        ],
+    )
+    session = build_execution_session([plan], operation="pull")
+
+    recorded_commands: list[str] = []
+
+    def fake_run_command(*, command, cwd, env, stream_output, interactive, privileged=False):
+        recorded_commands.append(command)
+        stdout_by_command = {
+            "echo alpha guard 1": (100, "alpha guard 1\n", ""),
+            "echo alpha guard 2": (0, "alpha guard 2\n", ""),
+            "echo beta guard": (0, "beta guard\n", ""),
+            "echo beta pre": (0, "beta pre\n", ""),
+            "echo beta post": (0, "beta post\n", ""),
+        }
+        if command not in stdout_by_command:
+            raise AssertionError(f"unexpected command: {command}")
+        return stdout_by_command[command]
+
+    monkeypatch.setattr("dotman.execution._run_command", fake_run_command)
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    alpha_result, beta_result = result.packages
+    assert alpha_result.status == "skipped"
+    assert alpha_result.skip_reason == "guard"
+    assert [step.status for step in alpha_result.steps] == ["skipped", "skipped", "skipped", "skipped", "skipped"]
+    assert alpha_result.steps[0].skip_reason == "guard"
+    assert alpha_result.steps[1].skip_reason == "guard"
+    assert "echo alpha guard 2" not in recorded_commands
+    assert "echo alpha pre" not in recorded_commands
+    assert "echo alpha post" not in recorded_commands
+    assert beta_result.status == "ok"
+    assert [step.status for step in beta_result.steps] == ["ok", "ok", "ok", "ok"]
+    assert alpha_repo_path.read_text(encoding="utf-8") == "alpha repo\n"
+    assert beta_repo_path.read_text(encoding="utf-8") == "beta live\n"
+
+
 def test_execute_session_fails_when_live_target_becomes_symlink_before_execution(
     tmp_path: Path,
 ) -> None:

@@ -31,6 +31,8 @@ This document captures the current command and selector direction for `dotman`.
 - `--run-noop` now feeds normal planning and selection instead of reviving hooks late in execution.
 - For the active operation, `--run-noop` temporarily treats all package hooks as noop-eligible, even if they do not declare `run_noop = true` in the manifest.
 - `--run-noop` still does not fabricate target writes or snapshots.
+- A `guard_*` hook that exits `100` soft-skips that package scope and lets later packages continue.
+- Human execution output should show a guard skip as `skipped (guard)`.
 
 ## Selectors
 
@@ -131,6 +133,7 @@ This document captures the current command and selector direction for `dotman`.
 - Before the first live mutation of a real `push`, dotman should create one manager-level snapshot for the finalized selected plan.
 - That snapshot should record enough state to restore the mutated paths later.
 - If the finalized `push` work is hook-only, dotman should not create a snapshot.
+- If package guards soft-skip before the first live mutation, dotman should keep going and create the snapshot only when the first real mutation is about to begin.
 - `file_symlink_mode = prompt` means interactive replace is allowed; `follow` means dotman writes through to the resolved target.
 - `dir_symlink_mode = fail` rejects symlinked directory roots; `follow` means dotman manages the resolved tree.
 - `push --dry-run` should not create a snapshot.
@@ -175,6 +178,7 @@ This document captures the current command and selector direction for `dotman`.
 - Synthetic hook-only selection rows should be package-scoped, not per-hook command rows.
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `pull` should execute immediately in one package-oriented timeline.
+- A `guard_pull` hook that exits `100` soft-skips that package scope and lets later packages continue.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.

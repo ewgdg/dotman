@@ -2680,6 +2680,7 @@ def execute_plans(
     full_paths: bool | None = None,
     run_noop: bool = False,
     assume_yes: bool = False,
+    snapshot_config=None,
 ):
     full_paths = _effective_full_paths(full_paths)
     return cli_emit.execute_plans(
@@ -2690,6 +2691,7 @@ def execute_plans(
         use_color=colors_enabled(),
         run_noop=run_noop,
         assume_yes=assume_yes,
+        snapshot_config=snapshot_config,
     )
 
 

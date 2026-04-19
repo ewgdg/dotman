@@ -10,10 +10,7 @@ from dotman.models import package_ref_text
 from dotman.selection_menu_context import selection_menu_config_scope
 from dotman.snapshot import (
     build_rollback_actions,
-    create_push_snapshot,
     list_snapshots,
-    mark_snapshot_status,
-    prune_snapshots,
     record_snapshot_restore,
 )
 
@@ -361,30 +358,15 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
         if plans is None:
             handlers.emit_interrupt_notice()
             return handlers.interrupted_exit_code
-        snapshot = create_push_snapshot(plans, engine.config.snapshots)
-        try:
-            execution_result = handlers.execute_plans(
-                operation="push",
-                plans=plans,
-                json_output=args.json_output,
-                full_paths=full_paths,
-                run_noop=run_noop,
-                assume_yes=assume_yes,
-            )
-        except Exception:
-            if snapshot is not None:
-                mark_snapshot_status(snapshot, "failed")
-                prune_snapshots(
-                    engine.config.snapshots.path,
-                    max_generations=engine.config.snapshots.max_generations,
-                )
-            raise
-        if snapshot is not None:
-            mark_snapshot_status(snapshot, "applied" if execution_result.exit_code == 0 else "failed")
-            prune_snapshots(
-                engine.config.snapshots.path,
-                max_generations=engine.config.snapshots.max_generations,
-            )
+        execution_result = handlers.execute_plans(
+            operation="push",
+            plans=plans,
+            json_output=args.json_output,
+            full_paths=full_paths,
+            run_noop=run_noop,
+            assume_yes=assume_yes,
+            snapshot_config=engine.config.snapshots,
+        )
         return handlers.emit_execution_result(result=execution_result, json_output=args.json_output)
 
 

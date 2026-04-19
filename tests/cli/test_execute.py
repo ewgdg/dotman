@@ -14,6 +14,8 @@ def _write_basic_execution_repo(
     repo_root: Path,
     *,
     failing_guard: bool = False,
+    guard_push_exit_code: int | None = None,
+    guard_pull_exit_code: int | None = None,
     package_id: str = "app",
     live_dir_name: str = "app",
 ) -> None:
@@ -24,9 +26,22 @@ def _write_basic_execution_repo(
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
     (package_root / "files" / "config.txt").write_text("repo value\n", encoding="utf-8")
 
+    if failing_guard and guard_push_exit_code is None:
+        guard_push_exit_code = 1
+
     guard_push = "printf 'guard push\\n'"
-    if failing_guard:
-        guard_push = "printf 'guard push failed\\n'; exit 1"
+    if guard_push_exit_code is not None:
+        if guard_push_exit_code == 100:
+            guard_push = "printf 'guard push\\n'; exit 100"
+        elif guard_push_exit_code != 0:
+            guard_push = f"printf 'guard push failed\\n'; exit {guard_push_exit_code}"
+
+    guard_pull = "printf 'guard pull\\n'"
+    if guard_pull_exit_code is not None:
+        if guard_pull_exit_code == 100:
+            guard_pull = "printf 'guard pull\\n'; exit 100"
+        elif guard_pull_exit_code != 0:
+            guard_pull = f"printf 'guard pull failed\\n'; exit {guard_pull_exit_code}"
 
     (package_root / "package.toml").write_text(
         "\n".join(
@@ -42,7 +57,7 @@ def _write_basic_execution_repo(
                 f"guard_push = \"{guard_push}\"",
                 "pre_push = \"printf 'pre push\\n'\"",
                 "post_push = \"printf 'post push\\n'\"",
-                "guard_pull = \"printf 'guard pull\\n'\"",
+                f"guard_pull = \"{guard_pull}\"",
                 "pre_pull = \"printf 'pre pull\\n'\"",
                 "post_pull = \"printf 'post pull\\n'\"",
                 "",
@@ -855,7 +870,7 @@ def test_push_cli_run_noop_dry_run_json_shows_hook_only_package(
     assert set(payload["bindings"][0]["hooks"]) == {"guard_push", "pre_push", "post_push"}
 
 
-def test_push_cli_run_noop_hook_only_plan_does_not_create_snapshot(
+def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_and_does_not_create_snapshot(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -868,7 +883,7 @@ def test_push_cli_run_noop_hook_only_plan_does_not_create_snapshot(
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
 
     repo_root = tmp_path / "repo"
-    _write_basic_execution_repo(repo_root)
+    _write_basic_execution_repo(repo_root, guard_push_exit_code=100)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     _write_tracked_binding(tmp_path / "state")
 
@@ -879,9 +894,39 @@ def test_push_cli_run_noop_hook_only_plan_does_not_create_snapshot(
     exit_code = main(["--config", str(config_path), "push", "--run-noop"])
 
     assert exit_code == 0
-    capsys.readouterr()
+    output = capsys.readouterr().out
+    assert "skipped (guard)" in output
+    assert "pre push" not in output
+    assert "post push" not in output
     snapshots_root = data_home / "dotman" / "snapshots"
     assert not snapshots_root.exists() or list(snapshots_root.iterdir()) == []
+
+
+def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_in_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    data_home = tmp_path / "data"
+    home.mkdir()
+    data_home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root, guard_push_exit_code=100)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--config", str(config_path), "--json", "push", "--run-noop"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["packages"][0]["status"] == "skipped"
+    assert payload["packages"][0]["skip_reason"] == "guard"
+    assert payload["packages"][0]["steps"][0]["skip_reason"] == "guard"
+    assert payload["packages"][0]["steps"][-1]["skip_reason"] == "guard"
 
 
 def test_pull_cli_run_noop_executes_hooks_for_all_noop_pull_plan(

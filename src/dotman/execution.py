@@ -72,6 +72,7 @@ class ExecutionSession:
 class ExecutionStepResult:
     step: ExecutionStep
     status: str
+    skip_reason: str | None = None
     exit_code: int | None = None
     stdout: str = ""
     stderr: str = ""
@@ -79,6 +80,8 @@ class ExecutionStepResult:
 
     def to_dict(self) -> dict[str, object]:
         step = self.step
+        repo_path = _step_repo_path(step)
+        live_path = _step_live_path(step)
         return {
             "kind": step.kind,
             "action": step.action,
@@ -89,13 +92,14 @@ class ExecutionStepResult:
                 "profile": step.binding_plan.binding.profile,
             },
             "status": self.status,
+            "skip_reason": self.skip_reason,
             "privileged": step.privileged,
             "exit_code": self.exit_code,
             "stdout": self.stdout,
             "stderr": self.stderr,
             "error": self.error,
-            "repo_path": str(_step_repo_path(step)) if _step_repo_path(step) is not None else None,
-            "live_path": str(_step_live_path(step)) if _step_live_path(step) is not None else None,
+            "repo_path": str(repo_path) if repo_path is not None else None,
+            "live_path": str(live_path) if live_path is not None else None,
             "command": step.command,
         }
 
@@ -105,6 +109,7 @@ class PackageExecutionResult:
     unit: PackageExecutionUnit
     status: str
     steps: tuple[ExecutionStepResult, ...]
+    skip_reason: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -115,6 +120,7 @@ class PackageExecutionResult:
             },
             "package_id": self.unit.package_id,
             "status": self.status,
+            "skip_reason": self.skip_reason,
             "steps": [step.to_dict() for step in self.steps],
         }
 
@@ -289,16 +295,24 @@ def execute_session(
     _preflight_execution_session_sudo(session)
     package_results: list[PackageExecutionResult] = []
     failed = False
-    for package_index, package in enumerate(session.packages):
+    for package in session.packages:
         if on_package_start is not None:
             on_package_start(package)
+
+        if failed:
+            skipped_result = _build_skipped_package_result(package, skip_reason="failure")
+            package_results.append(skipped_result)
+            if on_package_finish is not None:
+                on_package_finish(skipped_result)
+            continue
+
         step_results: list[ExecutionStepResult] = []
-        failed_in_package = False
-        failed_step_index: int | None = None
+        package_status = "ok"
+        package_skip_reason: str | None = None
         total_steps = len(package.steps)
         for step_index, step in enumerate(package.steps, start=1):
-            if failed:
-                step_results.append(ExecutionStepResult(step=step, status="skipped"))
+            if package_skip_reason is not None:
+                step_results.append(_build_skipped_step_result(step, skip_reason=package_skip_reason))
                 continue
             if on_step_start is not None:
                 on_step_start(package, step, step_index, total_steps)
@@ -306,41 +320,47 @@ def execute_session(
             step_results.append(result)
             if on_step_finish is not None:
                 on_step_finish(package, result, step_index, total_steps)
+            if result.status == "skipped":
+                package_skip_reason = result.skip_reason or "skipped"
+                if package_skip_reason != "guard":
+                    package_status = "skipped"
+                else:
+                    package_status = "skipped"
+                continue
             if result.status != "ok":
+                package_skip_reason = "failure"
+                package_status = "failed"
                 failed = True
-                failed_in_package = True
-                failed_step_index = step_index - 1
-                break
-        if failed_in_package and failed_step_index is not None:
-            for remaining_step in package.steps[failed_step_index + 1 :]:
-                step_results.append(ExecutionStepResult(step=remaining_step, status="skipped"))
         package_result = PackageExecutionResult(
             unit=package,
-            status="failed" if failed_in_package else "ok",
+            status=package_status,
+            skip_reason=package_skip_reason if package_status == "skipped" else None,
             steps=tuple(step_results),
         )
         package_results.append(package_result)
         if on_package_finish is not None:
             on_package_finish(package_result)
-        if failed:
-            for remaining_package in session.packages[package_index + 1 :]:
-                skipped_result = PackageExecutionResult(
-                    unit=remaining_package,
-                    status="skipped",
-                    steps=tuple(
-                        ExecutionStepResult(step=step, status="skipped") for step in remaining_package.steps
-                    ),
-                )
-                package_results.append(skipped_result)
-                if on_package_start is not None:
-                    on_package_start(remaining_package)
-                if on_package_finish is not None:
-                    on_package_finish(skipped_result)
-            break
     return ExecutionResult(
         session=session,
         status="failed" if failed else "ok",
         packages=tuple(package_results),
+    )
+
+
+def _build_skipped_step_result(step: ExecutionStep, *, skip_reason: str) -> ExecutionStepResult:
+    return ExecutionStepResult(step=step, status="skipped", skip_reason=skip_reason)
+
+
+def _build_skipped_package_result(
+    package: PackageExecutionUnit,
+    *,
+    skip_reason: str,
+) -> PackageExecutionResult:
+    return PackageExecutionResult(
+        unit=package,
+        status="skipped",
+        skip_reason=skip_reason,
+        steps=tuple(_build_skipped_step_result(step, skip_reason=skip_reason) for step in package.steps),
     )
 
 
@@ -521,13 +541,24 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                 interactive=False,
                 privileged=step.privileged,
             )
+            if exit_code == 0:
+                return ExecutionStepResult(step=step, status="ok", exit_code=exit_code, stdout=stdout, stderr=stderr)
+            if exit_code == 100 and _is_guard_step(step):
+                return ExecutionStepResult(
+                    step=step,
+                    status="skipped",
+                    skip_reason="guard",
+                    exit_code=exit_code,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
             return ExecutionStepResult(
                 step=step,
-                status="ok" if exit_code == 0 else "failed",
+                status="failed",
                 exit_code=exit_code,
                 stdout=stdout,
                 stderr=stderr,
-                error=None if exit_code == 0 else f"command exited with status {exit_code}",
+                error=f"command exited with status {exit_code}",
             )
 
         target_plan = _require_target_plan(step)
@@ -566,6 +597,10 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
         return ExecutionStepResult(step=step, status="ok")
     except Exception as exc:  # noqa: BLE001 - fail-fast execution should surface the original error text.
         return ExecutionStepResult(step=step, status="failed", error=str(exc))
+
+
+def _is_guard_step(step: ExecutionStep) -> bool:
+    return step.kind == "hook" and step.action.startswith("guard_")
 
 
 def _should_fallback_to_reconcile_after_capture(step: ExecutionStep) -> bool:

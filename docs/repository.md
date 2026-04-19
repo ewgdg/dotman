@@ -235,10 +235,14 @@ commands = ["echo pull"]
 run_noop = true
 ```
 
-- Hook lists run in declaration order and stop on first failure.
+- Hook lists run in declaration order and stop on first non-zero exit.
 - `guard_*` runs before package target work for that operation.
+- `guard_*` treats exit code `0` as pass, exit code `100` as a soft skip for that package, and any other non-zero exit as a hard failure.
+- A guard soft skip skips the rest of that package's guard list, its `pre_*`, its target steps, and its `post_*`, then execution continues with the next package.
 - `pre_*` runs immediately before the package's selected target steps.
+- `pre_*` stays hard-fail only: any non-zero exit, including `100`, fails the run.
 - `post_*` runs only when earlier steps for that package succeed.
+- `post_*` stays hard-fail only: any non-zero exit, including `100`, fails the run if it executes.
 - Package hooks normally run when the package still owns at least one non-noop effective target after tracked-target winner resolution and any interactive target exclusion.
 - If a package hook declares `run_noop = true`, dotman may retain that hook as standalone hook-only package work when the package has no executable target steps for the active operation.
 - Standalone noop retention is package-hook only in this phase. Target-level hook metadata is out of scope.

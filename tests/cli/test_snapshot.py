@@ -9,13 +9,27 @@ from dotman.snapshot import list_snapshots
 from tests.helpers import capture_parser_help, write_named_manager_config
 
 
-def _write_snapshot_execution_repo(repo_root: Path, *, package_id: str = "app") -> None:
+def _write_snapshot_execution_repo(
+    repo_root: Path,
+    *,
+    package_id: str = "app",
+    guard_push_exit_code: int | None = None,
+) -> None:
     package_root = repo_root / "packages" / package_id
     (package_root / "files").mkdir(parents=True)
     (repo_root / "profiles").mkdir(parents=True)
 
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
     (package_root / "files" / "config.txt").write_text("repo value\n", encoding="utf-8")
+    hooks = []
+    if guard_push_exit_code is not None:
+        if guard_push_exit_code == 100:
+            guard_push = "printf 'guard push\\n'; exit 100"
+        elif guard_push_exit_code == 0:
+            guard_push = "printf 'guard push\\n'"
+        else:
+            guard_push = f"printf 'guard push failed\\n'; exit {guard_push_exit_code}"
+        hooks = ["", "[hooks]", f'guard_push = "{guard_push}"']
     (package_root / "package.toml").write_text(
         "\n".join(
             [
@@ -24,6 +38,7 @@ def _write_snapshot_execution_repo(repo_root: Path, *, package_id: str = "app") 
                 "[targets.config]",
                 'source = "files/config.txt"',
                 f'path = "~/.config/{package_id}/config.txt"',
+                *hooks,
                 '',
             ]
         ),
@@ -131,6 +146,43 @@ def test_push_execute_creates_snapshot_and_rollback_restores_latest_snapshot(
     assert restored_snapshots[0].restore_count == 1
     assert restored_snapshots[0].last_restored_at is not None
     assert "executing rollback" in capsys.readouterr().out
+
+
+def test_push_execute_creates_snapshot_only_when_first_live_mutation_begins(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    data_home = tmp_path / "data"
+    home.mkdir()
+    data_home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+    guarded_repo = tmp_path / "guarded-repo"
+    mutating_repo = tmp_path / "mutating-repo"
+    _write_snapshot_execution_repo(guarded_repo, package_id="alpha-app", guard_push_exit_code=100)
+    _write_snapshot_execution_repo(mutating_repo, package_id="beta-app")
+    config_path = write_named_manager_config(tmp_path, {"alpha": guarded_repo, "beta": mutating_repo})
+    _write_tracked_binding(tmp_path / "state", repo_name="alpha", selector="alpha-app")
+    _write_tracked_binding(tmp_path / "state", repo_name="beta", selector="beta-app")
+
+    guarded_live_path = home / ".config" / "alpha-app" / "config.txt"
+    guarded_live_path.parent.mkdir(parents=True, exist_ok=True)
+    guarded_live_path.write_text("before alpha\n", encoding="utf-8")
+
+    mutating_live_path = home / ".config" / "beta-app" / "config.txt"
+    mutating_live_path.parent.mkdir(parents=True, exist_ok=True)
+    mutating_live_path.write_text("before beta\n", encoding="utf-8")
+
+    push_exit_code = main(["--config", str(config_path), "push"])
+
+    assert push_exit_code == 0
+    assert guarded_live_path.read_text(encoding="utf-8") == "before alpha\n"
+    assert mutating_live_path.read_text(encoding="utf-8") == "repo value\n"
+    snapshots = list_snapshots(data_home / "dotman" / "snapshots")
+    assert len(snapshots) == 1
+    assert snapshots[0].status == "applied"
 
 
 def test_push_execute_replaces_symlinked_target_and_rollback_restores_link(

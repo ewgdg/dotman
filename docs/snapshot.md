@@ -20,7 +20,9 @@ This document captures the planned snapshot lifecycle and rollback semantics for
 ## Lifecycle
 
 - Interactive target exclusion and diff review must finish before snapshot creation, so the snapshot matches the exact set of planned mutations.
-- Dotman should create the snapshot before the first live mutation of a real `push`.
+- Dotman should create the snapshot only when the first live mutation of a real `push` is about to begin.
+- Guard-only prefixes may soft-skip without creating a snapshot.
+- If the finalized work is hook-only or every selected package soft-skips before any live mutation, dotman should not create a snapshot.
 - A new snapshot should start in status `prepared` while dotman is still executing the push.
 - If the push completes successfully, dotman should mark the snapshot as `applied`.
 - If the push fails after snapshot creation, dotman should keep the snapshot and mark it as `failed`.

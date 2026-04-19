@@ -10,7 +10,7 @@ from dotman import cli_style
 from dotman.diff_review import ReviewItem, display_review_path
 from dotman.execution import build_execution_session, execute_session, _preflight_execution_session_sudo
 from dotman.file_access import sudo_session
-from dotman.snapshot import execute_rollback
+from dotman.snapshot import create_push_snapshot, execute_rollback, mark_snapshot_status, prune_snapshots
 
 
 @dataclass
@@ -419,12 +419,18 @@ def _print_execution_step_finish(_package: Any, step_result: Any, _index: int, _
         return
     if step_result.error:
         print(f"      {step_result.error}")
-    print(f"      {cli_style.render_execution_status(step_result.status, use_color=use_color)}")
+    print(f"      {_render_execution_status_label(step_result.status, step_result.skip_reason, use_color=use_color)}")
 
 
 def _print_execution_package_finish(package_result: Any, *, use_color: bool) -> None:
     if package_result.status == "skipped":
-        print(f"    {cli_style.render_execution_status('skipped', use_color=use_color)}")
+        print(f"    {_render_execution_status_label(package_result.status, package_result.skip_reason, use_color=use_color)}")
+
+
+def _render_execution_status_label(status: str, skip_reason: str | None, *, use_color: bool) -> str:
+    if status == "skipped" and skip_reason == "guard":
+        return f"{cli_style.render_execution_status('skipped', use_color=use_color)}{cli_style.render_annotation_parentheses(skip_reason, use_color=use_color)}"
+    return cli_style.render_execution_status(status, use_color=use_color)
 
 
 def emit_execution_result(*, result: Any, json_output: bool) -> int:
@@ -442,40 +448,86 @@ def execute_plans(
     use_color: bool,
     run_noop: bool = False,
     assume_yes: bool = False,
+    snapshot_config: Any | None = None,
 ):
     session = build_execution_session(plans, operation=operation, run_noop=run_noop)
-    with sudo_session():
-        _preflight_execution_session_sudo(session)
-        if json_output:
-            return execute_session(session, stream_output=False, assume_yes=assume_yes)
-        _print_execution_header(session=session, use_color=use_color)
-        if not session.packages:
-            return execute_session(session, stream_output=True, assume_yes=assume_yes)
-        return execute_session(
-            session,
-            stream_output=True,
-            assume_yes=assume_yes,
-            on_package_start=lambda package: _print_execution_package_start(package, use_color=use_color),
-            on_step_start=lambda package, step, index, total: _print_execution_step_start(
+    snapshot = None
+
+    def ensure_push_snapshot(step: Any) -> None:
+        nonlocal snapshot
+        if operation != "push" or snapshot_config is None or snapshot is not None or step.kind == "hook":
+            return
+        snapshot = create_push_snapshot(plans, snapshot_config)
+
+    def on_step_start(package: Any, step: Any, index: int, total: int) -> None:
+        ensure_push_snapshot(step)
+        if not json_output:
+            _print_execution_step_start(
                 package,
                 step,
                 index,
                 total,
                 full_paths=full_paths,
                 use_color=use_color,
-            ),
-            on_step_finish=lambda package, step_result, index, total: _print_execution_step_finish(
-                package,
-                step_result,
-                index,
-                total,
-                use_color=use_color,
-            ),
-            on_package_finish=lambda package_result: _print_execution_package_finish(
-                package_result,
-                use_color=use_color,
-            ),
-        )
+            )
+
+    def finalize_snapshot(execution_result: Any) -> None:
+        nonlocal snapshot
+        if snapshot is None:
+            return
+        mark_snapshot_status(snapshot, "applied" if execution_result.exit_code == 0 else "failed")
+        prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
+        snapshot = None
+
+    with sudo_session():
+        _preflight_execution_session_sudo(session)
+        if json_output:
+            try:
+                execution_result = execute_session(session, stream_output=False, assume_yes=assume_yes, on_step_start=on_step_start)
+            except Exception:
+                if snapshot is not None:
+                    mark_snapshot_status(snapshot, "failed")
+                    prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
+                raise
+            finalize_snapshot(execution_result)
+            return execution_result
+        _print_execution_header(session=session, use_color=use_color)
+        if not session.packages:
+            try:
+                execution_result = execute_session(session, stream_output=True, assume_yes=assume_yes, on_step_start=on_step_start)
+            except Exception:
+                if snapshot is not None:
+                    mark_snapshot_status(snapshot, "failed")
+                    prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
+                raise
+            finalize_snapshot(execution_result)
+            return execution_result
+        try:
+            execution_result = execute_session(
+                session,
+                stream_output=True,
+                assume_yes=assume_yes,
+                on_package_start=lambda package: _print_execution_package_start(package, use_color=use_color),
+                on_step_start=on_step_start,
+                on_step_finish=lambda package, step_result, index, total: _print_execution_step_finish(
+                    package,
+                    step_result,
+                    index,
+                    total,
+                    use_color=use_color,
+                ),
+                on_package_finish=lambda package_result: _print_execution_package_finish(
+                    package_result,
+                    use_color=use_color,
+                ),
+            )
+        except Exception:
+            if snapshot is not None:
+                mark_snapshot_status(snapshot, "failed")
+                prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
+            raise
+        finalize_snapshot(execution_result)
+        return execution_result
 
 
 def run_execution(
