@@ -11,15 +11,32 @@ from dotman.diff_review import DEFAULT_REVIEW_PAGER, ReviewItem, run_review_item
 
 
 class DummyStream:
-    def __init__(self, fd: int, *, tty: bool = True) -> None:
+    def __init__(self, fd: int, *, tty: bool = True, line: str = "") -> None:
         self._fd = fd
         self._tty = tty
+        self._line = line
 
     def isatty(self) -> bool:
         return self._tty
 
     def fileno(self) -> int:
         return self._fd
+
+    def readline(self) -> str:
+        return self._line
+
+
+class DummyOutputStream(DummyStream):
+    def __init__(self, fd: int, *, tty: bool = True) -> None:
+        super().__init__(fd, tty=tty)
+        self.writes: list[str] = []
+
+    def write(self, text: str) -> int:
+        self.writes.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        return None
 
 
 def test_preserve_terminal_state_restores_unique_tty_streams(monkeypatch) -> None:
@@ -100,3 +117,24 @@ def test_run_review_item_diff_preserves_terminal_state_when_interrupted(monkeypa
         run_review_item_diff(review_item)
 
     assert events == ["enter", "exit"]
+
+
+def test_read_prompt_line_uses_prompt_toolkit_for_interactive_stdio(monkeypatch) -> None:
+    prompt_messages: list[object] = []
+
+    monkeypatch.setattr(terminal.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(terminal.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(terminal.sys.stdin, "fileno", lambda: 0)
+    monkeypatch.setattr(terminal.sys.stdout, "fileno", lambda: 1)
+    monkeypatch.setattr(terminal, "prompt_toolkit_prompt", lambda message: prompt_messages.append(message) or "  n  ")
+
+    assert terminal.read_prompt_line("Review command: ") == "n"
+    assert len(prompt_messages) == 1
+
+
+def test_read_prompt_line_falls_back_to_plain_readline_for_non_tty_streams() -> None:
+    input_stream = DummyStream(30, tty=False, line="  2  \n")
+    output_stream = DummyOutputStream(31, tty=False)
+
+    assert terminal.read_prompt_line("Select: ", input_stream=input_stream, output_stream=output_stream) == "2"
+    assert "".join(output_stream.writes) == "Select: "

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotman.file_access import read_bytes
-from dotman.terminal import preserve_terminal_state
+from dotman.terminal import preserve_terminal_state, read_prompt_line
 
 
 ANSI_RESET = "\033[0m"
@@ -28,10 +28,7 @@ class EditableSourceCopy:
 
 
 def prompt(message: str) -> str:
-    sys.stdout.write(message)
-    sys.stdout.flush()
-    answer = sys.stdin.readline()
-    return answer.strip()
+    return read_prompt_line(message, input_stream=sys.stdin, output_stream=sys.stdout)
 
 
 def colors_enabled() -> bool:

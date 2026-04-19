@@ -39,6 +39,7 @@ from dotman.snapshot import (
     SnapshotRecord,
     find_snapshot_matches,
 )
+from dotman.terminal import read_prompt_line
 from dotman.resolver import (
     ResolverOption,
     build_binding_field_kinds,
@@ -106,10 +107,7 @@ class _EditQueryCandidate:
         return f"{self.repo_name}:{package_ref}.{self.target_name}"
 
 def prompt(message: str) -> str:
-    sys.stdout.write(message)
-    sys.stdout.flush()
-    answer = sys.stdin.readline()
-    return answer.strip()
+    return read_prompt_line(message, input_stream=sys.stdin, output_stream=sys.stdout)
 
 
 def colors_enabled() -> bool:

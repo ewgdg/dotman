@@ -4,6 +4,9 @@ import sys
 from contextlib import contextmanager
 from typing import Iterator, Sequence
 
+from prompt_toolkit import prompt as prompt_toolkit_prompt
+from prompt_toolkit.formatted_text import ANSI
+
 try:
     import termios
 except ImportError:  # pragma: no cover - non-POSIX platforms do not expose termios.
@@ -20,6 +23,27 @@ def preserve_terminal_state(*, streams: Sequence[object] | None = None) -> Itera
         yield
     finally:
         _restore_terminal_state(snapshots)
+
+
+def read_prompt_line(
+    message: str,
+    *,
+    input_stream: object | None = None,
+    output_stream: object | None = None,
+) -> str:
+    input_stream = sys.stdin if input_stream is None else input_stream
+    output_stream = sys.stdout if output_stream is None else output_stream
+
+    if _prompt_toolkit_supported(input_stream=input_stream, output_stream=output_stream):
+        try:
+            return _prompt_with_toolkit(message).strip()
+        except EOFError:
+            return ""
+
+    output_stream.write(message)
+    output_stream.flush()
+    answer = input_stream.readline()
+    return answer.strip()
 
 
 def _capture_terminal_state(*, streams: Sequence[object] | None = None) -> list[TerminalStateSnapshot]:
@@ -65,3 +89,16 @@ def _tty_file_descriptor(stream: object) -> int | None:
         return int(stream.fileno())
     except (AttributeError, OSError, ValueError, TypeError):
         return None
+
+
+def _prompt_toolkit_supported(*, input_stream: object, output_stream: object) -> bool:
+    return input_stream is sys.stdin and output_stream is sys.stdout and _tty_file_descriptor(input_stream) is not None and _tty_file_descriptor(output_stream) is not None
+
+
+def _prompt_with_toolkit(message: str) -> str:
+    prompt_message: str | ANSI
+    if "\x1b[" in message:
+        prompt_message = ANSI(message)
+    else:
+        prompt_message = message
+    return prompt_toolkit_prompt(prompt_message)
