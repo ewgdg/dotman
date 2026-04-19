@@ -117,11 +117,11 @@ def resolve_tracked_target_winners(
 def validate_target_collisions(
     rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
 ) -> None:
-    for index, (package, target, _repo_path, live_path, push_ignore, pull_ignore, _live_path_is_symlink, _live_path_symlink_target) in enumerate(rendered_targets):
+    for index, (package, target, repo_path, live_path, push_ignore, pull_ignore, _live_path_is_symlink, _live_path_symlink_target) in enumerate(rendered_targets):
         for (
             other_package,
             other_target,
-            _other_repo_path,
+            other_repo_path,
             other_live_path,
             other_push_ignore,
             other_pull_ignore,
@@ -129,11 +129,21 @@ def validate_target_collisions(
             _other_live_path_symlink_target,
         ) in rendered_targets[index + 1 :]:
             if live_path == other_live_path:
+                # Allow alias targets that converge on identical source path. This keeps
+                # layered package composition tolerant when two package manifests point at
+                # same repo file but expose it through different package identities.
+                if repo_path == other_repo_path:
+                    continue
                 raise ValueError(
                     f"conflicting target ownership: {package.id}:{target.name} and {other_package.id}:{other_target.name} both map to {live_path}"
                 )
             if live_path in other_live_path.parents:
                 relative = other_live_path.relative_to(live_path).as_posix()
+                # Allow nested alias targets when live tree and repo tree have same
+                # relative layout. Example: dir target points at repo dir, child file
+                # target points at file inside that same repo dir.
+                if repo_path / relative == other_repo_path:
+                    continue
                 parent_ignore = IgnoreMatcher.from_patterns(
                     merge_ignore_patterns(push_ignore, pull_ignore)
                 )
@@ -143,6 +153,9 @@ def validate_target_collisions(
                     )
             elif other_live_path in live_path.parents:
                 relative = live_path.relative_to(other_live_path).as_posix()
+                # Same tolerance as branch above, but with sides swapped.
+                if other_repo_path / relative == repo_path:
+                    continue
                 parent_ignore = IgnoreMatcher.from_patterns(
                     merge_ignore_patterns(other_push_ignore, other_pull_ignore)
                 )

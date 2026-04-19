@@ -106,10 +106,28 @@ This document captures the current repository structure and configuration schema
 - `append` should fail if the targeted inherited field is not a list.
 - Targets and hooks should stay keyed so merges remain deterministic.
 - Conflicting target ownership or incompatible target/path collisions should fail hard.
+- Exception: target ownership is tolerated when multiple package targets resolve to the same live path and the same resolved repo source path.
 - Reserved path collisions should also fail hard when one package reserves a live path used or reserved by another package.
 - A child package may override inherited targets, hooks, vars, and metadata.
 - Platform variants such as `linux/1password` are a primary use case for `extends`.
 - `extends` is preferable to cross-package relative `source` references when a variant wants to inherit most of a base package.
+
+Examples:
+
+- Allowed exact alias:
+  - live: `~/.config/shared.conf`
+  - repo A: `repo/shared.conf`
+  - repo B: `repo/shared.conf`
+- Allowed nested alias:
+  - parent live: `~/.config/app`
+  - child live: `~/.config/app/settings.toml`
+  - parent repo: `repo/app`
+  - child repo: `repo/app/settings.toml`
+- Rejected nested mismatch:
+  - parent live: `~/.config/app`
+  - child live: `~/.config/app/settings.toml`
+  - parent repo: `repo/app`
+  - child repo: `repo/app/other.toml`
 
 Example:
 
