@@ -284,6 +284,7 @@ run_noop = true
 - Provenance alone should not cause hooks to execute.
 - Repo hook template expansion and env stay repo-scoped only. Dotman provides values such as `DOTMAN_REPO_NAME`, `DOTMAN_OPERATION`, `DOTMAN_REPO_ROOT`, and `DOTMAN_STATE_PATH`, but intentionally does not inject ambiguous single-binding values like `DOTMAN_PROFILE` or `DOTMAN_PACKAGE_ID` there.
 - Target hook env keeps the usual repo/package/profile vars and also includes `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, and `DOTMAN_TARGET_LIVE_PATH`.
+- Hook env also includes `DOTMAN_ASSUME_YES`, set to `1` when CLI `--yes` is active and `0` otherwise.
 - Repo-wide helper scripts live under `scripts/`.
 - Package-specific scripts live inside the package, for example `hooks/`.
 - Prefer explicit runner commands such as `sh hooks/push.sh`, `python3 hooks/render.py`, or `uv run hooks/render.py` instead of relying on executable bits.

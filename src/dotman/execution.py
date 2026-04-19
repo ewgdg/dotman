@@ -822,7 +822,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
             exit_code, stdout, stderr = _run_command(
                 command=step.hook_plan.command,
                 cwd=step.hook_plan.cwd,
-                env=_build_hook_env(step),
+                env=_build_hook_env(step, assume_yes=assume_yes),
                 stream_output=stream_output,
                 interactive=False,
                 privileged=step.privileged,
@@ -1225,29 +1225,30 @@ def _require_interactive_terminal_for_reconcile() -> None:
     raise ValueError("reconcile_io 'tty' requires an interactive terminal")
 
 
-def _build_hook_env(step: ExecutionStep) -> dict[str, str]:
+def _build_hook_env(step: ExecutionStep, *, assume_yes: bool) -> dict[str, str]:
     hook_plan = step.hook_plan
     if hook_plan is not None and hook_plan.env is not None:
-        return hook_plan.env
-    plan = step.binding_plan
-    if plan is None:
-        return {}
-    env = {
-        "DOTMAN_REPO_NAME": plan.binding.repo,
-        "DOTMAN_PACKAGE_ID": step.package_id,
-        "DOTMAN_PROFILE": plan.binding.profile,
-        "DOTMAN_OPERATION": plan.operation,
-    }
-    if plan.repo_root is not None:
-        env["DOTMAN_REPO_ROOT"] = str(plan.repo_root)
-    if plan.state_path is not None:
-        env["DOTMAN_STATE_PATH"] = str(plan.state_path)
-    if hook_plan is not None:
-        env["DOTMAN_PACKAGE_ROOT"] = str(hook_plan.cwd)
-    if plan.inferred_os is not None:
-        env["DOTMAN_OS"] = plan.inferred_os
-    for key, value in plan.variables.items():
-        _flatten_vars(env, prefix=f"DOTMAN_VAR_{key}", value=value)
+        env = dict(hook_plan.env)
+    else:
+        env = {}
+        plan = step.binding_plan
+        if plan is not None:
+            env.setdefault("DOTMAN_REPO_NAME", plan.binding.repo)
+            if step.package_id is not None:
+                env.setdefault("DOTMAN_PACKAGE_ID", step.package_id)
+            env.setdefault("DOTMAN_PROFILE", plan.binding.profile)
+            env.setdefault("DOTMAN_OPERATION", plan.operation)
+            if plan.repo_root is not None:
+                env.setdefault("DOTMAN_REPO_ROOT", str(plan.repo_root))
+            if plan.state_path is not None:
+                env.setdefault("DOTMAN_STATE_PATH", str(plan.state_path))
+            if hook_plan is not None:
+                env.setdefault("DOTMAN_PACKAGE_ROOT", str(hook_plan.cwd))
+            if plan.inferred_os is not None:
+                env.setdefault("DOTMAN_OS", plan.inferred_os)
+            for key, value in plan.variables.items():
+                _flatten_vars(env, prefix=f"DOTMAN_VAR_{key}", value=value)
+    env["DOTMAN_ASSUME_YES"] = "1" if assume_yes else "0"
     return env
 
 

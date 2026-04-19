@@ -142,6 +142,103 @@ def test_build_execution_session_orders_repo_package_and_target_scopes() -> None
     assert [step.action for step in session.repos[0].post_steps] == ["post_push"]
 
 
+@pytest.mark.parametrize(("assume_yes", "expected_value"), [(False, "0"), (True, "1")])
+def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
+    monkeypatch,
+    tmp_path: Path,
+    assume_yes: bool,
+    expected_value: str,
+) -> None:
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={"feature": {"flag": "on"}},
+        hooks={
+            "guard_push": [
+                HookPlan(package_id="app", hook_name="guard_push", command="echo package guard", cwd=Path("/repo/app")),
+                HookPlan(
+                    package_id="app",
+                    target_name="config",
+                    scope_kind="target",
+                    hook_name="guard_push",
+                    command="echo target guard",
+                    cwd=Path("/repo/app"),
+                    env={
+                        "DOTMAN_TARGET_NAME": "config",
+                        "EXISTING_TARGET_ENV": "target",
+                    },
+                ),
+            ]
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=tmp_path / "repo" / "config",
+                live_path=tmp_path / "live" / "config",
+                action="noop",
+                target_kind="file",
+                projection_kind="raw",
+            )
+        ],
+        repo_root=tmp_path / "repo",
+        state_path=tmp_path / "state",
+        inferred_os="linux",
+    )
+    operation_plan = OperationPlan(
+        operation="push",
+        binding_plans=(plan,),
+        repo_hooks={
+            "fixture": {
+                "guard_push": [
+                    HookPlan(
+                        repo_name="fixture",
+                        scope_kind="repo",
+                        hook_name="guard_push",
+                        command="echo repo guard",
+                        cwd=Path("/repo"),
+                        env={
+                            "DOTMAN_REPO_NAME": "fixture",
+                            "EXISTING_REPO_ENV": "repo",
+                        },
+                    )
+                ]
+            }
+        },
+        repo_order=("fixture",),
+    )
+    session = build_execution_session(operation_plan, operation="push")
+
+    recorded_envs: dict[str, dict[str, str]] = {}
+
+    def fake_run_command(*, command, cwd, env, stream_output, interactive, privileged=False):
+        assert env is not None
+        recorded_envs[command] = dict(env)
+        return 0, "", ""
+
+    monkeypatch.setattr("dotman.execution._run_command", fake_run_command)
+
+    result = execute_session(session, stream_output=False, assume_yes=assume_yes)
+
+    assert result.status == "ok"
+    assert recorded_envs["echo repo guard"]["DOTMAN_ASSUME_YES"] == expected_value
+    assert recorded_envs["echo repo guard"]["EXISTING_REPO_ENV"] == "repo"
+    assert recorded_envs["echo package guard"]["DOTMAN_ASSUME_YES"] == expected_value
+    assert recorded_envs["echo package guard"]["DOTMAN_REPO_NAME"] == "fixture"
+    assert recorded_envs["echo package guard"]["DOTMAN_PACKAGE_ID"] == "app"
+    assert recorded_envs["echo package guard"]["DOTMAN_PROFILE"] == "default"
+    assert recorded_envs["echo package guard"]["DOTMAN_OPERATION"] == "push"
+    assert recorded_envs["echo package guard"]["DOTMAN_REPO_ROOT"] == str(tmp_path / "repo")
+    assert recorded_envs["echo package guard"]["DOTMAN_STATE_PATH"] == str(tmp_path / "state")
+    assert recorded_envs["echo package guard"]["DOTMAN_OS"] == "linux"
+    assert recorded_envs["echo package guard"]["DOTMAN_VAR_feature__flag"] == "on"
+    assert recorded_envs["echo target guard"]["DOTMAN_ASSUME_YES"] == expected_value
+    assert recorded_envs["echo target guard"]["EXISTING_TARGET_ENV"] == "target"
+    assert recorded_envs["echo target guard"]["DOTMAN_TARGET_NAME"] == "config"
+
+
 def test_execute_session_target_guard_skip_continues_next_target(monkeypatch, tmp_path: Path) -> None:
     recorded: list[str] = []
 
