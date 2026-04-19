@@ -19,12 +19,16 @@ from dotman.manifest import deep_merge, infer_profile_os
 from dotman.models import (
     Binding,
     BindingPlan,
+    binding_plans_for_operation_plan,
     filter_hook_plans_for_targets,
     HookPlan,
+    OperationPlan,
     PackageSpec,
     repo_qualified_target_text,
 )
 from dotman.projection import (
+    build_package_hook_env,
+    build_repo_hook_env,
     build_file_review_bytes,
     build_target_command_env,
     plan_directory_action,
@@ -61,7 +65,6 @@ def build_plan(
     variables = deep_merge(deep_merge(package_vars, profile_vars), repo.local_vars)
     inferred_os = infer_profile_os(binding.profile, lineage, variables)
     context = build_template_context(variables, profile=binding.profile, inferred_os=inferred_os)
-    hook_plans = engine._plan_hooks(repo, resolved_packages, context, operation=operation)
     target_plans = engine._plan_targets(
         repo=repo,
         packages=resolved_packages,
@@ -70,7 +73,21 @@ def build_plan(
         operation=operation,
         inferred_os=inferred_os,
     )
+    hook_plans = engine._plan_hooks(
+        repo,
+        resolved_packages,
+        context,
+        binding=binding,
+        operation=operation,
+        inferred_os=inferred_os,
+        variables=variables,
+        target_plans=target_plans,
+    )
     hooks = filter_hook_plans_for_targets(hook_plans, target_plans)
+    package_bound_profiles = {
+        package_id: (binding.profile if repo.package_binding_mode(package_id) == "multi_instance" else None)
+        for package_id in package_ids
+    }
     return BindingPlan(
         operation=operation,
         binding=binding,
@@ -80,6 +97,7 @@ def build_plan(
         hooks=hooks,
         target_plans=target_plans,
         hook_plans=hook_plans,
+        package_bound_profiles=package_bound_profiles,
         repo_root=repo.root,
         state_path=repo.config.state_path,
         inferred_os=inferred_os,
@@ -92,7 +110,7 @@ def build_tracked_plans(
     *,
     operation: str,
     bindings_by_repo: dict[str, list[Binding]] | None = None,
-) -> list[BindingPlan]:
+) -> OperationPlan:
     plans, candidates_by_live_path = engine._collect_tracked_candidates(
         operation=operation,
         bindings_by_repo=bindings_by_repo,
@@ -112,7 +130,12 @@ def build_tracked_plans(
                 target_plans=filtered_targets,
             )
         )
-    return filtered_plans
+    repo_by_name = {repo_config.name: engine.get_repo(repo_config.name) for repo_config in engine.config.ordered_repos}
+    return build_operation_plan(
+        filtered_plans,
+        repo_by_name=repo_by_name,
+        operation=operation,
+    )
 
 
 
@@ -247,11 +270,28 @@ def plan_hooks(
     repo: Repository,
     packages: list[PackageSpec],
     context: dict[str, Any],
+    *,
+    binding: Binding,
     operation: str | None = None,
+    inferred_os: str,
+    variables: dict[str, Any],
+    target_plans: list[Any],
 ) -> dict[str, list[HookPlan]]:
     hook_names = HOOK_NAMES_BY_OPERATION.get(operation, VALID_HOOK_NAMES)
     hooks: dict[str, list[HookPlan]] = defaultdict(list)
+    targets_by_owner = {
+        (target.package_id, target.target_name): target
+        for target in target_plans
+    }
     for package in packages:
+        package_env = build_package_hook_env(
+            repo=repo,
+            package=package,
+            binding=binding,
+            operation=operation or "push",
+            inferred_os=inferred_os,
+            context=context,
+        )
         package_hooks = package.hooks or {}
         for hook_name in hook_names:
             hook_spec = package_hooks.get(hook_name)
@@ -260,11 +300,142 @@ def plan_hooks(
             for command in hook_spec.commands:
                 hooks[hook_name].append(
                     HookPlan(
-                        package_id=package.id,
                         hook_name=hook_name,
                         command=render_template_string(command, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
                         cwd=hook_spec.declared_in,
+                        repo_name=repo.config.name,
+                        package_id=package.id,
+                        scope_kind="package",
+                        env=dict(package_env),
                         run_noop=hook_spec.run_noop,
                     )
                 )
+        for target_name, target_spec in (package.targets or {}).items():
+            target_plan = targets_by_owner.get((package.id, target_name))
+            if target_plan is None:
+                continue
+            target_hooks = target_spec.hooks or {}
+            for hook_name in hook_names:
+                hook_spec = target_hooks.get(hook_name)
+                if hook_spec is None:
+                    continue
+                target_env = dict(target_plan.command_env or {})
+                for command in hook_spec.commands:
+                    hooks[hook_name].append(
+                        HookPlan(
+                            hook_name=hook_name,
+                            command=render_template_string(command, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
+                            cwd=hook_spec.declared_in,
+                            repo_name=repo.config.name,
+                            package_id=package.id,
+                            target_name=target_name,
+                            scope_kind="target",
+                            env=target_env,
+                            run_noop=hook_spec.run_noop,
+                        )
+                    )
     return dict(hooks)
+
+
+def plan_repo_hooks(
+    repo: Repository,
+    *,
+    operation: str,
+) -> dict[str, list[HookPlan]]:
+    hook_names = HOOK_NAMES_BY_OPERATION.get(operation, VALID_HOOK_NAMES)
+    context = {"vars": repo.local_vars, "repo_name": repo.config.name, "operation": operation}
+    env = build_repo_hook_env(repo=repo, operation=operation, context=context)
+    hooks: dict[str, list[HookPlan]] = defaultdict(list)
+    for hook_name in hook_names:
+        hook_spec = (repo.hooks or {}).get(hook_name)
+        if hook_spec is None:
+            continue
+        for command in hook_spec.commands:
+            hooks[hook_name].append(
+                HookPlan(
+                    hook_name=hook_name,
+                    command=render_template_string(command, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
+                    cwd=hook_spec.declared_in,
+                    repo_name=repo.config.name,
+                    scope_kind="repo",
+                    env=dict(env),
+                    run_noop=hook_spec.run_noop,
+                )
+            )
+    return dict(hooks)
+
+
+def finalize_repo_hook_plans(
+    hooks: dict[str, list[HookPlan]],
+    binding_plans: list[BindingPlan],
+    *,
+    allow_standalone_noop_hooks: bool = False,
+    excluded_repo_names: set[str] | None = None,
+) -> dict[str, list[HookPlan]]:
+    if not hooks:
+        return {}
+    repo_name = next((hook.repo_name for hook_plans in hooks.values() for hook in hook_plans if hook.repo_name), None)
+    repo_has_lower_scope_work = any(
+        any(target.action != "noop" for target in plan.target_plans) or any(plan.hooks.values())
+        for plan in binding_plans
+    )
+    if repo_has_lower_scope_work:
+        return hooks
+    if repo_name is not None and repo_name in (excluded_repo_names or set()):
+        return {}
+    finalized: dict[str, list[HookPlan]] = {}
+    for hook_name, hook_plans in hooks.items():
+        retained = [hook for hook in hook_plans if allow_standalone_noop_hooks or hook.run_noop]
+        if retained:
+            finalized[hook_name] = retained
+    return finalized
+
+
+def standalone_repo_hook_summary(
+    hooks: dict[str, list[HookPlan]],
+    binding_plans: list[BindingPlan],
+) -> tuple[str, ...] | None:
+    if any(any(target.action != "noop" for target in plan.target_plans) or any(plan.hooks.values()) for plan in binding_plans):
+        return None
+    hook_names: list[str] = []
+    for hook_name, hook_plans in hooks.items():
+        if not hook_plans:
+            continue
+        hook_names.append(hook_name)
+    return tuple(hook_names) if hook_names else None
+
+
+def build_operation_plan(
+    plans: list[BindingPlan],
+    *,
+    repo_by_name: dict[str, Repository],
+    operation: str,
+    allow_standalone_noop_hooks: bool = False,
+    excluded_repo_names: set[str] | None = None,
+) -> OperationPlan:
+    repo_order = tuple(
+        repo_name
+        for repo_name in repo_by_name
+        if any(plan.binding.repo == repo_name for plan in plans)
+    )
+    repo_hook_plans = {
+        repo_name: plan_repo_hooks(repo_by_name[repo_name], operation=operation)
+        for repo_name in repo_order
+    }
+    repo_hooks = {
+        repo_name: finalize_repo_hook_plans(
+            repo_hook_plans.get(repo_name, {}),
+            [plan for plan in plans if plan.binding.repo == repo_name],
+            allow_standalone_noop_hooks=allow_standalone_noop_hooks,
+            excluded_repo_names=excluded_repo_names,
+        )
+        for repo_name in repo_order
+    }
+    repo_hooks = {repo_name: hooks for repo_name, hooks in repo_hooks.items() if hooks}
+    return OperationPlan(
+        operation=operation,
+        binding_plans=tuple(plans),
+        repo_hooks=repo_hooks,
+        repo_hook_plans=repo_hook_plans,
+        repo_order=repo_order,
+    )

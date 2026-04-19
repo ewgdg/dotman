@@ -72,6 +72,7 @@ class TargetSpec:
     pull_view_live: str | None = None
     push_ignore: tuple[str, ...] | None = None
     pull_ignore: tuple[str, ...] | None = None
+    hooks: dict[str, "HookSpec"] | None = None
     disabled: bool = False
 
 
@@ -146,15 +147,22 @@ class InstalledBindingSummary:
 
 @dataclass(frozen=True)
 class HookPlan:
-    package_id: str
     hook_name: str
     command: str
     cwd: Path
+    repo_name: str | None = None
+    package_id: str | None = None
+    target_name: str | None = None
+    scope_kind: str = "package"
+    env: dict[str, str] | None = field(default=None, repr=False)
     run_noop: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "scope_kind": self.scope_kind,
+            "repo_name": self.repo_name,
             "package_id": self.package_id,
+            "target_name": self.target_name,
             "hook_name": self.hook_name,
             "command": self.command,
             "cwd": str(self.cwd),
@@ -354,17 +362,7 @@ def filter_hook_plans_for_targets(
     hooks: dict[str, list[HookPlan]],
     target_plans: list[TargetPlan],
 ) -> dict[str, list[HookPlan]]:
-    executable_package_ids = executable_package_ids_for_targets(target_plans)
-    filtered_hooks: dict[str, list[HookPlan]] = {}
-    for hook_name, hook_plans in hooks.items():
-        matching_hooks = [
-            hook_plan
-            for hook_plan in hook_plans
-            if hook_plan.package_id in executable_package_ids
-        ]
-        if matching_hooks:
-            filtered_hooks[hook_name] = matching_hooks
-    return filtered_hooks
+    return finalize_hook_plans_for_targets(hooks, target_plans)
 
 
 def executable_package_ids_for_targets(target_plans: list[TargetPlan]) -> set[str]:
@@ -382,17 +380,41 @@ def finalize_hook_plans_for_targets(
     *,
     allow_standalone_noop_hooks: bool = False,
     excluded_standalone_package_ids: set[str] | None = None,
+    excluded_standalone_target_ids: set[tuple[str, str]] | None = None,
 ) -> dict[str, list[HookPlan]]:
     executable_package_ids = executable_package_ids_for_targets(target_plans)
+    executable_target_ids = {
+        (target.package_id, target.target_name)
+        for target in target_plans
+        if target.action != "noop"
+    }
     excluded_package_ids = excluded_standalone_package_ids or set()
+    excluded_target_ids = excluded_standalone_target_ids or set()
     filtered_hooks: dict[str, list[HookPlan]] = {}
     for hook_name, hook_plans in hooks.items():
         matching_hooks = [
             hook_plan
             for hook_plan in hook_plans
-            if hook_plan.package_id in executable_package_ids
+            if (
+                hook_plan.scope_kind == "package"
+                and hook_plan.package_id in executable_package_ids
+            )
             or (
-                hook_plan.package_id not in excluded_package_ids
+                hook_plan.scope_kind == "target"
+                and hook_plan.package_id is not None
+                and hook_plan.target_name is not None
+                and (hook_plan.package_id, hook_plan.target_name) in executable_target_ids
+            )
+            or (
+                hook_plan.scope_kind == "package"
+                and hook_plan.package_id not in excluded_package_ids
+                and (allow_standalone_noop_hooks or hook_plan.run_noop)
+            )
+            or (
+                hook_plan.scope_kind == "target"
+                and hook_plan.package_id is not None
+                and hook_plan.target_name is not None
+                and (hook_plan.package_id, hook_plan.target_name) not in excluded_target_ids
                 and (allow_standalone_noop_hooks or hook_plan.run_noop)
             )
         ]
@@ -409,6 +431,8 @@ def standalone_hook_package_summaries(
     hook_names_by_package: dict[str, list[str]] = {}
     for hook_name, hook_plans in hooks.items():
         for hook_plan in hook_plans:
+            if hook_plan.scope_kind != "package":
+                continue
             if hook_plan.package_id in executable_package_ids:
                 continue
             package_hook_names = hook_names_by_package.setdefault(hook_plan.package_id, [])
@@ -417,6 +441,32 @@ def standalone_hook_package_summaries(
     return {
         package_id: tuple(hook_names)
         for package_id, hook_names in hook_names_by_package.items()
+    }
+
+
+def standalone_hook_target_summaries(
+    hooks: dict[str, list[HookPlan]],
+    target_plans: list[TargetPlan],
+) -> dict[tuple[str, str], tuple[str, ...]]:
+    executable_target_ids = {
+        (target.package_id, target.target_name)
+        for target in target_plans
+        if target.action != "noop"
+    }
+    hook_names_by_target: dict[tuple[str, str], list[str]] = {}
+    for hook_name, hook_plans in hooks.items():
+        for hook_plan in hook_plans:
+            if hook_plan.scope_kind != "target" or hook_plan.package_id is None or hook_plan.target_name is None:
+                continue
+            target_id = (hook_plan.package_id, hook_plan.target_name)
+            if target_id in executable_target_ids:
+                continue
+            target_hook_names = hook_names_by_target.setdefault(target_id, [])
+            if hook_name not in target_hook_names:
+                target_hook_names.append(hook_name)
+    return {
+        target_id: tuple(hook_names)
+        for target_id, hook_names in hook_names_by_target.items()
     }
 
 
@@ -430,6 +480,7 @@ class BindingPlan:
     hooks: dict[str, list[HookPlan]]
     target_plans: list[TargetPlan]
     hook_plans: dict[str, list[HookPlan]] | None = field(default=None, repr=False)
+    package_bound_profiles: dict[str, str | None] = field(default_factory=dict, repr=False)
     repo_root: Path | None = None
     state_path: Path | None = None
     inferred_os: str | None = None
@@ -444,6 +495,39 @@ class BindingPlan:
             "targets": [target.to_dict() for target in self.target_plans],
             "hooks": {name: [item.to_dict() for item in items] for name, items in self.hooks.items()},
         }
+
+
+@dataclass(frozen=True)
+class OperationPlan:
+    operation: str
+    binding_plans: tuple[BindingPlan, ...]
+    repo_hooks: dict[str, dict[str, list[HookPlan]]] = field(default_factory=dict)
+    repo_hook_plans: dict[str, dict[str, list[HookPlan]]] | None = field(default=None, repr=False)
+    repo_order: tuple[str, ...] = ()
+
+    def __iter__(self):
+        return iter(self.binding_plans)
+
+    def __len__(self) -> int:
+        return len(self.binding_plans)
+
+    def __getitem__(self, index: int) -> BindingPlan:
+        return self.binding_plans[index]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "bindings": [plan.to_dict() for plan in self.binding_plans],
+            "repo_hooks": {
+                repo_name: {hook_name: [item.to_dict() for item in items] for hook_name, items in hooks.items()}
+                for repo_name, hooks in self.repo_hooks.items()
+            },
+        }
+
+
+def binding_plans_for_operation_plan(plans: OperationPlan | list[BindingPlan] | tuple[BindingPlan, ...]) -> list[BindingPlan]:
+    if isinstance(plans, OperationPlan):
+        return list(plans.binding_plans)
+    return list(plans)
 
 
 @dataclass(frozen=True)

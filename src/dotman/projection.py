@@ -718,6 +718,8 @@ def build_target_command_env(
         "DOTMAN_PACKAGE_ID": package.id,
         "DOTMAN_PACKAGE_ROOT": str(package.package_root),
         "DOTMAN_TARGET_NAME": target.name,
+        "DOTMAN_TARGET_REPO_PATH": str(repo_path),
+        "DOTMAN_TARGET_LIVE_PATH": str(live_path),
         "DOTMAN_REPO_PATH": str(repo_path),
         "DOTMAN_SOURCE": str(repo_path),
         "DOTMAN_LIVE_PATH": str(live_path),
@@ -726,5 +728,46 @@ def build_target_command_env(
         "DOTMAN_OS": inferred_os,
     }
     for flat_key, value in flatten_vars(context["vars"]).items():
+        env[f"DOTMAN_VAR_{flat_key}"] = value
+    return env
+
+
+def build_package_hook_env(
+    *,
+    repo: Repository,
+    package: PackageSpec,
+    binding: Binding,
+    operation: str,
+    inferred_os: str,
+    context: dict[str, Any],
+) -> dict[str, str]:
+    env = {
+        "DOTMAN_REPO_NAME": repo.config.name,
+        "DOTMAN_REPO_ROOT": str(repo.root),
+        "DOTMAN_STATE_PATH": str(repo.config.state_path),
+        "DOTMAN_PACKAGE_ID": package.id,
+        "DOTMAN_PACKAGE_ROOT": str(package.package_root),
+        "DOTMAN_PROFILE": binding.profile,
+        "DOTMAN_OPERATION": operation,
+        "DOTMAN_OS": inferred_os,
+    }
+    for flat_key, value in flatten_vars(context["vars"]).items():
+        env[f"DOTMAN_VAR_{flat_key}"] = value
+    return env
+
+
+def build_repo_hook_env(
+    *,
+    repo: Repository,
+    operation: str,
+    context: dict[str, Any],
+) -> dict[str, str]:
+    env = {
+        "DOTMAN_REPO_NAME": repo.config.name,
+        "DOTMAN_REPO_ROOT": str(repo.root),
+        "DOTMAN_STATE_PATH": str(repo.config.state_path),
+        "DOTMAN_OPERATION": operation,
+    }
+    for flat_key, value in flatten_vars(context.get("vars", {})).items():
         env[f"DOTMAN_VAR_{flat_key}"] = value
     return env

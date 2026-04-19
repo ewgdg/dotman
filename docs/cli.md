@@ -124,12 +124,12 @@ This document captures the current command and selector direction for `dotman`.
 - `push` with no binding should replay the current tracked bindings from persisted state without changing the tracked binding set.
 - If group membership or package `depends` change in the repo, `push` should pick up newly introduced managed packages and files.
 - `push` should only touch files within the current managed selection.
-- In interactive mode, `push` should present one combined selection menu for pending non-noop target actions plus synthetic package hook-only rows when a package has noop-eligible hooks but no executable target rows.
+- In interactive mode, `push` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
 - A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
-- Synthetic hook-only selection rows should be package-scoped, not per-hook command rows.
+- Synthetic hook-only selection rows should stay owner-scoped, not per-hook command rows. Supported rows are repo (`[hooks] repo`), package (`[hooks] repo:package`), and target (`[hooks] repo:package.target`).
 - After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
-- After diff review accepts, `push` should execute immediately in one package-oriented timeline.
+- After diff review accepts, `push` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
 - Before the first live mutation of a real `push`, dotman should create one manager-level snapshot for the finalized selected plan.
 - That snapshot should record enough state to restore the mutated paths later.
 - If the finalized `push` work is hook-only, dotman should not create a snapshot.
@@ -172,12 +172,12 @@ This document captures the current command and selector direction for `dotman`.
 - `pull` with no binding should replay the current tracked bindings from persisted state.
 - If the requested selector is not currently tracked, `pull` should fail instead of implicitly creating state. The user should use `track` first.
 - `pull` should first build a reverse-sync plan before changing any sources.
-- In interactive mode, `pull` should present one combined selection menu for pending non-noop target actions plus synthetic package hook-only rows when a package has noop-eligible hooks but no executable target rows.
+- In interactive mode, `pull` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
 - A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
-- Synthetic hook-only selection rows should be package-scoped, not per-hook command rows.
+- Synthetic hook-only selection rows should stay owner-scoped, not per-hook command rows. Supported rows are repo (`[hooks] repo`), package (`[hooks] repo:package`), and target (`[hooks] repo:package.target`).
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
-- After diff review accepts, `pull` should execute immediately in one package-oriented timeline.
+- After diff review accepts, `pull` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
 - A `guard_pull` hook that exits `100` soft-skips that package scope and lets later packages continue.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
 - The interactive diff review stage should stay inspection-only in v1.

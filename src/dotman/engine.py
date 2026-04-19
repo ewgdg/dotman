@@ -16,6 +16,7 @@ from dotman.models import (
     InstalledOwnedTargetDetail,
     InstalledTargetSummary,
     ManagerConfig,
+    OperationPlan,
     PackageSpec,
     TrackedBindingIssue,
 )
@@ -245,10 +246,10 @@ class DotmanEngine:
         }
         return selector, profile, exact_matches, list(unique_partials.values()), list(unique_owners.values())
 
-    def plan_push(self) -> list[BindingPlan]:
+    def plan_push(self) -> OperationPlan:
         return self._build_tracked_plans(operation="push")
 
-    def plan_pull(self) -> list[BindingPlan]:
+    def plan_pull(self) -> OperationPlan:
         return self._build_tracked_plans(operation="pull")
 
     def _tracking_helpers(self):
@@ -600,11 +601,20 @@ class DotmanEngine:
         *,
         operation: str,
         bindings_by_repo: dict[str, list[Binding]] | None = None,
-    ) -> list[BindingPlan]:
+    ) -> OperationPlan:
         return self._planning_helpers().build_tracked_plans(
             self,
             operation=operation,
             bindings_by_repo=bindings_by_repo,
+        )
+
+    def _build_operation_plan(self, plans: list[BindingPlan], *, operation: str, allow_standalone_noop_hooks: bool = False, excluded_repo_names: set[str] | None = None) -> OperationPlan:
+        return self._planning_helpers().build_operation_plan(
+            plans,
+            repo_by_name={repo_config.name: self.get_repo(repo_config.name) for repo_config in self.config.ordered_repos},
+            operation=operation,
+            allow_standalone_noop_hooks=allow_standalone_noop_hooks,
+            excluded_repo_names=excluded_repo_names,
         )
 
     def _collect_tracked_candidates(
@@ -636,9 +646,23 @@ class DotmanEngine:
         repo: Repository,
         packages: list[PackageSpec],
         context: dict[str, Any],
+        *,
+        binding: Binding,
         operation: str | None = None,
+        inferred_os: str,
+        variables: dict[str, Any],
+        target_plans: list[Any],
     ) -> dict[str, list[Any]]:
-        return self._planning_helpers().plan_hooks(repo, packages, context, operation=operation)
+        return self._planning_helpers().plan_hooks(
+            repo,
+            packages,
+            context,
+            binding=binding,
+            operation=operation,
+            inferred_os=inferred_os,
+            variables=variables,
+            target_plans=target_plans,
+        )
 
     def _plan_targets(
         self,

@@ -218,10 +218,36 @@ sync_policy = "pull-only"
 - Supported hook names are `guard_push`, `pre_push`, `post_push`, `guard_pull`, `pre_pull`, and `post_pull`.
 - `check` is removed; there is no backward-compatibility alias.
 - Hook entries may be a single item, an ordered list, or a table with `commands` and optional metadata.
-- Package hook table form supports `run_noop = true | false`.
+- Repo, package, and target hook table form all support `run_noop = true | false`.
 - `run_noop` defaults to `false`.
-- Package hook shorthand still works and normalizes to `run_noop = false`.
+- Repo, package, and target hook shorthand still work and normalize to `run_noop = false`.
 - Empty hook command lists are allowed and mean the hook is effectively disabled at that package layer.
+
+Repo hooks live in `repo.toml` under top-level `[hooks]` and run once per repo per operation:
+
+```toml
+[hooks]
+pre_push = "echo repo pre"
+
+[hooks.guard_pull]
+commands = ["echo repo guard pull"]
+run_noop = true
+```
+
+Target hooks live under `[targets.<name>.hooks]` inside a package manifest:
+
+```toml
+[targets.config]
+source = "files/config.txt"
+path = "~/.config/app/config.txt"
+
+[targets.config.hooks]
+pre_push = "echo target pre"
+
+[targets.config.hooks.post_pull]
+commands = ["echo target post pull"]
+run_noop = true
+```
 
 Example:
 
@@ -243,11 +269,21 @@ run_noop = true
 - `pre_*` stays hard-fail only: any non-zero exit, including `100`, fails the run.
 - `post_*` runs only when earlier steps for that package succeed.
 - `post_*` stays hard-fail only: any non-zero exit, including `100`, fails the run if it executes.
+- Repo hooks execute in repo scope order: repo `guard_*`, repo `pre_*`, retained package/target work, then repo `post_*`.
+- Target hooks execute around their own target only: target `guard_*`, target `pre_*`, target action steps, then target `post_*`.
+- Repo `guard_*` exit `100` soft-skips that repo subtree and continues with the next repo.
+- Target `guard_*` exit `100` soft-skips only that target subtree and continues with the next target.
 - Package hooks normally run when the package still owns at least one non-noop effective target after tracked-target winner resolution and any interactive target exclusion.
+- Target hooks normally run when that target still owns at least one non-noop effective target action after winner resolution and any interactive target exclusion.
+- Repo hooks normally run when the finalized repo still has any retained package or target work.
 - If a package hook declares `run_noop = true`, dotman may retain that hook as standalone hook-only package work when the package has no executable target steps for the active operation.
-- Standalone noop retention is package-hook only in this phase. Target-level hook metadata is out of scope.
+- If a target hook declares `run_noop = true`, dotman may retain that hook as standalone hook-only target work when that target action is noop.
+- If a repo hook declares `run_noop = true`, dotman may retain that hook as standalone hook-only repo work when the finalized repo has no lower-scope work.
 - Standalone hook-only package execution must not fabricate target writes or snapshots.
+- Standalone hook-only target or repo execution must not fabricate target writes or snapshots.
 - Provenance alone should not cause hooks to execute.
+- Repo hook template expansion and env stay repo-scoped only. Dotman provides values such as `DOTMAN_REPO_NAME`, `DOTMAN_OPERATION`, `DOTMAN_REPO_ROOT`, and `DOTMAN_STATE_PATH`, but intentionally does not inject ambiguous single-binding values like `DOTMAN_PROFILE` or `DOTMAN_PACKAGE_ID` there.
+- Target hook env keeps the usual repo/package/profile vars and also includes `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, and `DOTMAN_TARGET_LIVE_PATH`.
 - Repo-wide helper scripts live under `scripts/`.
 - Package-specific scripts live inside the package, for example `hooks/`.
 - Prefer explicit runner commands such as `sh hooks/push.sh`, `python3 hooks/render.py`, or `uv run hooks/render.py` instead of relying on executable bits.

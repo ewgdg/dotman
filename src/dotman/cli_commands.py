@@ -312,8 +312,8 @@ def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, ope
         )
         binding_text = f"{binding.repo}:{binding.selector}"
         if operation == "push":
-            return [engine.plan_push_binding(binding_text, profile=binding.profile)]
-        return [engine.plan_pull_binding(binding_text, profile=binding.profile)]
+            return engine._build_operation_plan([engine.plan_push_binding(binding_text, profile=binding.profile)], operation="push")
+        return engine._build_operation_plan([engine.plan_pull_binding(binding_text, profile=binding.profile)], operation="pull")
     return engine.plan_push() if operation == "push" else engine.plan_pull()
 
 

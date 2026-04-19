@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import stat
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,7 +11,7 @@ import dotman.execution as execution
 from dotman import file_access
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
-from dotman.models import Binding, BindingPlan, HookPlan, TargetPlan
+from dotman.models import Binding, BindingPlan, HookPlan, OperationPlan, TargetPlan
 from tests.helpers import write_named_manager_config
 
 
@@ -72,6 +73,131 @@ def test_build_execution_session_orders_push_steps_per_package() -> None:
         "guard_push",
         "update",
     ]
+
+
+def test_build_execution_session_orders_repo_package_and_target_scopes() -> None:
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={
+            "guard_push": [HookPlan(package_id="app", hook_name="guard_push", command="echo package guard", cwd=Path("/repo/app"))],
+            "pre_push": [HookPlan(package_id="app", hook_name="pre_push", command="echo package pre", cwd=Path("/repo/app"))],
+            "post_push": [HookPlan(package_id="app", hook_name="post_push", command="echo package post", cwd=Path("/repo/app"))],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/live/app.conf"),
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"repo\n",
+            )
+        ],
+    )
+    operation_plan = OperationPlan(
+        operation="push",
+        binding_plans=(replace(plan, hooks={
+            **plan.hooks,
+            "guard_push": [
+                *plan.hooks["guard_push"],
+                HookPlan(package_id="app", target_name="config", scope_kind="target", hook_name="guard_push", command="echo target guard", cwd=Path("/repo/app")),
+            ],
+            "pre_push": [
+                *plan.hooks["pre_push"],
+                HookPlan(package_id="app", target_name="config", scope_kind="target", hook_name="pre_push", command="echo target pre", cwd=Path("/repo/app")),
+            ],
+            "post_push": [
+                *plan.hooks["post_push"],
+                HookPlan(package_id="app", target_name="config", scope_kind="target", hook_name="post_push", command="echo target post", cwd=Path("/repo/app")),
+            ],
+        }),),
+        repo_hooks={
+            "fixture": {
+                "guard_push": [HookPlan(repo_name="fixture", scope_kind="repo", hook_name="guard_push", command="echo repo guard", cwd=Path("/repo"))],
+                "pre_push": [HookPlan(repo_name="fixture", scope_kind="repo", hook_name="pre_push", command="echo repo pre", cwd=Path("/repo"))],
+                "post_push": [HookPlan(repo_name="fixture", scope_kind="repo", hook_name="post_push", command="echo repo post", cwd=Path("/repo"))],
+            }
+        },
+        repo_order=("fixture",),
+    )
+
+    session = build_execution_session(operation_plan, operation="push")
+
+    assert [step.action for step in session.repos[0].pre_steps] == ["guard_push", "pre_push"]
+    assert [step.action for step in session.repos[0].packages[0].steps] == [
+        "guard_push",
+        "pre_push",
+        "guard_push",
+        "pre_push",
+        "create",
+        "post_push",
+        "post_push",
+    ]
+    assert [step.action for step in session.repos[0].post_steps] == ["post_push"]
+
+
+def test_execute_session_target_guard_skip_continues_next_target(monkeypatch, tmp_path: Path) -> None:
+    recorded: list[str] = []
+
+    def fake_run_command(**kwargs):
+        recorded.append(kwargs["command"])
+        if kwargs["command"] == "exit 100":
+            return 100, "", ""
+        return 0, "", ""
+
+    monkeypatch.setattr(execution, "_run_command", fake_run_command)
+    monkeypatch.setattr(execution, "_execute_target_step", lambda step: None)
+
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="fixture", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={
+            "guard_push": [
+                HookPlan(package_id="app", target_name="alpha", scope_kind="target", hook_name="guard_push", command="exit 100", cwd=Path("/repo/app")),
+                HookPlan(package_id="app", target_name="beta", scope_kind="target", hook_name="guard_push", command="echo beta guard", cwd=Path("/repo/app")),
+            ],
+            "pre_push": [
+                HookPlan(package_id="app", target_name="alpha", scope_kind="target", hook_name="pre_push", command="echo alpha pre", cwd=Path("/repo/app")),
+                HookPlan(package_id="app", target_name="beta", scope_kind="target", hook_name="pre_push", command="echo beta pre", cwd=Path("/repo/app")),
+            ],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="alpha",
+                repo_path=tmp_path / "repo" / "alpha.conf",
+                live_path=tmp_path / "live" / "alpha.conf",
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"alpha\n",
+            ),
+            TargetPlan(
+                package_id="app",
+                target_name="beta",
+                repo_path=tmp_path / "repo" / "beta.conf",
+                live_path=tmp_path / "live" / "beta.conf",
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"beta\n",
+            ),
+        ],
+    )
+
+    result = execute_session(build_execution_session([plan], operation="push"), stream_output=False)
+
+    assert result.status == "ok"
+    assert recorded == ["exit 100", "echo beta guard", "echo beta pre"]
 
 
 def test_build_execution_session_marks_hooks_privileged_when_package_needs_sudo() -> None:

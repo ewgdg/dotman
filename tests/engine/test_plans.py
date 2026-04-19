@@ -113,6 +113,51 @@ def write_hook_metadata_repo(
     return repo_root
 
 
+def write_repo_and_target_hook_repo(
+    tmp_path: Path,
+    *,
+    repo_manifest: list[str] | None = None,
+    package_manifest: list[str] | None = None,
+    child_manifest: list[str] | None = None,
+) -> Path:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "app" / "files").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "app" / "files" / "config.txt").write_text("config\n", encoding="utf-8")
+    if repo_manifest is not None:
+        (repo_root / "repo.toml").write_text("\n".join([*repo_manifest, ""]), encoding="utf-8")
+    (repo_root / "packages" / "app" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "app"',
+                *(package_manifest or []),
+                "",
+                "[targets.config]",
+                'source = "files/config.txt"',
+                'path = "~/.config/app/config.txt"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    if child_manifest is not None:
+        (repo_root / "packages" / "child" / "files").mkdir(parents=True)
+        (repo_root / "packages" / "child" / "files" / "config.txt").write_text("child\n", encoding="utf-8")
+        (repo_root / "packages" / "child" / "package.toml").write_text(
+            "\n".join(
+                [
+                    'id = "child"',
+                    'extends = ["app"]',
+                    *child_manifest,
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    return repo_root
+
+
 def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -327,6 +372,72 @@ def test_package_hook_override_replaces_metadata_when_merging_extends(
 
     hook = engine.get_repo("fixture").resolve_package("child").hooks["pre_push"]
     assert hook.commands == ("echo child",)
+    assert hook.run_noop is True
+
+
+def test_repo_hook_table_form_parses_run_noop_metadata(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        repo_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo repo"]',
+            "run_noop = true",
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    hook = engine.get_repo("fixture").hooks["pre_push"]
+    assert hook.commands == ("echo repo",)
+    assert hook.run_noop is True
+
+
+def test_target_hook_table_form_parses_run_noop_metadata(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        package_manifest=[
+            "[targets.config.hooks.pre_push]",
+            'commands = ["echo target"]',
+            "run_noop = true",
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    hook = engine.get_repo("fixture").resolve_package("app").targets["config"].hooks["pre_push"]
+    assert hook.commands == ("echo target",)
+    assert hook.run_noop is True
+
+
+def test_target_hook_override_replaces_metadata_when_merging_extends(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        package_manifest=[
+            "[targets.config.hooks.pre_push]",
+            'commands = ["echo base target"]',
+            "run_noop = false",
+        ],
+        child_manifest=[
+            "[targets.config]",
+            'source = "files/config.txt"',
+            'path = "~/.config/child/config.txt"',
+            "",
+            "[targets.config.hooks.pre_push]",
+            'commands = ["echo child target"]',
+            "run_noop = true",
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    hook = engine.get_repo("fixture").resolve_package("child").targets["config"].hooks["pre_push"]
+    assert hook.commands == ("echo child target",)
     assert hook.run_noop is True
 
 

@@ -185,7 +185,20 @@ def describe_package_binding(
     inferred_os = infer_profile_os(binding.profile, lineage, variables)
     context = build_template_context(variables, profile=binding.profile, inferred_os=inferred_os)
     package = repo.resolve_package(package_id)
-    hooks = engine._plan_hooks(repo, [package], context) if executable else {}
+    hooks = (
+        engine._plan_hooks(
+            repo,
+            [package],
+            context,
+            binding=binding,
+            operation="push",
+            inferred_os=inferred_os,
+            variables=variables,
+            target_plans=[],
+        )
+        if executable
+        else {}
+    )
     targets = summarize_targets(repo, package, context)
     tracked_reason = "explicit" if package_id in engine._selected_package_ids(repo, binding.selector, selector_kind) else "implicit"
 

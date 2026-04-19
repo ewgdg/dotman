@@ -24,9 +24,12 @@ from dotman.diff_review import (
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text, parse_package_ref_text
 from dotman.models import (
     Binding,
+    OperationPlan,
+    binding_plans_for_operation_plan,
     finalize_hook_plans_for_targets,
     package_ref_text,
     standalone_hook_package_summaries,
+    standalone_hook_target_summaries,
 )
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
@@ -53,6 +56,7 @@ from dotman.resolver import (
 )
 from dotman.cli_parser import build_parser as build_cli_parser
 from dotman import cli_emit, cli_commands
+from dotman.planning import finalize_repo_hook_plans, standalone_repo_hook_summary
 from dotman.selection_menu_context import current_selection_menu_config
 
 
@@ -81,6 +85,7 @@ class PendingSelectionItem:
     destination_path: str | None = None
     kind: str = "target"
     hook_names: tuple[str, ...] = ()
+    repo_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2097,7 +2102,8 @@ def collect_pending_selection_items_for_operation(
     use_raw_hook_plans: bool = False,
 ) -> list[PendingSelectionItem]:
     selection_items: list[PendingSelectionItem] = []
-    for plan in plans:
+    binding_plans = binding_plans_for_operation_plan(plans)
+    for plan in binding_plans:
         binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
         for target in plan.target_plans:
             if target.directory_items:
@@ -2131,21 +2137,22 @@ def collect_pending_selection_items_for_operation(
                     package_id=target.package_id,
                     action=selection_item_action(operation=operation, action=target.action),
                     target_name=target.target_name,
+                    bound_profile=plan.package_bound_profiles.get(target.package_id),
                     source_path=source_path,
                     destination_path=destination_path,
                 )
             )
         hook_source = (getattr(plan, "hook_plans", None) or plan.hooks) if use_raw_hook_plans else plan.hooks
-        standalone_hook_packages = standalone_hook_package_summaries(
+        finalized_hooks = (
             finalize_hook_plans_for_targets(
                 hook_source,
                 plan.target_plans,
                 allow_standalone_noop_hooks=run_noop,
             )
             if use_raw_hook_plans
-            else hook_source,
-            plan.target_plans,
+            else hook_source
         )
+        standalone_hook_packages = standalone_hook_package_summaries(finalized_hooks, plan.target_plans)
         for package_id, hook_names in standalone_hook_packages.items():
             selection_items.append(
                 PendingSelectionItem(
@@ -2153,7 +2160,62 @@ def collect_pending_selection_items_for_operation(
                     package_id=package_id,
                     action="hooks",
                     kind="package_hook_noop",
+                    bound_profile=plan.package_bound_profiles.get(package_id),
                     hook_names=hook_names,
+                )
+            )
+        standalone_hook_targets = standalone_hook_target_summaries(finalized_hooks, plan.target_plans)
+        for (package_id, target_name), hook_names in standalone_hook_targets.items():
+            selection_items.append(
+                PendingSelectionItem(
+                    binding_label=binding_label,
+                    package_id=package_id,
+                    target_name=target_name,
+                    action="hooks",
+                    kind="target_hook_noop",
+                    bound_profile=plan.package_bound_profiles.get(package_id),
+                    hook_names=hook_names,
+                )
+            )
+    if isinstance(plans, OperationPlan):
+        provisional_binding_plans = [
+            replace(
+                plan,
+                hooks=(
+                    finalize_hook_plans_for_targets(
+                        (getattr(plan, "hook_plans", None) or plan.hooks),
+                        plan.target_plans,
+                        allow_standalone_noop_hooks=run_noop,
+                    )
+                    if use_raw_hook_plans
+                    else plan.hooks
+                ),
+            )
+            for plan in binding_plans
+        ]
+        for repo_name in plans.repo_order:
+            repo_binding_plans = [plan for plan in provisional_binding_plans if plan.binding.repo == repo_name]
+            hook_source = (plans.repo_hook_plans or {}).get(repo_name, {}) if use_raw_hook_plans else plans.repo_hooks.get(repo_name, {})
+            finalized_repo_hooks = (
+                finalize_repo_hook_plans(
+                    hook_source,
+                    repo_binding_plans,
+                    allow_standalone_noop_hooks=run_noop,
+                )
+                if use_raw_hook_plans
+                else hook_source
+            )
+            hook_names = standalone_repo_hook_summary(finalized_repo_hooks, repo_binding_plans)
+            if hook_names is None:
+                continue
+            selection_items.append(
+                PendingSelectionItem(
+                    binding_label=f"{repo_name}:repo@repo",
+                    package_id=repo_name,
+                    action="hooks",
+                    kind="repo_hook_noop",
+                    hook_names=hook_names,
+                    repo_name=repo_name,
                 )
             )
     return selection_items
@@ -2161,22 +2223,36 @@ def collect_pending_selection_items_for_operation(
 
 def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full_paths: bool | None = None) -> None:
     full_paths = _effective_full_paths(full_paths)
-    repo_name = repo_name_from_binding_label(item.binding_label)
-    if item.kind == "package_hook_noop":
-        package_label = package_label_text(
-            repo_name=repo_name,
-            package_id=item.package_id,
-            bound_profile=item.bound_profile,
-        )
+    repo_name = item.repo_name or repo_name_from_binding_label(item.binding_label)
+    if item.kind in {"package_hook_noop", "target_hook_noop", "repo_hook_noop"}:
+        if item.kind == "repo_hook_noop":
+            owner_label = repo_name
+        else:
+            owner_label = package_label_text(
+                repo_name=repo_name,
+                package_id=item.package_id,
+                bound_profile=item.bound_profile,
+                target_name=item.target_name if item.kind == "target_hook_noop" else None,
+            )
         hook_summary = cli_style.hook_summary_text(item.hook_names)
         if not colors_enabled():
-            item_text = f"[hooks] {package_label}"
+            item_text = f"[hooks] {owner_label}"
             item_text += cli_style.render_annotation_parentheses(hook_summary, use_color=False)
             print(f"  {index:>2}) {item_text}")
             return
 
         badge_text = style_text("[hooks]", *MENU_ACTION_STYLE_BY_NAME.get("update", ("1",)))
-        package_text = render_package_label(repo_name=repo_name, package_id=item.package_id, bound_profile=item.bound_profile)
+        if item.kind == "repo_hook_noop":
+            package_text = style_text(repo_name, *MENU_REPO_STYLE)
+        elif item.kind == "target_hook_noop":
+            package_text = render_package_target_label(
+                repo_name=repo_name,
+                package_id=item.package_id,
+                target_name=item.target_name,
+                bound_profile=item.bound_profile,
+            )
+        else:
+            package_text = render_package_label(repo_name=repo_name, package_id=item.package_id, bound_profile=item.bound_profile)
         summary_text = cli_style.render_annotation_parentheses(hook_summary, use_color=True)
         print(
             f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
@@ -2261,10 +2337,18 @@ def filter_plans_for_interactive_selection(
 
     excluded_targets: set[tuple[str, str, str, str, str]] = set()
     excluded_standalone_packages: set[tuple[str, str]] = set()
+    excluded_standalone_targets: set[tuple[str, str, str]] = set()
+    excluded_repo_names: set[str] = set()
     for excluded_index in excluded_indexes:
         item = selection_items[excluded_index - 1]
         if item.kind == "package_hook_noop":
             excluded_standalone_packages.add((item.binding_label, item.package_id))
+            continue
+        if item.kind == "target_hook_noop":
+            excluded_standalone_targets.add((item.binding_label, item.package_id, item.target_name or ""))
+            continue
+        if item.kind == "repo_hook_noop":
+            excluded_repo_names.add(item.repo_name or repo_name_from_binding_label(item.binding_label))
             continue
         excluded_targets.add(
             (
@@ -2276,8 +2360,9 @@ def filter_plans_for_interactive_selection(
             )
         )
 
+    binding_plans = binding_plans_for_operation_plan(plans)
     filtered_plans = []
-    for plan in plans:
+    for plan in binding_plans:
         binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
         filtered_targets = []
         for target in plan.target_plans:
@@ -2322,9 +2407,30 @@ def filter_plans_for_interactive_selection(
                         for current_binding_label, package_id in excluded_standalone_packages
                         if current_binding_label == binding_label
                     },
+                    excluded_standalone_target_ids={
+                        (package_id, target_name)
+                        for current_binding_label, package_id, target_name in excluded_standalone_targets
+                        if current_binding_label == binding_label
+                    },
                 ),
                 target_plans=filtered_targets,
             )
+        )
+    if isinstance(plans, OperationPlan):
+        repo_hooks = {
+            repo_name: finalize_repo_hook_plans(
+                (plans.repo_hook_plans or {}).get(repo_name, {}),
+                [plan for plan in filtered_plans if plan.binding.repo == repo_name],
+                allow_standalone_noop_hooks=run_noop,
+                excluded_repo_names=excluded_repo_names,
+            )
+            for repo_name in plans.repo_order
+        }
+        repo_hooks = {repo_name: hooks for repo_name, hooks in repo_hooks.items() if hooks}
+        return replace(
+            plans,
+            binding_plans=tuple(filtered_plans),
+            repo_hooks=repo_hooks,
         )
     return filtered_plans
 
@@ -2520,7 +2626,7 @@ def prepare_push_plans_for_execution(
     full_paths = _effective_full_paths(full_paths)
     hazards = cli_emit.collect_push_live_symlink_hazards(plans)
     if not hazards:
-        return list(plans)
+        return plans
 
     interactive = interactive_mode_enabled(json_output=json_output)
     if interactive:

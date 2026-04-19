@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 from threading import Thread
 from typing import Iterator, Sequence
@@ -25,7 +25,7 @@ from dotman.file_access import (
     sudo_prefix_command,
     write_bytes_atomic as sudo_write_bytes_atomic,
 )
-from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan, repo_qualified_target_text
+from dotman.models import BindingPlan, DirectoryPlanItem, HookPlan, OperationPlan, TargetPlan, binding_plans_for_operation_plan, repo_qualified_target_text
 from dotman.repo_access import restore_repo_path_access_for_invoking_user
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_string
@@ -34,10 +34,12 @@ from dotman.terminal import preserve_terminal_state
 
 @dataclass(frozen=True)
 class ExecutionStep:
-    package_id: str
-    binding_plan: BindingPlan
-    kind: str
-    action: str
+    repo_name: str = ""
+    package_id: str | None = None
+    binding_plan: BindingPlan | None = None
+    kind: str = ""
+    action: str = ""
+    scope_kind: str = "package"
     hook_plan: HookPlan | None = None
     target_plan: TargetPlan | None = None
     directory_item: DirectoryPlanItem | None = None
@@ -62,10 +64,46 @@ class PackageExecutionUnit:
 
 
 @dataclass(frozen=True)
+class RepoExecutionUnit:
+    repo_name: str
+    pre_steps: tuple[ExecutionStep, ...]
+    packages: tuple[PackageExecutionUnit, ...]
+    post_steps: tuple[ExecutionStep, ...]
+
+    @property
+    def steps(self) -> tuple[ExecutionStep, ...]:
+        package_steps = tuple(step for package in self.packages for step in package.steps)
+        return (*self.pre_steps, *package_steps, *self.post_steps)
+
+
+@dataclass(frozen=True)
 class ExecutionSession:
     operation: str
-    packages: tuple[PackageExecutionUnit, ...]
+    repos: tuple[RepoExecutionUnit, ...] = ()
+    packages: InitVar[tuple[PackageExecutionUnit, ...] | None] = None
     requires_privilege: bool = False
+
+    def __post_init__(self, packages: tuple[PackageExecutionUnit, ...] | None) -> None:
+        if packages is None or self.repos:
+            return
+        repo_units: list[RepoExecutionUnit] = []
+        packages_by_repo: dict[str, list[PackageExecutionUnit]] = {}
+        for package in packages:
+            packages_by_repo.setdefault(package.repo_name, []).append(package)
+        for repo_name, repo_packages in packages_by_repo.items():
+            repo_units.append(
+                RepoExecutionUnit(
+                    repo_name=repo_name,
+                    pre_steps=(),
+                    packages=tuple(repo_packages),
+                    post_steps=(),
+                )
+            )
+        object.__setattr__(self, "repos", tuple(repo_units))
+
+    @property
+    def packages(self) -> tuple[PackageExecutionUnit, ...]:
+        return tuple(package for repo in self.repos for package in repo.packages)
 
 
 @dataclass(frozen=True)
@@ -86,7 +124,10 @@ class ExecutionStepResult:
             "kind": step.kind,
             "action": step.action,
             "package_id": step.package_id,
-            "binding": {
+            "repo": step.repo_name,
+            "binding": None
+            if step.binding_plan is None
+            else {
                 "repo": step.binding_plan.binding.repo,
                 "selector": step.binding_plan.binding.selector,
                 "profile": step.binding_plan.binding.profile,
@@ -126,10 +167,32 @@ class PackageExecutionResult:
 
 
 @dataclass(frozen=True)
+class RepoExecutionResult:
+    unit: RepoExecutionUnit
+    status: str
+    steps: tuple[ExecutionStepResult, ...]
+    packages: tuple[PackageExecutionResult, ...]
+    skip_reason: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "repo": self.unit.repo_name,
+            "status": self.status,
+            "skip_reason": self.skip_reason,
+            "steps": [step.to_dict() for step in self.steps],
+            "packages": [package.to_dict() for package in self.packages],
+        }
+
+
+@dataclass(frozen=True)
 class ExecutionResult:
     session: ExecutionSession
     status: str
-    packages: tuple[PackageExecutionResult, ...]
+    repos: tuple[RepoExecutionResult, ...]
+
+    @property
+    def packages(self) -> tuple[PackageExecutionResult, ...]:
+        return tuple(package for repo in self.repos for package in repo.packages)
 
     @property
     def exit_code(self) -> int:
@@ -141,6 +204,7 @@ class ExecutionResult:
             "operation": self.session.operation,
             "status": self.status,
             "requires_privilege": self.session.requires_privilege,
+            "repos": [repo.to_dict() for repo in self.repos],
             "packages": [package.to_dict() for package in self.packages],
         }
 
@@ -152,81 +216,175 @@ _STEP_LABELS_BY_OPERATION = {
 
 
 def build_execution_session(
-    plans: Sequence[BindingPlan],
+    plans: Sequence[BindingPlan] | OperationPlan,
     *,
     operation: str,
     run_noop: bool = False,
 ) -> ExecutionSession:
     del run_noop
-    _ensure_no_unapproved_live_symlink_targets(plans, operation=operation)
-    package_units: list[PackageExecutionUnit] = []
+    binding_plans = binding_plans_for_operation_plan(plans)
+    repo_hooks = plans.repo_hooks if isinstance(plans, OperationPlan) else {}
+    repo_order = plans.repo_order if isinstance(plans, OperationPlan) and plans.repo_order else tuple(
+        dict.fromkeys(plan.binding.repo for plan in binding_plans)
+    )
+    _ensure_no_unapproved_live_symlink_targets(binding_plans, operation=operation)
+    repo_units: list[RepoExecutionUnit] = []
     hook_names = _STEP_LABELS_BY_OPERATION[operation]
-    for plan in plans:
-        targets_by_package: dict[str, list[TargetPlan]] = {}
-        for target in plan.target_plans:
-            if target.action == "noop":
-                continue
-            targets_by_package.setdefault(target.package_id, []).append(target)
+    for repo_name in repo_order:
+        repo_binding_plans = [plan for plan in binding_plans if plan.binding.repo == repo_name]
+        package_units: list[PackageExecutionUnit] = []
+        for plan in repo_binding_plans:
+            package_hooks_by_package: dict[str, dict[str, list[HookPlan]]] = {}
+            target_hooks_by_target: dict[tuple[str, str], dict[str, list[HookPlan]]] = {}
+            for hook_name in hook_names:
+                for hook_plan in plan.hooks.get(hook_name, []):
+                    if hook_plan.scope_kind == "target" and hook_plan.package_id is not None and hook_plan.target_name is not None:
+                        target_hooks_by_target.setdefault((hook_plan.package_id, hook_plan.target_name), {}).setdefault(hook_name, []).append(hook_plan)
+                        continue
+                    if hook_plan.package_id is not None:
+                        package_hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
 
-        filtered_hooks_by_package: dict[str, dict[str, list[HookPlan]]] = {}
-        for hook_name in hook_names:
-            for hook_plan in plan.hooks.get(hook_name, []):
-                filtered_hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
+            targets_by_package: dict[str, list[TargetPlan]] = {}
+            for target in plan.target_plans:
+                targets_by_package.setdefault(target.package_id, []).append(target)
 
-        for package_id in plan.package_ids:
-            target_plans = targets_by_package.get(package_id, [])
-            package_hooks = filtered_hooks_by_package.get(package_id, {})
-
-            target_steps: list[ExecutionStep] = []
-            for target_plan in target_plans:
-                target_steps.extend(_build_target_steps(plan=plan, target_plan=target_plan, operation=operation))
-
-            package_requires_privilege = any(step.privileged for step in target_steps)
-            package_steps: list[ExecutionStep] = []
-            for hook_name in hook_names[:2]:
-                package_steps.extend(
-                    ExecutionStep(
-                        package_id=package_id,
-                        binding_plan=plan,
-                        kind="hook",
-                        action=hook_name,
-                        hook_plan=hook_plan,
-                        privileged=package_requires_privilege,
+            for package_id in plan.package_ids:
+                package_targets = targets_by_package.get(package_id, [])
+                package_hooks = package_hooks_by_package.get(package_id, {})
+                target_steps_by_owner = {
+                    (target.package_id, target.target_name): (
+                        [] if target.action == "noop" else _build_target_steps(plan=plan, target_plan=target, operation=operation)
                     )
-                    for hook_plan in package_hooks.get(hook_name, [])
+                    for target in package_targets
+                }
+                package_requires_privilege = any(
+                    step.privileged
+                    for steps in target_steps_by_owner.values()
+                    for step in steps
                 )
-
-            package_steps.extend(target_steps)
-
-            if target_plans or package_hooks:
-                package_steps.extend(
-                    ExecutionStep(
-                        package_id=package_id,
-                        binding_plan=plan,
-                        kind="hook",
-                        action=hook_names[2],
-                        hook_plan=hook_plan,
-                        privileged=package_requires_privilege,
+                package_steps: list[ExecutionStep] = []
+                for hook_name in hook_names[:2]:
+                    package_steps.extend(
+                        ExecutionStep(
+                            repo_name=plan.binding.repo,
+                            package_id=package_id,
+                            binding_plan=plan,
+                            kind="hook",
+                            action=hook_name,
+                            scope_kind="package",
+                            hook_plan=hook_plan,
+                            privileged=package_requires_privilege,
+                        )
+                        for hook_plan in package_hooks.get(hook_name, [])
                     )
-                    for hook_plan in package_hooks.get(hook_names[2], [])
+
+                for target in package_targets:
+                    target_id = (target.package_id, target.target_name)
+                    target_steps = target_steps_by_owner[target_id]
+                    target_requires_privilege = any(step.privileged for step in target_steps)
+                    target_hooks = target_hooks_by_target.get(target_id, {})
+                    for hook_name in hook_names[:2]:
+                        package_steps.extend(
+                            ExecutionStep(
+                                repo_name=plan.binding.repo,
+                                package_id=package_id,
+                                binding_plan=plan,
+                                kind="hook",
+                                action=hook_name,
+                                scope_kind="target",
+                                hook_plan=hook_plan,
+                                target_plan=target,
+                                privileged=target_requires_privilege,
+                            )
+                            for hook_plan in target_hooks.get(hook_name, [])
+                        )
+                    package_steps.extend(target_steps)
+                    if target_steps or target_hooks:
+                        package_steps.extend(
+                            ExecutionStep(
+                                repo_name=plan.binding.repo,
+                                package_id=package_id,
+                                binding_plan=plan,
+                                kind="hook",
+                                action=hook_names[2],
+                                scope_kind="target",
+                                hook_plan=hook_plan,
+                                target_plan=target,
+                                privileged=target_requires_privilege,
+                            )
+                            for hook_plan in target_hooks.get(hook_names[2], [])
+                        )
+
+                if package_steps or package_hooks:
+                    package_steps.extend(
+                        ExecutionStep(
+                            repo_name=plan.binding.repo,
+                            package_id=package_id,
+                            binding_plan=plan,
+                            kind="hook",
+                            action=hook_names[2],
+                            scope_kind="package",
+                            hook_plan=hook_plan,
+                            privileged=package_requires_privilege,
+                        )
+                        for hook_plan in package_hooks.get(hook_names[2], [])
+                    )
+
+                if not package_steps:
+                    continue
+                package_units.append(
+                    PackageExecutionUnit(
+                        repo_name=plan.binding.repo,
+                        binding_selector=plan.binding.selector,
+                        profile=plan.binding.profile,
+                        package_id=package_id,
+                        steps=tuple(package_steps),
+                    )
                 )
 
-            if not package_steps:
-                continue
-            package_units.append(
-                PackageExecutionUnit(
-                    repo_name=plan.binding.repo,
-                    binding_selector=plan.binding.selector,
-                    profile=plan.binding.profile,
-                    package_id=package_id,
-                    steps=tuple(package_steps),
-                )
+        repo_requires_privilege = any(step.privileged for package in package_units for step in package.steps)
+        repo_pre_steps = tuple(
+            ExecutionStep(
+                repo_name=repo_name,
+                package_id=None,
+                binding_plan=None,
+                kind="hook",
+                action=hook_name,
+                scope_kind="repo",
+                hook_plan=hook_plan,
+                privileged=repo_requires_privilege,
             )
+            for hook_name in hook_names[:2]
+            for hook_plan in repo_hooks.get(repo_name, {}).get(hook_name, [])
+        )
+        repo_post_steps = tuple(
+            ExecutionStep(
+                repo_name=repo_name,
+                package_id=None,
+                binding_plan=None,
+                kind="hook",
+                action=hook_names[2],
+                scope_kind="repo",
+                hook_plan=hook_plan,
+                privileged=repo_requires_privilege,
+            )
+            for hook_plan in repo_hooks.get(repo_name, {}).get(hook_names[2], [])
+        )
+        if not package_units and not repo_pre_steps and not repo_post_steps:
+            continue
+        repo_units.append(
+            RepoExecutionUnit(
+                repo_name=repo_name,
+                pre_steps=repo_pre_steps,
+                packages=tuple(package_units),
+                post_steps=repo_post_steps,
+            )
+        )
 
     return ExecutionSession(
         operation=operation,
-        packages=tuple(package_units),
-        requires_privilege=any(step.privileged for package in package_units for step in package.steps),
+        repos=tuple(repo_units),
+        requires_privilege=any(step.privileged for repo in repo_units for step in repo.steps),
     )
 
 
@@ -293,58 +451,170 @@ def execute_session(
     on_package_finish=None,
 ) -> ExecutionResult:
     _preflight_execution_session_sudo(session)
-    package_results: list[PackageExecutionResult] = []
+    repo_results: list[RepoExecutionResult] = []
     failed = False
-    for package in session.packages:
-        if on_package_start is not None:
-            on_package_start(package)
+    for repo in session.repos:
+        repo_step_results: list[ExecutionStepResult] = []
+        repo_package_results: list[PackageExecutionResult] = []
+        repo_status = "ok"
+        repo_skip_reason: str | None = None
 
         if failed:
-            skipped_result = _build_skipped_package_result(package, skip_reason="failure")
-            package_results.append(skipped_result)
-            if on_package_finish is not None:
-                on_package_finish(skipped_result)
+            repo_status = "skipped"
+            repo_skip_reason = "failure"
+            repo_step_results.extend(_build_skipped_step_result(step, skip_reason="failure") for step in (*repo.pre_steps, *repo.post_steps))
+            for package in repo.packages:
+                if on_package_start is not None:
+                    on_package_start(package)
+                skipped_result = _build_skipped_package_result(package, skip_reason="failure")
+                repo_package_results.append(skipped_result)
+                if on_package_finish is not None:
+                    on_package_finish(skipped_result)
+            repo_results.append(
+                RepoExecutionResult(
+                    unit=repo,
+                    status=repo_status,
+                    skip_reason=repo_skip_reason,
+                    steps=tuple(repo_step_results),
+                    packages=tuple(repo_package_results),
+                )
+            )
             continue
 
-        step_results: list[ExecutionStepResult] = []
-        package_status = "ok"
-        package_skip_reason: str | None = None
-        total_steps = len(package.steps)
-        for step_index, step in enumerate(package.steps, start=1):
-            if package_skip_reason is not None:
-                step_results.append(_build_skipped_step_result(step, skip_reason=package_skip_reason))
-                continue
+        for step_index, step in enumerate(repo.pre_steps, start=1):
             if on_step_start is not None:
-                on_step_start(package, step, step_index, total_steps)
+                on_step_start(repo, step, step_index, len(repo.pre_steps))
             result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
-            step_results.append(result)
+            repo_step_results.append(result)
             if on_step_finish is not None:
-                on_step_finish(package, result, step_index, total_steps)
+                on_step_finish(repo, result, step_index, len(repo.pre_steps))
             if result.status == "skipped":
-                package_skip_reason = result.skip_reason or "skipped"
-                if package_skip_reason != "guard":
-                    package_status = "skipped"
-                else:
-                    package_status = "skipped"
-                continue
+                repo_status = "skipped"
+                repo_skip_reason = result.skip_reason or "guard"
+                break
             if result.status != "ok":
-                package_skip_reason = "failure"
-                package_status = "failed"
+                repo_status = "failed"
+                repo_skip_reason = "failure"
                 failed = True
-        package_result = PackageExecutionResult(
-            unit=package,
-            status=package_status,
-            skip_reason=package_skip_reason if package_status == "skipped" else None,
-            steps=tuple(step_results),
+                break
+
+        for package in repo.packages:
+            if repo_skip_reason is not None:
+                if on_package_start is not None:
+                    on_package_start(package)
+                skipped_result = _build_skipped_package_result(package, skip_reason=repo_skip_reason)
+                repo_package_results.append(skipped_result)
+                if on_package_finish is not None:
+                    on_package_finish(skipped_result)
+                continue
+            package_result = _execute_package_unit(
+                package,
+                stream_output=stream_output,
+                assume_yes=assume_yes,
+                on_package_start=on_package_start,
+                on_step_start=on_step_start,
+                on_step_finish=on_step_finish,
+                on_package_finish=on_package_finish,
+            )
+            repo_package_results.append(package_result)
+            if package_result.status == "failed":
+                repo_status = "failed"
+                repo_skip_reason = "failure"
+                failed = True
+            elif package_result.status == "skipped" and package_result.skip_reason == "guard":
+                # package guard skip is local to package; repo remains ok.
+                pass
+
+        if repo_skip_reason is None and repo_status == "ok":
+            for step_index, step in enumerate(repo.post_steps, start=1):
+                if on_step_start is not None:
+                    on_step_start(repo, step, step_index, len(repo.post_steps))
+                result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
+                repo_step_results.append(result)
+                if on_step_finish is not None:
+                    on_step_finish(repo, result, step_index, len(repo.post_steps))
+                if result.status != "ok":
+                    repo_status = "failed"
+                    repo_skip_reason = "failure"
+                    failed = True
+                    break
+        else:
+            repo_step_results.extend(_build_skipped_step_result(step, skip_reason=repo_skip_reason or "failure") for step in repo.post_steps)
+
+        repo_results.append(
+            RepoExecutionResult(
+                unit=repo,
+                status=repo_status,
+                skip_reason=repo_skip_reason if repo_status == "skipped" else None,
+                steps=tuple(repo_step_results),
+                packages=tuple(repo_package_results),
+            )
         )
-        package_results.append(package_result)
-        if on_package_finish is not None:
-            on_package_finish(package_result)
     return ExecutionResult(
         session=session,
         status="failed" if failed else "ok",
-        packages=tuple(package_results),
+        repos=tuple(repo_results),
     )
+
+
+def _execute_package_unit(
+    package: PackageExecutionUnit,
+    *,
+    stream_output: bool,
+    assume_yes: bool,
+    on_package_start=None,
+    on_step_start=None,
+    on_step_finish=None,
+    on_package_finish=None,
+) -> PackageExecutionResult:
+    if on_package_start is not None:
+        on_package_start(package)
+
+    step_results: list[ExecutionStepResult] = []
+    package_status = "ok"
+    package_skip_reason: str | None = None
+    skipped_target_id: tuple[str, str] | None = None
+    total_steps = len(package.steps)
+    for step_index, step in enumerate(package.steps, start=1):
+        current_target_id = _step_target_id(step)
+        if skipped_target_id is not None and current_target_id != skipped_target_id:
+            skipped_target_id = None
+        if package_skip_reason is not None:
+            step_results.append(_build_skipped_step_result(step, skip_reason=package_skip_reason))
+            continue
+        if skipped_target_id is not None and current_target_id == skipped_target_id:
+            step_results.append(_build_skipped_step_result(step, skip_reason="guard"))
+            continue
+        if on_step_start is not None:
+            on_step_start(package, step, step_index, total_steps)
+        result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
+        step_results.append(result)
+        if on_step_finish is not None:
+            on_step_finish(package, result, step_index, total_steps)
+        if result.status == "skipped" and result.skip_reason == "guard":
+            if step.scope_kind == "target" and current_target_id is not None:
+                skipped_target_id = current_target_id
+                continue
+            package_skip_reason = "guard"
+            package_status = "skipped"
+            continue
+        if result.status == "skipped":
+            package_skip_reason = result.skip_reason or "skipped"
+            package_status = "skipped"
+            continue
+        if result.status != "ok":
+            package_skip_reason = "failure"
+            package_status = "failed"
+            continue
+    package_result = PackageExecutionResult(
+        unit=package,
+        status=package_status,
+        skip_reason=package_skip_reason if package_status == "skipped" else None,
+        steps=tuple(step_results),
+    )
+    if on_package_finish is not None:
+        on_package_finish(package_result)
+    return package_result
 
 
 def _build_skipped_step_result(step: ExecutionStep, *, skip_reason: str) -> ExecutionStepResult:
@@ -399,12 +669,12 @@ def _preflight_execution_session_sudo(session: ExecutionSession) -> None:
 
 
 def _execution_session_sudo_reason(session: ExecutionSession) -> str:
-    for package in session.packages:
-        for step in package.steps:
+    for repo in session.repos:
+        for step in repo.steps:
             if step.privileged and step.kind != "hook":
                 return _sudo_reason_for_step(step)
-    for package in session.packages:
-        for step in package.steps:
+    for repo in session.repos:
+        for step in repo.steps:
             if step.privileged:
                 return _sudo_reason_for_step(step)
     return "planned execution includes privileged operations"
@@ -423,6 +693,8 @@ def _sudo_reason_for_step(step: ExecutionStep) -> str:
     if step.action == "delete_repo" and repo_path is not None:
         return f"delete protected path: {repo_path}"
     if step.kind == "hook":
+        if step.package_id is None:
+            return f"execute privileged repo hook for {step.repo_name}"
         return f"execute privileged hook for {step.package_id}"
     if live_path is not None:
         return f"access protected path: {live_path}"
@@ -438,10 +710,12 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
         if target_plan.target_kind == "directory":
             steps.extend(
                 ExecutionStep(
+                    repo_name=plan.binding.repo,
                     package_id=target_plan.package_id,
                     binding_plan=plan,
                     kind="target",
                     action=item.action,
+                    scope_kind="target",
                     target_plan=target_plan,
                     directory_item=item,
                     privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=item.action, directory_item=item),
@@ -451,10 +725,12 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
             if target_plan.directory_items and target_plan.chmod is not None:
                 steps.append(
                     ExecutionStep(
+                        repo_name=plan.binding.repo,
                         package_id=target_plan.package_id,
                         binding_plan=plan,
                         kind="chmod",
                         action="chmod",
+                        scope_kind="target",
                         target_plan=target_plan,
                         privileged=needs_sudo_for_chmod(target_plan.live_path),
                     )
@@ -462,10 +738,12 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
             return steps
         steps.append(
             ExecutionStep(
+                repo_name=plan.binding.repo,
                 package_id=target_plan.package_id,
                 binding_plan=plan,
                 kind="target",
                 action=target_plan.action,
+                scope_kind="target",
                 target_plan=target_plan,
                 privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=target_plan.action),
             )
@@ -473,10 +751,12 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
         if target_plan.action in {"create", "update"} and target_plan.chmod is not None:
             steps.append(
                 ExecutionStep(
+                    repo_name=plan.binding.repo,
                     package_id=target_plan.package_id,
                     binding_plan=plan,
                     kind="chmod",
                     action="chmod",
+                    scope_kind="target",
                     target_plan=target_plan,
                     privileged=needs_sudo_for_chmod(target_plan.live_path),
                 )
@@ -486,10 +766,12 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
     if target_plan.reconcile_command is not None and target_plan.capture_command is None and target_plan.action == "update":
         steps.append(
             ExecutionStep(
+                repo_name=plan.binding.repo,
                 package_id=target_plan.package_id,
                 binding_plan=plan,
                 kind="reconcile",
                 action="reconcile",
+                scope_kind="target",
                 target_plan=target_plan,
                 privileged=_reconcile_step_needs_sudo(target_plan),
             )
@@ -500,10 +782,12 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
         action_map = {"create": "create_repo", "update": "update_repo", "delete": "delete_repo"}
         steps.extend(
             ExecutionStep(
+                repo_name=plan.binding.repo,
                 package_id=target_plan.package_id,
                 binding_plan=plan,
                 kind="target",
                 action=action_map[item.action],
+                scope_kind="target",
                 target_plan=target_plan,
                 directory_item=item,
                 privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=action_map[item.action], directory_item=item),
@@ -519,10 +803,12 @@ def _build_target_steps(*, plan: BindingPlan, target_plan: TargetPlan, operation
     }[target_plan.action]
     steps.append(
         ExecutionStep(
+            repo_name=plan.binding.repo,
             package_id=target_plan.package_id,
             binding_plan=plan,
             kind="target",
             action=direct_action,
+            scope_kind="target",
             target_plan=target_plan,
             privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=direct_action),
         )
@@ -940,8 +1226,12 @@ def _require_interactive_terminal_for_reconcile() -> None:
 
 
 def _build_hook_env(step: ExecutionStep) -> dict[str, str]:
-    plan = step.binding_plan
     hook_plan = step.hook_plan
+    if hook_plan is not None and hook_plan.env is not None:
+        return hook_plan.env
+    plan = step.binding_plan
+    if plan is None:
+        return {}
     env = {
         "DOTMAN_REPO_NAME": plan.binding.repo,
         "DOTMAN_PACKAGE_ID": step.package_id,
@@ -997,6 +1287,14 @@ def _flatten_vars(output: dict[str, str], *, prefix: str, value: object) -> None
             _flatten_vars(output, prefix=f"{prefix}__{nested_key}", value=nested_value)
         return
     output[prefix] = str(value)
+
+
+def _step_target_id(step: ExecutionStep) -> tuple[str, str] | None:
+    if step.target_plan is not None:
+        return (step.target_plan.package_id, step.target_plan.target_name)
+    if step.hook_plan is not None and step.hook_plan.package_id is not None and step.hook_plan.target_name is not None:
+        return (step.hook_plan.package_id, step.hook_plan.target_name)
+    return None
 
 
 def _require_target_plan(step: ExecutionStep) -> TargetPlan:

@@ -38,9 +38,18 @@ Current responsibility split:
 - `manifest.py` — manifest merge and schema helpers
 - `tracking.py` — persisted tracked-state and binding flows
 - `installed.py` — tracked/installed package inspection helpers
-- `planning.py` — high-level plan orchestration
+- `planning.py` — high-level plan orchestration, including the top-level operation-plan wrapper used for repo-scoped hooks
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `projection.py` — target projection and file/directory action planning
+
+Current execution shape is intentionally nested:
+
+- operation plan
+- repo-scoped hook buckets
+- binding/package plans
+- target plans and target-scoped hooks
+
+That structure keeps repo/package/target hook ordering explicit instead of hiding it in ad hoc sorting.
 
 If a new engine feature clearly belongs to one of those areas, put it there first and keep `engine.py` as the public facade.
 

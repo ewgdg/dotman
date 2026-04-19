@@ -35,18 +35,26 @@ class Repository:
     def __init__(self, config: RepoConfig) -> None:
         self.config = config
         self.root = config.path
+        self._repo_config_payload = self._load_repo_config_payload()
         self.ignore_defaults = self._load_repo_ignore_defaults()
+        self.hooks = self._load_repo_hooks()
         self.packages = self._load_packages()
         self.groups = self._load_groups()
         self.profiles = self._load_profiles()
         self.local_vars = self._load_local_vars()
         self._resolved_packages: dict[str, PackageSpec] = {}
 
+    def _load_repo_config_payload(self) -> dict[str, Any]:
+        repo_config_path = self.root / "repo.toml"
+        if not repo_config_path.exists():
+            return {}
+        return load_toml_file(repo_config_path, context="repo config")
+
     def _load_repo_ignore_defaults(self) -> RepoIgnoreDefaults:
         repo_config_path = self.root / "repo.toml"
         if not repo_config_path.exists():
             return RepoIgnoreDefaults()
-        payload = load_toml_file(repo_config_path, context="repo config")
+        payload = self._repo_config_payload
         ignore_payload = payload.get("ignore")
         if ignore_payload is None:
             return RepoIgnoreDefaults()
@@ -56,6 +64,32 @@ class Repository:
             push=normalize_string_list(read_schema_alias(ignore_payload, "push", "apply")) or (),
             pull=normalize_string_list(read_schema_alias(ignore_payload, "pull", "import")) or (),
         )
+
+    def _load_repo_hooks(self) -> dict[str, HookSpec] | None:
+        repo_config_path = self.root / "repo.toml"
+        if not repo_config_path.exists():
+            return None
+        hooks_payload = self._repo_config_payload.get("hooks")
+        if hooks_payload is None:
+            return None
+        if not isinstance(hooks_payload, dict):
+            raise ValueError(f"repo config {repo_config_path} [hooks] must be a table")
+        unknown_hook_names = [hook_name for hook_name in hooks_payload if hook_name not in VALID_HOOK_NAMES]
+        if unknown_hook_names:
+            unknown_text = ", ".join(sorted(unknown_hook_names))
+            raise ValueError(
+                f"repo config {repo_config_path} uses unsupported hook names: {unknown_text}"
+            )
+        return {
+            hook_name: build_hook_spec(
+                hook_name=hook_name,
+                hook_payload=hook_value,
+                manifest_path=repo_config_path,
+                owner_label="repo",
+                manifest_kind="repo config",
+            )
+            for hook_name, hook_value in hooks_payload.items()
+        }
 
     def _load_packages(self) -> dict[str, PackageSpec]:
         packages: dict[str, PackageSpec] = {}

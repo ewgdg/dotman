@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, SelectionMenuConfig, TargetPlan
+from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, OperationPlan, SelectionMenuConfig, TargetPlan
 from dotman.selection_menu_context import selection_menu_config_scope
 
 from tests.helpers import (
@@ -440,6 +440,105 @@ def test_filter_plans_for_interactive_selection_run_noop_broadens_hook_only_elig
     selection_items = cli.collect_pending_selection_items_for_operation([filtered_plan], operation="push")
     assert len(selection_items) == 1
     assert selection_items[0].kind == "package_hook_noop"
+
+
+def test_collect_pending_selection_items_adds_synthetic_target_hook_only_row() -> None:
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="sandbox", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        hook_plans={
+            "pre_push": [
+                HookPlan(
+                    package_id="app",
+                    target_name="config",
+                    scope_kind="target",
+                    hook_name="pre_push",
+                    command="echo pre target",
+                    cwd=Path("/repo/app"),
+                    run_noop=True,
+                )
+            ]
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/live/app.conf"),
+                action="noop",
+                target_kind="file",
+                projection_kind="file",
+            )
+        ],
+    )
+
+    selection_items = cli.collect_pending_selection_items_for_operation(
+        [plan],
+        operation="push",
+        use_raw_hook_plans=True,
+    )
+
+    assert len(selection_items) == 1
+    assert selection_items[0].kind == "target_hook_noop"
+    assert selection_items[0].target_name == "config"
+    assert selection_items[0].hook_names == ("pre_push",)
+
+
+def test_collect_pending_selection_items_adds_synthetic_repo_hook_only_row() -> None:
+    plan = BindingPlan(
+        operation="push",
+        binding=Binding(repo="sandbox", selector="app", profile="default"),
+        selector_kind="package",
+        package_ids=["app"],
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/live/app.conf"),
+                action="noop",
+                target_kind="file",
+                projection_kind="file",
+            )
+        ],
+    )
+    operation_plan = OperationPlan(
+        operation="push",
+        binding_plans=(plan,),
+        repo_hooks={},
+        repo_hook_plans={
+            "sandbox": {
+                "pre_push": [
+                    HookPlan(
+                        repo_name="sandbox",
+                        scope_kind="repo",
+                        hook_name="pre_push",
+                        command="echo repo pre",
+                        cwd=Path("/repo"),
+                        run_noop=True,
+                    )
+                ]
+            }
+        },
+        repo_order=("sandbox",),
+    )
+
+    selection_items = cli.collect_pending_selection_items_for_operation(
+        operation_plan,
+        operation="push",
+        use_raw_hook_plans=True,
+    )
+
+    assert len(selection_items) == 1
+    assert selection_items[0].kind == "repo_hook_noop"
+    assert selection_items[0].repo_name == "sandbox"
+    assert selection_items[0].hook_names == ("pre_push",)
 
 def test_collect_pending_selection_items_for_push_uses_repo_to_live_paths() -> None:
     target_plan = TargetPlan(
