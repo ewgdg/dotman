@@ -1,12 +1,8 @@
----
-title: "`patch` capture helper and `jinja-patch` preset plan"
-status: completed
-updated: 2026-04-17
----
-
 # `patch` capture helper and `jinja-patch` preset plan
 
 Date: 2026-04-14
+
+Updated: 2026-04-17
 
 ## Goal
 

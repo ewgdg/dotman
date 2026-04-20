@@ -1,12 +1,8 @@
----
-title: "`dotman edit target` plan"
-status: completed
-updated: 2026-04-17
----
-
 # `dotman edit target` plan
 
 Date: 2026-04-17
+
+Updated: 2026-04-17
 
 ## Goal
 

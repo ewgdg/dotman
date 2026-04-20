@@ -1,12 +1,8 @@
----
-title: "`dotman --yes` / `--run-noop` mode plan"
-status: completed
-updated: 2026-04-17
----
-
 # `dotman --yes` / `--run-noop` mode plan
 
 Date: 2026-04-15
+
+Updated: 2026-04-17
 
 ## Goal
 

@@ -1,12 +1,8 @@
----
-title: "Formal pull/push execution plan"
-status: completed
-updated: 2026-04-17
----
-
 # Formal pull/push execution plan
 
 Date: 2026-04-09
+
+Updated: 2026-04-17
 
 ## Goal
 

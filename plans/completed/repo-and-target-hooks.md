@@ -1,12 +1,8 @@
----
-title: "Repo-level and target-level hooks plan"
-status: completed
-updated: 2026-04-18
----
-
 # Repo-level and target-level hooks plan
 
 Date: 2026-04-18
+
+Updated: 2026-04-18
 
 ## Goal
 

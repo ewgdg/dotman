@@ -1,12 +1,8 @@
----
-title: "Package hook metadata and synthetic noop selection plan"
-status: completed
-updated: 2026-04-18
----
-
 # Package hook metadata and synthetic noop selection plan
 
 Date: 2026-04-18
+
+Updated: 2026-04-18
 
 ## Goal
 

@@ -1,12 +1,8 @@
----
-title: "Target sync policy plan"
-status: completed
-updated: 2026-04-17
----
-
 # Target sync policy plan
 
 Date: 2026-04-15
+
+Updated: 2026-04-17
 
 ## Goal
 
@@ -106,4 +102,3 @@ Also update example manifests where a concrete example helps.
 - No new sync engine.
 - No conflict resolution feature.
 - No behavioral change for existing configs that omit the field.
-

@@ -1,12 +1,8 @@
----
-title: "Target refs plan"
-status: proposed
-updated: 2026-04-19
----
-
 # Target refs plan
 
 Date: 2026-04-19
+
+Updated: 2026-04-19
 
 ## Goal
 

@@ -1,12 +1,8 @@
----
-title: "Target .identifier and hook summary UI plan"
-status: completed
-updated: 2026-04-18
----
-
 # Target `.identifier` and hook summary UI plan
 
 Date: 2026-04-18
+
+Updated: 2026-04-18
 
 ## Goal
 

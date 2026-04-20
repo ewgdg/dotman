@@ -1,10 +1,6 @@
----
-title: "`dotman edit <query>` sugar plan"
-status: completed
-updated: 2026-04-17
----
-
 # `dotman edit <query>` sugar plan
+
+Updated: 2026-04-17
 
 ## Goal
 

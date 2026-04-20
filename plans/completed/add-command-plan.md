@@ -1,12 +1,8 @@
----
-title: "`dotman add` implementation plan"
-status: completed
-updated: 2026-04-17
----
-
 # `dotman add` implementation plan
 
 Date: 2026-04-09
+
+Updated: 2026-04-17
 
 ## Why this file exists
 

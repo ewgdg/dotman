@@ -1,12 +1,8 @@
----
-title: "Gitignore-style ignore matcher plan"
-status: completed
-updated: 2026-04-17
----
-
 # Gitignore-style ignore matcher plan
 
 Date: 2026-04-12
+
+Updated: 2026-04-17
 
 ## Goal
 
