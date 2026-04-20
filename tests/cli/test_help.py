@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import Binding, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,
@@ -227,7 +227,7 @@ def test_prompt_for_excluded_items_shows_help_then_returns_selection(monkeypatch
     prompts = iter(["?", "1 3-4"])
     items = [
         cli.PendingSelectionItem(
-            binding_label="example:git@basic",
+            selection_label="example:git@basic",
             package_id="git",
             target_name="gitconfig",
             action="update",
@@ -252,7 +252,7 @@ def test_prompt_for_excluded_items_uses_full_paths_when_requested(monkeypatch, c
     prompts = iter([""])
     items = [
         cli.PendingSelectionItem(
-            binding_label="example:git@basic",
+            selection_label="example:git@basic",
             package_id="git",
             target_name="gitconfig",
             action="update",
@@ -274,7 +274,7 @@ def test_prompt_for_excluded_items_uses_full_paths_when_requested(monkeypatch, c
 
 def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> None:
     review_item = cli.ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
@@ -302,7 +302,7 @@ def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> 
 
 def test_run_diff_review_menu_uses_full_paths_when_requested(monkeypatch, capsys) -> None:
     review_item = cli.ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",

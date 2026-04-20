@@ -5,10 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from dotman.models import Binding
 from dotman.engine import DotmanEngine
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
+    single_package_plan,
     write_manager_config,
     write_multi_instance_repo,
     write_package_override_preview_repo,
@@ -52,11 +54,12 @@ def test_tracked_push_plan_drops_hooks_for_packages_without_winning_targets(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plans_by_package_id = {plan.binding.selector: plan for plan in engine.plan_push()}
+    plans_by_package_id = {plan.package_id: plan for plan in engine.plan_push()}
 
     core_cli_meta_plan = plans_by_package_id["core-cli-meta"]
-    assert {target.package_id for target in core_cli_meta_plan.target_plans} == {"nvim"}
+    assert core_cli_meta_plan.target_plans == []
     assert core_cli_meta_plan.hooks == {}
+    assert {target.package_id for target in plans_by_package_id["nvim"].target_plans} == {"nvim"}
 
     work_git_plan = plans_by_package_id["work/git"]
     assert {target.package_id for target in work_git_plan.target_plans} == {"work/git"}
@@ -165,10 +168,10 @@ def test_plan_push_uses_current_tracked_state_without_writing_new_state(
 
     plans = engine.plan_push()
 
-    assert len(plans) == 1
+    assert len(plans) == 3
     assert plans[0].operation == "push"
-    assert plans[0].binding.selector == "core-cli-meta"
-    assert plans[0].package_ids == ["core-cli-meta", "git", "nvim"]
+    assert plans[0].package_id == "core-cli-meta"
+    assert [plan.package_id for plan in plans] == ["core-cli-meta", "git", "nvim"]
     assert not (state_dir / "tracked-packages.toml").with_suffix(".tmp").exists()
 
 def test_plan_push_prefers_explicit_targets_over_implicit_targets(
@@ -205,13 +208,14 @@ def test_plan_push_prefers_explicit_targets_over_implicit_targets(
     engine = DotmanEngine.from_config_path(config_path)
 
     plans = engine.plan_push()
-    plans_by_package_id = {plan.binding.selector: plan for plan in plans}
+    plans_by_package_id = {plan.package_id: plan for plan in plans}
 
-    assert {target.package_id for target in plans_by_package_id["core-cli-meta"].target_plans} == {"nvim"}
+    assert plans_by_package_id["core-cli-meta"].target_plans == []
+    assert {target.package_id for target in plans_by_package_id["nvim"].target_plans} == {"nvim"}
     assert {target.package_id for target in plans_by_package_id["work/git"].target_plans} == {"work/git"}
     assert "Work User" in plans_by_package_id["work/git"].target_plans[0].desired_text
 
-def test_preview_binding_implicit_overrides_returns_unique_packages(
+def test_preview_package_selection_implicit_overrides_returns_unique_packages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -224,15 +228,25 @@ def test_preview_binding_implicit_overrides_returns_unique_packages(
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     engine = DotmanEngine.from_config_path(config_path)
 
-    engine.record_tracked_package_entry(engine.resolve_binding("fixture:beta-stack@basic")[1])
+    engine.record_tracked_package_entry(Binding(repo="fixture", selector="beta-meta", profile="basic"))
 
-    overrides = engine.preview_binding_implicit_overrides(engine.resolve_binding("fixture:alpha@basic")[1])
+    alpha_repo, alpha_query, _alpha_selector_kind = engine.resolve_selector_query_text("fixture:alpha@basic")
+    overrides = engine.preview_package_selection_implicit_overrides(
+        engine._resolved_package_selection(
+            repo=alpha_repo,
+            package_id=alpha_query.selector,
+            requested_profile=alpha_query.profile or "",
+            explicit=True,
+            source_kind="selector_query",
+            source_selector=alpha_query.selector,
+        )
+    )
 
     assert len(overrides) == 1
     override = overrides[0]
-    assert override.winner.binding_label == "fixture:alpha@basic"
+    assert override.winner.selection_label == "fixture:alpha@basic"
     assert override.winner.package_id == "alpha"
-    assert [contender.binding_label for contender in override.overridden] == ["fixture:beta-meta@basic"]
+    assert [contender.selection_label for contender in override.overridden] == ["fixture:beta@basic"]
     assert [contender.package_id for contender in override.overridden] == ["beta"]
 
 def test_record_binding_writes_resolved_binding_state(
@@ -245,10 +259,10 @@ def test_record_binding_writes_resolved_binding_state(
 
     config_path = write_manager_config(tmp_path)
     engine = DotmanEngine.from_config_path(config_path)
-    plan = engine.plan_push_binding("example:git@basic")
+    plan = single_package_plan(engine, "example:git@basic", operation="push")
     state_path = tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml"
 
-    engine.record_tracked_package_entry(plan.binding)
+    engine.record_tracked_package_entry(Binding(repo=plan.repo_name, selector=plan.package_id, profile=plan.requested_profile))
 
     assert state_path.exists()
     assert state_path.read_text(encoding="utf-8") == "\n".join(
@@ -274,7 +288,8 @@ def test_record_binding_flattens_group_into_package_bindings(
 
     config_path = write_manager_config(tmp_path)
     engine = DotmanEngine.from_config_path(config_path)
-    _repo, binding, selector_kind = engine.resolve_binding("example:os/arch@basic")
+    repo, selector_query, selector_kind = engine.resolve_selector_query_text("example:os/arch@basic")
+    binding = Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
     state_path = tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml"
 
     assert selector_kind == "group"
@@ -325,9 +340,9 @@ def test_record_binding_replaces_existing_selector_binding_with_new_profile(
         encoding="utf-8",
     )
 
-    plan = engine.plan_push_binding("example:git@work")
+    plan = single_package_plan(engine, "example:git@work", operation="push")
 
-    engine.record_tracked_package_entry(plan.binding)
+    engine.record_tracked_package_entry(Binding(repo=plan.repo_name, selector=plan.package_id, profile=plan.requested_profile))
 
     bindings = engine.read_tracked_package_entries(engine.get_repo("example"))
     assert [(binding.selector, binding.profile) for binding in bindings] == [
@@ -349,8 +364,8 @@ def test_record_binding_keeps_distinct_profiles_for_multi_instance_package(
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     engine = DotmanEngine.from_config_path(config_path)
 
-    engine.record_tracked_package_entry(engine.plan_push_binding("fixture:profiled@basic").binding)
-    engine.record_tracked_package_entry(engine.plan_push_binding("fixture:profiled@work").binding)
+    engine.record_tracked_package_entry(Binding(repo="fixture", selector="profiled", profile="basic"))
+    engine.record_tracked_package_entry(Binding(repo="fixture", selector="profiled", profile="work"))
 
     bindings = engine.read_tracked_package_entries(engine.get_repo("fixture"))
     assert [(binding.selector, binding.profile) for binding in bindings] == [

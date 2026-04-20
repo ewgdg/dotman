@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
-from dotman.models import BindingPlan
+from dotman.models import PackagePlan
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.terminal import preserve_terminal_state
@@ -23,7 +23,7 @@ REVIEW_PATH_TAIL_PARTS = 2
 
 @dataclass(frozen=True)
 class ReviewItem:
-    binding_label: str
+    selection_label: str
     package_id: str
     target_name: str
     action: str
@@ -40,10 +40,10 @@ class ReviewItem:
     diff_unavailable_reason: str | None = None
 
 
-def build_review_items(plans: Sequence[BindingPlan], *, operation: str) -> list[ReviewItem]:
+def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[ReviewItem]:
     review_items: list[ReviewItem] = []
     for plan in plans:
-        binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
+        selection_label = plan.selection_label
         for target in plan.target_plans:
             if target.directory_items:
                 for item in target.directory_items:
@@ -54,7 +54,7 @@ def build_review_items(plans: Sequence[BindingPlan], *, operation: str) -> list[
                     )
                     review_items.append(
                         ReviewItem(
-                            binding_label=binding_label,
+                            selection_label=selection_label,
                             package_id=target.package_id,
                             target_name=target.target_name,
                             action=item.action,
@@ -82,7 +82,7 @@ def build_review_items(plans: Sequence[BindingPlan], *, operation: str) -> list[
                 diff_unavailable_reason = target.projection_error or "diff preview is unavailable"
             review_items.append(
                 ReviewItem(
-                    binding_label=binding_label,
+                    selection_label=selection_label,
                     package_id=target.package_id,
                     target_name=target.target_name,
                     action=target.action,

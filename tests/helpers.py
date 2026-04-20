@@ -4,6 +4,7 @@ from pathlib import Path
 
 import dotman.cli as cli
 import pytest
+from dotman.models import PackagePlan, ResolvedPackageIdentity, ResolvedPackageSelection
 
 
 def write_example_local_override(tmp_path: Path, *, repo_name: str, repo_path: Path) -> None:
@@ -19,6 +20,82 @@ def write_example_local_override(tmp_path: Path, *, repo_name: str, repo_path: P
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_REPO = PROJECT_ROOT / "examples" / "repo"
 REFERENCE_REPO = PROJECT_ROOT / "tests" / "fixtures" / "reference_repo"
+
+
+def make_resolved_package_selection(
+    *,
+    repo_name: str,
+    package_id: str,
+    requested_profile: str,
+    bound_profile: str | None = None,
+    explicit: bool = True,
+    source_kind: str = "selector_query",
+    source_selector: str | None = None,
+    owner_identity: ResolvedPackageIdentity | None = None,
+) -> ResolvedPackageSelection:
+    return ResolvedPackageSelection(
+        identity=ResolvedPackageIdentity(
+            repo=repo_name,
+            package_id=package_id,
+            bound_profile=bound_profile,
+        ),
+        requested_profile=requested_profile,
+        explicit=explicit,
+        source_kind=source_kind,
+        source_selector=source_selector or package_id,
+        owner_identity=owner_identity,
+    )
+
+
+def make_package_plan(
+    *,
+    operation: str,
+    repo_name: str,
+    package_id: str,
+    requested_profile: str,
+    bound_profile: str | None = None,
+    explicit: bool = True,
+    source_kind: str = "selector_query",
+    source_selector: str | None = None,
+    owner_identity: ResolvedPackageIdentity | None = None,
+    variables: dict | None = None,
+    hooks: dict | None = None,
+    target_plans: list | None = None,
+    hook_plans: dict | None = None,
+    repo_root: Path | None = None,
+    state_path: Path | None = None,
+    inferred_os: str | None = None,
+) -> PackagePlan:
+    return PackagePlan(
+        operation=operation,
+        selection=make_resolved_package_selection(
+            repo_name=repo_name,
+            package_id=package_id,
+            requested_profile=requested_profile,
+            bound_profile=bound_profile,
+            explicit=explicit,
+            source_kind=source_kind,
+            source_selector=source_selector,
+            owner_identity=owner_identity,
+        ),
+        variables=variables or {},
+        hooks=hooks or {},
+        target_plans=target_plans or [],
+        hook_plans=hook_plans,
+        repo_root=repo_root,
+        state_path=state_path,
+        inferred_os=inferred_os,
+    )
+
+
+def single_package_plan(engine, query_text: str, *, operation: str = "push", profile: str | None = None) -> PackagePlan:
+    operation_plan = (
+        engine.plan_push_query(query_text, profile=profile)
+        if operation == "push"
+        else engine.plan_pull_query(query_text, profile=profile)
+    )
+    assert len(operation_plan.package_plans) == 1
+    return operation_plan.package_plans[0]
 
 
 def capture_parser_help(capsys: pytest.CaptureFixture[str], *args: str) -> str:

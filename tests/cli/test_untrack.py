@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import Binding, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,
@@ -256,8 +256,8 @@ def test_untrack_cli_rejects_removal_that_would_expose_implicit_conflict(
     assert exit_code == 2
     error_output = capsys.readouterr().err
     assert "cannot untrack 'fixture:shared@direct': removing this binding would expose conflicting implicit tracked targets" in error_output
-    assert "fixture:stack-a@work -> fixture:shared.shared" in error_output
-    assert "fixture:stack-b@personal -> fixture:shared.shared" in error_output
+    assert "fixture:shared@work -> fixture:shared.shared" in error_output
+    assert "fixture:shared@personal -> fixture:shared.shared" in error_output
     assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == original_state
 
 def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(

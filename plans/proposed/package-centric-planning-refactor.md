@@ -639,10 +639,14 @@ Add/update coverage for:
 - [x] Switch planner core to emit `OperationPlan.package_plans`
 - [x] Switch tracked planning core to explicit/implicit package-plan batches
 - [x] Add focused regression tests for direct query planning, tracked planning, and multi-instance normalization
+- [x] Remove binding-plan compatibility layer from planner/execution models and APIs
+- [x] Migrate execution/review/snapshot/CLI selection flows to `PackagePlan` / `package_plans`
+- [x] Update broader tests to package-plan/query APIs and package-selection labels
+- [x] Restore full green suite after package-plan migration (`uv run pytest -q`)
 
 ### In progress
 
-- Binding-centric compatibility cleanup in CLI/UI/tests
+- None
 
 ### Blocked
 

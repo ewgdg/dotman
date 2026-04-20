@@ -198,6 +198,13 @@ class ResolvedPackageIdentity:
     package_id: str
     bound_profile: str | None
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "repo": self.repo,
+            "package_id": self.package_id,
+            "bound_profile": self.bound_profile,
+        }
+
 
 PackageSelectionSourceKind = Literal["selector_query", "tracked_entry", "dependency"]
 
@@ -228,13 +235,24 @@ class ResolvedPackageSelection:
         selector = self.source_selector or self.identity.package_id
         return f"{self.identity.repo}:{selector}@{self.requested_profile}"
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "identity": self.identity.to_dict(),
+            "requested_profile": self.requested_profile,
+            "explicit": self.explicit,
+            "source_kind": self.source_kind,
+            "source_selector": self.source_selector,
+            "owner_identity": None if self.owner_identity is None else self.owner_identity.to_dict(),
+            "selection_label": self.selection_label,
+        }
+
 
 def resolved_package_identity_key(identity: ResolvedPackageIdentity) -> tuple[str, str, str | None]:
     return (identity.repo, identity.package_id, identity.bound_profile)
 
 
-def resolved_package_selection_key(selection: ResolvedPackageSelection) -> tuple[str, str, str | None]:
-    return resolved_package_identity_key(selection.identity)
+def resolved_package_selection_key(selection: ResolvedPackageSelection) -> tuple[str, str, str | None, str]:
+    return (*resolved_package_identity_key(selection.identity), selection.requested_profile)
 
 
 @dataclass(frozen=True)
@@ -644,28 +662,17 @@ class PackagePlan:
         return self.selection.requested_profile
 
     @property
-    def binding(self) -> Binding:
-        return Binding(
-            repo=self.selection.identity.repo,
-            selector=self.selection.source_selector or self.selection.identity.package_id,
-            profile=self.selection.requested_profile,
-        )
-
-    @property
-    def selector_kind(self) -> str:
-        if self.selection.source_selector is not None and self.selection.source_selector != self.selection.identity.package_id:
-            return "group"
-        return "package"
-
-    @property
-    def package_ids(self) -> list[str]:
-        return [self.selection.identity.package_id]
+    def selection_label(self) -> str:
+        return self.selection.selection_label
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "selection": self.selection.to_dict(),
+            "selection_label": self.selection.selection_label,
             "repo": self.selection.identity.repo,
             "package_id": self.selection.identity.package_id,
             "bound_profile": self.selection.identity.bound_profile,
+            "profile": self.selection.requested_profile,
             "requested_profile": self.selection.requested_profile,
             "explicit": self.selection.explicit,
             "source_kind": self.selection.source_kind,
@@ -673,9 +680,6 @@ class PackagePlan:
             "targets": [target.to_dict() for target in self.target_plans],
             "hooks": {name: [item.to_dict() for item in items] for name, items in self.hooks.items()},
         }
-
-
-BindingPlan = PackagePlan
 
 
 @dataclass(frozen=True)
@@ -688,10 +692,6 @@ class OperationPlan:
 
     def __iter__(self):
         return iter(self.package_plans)
-
-    @property
-    def binding_plans(self) -> tuple[PackagePlan, ...]:
-        return self.package_plans
 
     def __len__(self) -> int:
         return len(self.package_plans)
@@ -713,10 +713,6 @@ def package_plans_for_operation_plan(plans: OperationPlan | list[PackagePlan] | 
     if isinstance(plans, OperationPlan):
         return list(plans.package_plans)
     return list(plans)
-
-
-def binding_plans_for_operation_plan(plans: OperationPlan | list[PackagePlan] | tuple[PackagePlan, ...]) -> list[PackagePlan]:
-    return package_plans_for_operation_plan(plans)
 
 
 @dataclass(frozen=True)

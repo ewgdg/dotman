@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import Binding, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine, list_directory_files, matches_ignore_pattern
-from tests.helpers import write_single_repo_config
+from tests.helpers import single_package_plan, write_single_repo_config
 
 
 def test_gitignore_style_recursive_directory_patterns_ignore_nested_pycache_files(
@@ -124,7 +124,7 @@ def test_directory_target_push_ignore_uses_gitignore_semantics_for_nested_pycach
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    plan = engine.plan_push_binding("fixture:sample@default")
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
     target = plan.target_plans[0]
     assert target.action == "create"
@@ -173,7 +173,7 @@ def test_directory_target_pull_ignore_preserves_gitignore_style_nested_pycache_f
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    plan = engine.plan_push_binding("fixture:sample@default")
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
     target = plan.target_plans[0]
     assert target.action == "noop"

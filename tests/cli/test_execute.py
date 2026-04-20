@@ -367,7 +367,7 @@ def test_push_cli_dry_run_human_warning_uses_package_target_label(capsys) -> Non
     cli_emit.print_push_live_symlink_hazard_warning(
         [
             cli_emit.PushSymlinkHazard(
-                binding_label="main:sunshine@host/linux",
+                selection_label="main:sunshine@host/linux",
                 package_id="sunshine",
                 target_name="f_config_sunshine_sunshine_conf",
                 live_path=Path("/live/config.txt"),

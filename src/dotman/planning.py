@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import replace
 from pathlib import Path
+import sys
 from typing import Any
 
 from dotman.collisions import (
@@ -15,6 +16,7 @@ from dotman.collisions import (
     validate_reserved_path_conflicts,
     validate_target_collisions,
 )
+from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os
 from dotman.models import (
     Binding,
@@ -54,7 +56,7 @@ HOOK_NAMES_BY_OPERATION = {
 
 def _merge_selection(
     selections: list[ResolvedPackageSelection],
-    selection_indexes: dict[tuple[str, str, str | None], int],
+    selection_indexes: dict[tuple[str, str, str | None, str], int],
     selection: ResolvedPackageSelection,
 ) -> None:
     key = resolved_package_selection_key(selection)
@@ -78,7 +80,7 @@ def _resolved_package_selections_from_roots(
     source_selector: str | None,
 ) -> list[ResolvedPackageSelection]:
     selections: list[ResolvedPackageSelection] = []
-    selection_indexes: dict[tuple[str, str, str | None], int] = {}
+    selection_indexes: dict[tuple[str, str, str | None, str], int] = {}
     for root_package_id in root_package_ids:
         root_selection = engine._resolved_package_selection(
             repo=repo,
@@ -198,7 +200,10 @@ def build_package_plan(
         selection=selection,
         operation=operation,
         inferred_os=inferred_os,
-        declaration_package_ids={root_identity.package_id},
+        # Keep local declarations package-scoped, but include root owner when this
+        # package is only reached through another package's target refs. That
+        # preserves contributor/ref provenance on canonical targets.
+        declaration_package_ids={selection.identity.package_id, root_identity.package_id},
     )
     hook_plans = engine._plan_hooks(
         repo,
@@ -231,7 +236,7 @@ def build_package_plan(
 
 def _merge_package_plans(plans: list[PackagePlan]) -> list[PackagePlan]:
     merged: list[PackagePlan] = []
-    plan_indexes: dict[tuple[str, str, str | None], int] = {}
+    plan_indexes: dict[tuple[str, str, str | None, str], int] = {}
     for plan in plans:
         key = resolved_package_selection_key(plan.selection)
         existing_index = plan_indexes.get(key)
@@ -563,6 +568,8 @@ def build_operation_plan(
     allow_standalone_noop_hooks: bool = False,
     excluded_repo_names: set[str] | None = None,
 ) -> OperationPlan:
+    if operation == "push":
+        _validate_direct_package_plan_conflicts(package_plans, repo_by_name=repo_by_name)
     repo_order = tuple(
         repo_name
         for repo_name in repo_by_name
@@ -589,3 +596,80 @@ def build_operation_plan(
         repo_hook_plans=repo_hook_plans,
         repo_order=repo_order,
     )
+
+
+def _validate_direct_package_plan_conflicts(
+    package_plans: list[PackagePlan],
+    *,
+    repo_by_name: dict[str, Repository],
+) -> None:
+    for repo_name in repo_by_name:
+        repo_package_plans = [plan for plan in package_plans if plan.repo_name == repo_name]
+        if len(repo_package_plans) < 2:
+            continue
+        repo = repo_by_name[repo_name]
+        rendered_targets = []
+        for plan in repo_package_plans:
+            for target in plan.target_plans:
+                package = repo.resolve_package(target.package_id)
+                target_spec = package.targets[target.target_name]
+                rendered_targets.append(
+                    (
+                        package,
+                        target_spec,
+                        target.repo_path,
+                        target.live_path,
+                        target.push_ignore,
+                        target.pull_ignore,
+                        target.live_path_is_symlink,
+                        target.live_path_symlink_target,
+                    )
+                )
+        validate_target_collisions(rendered_targets)
+        _validate_reserved_path_conflicts_for_package_plans(repo_package_plans, repo=repo, rendered_targets=rendered_targets)
+
+
+def _validate_reserved_path_conflicts_for_package_plans(
+    package_plans: list[PackagePlan],
+    *,
+    repo: Repository,
+    rendered_targets: list[tuple[PackageSpec, Any, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
+) -> None:
+    target_claims = [
+        (package.id, f"{package.id}:{target.name}", live_path)
+        for package, target, _repo_path, live_path, _push_ignore, _pull_ignore, _live_path_is_symlink, _live_path_symlink_target in rendered_targets
+    ]
+    reserved_claims: list[tuple[str, Path]] = []
+    for plan in package_plans:
+        package = repo.resolve_package(plan.package_id)
+        context = build_template_context(
+            plan.variables,
+            profile=plan.requested_profile,
+            inferred_os=plan.inferred_os or sys.platform,
+        )
+        for reserved_path in package.reserved_paths or ():
+            rendered_path = render_template_string(
+                reserved_path,
+                context,
+                base_dir=package.package_root,
+                source_path=package.package_root,
+            )
+            reserved_claims.append((package.id, expand_path(rendered_path, dereference=False)))
+
+    for package_id, reserved_path in reserved_claims:
+        for target_package_id, target_label, target_path in target_claims:
+            if package_id == target_package_id:
+                continue
+            if paths_conflict(reserved_path, target_path):
+                raise ValueError(
+                    f"reserved path conflict: {package_id} reserves {reserved_path} and {target_label} maps to {target_path}"
+                )
+
+    for index, (package_id, reserved_path) in enumerate(reserved_claims):
+        for other_package_id, other_reserved_path in reserved_claims[index + 1 :]:
+            if package_id == other_package_id:
+                continue
+            if paths_conflict(reserved_path, other_reserved_path):
+                raise ValueError(
+                    f"reserved path conflict: {package_id} reserves {reserved_path} and {other_package_id} reserves {other_reserved_path}"
+                )

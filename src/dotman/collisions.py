@@ -44,20 +44,6 @@ class TrackedTargetCandidate:
     target_label: str
     signature: tuple[Any, ...]
 
-    @property
-    def binding_label(self) -> str:
-        return self.selection_label
-
-    @property
-    def binding(self):
-        from dotman.models import Binding
-
-        return Binding(
-            repo=self.selection.identity.repo,
-            selector=self.selection.source_selector or self.selection.identity.package_id,
-            profile=self.selection.requested_profile,
-        )
-
 
 @dataclass(frozen=True)
 class TrackedTargetOverride:

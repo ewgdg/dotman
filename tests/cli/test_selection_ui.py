@@ -8,13 +8,14 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, OperationPlan, SelectionMenuConfig, TargetPlan
+from dotman.models import Binding, DirectoryPlanItem, HookPlan, OperationPlan, SelectionMenuConfig, TargetPlan
 from dotman.selection_menu_context import selection_menu_config_scope
 
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
     capture_parser_help,
+    make_package_plan,
     write_implicit_conflict_repo,
     write_manager_config,
     write_multi_instance_repo,
@@ -31,7 +32,7 @@ def test_prompt_for_excluded_items_uses_archived_colored_style(
 ) -> None:
     selection_items = [
         PendingSelectionItem(
-            binding_label="example:git@basic",
+            selection_label="example:git@basic",
             package_id="git",
             target_name="gitconfig",
             action="create",
@@ -119,7 +120,7 @@ def test_print_pending_selection_item_renders_hook_summary_in_parentheses(monkey
     cli.print_pending_selection_item(
         1,
         PendingSelectionItem(
-            binding_label="example:git@basic",
+            selection_label="example:git@basic",
             package_id="git",
             action="hooks",
             kind="package_hook_noop",
@@ -155,11 +156,11 @@ def test_filter_plans_for_interactive_selection_excludes_directory_child_pull_it
             ),
         ),
     )
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="sandbox", selector="sandbox/bin", profile="default"),
-        selector_kind="package",
-        package_ids=["sandbox/bin"],
+        repo_name="sandbox",
+        package_id="sandbox/bin",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[target_plan],
@@ -199,11 +200,11 @@ def test_collect_pending_selection_items_for_pull_uses_live_to_repo_paths() -> N
             ),
         ),
     )
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="sandbox", selector="sandbox/bin", profile="default"),
-        selector_kind="package",
-        package_ids=["sandbox/bin"],
+        repo_name="sandbox",
+        package_id="sandbox/bin",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[target_plan],
@@ -234,19 +235,33 @@ def test_filter_plans_for_interactive_selection_recomputes_hooks_from_remaining_
         target_kind="file",
         projection_kind="file",
     )
-    plan = BindingPlan(
+    alpha_plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="sandbox", selector="stack", profile="default"),
-        selector_kind="group",
-        package_ids=["alpha", "beta"],
+        repo_name="sandbox",
+        package_id="alpha",
+        requested_profile="default",
+        source_selector="stack",
         variables={},
         hooks={
             "pre_push": [
                 HookPlan(package_id="alpha", hook_name="pre_push", command="echo alpha", cwd=Path("/repo/alpha")),
+            ]
+        },
+        target_plans=[alpha_target],
+    )
+    beta_plan = make_package_plan(
+        operation="push",
+        repo_name="sandbox",
+        package_id="beta",
+        requested_profile="default",
+        source_selector="stack",
+        variables={},
+        hooks={
+            "pre_push": [
                 HookPlan(package_id="beta", hook_name="pre_push", command="echo beta", cwd=Path("/repo/beta")),
             ]
         },
-        target_plans=[alpha_target, beta_target],
+        target_plans=[beta_target],
     )
 
     monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: True)
@@ -256,22 +271,23 @@ def test_filter_plans_for_interactive_selection_recomputes_hooks_from_remaining_
         lambda selection_items, *, operation, full_paths=False: {1},
     )
 
-    filtered_plan = cli.filter_plans_for_interactive_selection(
-        plans=[plan],
+    filtered_plans = cli.filter_plans_for_interactive_selection(
+        plans=[alpha_plan, beta_plan],
         operation="push",
         json_output=False,
-    )[0]
+    )
+    filtered_plan = next(plan for plan in filtered_plans if plan.package_id == "beta")
 
     assert [target.package_id for target in filtered_plan.target_plans] == ["beta"]
     assert [hook.package_id for hook in filtered_plan.hooks["pre_push"]] == ["beta"]
 
 
 def test_collect_pending_selection_items_adds_synthetic_hook_only_row() -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="sandbox", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         hook_plans={
@@ -320,11 +336,11 @@ def test_collect_pending_selection_items_adds_synthetic_hook_only_row() -> None:
 
 
 def test_filter_plans_for_interactive_selection_excludes_synthetic_hook_only_row(monkeypatch) -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="sandbox", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         hook_plans={
@@ -378,11 +394,11 @@ def test_filter_plans_for_interactive_selection_excludes_synthetic_hook_only_row
 
 
 def test_filter_plans_for_interactive_selection_run_noop_broadens_hook_only_eligibility(monkeypatch) -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="sandbox", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         hook_plans={
@@ -443,11 +459,11 @@ def test_filter_plans_for_interactive_selection_run_noop_broadens_hook_only_elig
 
 
 def test_collect_pending_selection_items_adds_synthetic_target_hook_only_row() -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="sandbox", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         hook_plans={
@@ -489,11 +505,11 @@ def test_collect_pending_selection_items_adds_synthetic_target_hook_only_row() -
 
 
 def test_collect_pending_selection_items_adds_synthetic_repo_hook_only_row() -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="sandbox", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -510,7 +526,7 @@ def test_collect_pending_selection_items_adds_synthetic_repo_hook_only_row() -> 
     )
     operation_plan = OperationPlan(
         operation="push",
-        binding_plans=(plan,),
+        package_plans=(plan,),
         repo_hooks={},
         repo_hook_plans={
             "sandbox": {
@@ -558,11 +574,11 @@ def test_collect_pending_selection_items_for_push_uses_repo_to_live_paths() -> N
             ),
         ),
     )
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="sandbox", selector="sandbox/bin", profile="default"),
-        selector_kind="package",
-        package_ids=["sandbox/bin"],
+        repo_name="sandbox",
+        package_id="sandbox/bin",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[target_plan],
@@ -666,7 +682,7 @@ def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(
 ) -> None:
     review_items = [
         cli.ReviewItem(
-            binding_label="example:git@basic",
+            selection_label="example:git@basic",
             package_id="git",
             target_name="gitconfig",
             action="update",
@@ -679,7 +695,7 @@ def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(
             after_bytes=b"after\n",
         ),
         cli.ReviewItem(
-            binding_label="example:zsh@basic",
+            selection_label="example:zsh@basic",
             package_id="zsh",
             target_name="zshrc",
             action="update",
@@ -713,7 +729,7 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
     capsys,
 ) -> None:
     review_item = cli.ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
@@ -743,7 +759,7 @@ def test_print_review_diff_header_dims_metadata_prefix_when_colored(
     capsys,
 ) -> None:
     review_item = cli.ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
@@ -773,7 +789,7 @@ def test_run_diff_review_menu_default_command_views_next_diff(
 ) -> None:
     review_items = [
         cli.ReviewItem(
-            binding_label="example:git@basic",
+            selection_label="example:git@basic",
             package_id="git",
             target_name="gitconfig",
             action="update",
@@ -786,7 +802,7 @@ def test_run_diff_review_menu_default_command_views_next_diff(
             after_bytes=b"after\n",
         ),
         cli.ReviewItem(
-            binding_label="example:zsh@basic",
+            selection_label="example:zsh@basic",
             package_id="zsh",
             target_name="zshrc",
             action="update",
@@ -820,7 +836,7 @@ def test_run_diff_review_menu_next_command_uses_last_viewed_file(
 ) -> None:
     review_items = [
         cli.ReviewItem(
-            binding_label="example:git@basic",
+            selection_label="example:git@basic",
             package_id="git",
             target_name="gitconfig",
             action="update",
@@ -833,7 +849,7 @@ def test_run_diff_review_menu_next_command_uses_last_viewed_file(
             after_bytes=b"after\n",
         ),
         cli.ReviewItem(
-            binding_label="example:zsh@basic",
+            selection_label="example:zsh@basic",
             package_id="zsh",
             target_name="zshrc",
             action="update",
@@ -846,7 +862,7 @@ def test_run_diff_review_menu_next_command_uses_last_viewed_file(
             after_bytes=b"after\n",
         ),
         cli.ReviewItem(
-            binding_label="example:nvim@basic",
+            selection_label="example:nvim@basic",
             package_id="nvim",
             target_name="init_lua",
             action="update",
@@ -876,7 +892,7 @@ def test_run_diff_review_menu_next_command_uses_last_viewed_file(
 
 def test_run_diff_review_menu_next_command_at_end_prompts_for_continue(monkeypatch) -> None:
     review_item = cli.ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
@@ -975,10 +991,29 @@ def test_ensure_track_binding_replacement_confirmed_skips_prompt_when_assume_yes
 def test_ensure_track_binding_implicit_overrides_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
     binding = Binding(repo="fixture", selector="stack", profile="current")
     engine = SimpleNamespace(
-        preview_binding_implicit_overrides=lambda _binding: [
+        get_repo=lambda _repo_name: SimpleNamespace(),
+        resolve_selector_query_text=lambda _text: (
+            SimpleNamespace(config=SimpleNamespace(name="fixture")),
+            SimpleNamespace(selector="stack", profile="current"),
+            "group",
+        ),
+        _planning_helpers=lambda: SimpleNamespace(
+            resolve_selector_query=lambda *_args, **_kwargs: [
+                SimpleNamespace(explicit=True, identity=SimpleNamespace(repo="fixture", package_id="stack"))
+            ]
+        ),
+        _resolved_package_selection=lambda **kwargs: SimpleNamespace(**kwargs),
+        preview_package_selection_implicit_overrides=lambda _selection: [
             SimpleNamespace(
-                winner=SimpleNamespace(binding_label="fixture:stack@current", package_id="stack"),
-                overridden=(SimpleNamespace(binding_label="fixture:stack@implicit", package_id="implicit"),),
+                winner=SimpleNamespace(
+                    selection_label="fixture:stack@current",
+                    package_id="stack",
+                    selection=SimpleNamespace(
+                        identity=SimpleNamespace(repo="fixture", bound_profile=None),
+                        requested_profile="current",
+                    ),
+                ),
+                overridden=(SimpleNamespace(selection_label="fixture:stack@implicit", package_id="implicit"),),
             )
         ]
     )
@@ -1035,7 +1070,7 @@ def test_select_menu_option_uses_manager_bottom_up_default(monkeypatch, capsys) 
 def test_prompt_for_excluded_items_uses_manager_full_path_default(monkeypatch, capsys) -> None:
     selection_items = [
         PendingSelectionItem(
-            binding_label="example:git@basic",
+            selection_label="example:git@basic",
             package_id="git",
             target_name="gitconfig",
             action="update",
@@ -1057,7 +1092,7 @@ def test_prompt_for_excluded_items_uses_manager_full_path_default(monkeypatch, c
 
 def test_print_review_item_compacts_long_paths(monkeypatch, capsys) -> None:
     review_item = cli.ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
@@ -1083,7 +1118,7 @@ def test_print_review_item_compacts_long_paths(monkeypatch, capsys) -> None:
 
 def test_print_review_item_shows_unavailable_badge(monkeypatch, capsys) -> None:
     review_item = cli.ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
@@ -1109,7 +1144,7 @@ def test_print_review_item_shows_unavailable_badge(monkeypatch, capsys) -> None:
 def test_prompt_for_excluded_items_preserves_root_prefix_for_system_paths(monkeypatch, capsys) -> None:
     selection_items = [
         PendingSelectionItem(
-            binding_label="main:sddm@basic",
+            selection_label="main:sddm@basic",
             package_id="sddm",
             target_name="kde_settings.conf",
             action="delete",
@@ -1130,7 +1165,7 @@ def test_prompt_for_excluded_items_preserves_root_prefix_for_system_paths(monkey
 
 def test_print_review_item_preserves_root_prefix_for_system_paths(monkeypatch, capsys) -> None:
     review_item = cli.ReviewItem(
-        binding_label="main:sddm@basic",
+        selection_label="main:sddm@basic",
         package_id="sddm",
         target_name="kde_settings.conf",
         action="delete",

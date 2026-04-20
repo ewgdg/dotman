@@ -10,7 +10,7 @@ from dotman import cli_style
 from dotman.diff_review import ReviewItem, display_review_path
 from dotman.execution import build_execution_session, execute_session, _preflight_execution_session_sudo
 from dotman.file_access import sudo_session
-from dotman.models import OperationPlan, binding_plans_for_operation_plan
+from dotman.models import OperationPlan, package_plans_for_operation_plan
 from dotman.snapshot import create_push_snapshot, execute_rollback, mark_snapshot_status, prune_snapshots
 
 
@@ -46,7 +46,7 @@ def _format_variable_value(value: Any) -> str:
 
 @dataclass(frozen=True)
 class PushSymlinkHazard:
-    binding_label: str
+    selection_label: str
     package_id: str
     target_name: str
     live_path: Path
@@ -56,7 +56,7 @@ class PushSymlinkHazard:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "binding_label": self.binding_label,
+            "selection_label": self.selection_label,
             "package_id": self.package_id,
             "target_name": self.target_name,
             "live_path": str(self.live_path),
@@ -68,8 +68,8 @@ class PushSymlinkHazard:
 
 def collect_push_live_symlink_hazards(plans: Sequence[Any]) -> list[PushSymlinkHazard]:
     hazards: list[PushSymlinkHazard] = []
-    for plan in binding_plans_for_operation_plan(plans):
-        binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
+    for plan in package_plans_for_operation_plan(plans):
+        selection_label = plan.selection_label
         for target in plan.target_plans:
             if target.action == "noop" or not target.live_path_is_symlink:
                 continue
@@ -78,7 +78,7 @@ def collect_push_live_symlink_hazards(plans: Sequence[Any]) -> list[PushSymlinkH
                     continue
                 hazards.append(
                     PushSymlinkHazard(
-                        binding_label=binding_label,
+                        selection_label=selection_label,
                         package_id=target.package_id,
                         target_name=target.target_name,
                         live_path=target.live_path,
@@ -92,7 +92,7 @@ def collect_push_live_symlink_hazards(plans: Sequence[Any]) -> list[PushSymlinkH
                 continue
             hazards.append(
                 PushSymlinkHazard(
-                    binding_label=binding_label,
+                    selection_label=selection_label,
                     package_id=target.package_id,
                     target_name=target.target_name,
                     live_path=target.live_path,
@@ -106,7 +106,7 @@ def collect_push_live_symlink_hazards(plans: Sequence[Any]) -> list[PushSymlinkH
 
 def allow_push_live_symlink_replacements(plans: Sequence[Any]) -> list[Any]:
     updated_plans: list[Any] = []
-    for plan in binding_plans_for_operation_plan(plans):
+    for plan in package_plans_for_operation_plan(plans):
         updated_targets = []
         for target in plan.target_plans:
             if (
@@ -120,7 +120,7 @@ def allow_push_live_symlink_replacements(plans: Sequence[Any]) -> list[Any]:
                 updated_targets.append(target)
         updated_plans.append(replace(plan, target_plans=updated_targets))
     if isinstance(plans, OperationPlan):
-        return replace(plans, binding_plans=tuple(updated_plans))
+        return replace(plans, package_plans=tuple(updated_plans))
     return updated_plans
 
 
@@ -150,7 +150,7 @@ def print_push_live_symlink_hazard_warning(
         status_text = cli_style.render_menu_badge(f"[{status_label}]", use_color=use_color)
         live_path = display_cli_path(hazard.live_path, full_paths=full_paths)
         package_target_label = cli_style.render_package_target_label(
-            repo_name=hazard.binding_label.split(":", 1)[0],
+            repo_name=hazard.selection_label.split(":", 1)[0],
             package_id=hazard.package_id,
             target_name=hazard.target_name,
             use_color=use_color,
@@ -164,11 +164,11 @@ def effective_execution_mode(*, dry_run_requested: bool) -> str:
 
 
 def count_hook_commands(plans: Sequence[Any]) -> int:
-    binding_hook_count = sum(len(hook_plans) for plan in binding_plans_for_operation_plan(plans) for hook_plans in plan.hooks.values())
+    package_hook_count = sum(len(hook_plans) for plan in package_plans_for_operation_plan(plans) for hook_plans in plan.hooks.values())
     repo_hook_count = 0
     if isinstance(plans, OperationPlan):
         repo_hook_count = sum(len(hook_plans) for hooks in plans.repo_hooks.values() for hook_plans in hooks.values())
-    return binding_hook_count + repo_hook_count
+    return package_hook_count + repo_hook_count
 
 
 def display_cli_path(reference_path: Path | str, *, full_paths: bool) -> str:
@@ -212,7 +212,7 @@ def _render_payload_action(action: str, *, use_color: bool) -> str:
 def _print_payload_target_item(item: Any, *, full_paths: bool, use_color: bool) -> None:
     if getattr(item, "kind", "target") == "target_hook_noop":
         target_label = cli_style.render_package_target_label(
-            repo_name=item.binding_label.split(":", 1)[0],
+            repo_name=item.selection_label.split(":", 1)[0],
             package_id=item.package_id,
             target_name=item.target_name,
             bound_profile=getattr(item, "bound_profile", None),
@@ -227,7 +227,7 @@ def _print_payload_target_item(item: Any, *, full_paths: bool, use_color: bool) 
     source_path = display_cli_path(item.source_path, full_paths=full_paths)
     destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
     arrow_text = cli_style.style_text("->", *cli_style.MENU_HINT_STYLE) if use_color else "->"
-    repo_name = item.binding_label.split(":", 1)[0]
+    repo_name = item.selection_label.split(":", 1)[0]
     target_label = cli_style.render_package_target_label(
         repo_name=repo_name,
         package_id=item.package_id,
@@ -247,7 +247,7 @@ def collect_payload_package_sections(
 ) -> list[PayloadPackageSection]:
     package_sections: dict[tuple[str, str, str], PayloadPackageSection] = {}
 
-    for plan in binding_plans_for_operation_plan(plans):
+    for plan in package_plans_for_operation_plan(plans):
         targets_by_package: dict[str, list[Any]] = {}
         for item in collect_pending_selection_items_for_operation([plan], operation=operation):
             if getattr(item, "kind", "target") == "package_hook_noop":
@@ -264,31 +264,31 @@ def collect_payload_package_sections(
                 if hook_plan.package_id is not None:
                     package_hooks_by_package.setdefault(hook_plan.package_id, {}).setdefault(hook_name, []).append(hook_plan)
 
-        for package_id in plan.package_ids:
-            package_targets = targets_by_package.get(package_id, [])
-            package_hooks = package_hooks_by_package.get(package_id, {})
-            target_hooks = target_hooks_by_package.get(package_id, {})
-            if not package_targets and not package_hooks and not target_hooks:
-                continue
-            section_key = (plan.binding.repo, package_id, plan.binding.profile)
-            section = package_sections.get(section_key)
-            if section is None:
-                section = PayloadPackageSection(
-                    repo_name=plan.binding.repo,
-                    package_id=package_id,
-                    profile=plan.binding.profile,
-                    package_hooks={},
-                    target_hooks={},
-                    targets=[],
-                )
-                package_sections[section_key] = section
-            for hook_name, hook_plans in package_hooks.items():
-                section.package_hooks.setdefault(hook_name, []).extend(hook_plans)
-            for target_name, target_hook_map in target_hooks.items():
-                target_section = section.target_hooks.setdefault(target_name, {})
-                for hook_name, hook_plans in target_hook_map.items():
-                    target_section.setdefault(hook_name, []).extend(hook_plans)
-            section.targets.extend(package_targets)
+        package_id = plan.package_id
+        package_targets = targets_by_package.get(package_id, [])
+        package_hooks = package_hooks_by_package.get(package_id, {})
+        target_hooks = target_hooks_by_package.get(package_id, {})
+        if not package_targets and not package_hooks and not target_hooks:
+            continue
+        section_key = (plan.repo_name, package_id, plan.requested_profile)
+        section = package_sections.get(section_key)
+        if section is None:
+            section = PayloadPackageSection(
+                repo_name=plan.repo_name,
+                package_id=package_id,
+                profile=plan.requested_profile,
+                package_hooks={},
+                target_hooks={},
+                targets=[],
+            )
+            package_sections[section_key] = section
+        for hook_name, hook_plans in package_hooks.items():
+            section.package_hooks.setdefault(hook_name, []).extend(hook_plans)
+        for target_name, target_hook_map in target_hooks.items():
+            target_section = section.target_hooks.setdefault(target_name, {})
+            for hook_name, hook_plans in target_hook_map.items():
+                target_section.setdefault(hook_name, []).extend(hook_plans)
+        section.targets.extend(package_targets)
 
     return list(package_sections.values())
 
@@ -314,7 +314,7 @@ def emit_payload(
     collect_pending_selection_items_for_operation: CollectPendingSelectionItems,
 ) -> int:
     visible_plans = []
-    for plan in binding_plans_for_operation_plan(plans):
+    for plan in package_plans_for_operation_plan(plans):
         visible_target_ids = {
             (hook.package_id, hook.target_name)
             for hook_plans in plan.hooks.values()
@@ -332,7 +332,7 @@ def emit_payload(
         visible_plans.append(replace(plan, target_plans=visible_targets, hooks=visible_hooks))
     visible_operation_plans: Sequence[Any]
     if isinstance(plans, OperationPlan):
-        visible_operation_plans = replace(plans, binding_plans=tuple(visible_plans))
+        visible_operation_plans = replace(plans, package_plans=tuple(visible_plans))
     else:
         visible_operation_plans = visible_plans
     warnings = collect_push_live_symlink_hazards(visible_operation_plans) if operation == "push" else []
@@ -461,7 +461,7 @@ def execution_step_display(step: Any, *, full_paths: bool) -> str:
     if target is None:
         return ""
     if step.kind == "chmod":
-        reference_path = target.live_path if step.binding_plan.operation == "push" else target.repo_path
+        reference_path = target.live_path if step.package_plan.operation == "push" else target.repo_path
         chmod_mode = target.chmod or "?"
         return f"{chmod_mode} {display_cli_path(reference_path, full_paths=full_paths)}"
     if step.action == "reconcile":
@@ -469,11 +469,11 @@ def execution_step_display(step: Any, *, full_paths: bool) -> str:
     if step.directory_item is not None:
         reference_path = (
             step.directory_item.live_path
-            if step.binding_plan.operation == "push"
+            if step.package_plan.operation == "push"
             else step.directory_item.repo_path
         )
         return display_cli_path(reference_path, full_paths=full_paths)
-    reference_path = target.live_path if step.binding_plan.operation == "push" else target.repo_path
+    reference_path = target.live_path if step.package_plan.operation == "push" else target.repo_path
     return display_cli_path(reference_path, full_paths=full_paths)
 
 
@@ -500,7 +500,7 @@ def _print_execution_package_start(package: Any, *, use_color: bool) -> None:
     _print_payload_package_header(
         repo_name=package.repo_name,
         package_id=package.package_id,
-        profile=package.profile,
+        profile=package.requested_profile,
         use_color=use_color,
     )
 
@@ -1247,7 +1247,7 @@ def emit_snapshot_detail(*, snapshot: Any, json_output: bool, full_paths: bool =
             repo_name=entry.repo_name,
             package_id=entry.package_id,
             target_name=entry.target_name,
-            binding_label=entry.binding_label,
+            binding_label=entry.selection_label,
             use_color=use_color,
         )
         if provenance is not None:

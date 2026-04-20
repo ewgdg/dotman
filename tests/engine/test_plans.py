@@ -9,6 +9,7 @@ from dotman.engine import DotmanEngine
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
+    single_package_plan,
     write_manager_config,
     write_multi_instance_repo,
     write_package_override_preview_repo,
@@ -229,12 +230,11 @@ def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_push_binding("example:git@basic")
+    plan = single_package_plan(engine, "example:git@basic", operation="push")
 
-    assert plan.binding.repo == "example"
-    assert plan.binding.selector == "git"
-    assert plan.binding.profile == "basic"
-    assert plan.package_ids == ["git"]
+    assert plan.repo_name == "example"
+    assert plan.package_id == "git"
+    assert plan.requested_profile == "basic"
     assert [hook.command for hook in plan.hooks["pre_push"]] == [
         "printf 'install %s\\n' git",
         'sh "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"',
@@ -262,8 +262,8 @@ def test_default_sync_policy_keeps_targets_in_both_push_and_pull_plans(
     repo_root = write_sync_policy_repo(tmp_path, package_manifest=[])
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    push_plan = engine.plan_push_binding("fixture:app@default")
-    pull_plan = engine.plan_pull_binding("fixture:app@default")
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+    pull_plan = single_package_plan(engine, "fixture:app@default", operation="pull")
 
     assert [target.target_name for target in push_plan.target_plans] == ["config"]
     assert [target.target_name for target in pull_plan.target_plans] == ["config"]
@@ -284,8 +284,8 @@ def test_target_sync_policy_overrides_package_sync_policy(
     )
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    push_plan = engine.plan_push_binding("fixture:app@default")
-    pull_plan = engine.plan_pull_binding("fixture:app@default")
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+    pull_plan = single_package_plan(engine, "fixture:app@default", operation="pull")
 
     assert engine.get_repo("fixture").resolve_package("app").sync_policy == "push-only"
     assert push_plan.target_plans == []
@@ -308,7 +308,7 @@ def test_hook_filtering_stays_quiet_when_no_targets_are_eligible(
     )
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    push_plan = engine.plan_push_binding("fixture:app@default")
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
 
     assert push_plan.target_plans == []
     assert push_plan.hooks == {}
@@ -380,7 +380,7 @@ def test_package_hook_table_form_allows_empty_commands_and_skips_execution(
     assert hook.commands == ()
     assert hook.run_noop is True
 
-    push_plan = engine.plan_push_binding("fixture:app@default")
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
     assert push_plan.hooks == {}
 
 
@@ -529,20 +529,23 @@ def test_target_refs_canonicalize_target_plans_and_keep_ref_package_hooks(
     )
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    plan = engine.plan_push_binding("fixture:beta@default")
+    operation_plan = engine.plan_push_query("fixture:beta@default")
+    plans_by_package_id = {plan.package_id: plan for plan in operation_plan.package_plans}
 
-    assert plan.package_ids == ["beta", "alpha"]
-    assert [(target.package_id, target.target_name) for target in plan.target_plans] == [("alpha", "shared")]
-    assert plan.target_plans[0].contributor_package_ids == ("beta", "alpha")
+    assert [plan.package_id for plan in operation_plan.package_plans] == ["beta", "alpha"]
+    assert plans_by_package_id["beta"].target_plans == []
+    assert [(target.package_id, target.target_name) for target in plans_by_package_id["alpha"].target_plans] == [("alpha", "shared")]
+    assert plans_by_package_id["alpha"].target_plans[0].contributor_package_ids == ("beta", "alpha")
     assert [
         (step.package_id, step.target_name)
-        for step in plan.target_plans[0].ref_chains[0].steps
+        for step in plans_by_package_id["alpha"].target_plans[0].ref_chains[0].steps
     ] == [("beta", "shared"), ("alpha", "shared")]
 
-    package_hooks = [hook for hook in plan.hooks["pre_push"] if hook.scope_kind == "package"]
-    target_hooks = [hook for hook in plan.hooks["pre_push"] if hook.scope_kind == "target"]
-    assert [hook.package_id for hook in package_hooks] == ["beta", "alpha"]
+    package_hooks = [hook for hook in plans_by_package_id["alpha"].hooks["pre_push"] if hook.scope_kind == "package"]
+    target_hooks = [hook for hook in plans_by_package_id["alpha"].hooks["pre_push"] if hook.scope_kind == "target"]
+    assert [hook.package_id for hook in package_hooks] == ["alpha"]
     assert [(hook.package_id, hook.target_name) for hook in target_hooks] == [("alpha", "shared")]
+    assert plans_by_package_id["beta"].hooks == {}
 
 
 def test_target_refs_allow_single_canonical_action_when_real_target_and_ref_are_selected_together(
@@ -564,10 +567,11 @@ def test_target_refs_allow_single_canonical_action_when_real_target_and_ref_are_
     )
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    plan = engine.plan_push_binding("fixture:beta@default")
+    operation_plan = engine.plan_push_query("fixture:beta@default")
+    alpha_plan = next(plan for plan in operation_plan.package_plans if plan.package_id == "alpha")
 
-    assert [(target.package_id, target.target_name) for target in plan.target_plans] == [("alpha", "shared")]
-    assert plan.target_plans[0].contributor_package_ids == ("beta", "alpha")
+    assert [(target.package_id, target.target_name) for target in alpha_plan.target_plans] == [("alpha", "shared")]
+    assert alpha_plan.target_plans[0].contributor_package_ids == ("beta", "alpha")
 
 
 def test_target_refs_reject_invalid_reference_syntax(
@@ -618,7 +622,7 @@ def test_target_refs_reject_cycles_with_full_cycle_text(
         ValueError,
         match=r"target ref cycle detected in repo 'fixture': alpha\.shared -> beta\.shared -> gamma\.shared -> alpha\.shared",
     ):
-        engine.plan_push_binding("fixture:alpha@default")
+        engine.plan_push_query("fixture:alpha@default")
 
 
 def test_package_sync_policy_is_inherited_through_extends(
@@ -637,8 +641,8 @@ def test_package_sync_policy_is_inherited_through_extends(
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
     child_package = engine.get_repo("fixture").resolve_package("child")
-    push_plan = engine.plan_push_binding("fixture:child@default")
-    pull_plan = engine.plan_pull_binding("fixture:child@default")
+    push_plan = single_package_plan(engine, "fixture:child@default", operation="push")
+    pull_plan = single_package_plan(engine, "fixture:child@default", operation="pull")
 
     assert child_package.sync_policy == "pull-only"
     assert push_plan.target_plans == []
@@ -676,14 +680,22 @@ def test_example_group_push_plan_expands_depends_and_render_target(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_push_binding("example:os/arch@basic")
+    operation_plan = engine.plan_push_query("example:os/arch@basic")
 
-    assert plan.binding.selector == "os/arch"
-    assert plan.selector_kind == "group"
-    assert plan.package_ids == ["core-cli-meta", "git", "nvim"]
-    assert {target.package_id for target in plan.target_plans} == {"git", "nvim"}
+    assert [plan.package_id for plan in operation_plan.package_plans] == ["core-cli-meta", "git", "nvim"]
+    assert {plan.selection_label for plan in operation_plan.package_plans} == {
+        "example:os/arch@basic",
+        "example:git@basic",
+        "example:nvim@basic",
+    }
+    assert {target.package_id for plan in operation_plan.package_plans for target in plan.target_plans} == {"git", "nvim"}
 
-    nvim_target = next(target for target in plan.target_plans if target.package_id == "nvim")
+    nvim_target = next(
+        target
+        for plan in operation_plan.package_plans
+        for target in plan.target_plans
+        if target.package_id == "nvim"
+    )
     assert nvim_target.projection_kind == "command"
     assert nvim_target.desired_text == 'vim.g.mapleader = " "\nvim.cmd.colorscheme("industry")\n'
 
@@ -742,11 +754,15 @@ def test_meta_package_depends_on_group_expands_group_members(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    plan = engine.plan_push_binding("fixture:tooling-meta@basic")
+    operation_plan = engine.plan_push_query("fixture:tooling-meta@basic")
 
-    assert plan.selector_kind == "package"
-    assert plan.package_ids == ["tooling-meta", "git", "nvim"]
-    assert {target.package_id for target in plan.target_plans} == {"git", "nvim"}
+    assert [plan.package_id for plan in operation_plan.package_plans] == ["tooling-meta", "git", "nvim"]
+    assert {plan.selection_label for plan in operation_plan.package_plans} == {
+        "fixture:tooling-meta@basic",
+        "fixture:git@basic",
+        "fixture:nvim@basic",
+    }
+    assert {target.package_id for plan in operation_plan.package_plans for target in plan.target_plans} == {"git", "nvim"}
 
 
 def test_dependency_resolution_allows_mixed_package_and_group_cycles_without_revisiting_packages(
@@ -791,11 +807,14 @@ def test_dependency_resolution_allows_mixed_package_and_group_cycles_without_rev
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    plan = engine.plan_push_binding("fixture:alpha@basic")
+    operation_plan = engine.plan_push_query("fixture:alpha@basic")
 
-    assert plan.selector_kind == "package"
-    assert plan.package_ids == ["alpha", "beta"]
-    assert {target.package_id for target in plan.target_plans} == {"alpha", "beta"}
+    assert [plan.package_id for plan in operation_plan.package_plans] == ["alpha", "beta"]
+    assert {plan.selection_label for plan in operation_plan.package_plans} == {
+        "fixture:alpha@basic",
+        "fixture:beta@basic",
+    }
+    assert {target.package_id for plan in operation_plan.package_plans for target in plan.target_plans} == {"alpha", "beta"}
 
 
 def test_example_extends_preserves_child_values_after_local_merge(
@@ -808,9 +827,8 @@ def test_example_extends_preserves_child_values_after_local_merge(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_push_binding("example:work/git@work")
+    plan = single_package_plan(engine, "example:work/git@work", operation="push")
 
-    assert plan.package_ids == ["work/git"]
     target = plan.target_plans[0]
     assert "name = Work User" in target.desired_text
     assert "email = local@example.test" in target.desired_text
@@ -830,7 +848,7 @@ def test_pull_plan_uses_declared_repo_and_live_views_for_rendered_targets(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_pull_binding("example:nvim@basic")
+    plan = single_package_plan(engine, "example:nvim@basic", operation="pull")
 
     target = plan.target_plans[0]
     assert target.pull_view_repo == "render"
@@ -879,8 +897,8 @@ def test_target_preset_jinja_editor_expands_default_workflow(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    push_plan = engine.plan_push_binding("fixture:shell@default")
-    pull_plan = engine.plan_pull_binding("fixture:shell@default")
+    push_plan = single_package_plan(engine, "fixture:shell@default", operation="push")
+    pull_plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
 
     push_target = push_plan.target_plans[0]
     pull_target = pull_plan.target_plans[0]
@@ -931,8 +949,8 @@ def test_target_preset_jinja_patch_expands_default_workflow(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    push_plan = engine.plan_push_binding("fixture:shell@default")
-    pull_plan = engine.plan_pull_binding("fixture:shell@default")
+    push_plan = single_package_plan(engine, "fixture:shell@default", operation="push")
+    pull_plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
 
     push_target = push_plan.target_plans[0]
     pull_target = pull_plan.target_plans[0]
@@ -983,8 +1001,8 @@ def test_target_preset_jinja_patch_editor_expands_default_workflow(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    push_plan = engine.plan_push_binding("fixture:shell@default")
-    pull_plan = engine.plan_pull_binding("fixture:shell@default")
+    push_plan = single_package_plan(engine, "fixture:shell@default", operation="push")
+    pull_plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
 
     push_target = push_plan.target_plans[0]
     pull_target = pull_plan.target_plans[0]
@@ -1028,7 +1046,7 @@ def test_capture_patch_rejects_directory_targets(tmp_path: Path, monkeypatch: py
     engine = DotmanEngine.from_config_path(config_path)
 
     with pytest.raises(ValueError, match="capture = \"patch\" requires a file target"):
-        engine.plan_pull_binding("fixture:shell@default")
+        engine.plan_pull_query("fixture:shell@default")
 
 
 def test_capture_patch_rejects_raw_review_views(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1072,7 +1090,7 @@ def test_capture_patch_rejects_raw_review_views(tmp_path: Path, monkeypatch: pyt
     engine = DotmanEngine.from_config_path(config_path)
 
     with pytest.raises(ValueError, match="pull_view_repo = \"render\" and pull_view_live = \"raw\""):
-        engine.plan_pull_binding("fixture:shell@default")
+        engine.plan_pull_query("fixture:shell@default")
 
 
 
@@ -1111,7 +1129,7 @@ def test_target_preset_values_can_be_overridden(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    target = engine.plan_pull_binding("fixture:shell@default").target_plans[0]
+    target = single_package_plan(engine, "fixture:shell@default", operation="pull").target_plans[0]
 
     assert target.render_command == "jinja"
     assert target.pull_view_repo == "raw"
@@ -1203,7 +1221,7 @@ def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_pull_binding("fixture:shell@default")
+    plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
 
     target = plan.target_plans[0]
     assert target.reconcile_command == "jinja"
@@ -1256,7 +1274,7 @@ def test_plain_file_with_jinja_markers_requires_explicit_render(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_push_binding("fixture:shell@default")
+    plan = single_package_plan(engine, "fixture:shell@default", operation="push")
 
     assert plan.target_plans[0].projection_kind == "raw"
     assert plan.target_plans[0].desired_text == "profile={{ profile }}\n"
@@ -1318,7 +1336,7 @@ def test_template_file_render_supports_relative_include(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_push_binding("fixture:shell@default")
+    plan = single_package_plan(engine, "fixture:shell@default", operation="push")
 
     assert plan.target_plans[0].projection_kind == "template"
     assert plan.target_plans[0].desired_text.strip().splitlines() == [
@@ -1336,15 +1354,17 @@ def test_sandbox_host_plan_composes_profile_vars_and_namespaced_packages(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_push_binding("host/linux-meta@host/linux")
+    operation_plan = engine.plan_push_query("host/linux-meta@host/linux")
+    plans_by_package_id = {plan.package_id: plan for plan in operation_plan.package_plans}
 
-    assert plan.binding.repo == "sandbox"
-    assert "linux/1password" in plan.package_ids
-    assert plan.variables["desktop"] == "niri"
-    assert plan.variables["UV_RUN"] == 'uv run --project "$DOTMAN_REPO_ROOT"'
+    assert {plan.repo_name for plan in operation_plan.package_plans} == {"sandbox"}
+    assert "linux/1password" in plans_by_package_id
+    assert plans_by_package_id["host/linux-meta"].variables["desktop"] == "niri"
+    assert plans_by_package_id["host/linux-meta"].variables["UV_RUN"] == 'uv run --project "$DOTMAN_REPO_ROOT"'
 
     sunshine_target = next(
         target
+        for plan in operation_plan.package_plans
         for target in plan.target_plans
         if target.package_id == "sunshine" and target.target_name == "selected_config"
     )
@@ -1360,7 +1380,7 @@ def test_sandbox_nested_directory_and_file_targets_plan_without_collision(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = engine.plan_push_binding("gsettings@host/linux")
+    plan = single_package_plan(engine, "gsettings@host/linux", operation="push")
 
     assert {target.target_name for target in plan.target_plans} == {
         "desktop",
@@ -1433,7 +1453,7 @@ def test_repo_toml_pull_ignore_applies_to_directory_targets(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_push_binding("fixture:sample@default")
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
     assert plan.target_plans[0].action == "noop"
 
@@ -1483,7 +1503,7 @@ def test_pull_plan_infers_directory_target_from_live_path_when_repo_source_is_mi
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_pull_binding("fixture:sample@default")
+    plan = single_package_plan(engine, "fixture:sample@default", operation="pull")
 
     target = plan.target_plans[0]
     assert target.target_kind == "directory"
@@ -1539,7 +1559,7 @@ def test_push_plan_infers_directory_target_from_live_path_when_repo_source_is_mi
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_push_binding("fixture:sample@default")
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
     target = plan.target_plans[0]
     assert target.target_kind == "directory"
@@ -1590,7 +1610,7 @@ def test_push_plan_marks_directory_target_unknown_when_repo_and_live_paths_are_b
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_push_binding("fixture:sample@default")
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
     target = plan.target_plans[0]
     assert target.target_kind == "unknown"
@@ -1647,7 +1667,7 @@ def test_pull_plan_exposes_file_level_items_for_directory_targets(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_pull_binding("fixture:sample@default")
+    plan = single_package_plan(engine, "fixture:sample@default", operation="pull")
 
     target = plan.target_plans[0]
     assert target.action == "update"
@@ -1706,7 +1726,7 @@ def test_push_plan_exposes_file_level_items_for_directory_targets(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_push_binding("fixture:sample@default")
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
     target = plan.target_plans[0]
     assert target.action == "update"
@@ -1778,7 +1798,7 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_push_binding("fixture:sample@default")
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
     assert plan.target_plans[0].action == "noop"
     assert plan.target_plans[0].push_ignore == ("*.archived",)

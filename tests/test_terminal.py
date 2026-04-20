@@ -83,7 +83,7 @@ def test_run_review_item_diff_preserves_terminal_state_when_interrupted(monkeypa
     repo_path = Path.home() / ".config" / "repo-file"
     live_path = Path.home() / ".local" / "share" / "live-file"
     review_item = ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",

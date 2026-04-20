@@ -11,21 +11,21 @@ import dotman.execution as execution
 from dotman import file_access
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
-from dotman.models import Binding, BindingPlan, HookPlan, OperationPlan, TargetPlan
-from tests.helpers import write_named_manager_config
+from dotman.models import HookPlan, OperationPlan, TargetPlan
+from tests.helpers import make_package_plan, single_package_plan, write_named_manager_config
 
 
 def test_build_execution_session_orders_push_steps_per_package() -> None:
-    plan = BindingPlan(
+    alpha_plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="stack", profile="default"),
-        selector_kind="group",
-        package_ids=["alpha", "beta"],
+        repo_name="fixture",
+        package_id="alpha",
+        requested_profile="default",
+        source_selector="stack",
         variables={},
         hooks={
             "guard_push": [
                 HookPlan(package_id="alpha", hook_name="guard_push", command="echo alpha guard", cwd=Path("/repo")),
-                HookPlan(package_id="beta", hook_name="guard_push", command="echo beta guard", cwd=Path("/repo")),
             ],
             "pre_push": [
                 HookPlan(package_id="alpha", hook_name="pre_push", command="echo alpha pre", cwd=Path("/repo")),
@@ -46,6 +46,21 @@ def test_build_execution_session_orders_push_steps_per_package() -> None:
                 desired_text="alpha\n",
                 desired_bytes=b"alpha\n",
             ),
+        ],
+    )
+    beta_plan = make_package_plan(
+        operation="push",
+        repo_name="fixture",
+        package_id="beta",
+        requested_profile="default",
+        source_selector="stack",
+        variables={},
+        hooks={
+            "guard_push": [
+                HookPlan(package_id="beta", hook_name="guard_push", command="echo beta guard", cwd=Path("/repo")),
+            ],
+        },
+        target_plans=[
             TargetPlan(
                 package_id="beta",
                 target_name="config",
@@ -60,7 +75,7 @@ def test_build_execution_session_orders_push_steps_per_package() -> None:
         ],
     )
 
-    session = build_execution_session([plan], operation="push")
+    session = build_execution_session([alpha_plan, beta_plan], operation="push")
 
     assert [unit.package_id for unit in session.packages] == ["alpha", "beta"]
     assert [step.action for step in session.packages[0].steps] == [
@@ -96,15 +111,15 @@ def test_execution_session_accepts_repo_units_without_touching_package_property(
 def test_execution_session_groups_package_units_into_repo_units() -> None:
     alpha = execution.PackageExecutionUnit(
         repo_name="fixture",
-        binding_selector="alpha",
-        profile="default",
+        selection_label="fixture:alpha@default",
+        requested_profile="default",
         package_id="alpha",
         steps=(),
     )
     beta = execution.PackageExecutionUnit(
         repo_name="fixture",
-        binding_selector="beta",
-        profile="default",
+        selection_label="fixture:beta@default",
+        requested_profile="default",
         package_id="beta",
         steps=(),
     )
@@ -120,11 +135,11 @@ def test_execution_session_groups_package_units_into_repo_units() -> None:
 
 
 def test_build_execution_session_orders_repo_package_and_target_scopes() -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={
             "guard_push": [HookPlan(package_id="app", hook_name="guard_push", command="echo package guard", cwd=Path("/repo/app"))],
@@ -146,7 +161,7 @@ def test_build_execution_session_orders_repo_package_and_target_scopes() -> None
     )
     operation_plan = OperationPlan(
         operation="push",
-        binding_plans=(replace(plan, hooks={
+        package_plans=(replace(plan, hooks={
             **plan.hooks,
             "guard_push": [
                 *plan.hooks["guard_push"],
@@ -193,11 +208,11 @@ def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
     assume_yes: bool,
     expected_value: str,
 ) -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={"feature": {"flag": "on"}},
         hooks={
             "guard_push": [
@@ -233,7 +248,7 @@ def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
     )
     operation_plan = OperationPlan(
         operation="push",
-        binding_plans=(plan,),
+        package_plans=(plan,),
         repo_hooks={
             "fixture": {
                 "guard_push": [
@@ -295,11 +310,11 @@ def test_execute_session_target_guard_skip_continues_next_target(monkeypatch, tm
     monkeypatch.setattr(execution, "_run_command", fake_run_command)
     monkeypatch.setattr(execution, "_execute_target_step", lambda step: None)
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={
             "guard_push": [
@@ -342,11 +357,11 @@ def test_execute_session_target_guard_skip_continues_next_target(monkeypatch, tm
 
 
 def test_build_execution_session_marks_hooks_privileged_when_package_needs_sudo() -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={
             "guard_push": [HookPlan(package_id="app", hook_name="guard_push", command="echo guard", cwd=Path("/repo"))],
@@ -375,11 +390,11 @@ def test_build_execution_session_marks_hooks_privileged_when_package_needs_sudo(
 def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged(monkeypatch) -> None:
     monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: True)
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={
             "guard_pull": [HookPlan(package_id="app", hook_name="guard_pull", command="echo guard", cwd=Path("/repo"))],
@@ -407,11 +422,11 @@ def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged
 
 
 def test_build_execution_session_prefers_capture_step_when_capture_and_reconcile_both_defined() -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -435,11 +450,11 @@ def test_build_execution_session_prefers_capture_step_when_capture_and_reconcile
 
 
 def test_build_execution_session_does_not_add_pull_chmod_steps() -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -463,11 +478,11 @@ def test_build_execution_session_does_not_add_pull_chmod_steps() -> None:
 
 def test_build_execution_session_keeps_hook_only_packages_when_hooks_are_finalized() -> None:
     for operation, hook_name_prefix in (("push", "push"), ("pull", "pull")):
-        plan = BindingPlan(
+        plan = make_package_plan(
             operation=operation,
-            binding=Binding(repo="fixture", selector="app", profile="default"),
-            selector_kind="package",
-            package_ids=["app"],
+            repo_name="fixture",
+            package_id="app",
+            requested_profile="default",
             variables={},
             hooks={
                 f"guard_{hook_name_prefix}": [
@@ -514,25 +529,23 @@ def test_execute_session_soft_skips_push_package_on_guard_exit_100_and_continues
     alpha_repo_path.write_text("alpha repo\n", encoding="utf-8")
     beta_repo_path.write_text("beta repo\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    alpha_plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="stack", profile="default"),
-        selector_kind="group",
-        package_ids=["alpha", "beta"],
+        repo_name="fixture",
+        package_id="alpha",
+        requested_profile="default",
+        source_selector="stack",
         variables={},
         hooks={
             "guard_push": [
                 HookPlan(package_id="alpha", hook_name="guard_push", command="echo alpha guard 1", cwd=Path("/repo")),
                 HookPlan(package_id="alpha", hook_name="guard_push", command="echo alpha guard 2", cwd=Path("/repo")),
-                HookPlan(package_id="beta", hook_name="guard_push", command="echo beta guard", cwd=Path("/repo")),
             ],
             "pre_push": [
                 HookPlan(package_id="alpha", hook_name="pre_push", command="echo alpha pre", cwd=Path("/repo")),
-                HookPlan(package_id="beta", hook_name="pre_push", command="echo beta pre", cwd=Path("/repo")),
             ],
             "post_push": [
                 HookPlan(package_id="alpha", hook_name="post_push", command="echo alpha post", cwd=Path("/repo")),
-                HookPlan(package_id="beta", hook_name="post_push", command="echo beta post", cwd=Path("/repo")),
             ],
         },
         target_plans=[
@@ -546,6 +559,27 @@ def test_execute_session_soft_skips_push_package_on_guard_exit_100_and_continues
                 projection_kind="raw",
                 desired_bytes=b"alpha live\n",
             ),
+        ],
+    )
+    beta_plan = make_package_plan(
+        operation="push",
+        repo_name="fixture",
+        package_id="beta",
+        requested_profile="default",
+        source_selector="stack",
+        variables={},
+        hooks={
+            "guard_push": [
+                HookPlan(package_id="beta", hook_name="guard_push", command="echo beta guard", cwd=Path("/repo")),
+            ],
+            "pre_push": [
+                HookPlan(package_id="beta", hook_name="pre_push", command="echo beta pre", cwd=Path("/repo")),
+            ],
+            "post_push": [
+                HookPlan(package_id="beta", hook_name="post_push", command="echo beta post", cwd=Path("/repo")),
+            ],
+        },
+        target_plans=[
             TargetPlan(
                 package_id="beta",
                 target_name="config",
@@ -558,7 +592,7 @@ def test_execute_session_soft_skips_push_package_on_guard_exit_100_and_continues
             ),
         ],
     )
-    session = build_execution_session([plan], operation="push")
+    session = build_execution_session([alpha_plan, beta_plan], operation="push")
 
     recorded_commands: list[str] = []
 
@@ -608,25 +642,23 @@ def test_execute_session_soft_skips_pull_package_on_guard_exit_100_and_continues
     alpha_live_path.write_text("alpha live\n", encoding="utf-8")
     beta_live_path.write_text("beta live\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    alpha_plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="stack", profile="default"),
-        selector_kind="group",
-        package_ids=["alpha", "beta"],
+        repo_name="fixture",
+        package_id="alpha",
+        requested_profile="default",
+        source_selector="stack",
         variables={},
         hooks={
             "guard_pull": [
                 HookPlan(package_id="alpha", hook_name="guard_pull", command="echo alpha guard 1", cwd=Path("/repo")),
                 HookPlan(package_id="alpha", hook_name="guard_pull", command="echo alpha guard 2", cwd=Path("/repo")),
-                HookPlan(package_id="beta", hook_name="guard_pull", command="echo beta guard", cwd=Path("/repo")),
             ],
             "pre_pull": [
                 HookPlan(package_id="alpha", hook_name="pre_pull", command="echo alpha pre", cwd=Path("/repo")),
-                HookPlan(package_id="beta", hook_name="pre_pull", command="echo beta pre", cwd=Path("/repo")),
             ],
             "post_pull": [
                 HookPlan(package_id="alpha", hook_name="post_pull", command="echo alpha post", cwd=Path("/repo")),
-                HookPlan(package_id="beta", hook_name="post_pull", command="echo beta post", cwd=Path("/repo")),
             ],
         },
         target_plans=[
@@ -639,6 +671,27 @@ def test_execute_session_soft_skips_pull_package_on_guard_exit_100_and_continues
                 target_kind="file",
                 projection_kind="raw",
             ),
+        ],
+    )
+    beta_plan = make_package_plan(
+        operation="pull",
+        repo_name="fixture",
+        package_id="beta",
+        requested_profile="default",
+        source_selector="stack",
+        variables={},
+        hooks={
+            "guard_pull": [
+                HookPlan(package_id="beta", hook_name="guard_pull", command="echo beta guard", cwd=Path("/repo")),
+            ],
+            "pre_pull": [
+                HookPlan(package_id="beta", hook_name="pre_pull", command="echo beta pre", cwd=Path("/repo")),
+            ],
+            "post_pull": [
+                HookPlan(package_id="beta", hook_name="post_pull", command="echo beta post", cwd=Path("/repo")),
+            ],
+        },
+        target_plans=[
             TargetPlan(
                 package_id="beta",
                 target_name="config",
@@ -650,7 +703,7 @@ def test_execute_session_soft_skips_pull_package_on_guard_exit_100_and_continues
             ),
         ],
     )
-    session = build_execution_session([plan], operation="pull")
+    session = build_execution_session([alpha_plan, beta_plan], operation="pull")
 
     recorded_commands: list[str] = []
 
@@ -699,11 +752,11 @@ def test_execute_session_fails_when_live_target_becomes_symlink_before_execution
     real_live_path.write_text("live\n", encoding="utf-8")
     live_path = live_root / "config.txt"
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -745,11 +798,11 @@ def test_execute_session_allows_live_target_symlink_replacement_when_explicitly_
     live_path = live_root / "config.txt"
     live_path.symlink_to(real_live_path)
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -793,11 +846,11 @@ def test_execute_session_follows_live_target_symlink_when_configured(
     live_path = live_root / "config.txt"
     live_path.symlink_to(real_live_path)
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -835,11 +888,11 @@ def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
     repo_path.write_text("repo\n", encoding="utf-8")
     live_path.write_text("live\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -902,11 +955,11 @@ def test_execute_session_runs_builtin_jinja_reconcile_helper(
     repo_path.write_text("repo\n", encoding="utf-8")
     live_path.write_text("live\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -975,11 +1028,11 @@ def test_execute_session_fails_tty_reconcile_without_terminal(
     repo_path.write_text("repo\n", encoding="utf-8")
     live_path.write_text("live\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -1023,11 +1076,11 @@ def test_execute_session_restores_repo_path_access_for_pull_updates_run_via_sudo
     live_path = tmp_path / "live.txt"
     live_path.write_text("live\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         repo_root=repo_root,
@@ -1077,11 +1130,11 @@ def test_execute_session_uses_sudo_writer_for_system_live_paths(
     repo_path.write_text("repo\n", encoding="utf-8")
     live_path = Path("/etc/sddm.conf")
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -1134,17 +1187,17 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
         package_units=(
             execution.PackageExecutionUnit(
                 repo_name="fixture",
-                binding_selector="app",
-                profile="default",
+                selection_label="fixture:app@default",
+                requested_profile="default",
                 package_id="app",
                 steps=(
                     execution.ExecutionStep(
                         package_id="app",
-                        binding_plan=BindingPlan(
+                        package_plan=make_package_plan(
                             operation="push",
-                            binding=Binding(repo="fixture", selector="app", profile="default"),
-                            selector_kind="package",
-                            package_ids=["app"],
+                            repo_name="fixture",
+                            package_id="app",
+                            requested_profile="default",
                             variables={},
                             hooks={},
                             target_plans=[target_plan],
@@ -1186,11 +1239,11 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
 def test_execute_session_runs_privileged_hooks_through_sudo(
     monkeypatch,
 ) -> None:
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="push",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={
             "guard_push": [HookPlan(package_id="app", hook_name="guard_push", command="echo guard", cwd=Path("/repo"))],
@@ -1373,11 +1426,11 @@ def test_execute_session_keeps_batch_reconcile_on_piped_command_path(
     repo_path.write_text("repo\n", encoding="utf-8")
     live_path.write_text("live\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -1446,11 +1499,11 @@ def test_execute_session_runs_custom_reconcile_without_auto_sudo(
     repo_path.write_text("repo\n", encoding="utf-8")
     live_path.write_text("live\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -1513,11 +1566,11 @@ def test_execute_session_falls_back_to_reconcile_when_capture_fails(
     repo_path.write_text("repo\n", encoding="utf-8")
     live_path.write_text("live\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="fixture", selector="app", profile="default"),
-        selector_kind="package",
-        package_ids=["app"],
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
         variables={},
         hooks={},
         target_plans=[
@@ -1614,7 +1667,7 @@ def test_execute_session_uses_review_env_for_patch_capture_and_writes_patched_re
     live_path.write_text("greeting = world\n", encoding="utf-8")
 
     engine = DotmanEngine.from_config_path(write_named_manager_config(tmp_path, {"fixture": repo_root}))
-    plan = engine.plan_pull_binding("fixture:shell@default")
+    plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
     session = build_execution_session([plan], operation="pull")
 
     recorded: dict[str, object] = {}
@@ -1656,7 +1709,7 @@ def test_execute_session_aborts_when_patch_capture_verification_fails(
     live_path.write_text("greeting = world\n", encoding="utf-8")
 
     engine = DotmanEngine.from_config_path(write_named_manager_config(tmp_path, {"fixture": repo_root}))
-    plan = engine.plan_pull_binding("fixture:shell@default")
+    plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
     session = build_execution_session([plan], operation="pull")
 
     monkeypatch.setattr(

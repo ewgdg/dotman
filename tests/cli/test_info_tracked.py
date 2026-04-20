@@ -8,12 +8,13 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import Binding, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
     capture_parser_help,
+    single_package_plan,
     write_implicit_conflict_repo,
     write_manager_config,
     write_multi_instance_repo,
@@ -595,7 +596,7 @@ def test_info_tracked_cli_emits_hooks_even_when_package_targets_are_noop(
     )
 
     engine = cli.DotmanEngine.from_config_path(config_path)
-    plan = engine.plan_push_binding("example:git@basic")
+    plan = single_package_plan(engine, "example:git@basic", operation="push")
     (home / ".gitconfig").write_text(plan.target_plans[0].desired_text or "", encoding="utf-8")
 
     exit_code = main(

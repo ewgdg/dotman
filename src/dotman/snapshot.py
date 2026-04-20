@@ -13,7 +13,7 @@ from typing import Sequence
 from dotman.config import default_snapshot_root
 from dotman.toml_utils import load_toml_file
 from dotman.execution import delete_path_and_prune_empty_parents, write_bytes_atomic, write_symlink_atomic
-from dotman.models import BindingPlan, SnapshotConfig
+from dotman.models import PackagePlan, SnapshotConfig
 
 
 FINAL_SNAPSHOT_STATUSES = {"applied", "failed"}
@@ -32,7 +32,7 @@ class SnapshotEntry:
     preserve_symlink_identity: bool = False
     restore_path: Path | None = None
     repo_name: str | None = None
-    binding_label: str | None = None
+    selection_label: str | None = None
     package_id: str | None = None
     target_name: str | None = None
 
@@ -47,7 +47,7 @@ class SnapshotEntry:
             "symlink_target": self.symlink_target,
             "preserve_symlink_identity": self.preserve_symlink_identity,
             "repo_name": self.repo_name,
-            "binding_label": self.binding_label,
+            "selection_label": self.selection_label,
             "package_id": self.package_id,
             "target_name": self.target_name,
         }
@@ -142,7 +142,7 @@ class RollbackResult:
         }
 
 
-def create_push_snapshot(plans: Sequence[BindingPlan], snapshot_config: SnapshotConfig) -> SnapshotRecord | None:
+def create_push_snapshot(plans: Sequence[PackagePlan], snapshot_config: SnapshotConfig) -> SnapshotRecord | None:
     if not snapshot_config.enabled:
         return None
 
@@ -192,7 +192,7 @@ def create_push_snapshot(plans: Sequence[BindingPlan], snapshot_config: Snapshot
                 preserve_symlink_identity=preserve_symlink_identity,
                 restore_path=restore_path,
                 repo_name=entry["repo_name"],
-                binding_label=entry["binding_label"],
+                selection_label=entry["selection_label"],
                 package_id=entry["package_id"],
                 target_name=entry["target_name"],
             )
@@ -321,8 +321,10 @@ def load_snapshot(snapshot_root: Path) -> SnapshotRecord:
                 preserve_symlink_identity=preserve_symlink_identity,
                 restore_path=Path(restore_path) if restore_path is not None else None,
                 repo_name=entry_payload.get("repo_name") if isinstance(entry_payload.get("repo_name"), str) else None,
-                binding_label=(
-                    entry_payload.get("binding_label")
+                selection_label=(
+                    entry_payload.get("selection_label")
+                    if isinstance(entry_payload.get("selection_label"), str)
+                    else entry_payload.get("binding_label")
                     if isinstance(entry_payload.get("binding_label"), str)
                     else None
                 ),
@@ -458,10 +460,10 @@ def execute_rollback(snapshot: SnapshotRecord, actions: Sequence[RollbackAction]
     )
 
 
-def _iter_push_snapshot_entries(plans: Sequence[BindingPlan]):
+def _iter_push_snapshot_entries(plans: Sequence[PackagePlan]):
     seen_live_paths: set[Path] = set()
     for plan in plans:
-        binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
+        selection_label = plan.selection_label
         for target in plan.target_plans:
             if target.directory_items:
                 for item in target.directory_items:
@@ -471,8 +473,8 @@ def _iter_push_snapshot_entries(plans: Sequence[BindingPlan]):
                     yield {
                         "live_path": item.live_path,
                         "push_action": item.action,
-                        "repo_name": plan.binding.repo,
-                        "binding_label": binding_label,
+                        "repo_name": plan.repo_name,
+                        "selection_label": selection_label,
                         "package_id": target.package_id,
                         "target_name": target.target_name,
                     }
@@ -485,8 +487,8 @@ def _iter_push_snapshot_entries(plans: Sequence[BindingPlan]):
             yield {
                 "live_path": target.live_path,
                 "push_action": target.action,
-                "repo_name": plan.binding.repo,
-                "binding_label": binding_label,
+                "repo_name": plan.repo_name,
+                "selection_label": selection_label,
                 "package_id": target.package_id,
                 "target_name": target.target_name,
                 "file_symlink_mode": target.file_symlink_mode,
@@ -527,8 +529,8 @@ def _write_snapshot_manifest(snapshot: SnapshotRecord) -> None:
             lines.append(f"mode = {entry.mode}")
         if entry.repo_name is not None:
             lines.append(f"repo_name = {json.dumps(entry.repo_name)}")
-        if entry.binding_label is not None:
-            lines.append(f"binding_label = {json.dumps(entry.binding_label)}")
+        if entry.selection_label is not None:
+            lines.append(f"selection_label = {json.dumps(entry.selection_label)}")
         if entry.package_id is not None:
             lines.append(f"package_id = {json.dumps(entry.package_id)}")
         if entry.target_name is not None:

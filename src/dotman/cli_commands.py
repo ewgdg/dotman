@@ -6,7 +6,7 @@ from typing import Any, Callable
 from dotman.add import prepare_add_to_package, write_add_result
 from dotman.engine import TrackedTargetConflictError
 from dotman.file_access import sudo_session
-from dotman.models import package_ref_text
+from dotman.models import Binding, package_ref_text
 from dotman.selection_menu_context import selection_menu_config_scope
 from dotman.snapshot import (
     build_rollback_actions,
@@ -190,7 +190,8 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
 def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
     assume_yes = getattr(args, "assume_yes", False)
     binding_text, profile = handlers.resolve_binding_text(engine, args.binding, json_output=args.json_output)
-    _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=profile)
+    repo, selector_query, _selector_kind = engine.resolve_selector_query_text(binding_text, profile=profile)
+    binding = Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
     while True:
         if not handlers.ensure_track_binding_replacement_confirmed(
             engine,
@@ -223,7 +224,11 @@ def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> in
             )
             if alternative_profile is None:
                 raise
-            _repo, binding, _selector_kind = engine.resolve_binding(binding_text, profile=alternative_profile)
+            repo, selector_query, _selector_kind = engine.resolve_selector_query_text(
+                binding_text,
+                profile=alternative_profile,
+            )
+            binding = Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
             continue
         if not handlers.ensure_track_binding_implicit_overrides_confirmed(
             engine,
@@ -320,8 +325,8 @@ def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, ope
         )
         binding_text = f"{binding.repo}:{binding.selector}"
         if operation == "push":
-            return engine._build_operation_plan([engine.plan_push_binding(binding_text, profile=binding.profile)], operation="push")
-        return engine._build_operation_plan([engine.plan_pull_binding(binding_text, profile=binding.profile)], operation="pull")
+            return engine.plan_push_query(binding_text, profile=binding.profile)
+        return engine.plan_pull_query(binding_text, profile=binding.profile)
     return engine.plan_push() if operation == "push" else engine.plan_pull()
 
 

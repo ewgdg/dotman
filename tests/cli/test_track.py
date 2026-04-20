@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, BindingPlan, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import Binding, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,
@@ -613,7 +613,7 @@ def test_track_cli_confirms_before_overriding_implicit_targets(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Confirm explicit override for example:work/git@work:" in output
-    assert "implicit: example:core-cli-meta@basic (git)" in output
+    assert "implicit: example:git@basic (git)" in output
     assert "tracked example:work/git@work" in output
 
 def test_track_cli_refuses_implicit_override_in_non_interactive_mode(
@@ -721,7 +721,7 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
         encoding="utf-8",
     )
 
-    answers = iter(["y", "y"])
+    answers = iter(["1", "y"])
     monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
 
     exit_code = main(
@@ -735,10 +735,9 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Resolve implicit conflict for fixture:alpha-stack@basic:" in output
-    assert "promote:   fixture:alpha@basic" in output
+    assert "Select a conflicting package to track explicitly for fixture:alpha-stack@basic:" in output
     assert "Confirm explicit override for fixture:alpha@basic:" in output
-    assert "implicit: fixture:beta-meta@basic (beta)" in output
+    assert "implicit: fixture:beta@basic (beta)" in output
     assert "tracked fixture:alpha@basic" in output
     assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -800,6 +799,6 @@ def test_track_cli_lists_package_override_once_for_multi_target_package(
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert output.count("implicit: fixture:beta-meta@basic (beta)") == 1
+    assert output.count("implicit: fixture:beta@basic (beta)") == 1
     assert "~/.config/shared.conf" not in output
     assert "~/.config/extra.conf" not in output

@@ -25,9 +25,9 @@ from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_bindin
 from dotman.models import (
     Binding,
     OperationPlan,
-    binding_plans_for_operation_plan,
     finalize_hook_plans_for_targets,
     package_ref_text,
+    package_plans_for_operation_plan,
     standalone_hook_package_summaries,
     standalone_hook_target_summaries,
 )
@@ -78,7 +78,7 @@ SelectableItem = TypeVar("SelectableItem")
 
 @dataclass(frozen=True)
 class PendingSelectionItem:
-    binding_label: str
+    selection_label: str
     package_id: str
     action: str
     target_name: str | None = None
@@ -826,9 +826,9 @@ def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Seq
     print_selection_header(f"Confirm explicit override for {binding_label}:")
     print("  this track request will replace implicitly tracked package owners:")
     for override in overrides:
-        print(f"    new: {override.winner.binding_label} ({override.winner.package_id})")
+        print(f"    new: {override.winner.selection_label} ({override.winner.package_id})")
         for contender in override.overridden:
-            print(f"      implicit: {contender.binding_label} ({contender.package_id})")
+            print(f"      implicit: {contender.selection_label} ({contender.package_id})")
     if assume_yes:
         return True
     while True:
@@ -847,7 +847,37 @@ def ensure_track_binding_implicit_overrides_confirmed(
     json_output: bool,
     assume_yes: bool = False,
 ) -> bool:
-    overrides = engine.preview_binding_implicit_overrides(binding)
+    repo, query, selector_kind = engine.resolve_selector_query_text(
+        f"{binding.repo}:{binding.selector}@{binding.profile}"
+    )
+    if selector_kind == "group":
+        overrides = []
+        seen_override_keys: set[tuple[str, str, str | None, str]] = set()
+        for selection in engine._planning_helpers().resolve_selector_query(engine, query, operation="push"):
+            if not selection.explicit:
+                continue
+            for override in engine.preview_package_selection_implicit_overrides(selection):
+                key = (
+                    override.winner.selection.identity.repo,
+                    override.winner.package_id,
+                    override.winner.selection.identity.bound_profile,
+                    override.winner.selection.requested_profile,
+                )
+                if key in seen_override_keys:
+                    continue
+                seen_override_keys.add(key)
+                overrides.append(override)
+    else:
+        overrides = engine.preview_package_selection_implicit_overrides(
+            engine._resolved_package_selection(
+                repo=repo,
+                package_id=query.selector,
+                requested_profile=query.profile or "",
+                explicit=True,
+                source_kind="selector_query",
+                source_selector=query.selector,
+            )
+        )
     if not overrides:
         return True
     if assume_yes:
@@ -900,13 +930,26 @@ def prompt_for_conflicting_package_binding(
     if conflict.precedence != "implicit" or not interactive_mode_enabled(json_output=json_output):
         return None
     candidate_bindings = set(engine.expand_tracked_package_entry(binding))
+
+    def candidate_binding(candidate) -> Binding:
+        return Binding(
+            repo=candidate.selection.identity.repo,
+            selector=candidate.selection.source_selector or candidate.package_id,
+            profile=candidate.selection.requested_profile,
+        )
+
     package_ids = sorted(
         {
             candidate.package_id
             for candidate in conflict.candidates
-            if candidate.binding in candidate_bindings
+            if candidate_binding(candidate) in candidate_bindings
         }
     )
+    if not package_ids:
+        # Group/package-entry expansions do not always preserve the same selector text
+        # as the implicit conflict candidates. Fall back to conflict package ids so the
+        # user can explicitly promote one package to break the tie.
+        package_ids = sorted({candidate.package_id for candidate in conflict.candidates})
     if not package_ids:
         return None
     binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
@@ -2039,7 +2082,15 @@ def select_non_conflicting_track_profile(
     for candidate_profile in engine.list_profiles(repo_name):
         if candidate_profile == current_profile:
             continue
-        _repo, candidate_binding, _selector_kind = engine.resolve_binding(binding_text, profile=candidate_profile)
+        candidate_repo, selector_query, _selector_kind = engine.resolve_selector_query_text(
+            binding_text,
+            profile=candidate_profile,
+        )
+        candidate_binding = Binding(
+            repo=candidate_repo.config.name,
+            selector=selector_query.selector,
+            profile=selector_query.profile or "",
+        )
         try:
             engine.validate_tracked_package_entry(candidate_binding)
         except ValueError:
@@ -2072,7 +2123,7 @@ def selection_item_action(*, operation: str, action: str) -> str:
 
 def selection_item_identity(
     *,
-    binding_label: str,
+    selection_label: str,
     package_id: str,
     target_name: str,
     operation: str,
@@ -2085,7 +2136,7 @@ def selection_item_identity(
         live_path=live_path,
     )
     return (
-        binding_label,
+        selection_label,
         package_id,
         target_name,
         source_path,
@@ -2101,9 +2152,9 @@ def collect_pending_selection_items_for_operation(
     use_raw_hook_plans: bool = False,
 ) -> list[PendingSelectionItem]:
     selection_items: list[PendingSelectionItem] = []
-    binding_plans = binding_plans_for_operation_plan(plans)
-    for plan in binding_plans:
-        binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
+    package_plans = package_plans_for_operation_plan(plans)
+    for plan in package_plans:
+        selection_label = plan.selection_label
         for target in plan.target_plans:
             if target.directory_items:
                 for item in target.directory_items:
@@ -2114,7 +2165,7 @@ def collect_pending_selection_items_for_operation(
                     )
                     selection_items.append(
                         PendingSelectionItem(
-                            binding_label=binding_label,
+                            selection_label=selection_label,
                             package_id=target.package_id,
                             target_name=target.target_name,
                             action=selection_item_action(operation=operation, action=item.action),
@@ -2132,11 +2183,11 @@ def collect_pending_selection_items_for_operation(
             )
             selection_items.append(
                 PendingSelectionItem(
-                    binding_label=binding_label,
+                    selection_label=selection_label,
                     package_id=target.package_id,
                     action=selection_item_action(operation=operation, action=target.action),
                     target_name=target.target_name,
-                    bound_profile=plan.package_bound_profiles.get(target.package_id),
+                    bound_profile=plan.bound_profile,
                     source_path=source_path,
                     destination_path=destination_path,
                 )
@@ -2155,11 +2206,11 @@ def collect_pending_selection_items_for_operation(
         for package_id, hook_names in standalone_hook_packages.items():
             selection_items.append(
                 PendingSelectionItem(
-                    binding_label=binding_label,
+                    selection_label=selection_label,
                     package_id=package_id,
                     action="hooks",
                     kind="package_hook_noop",
-                    bound_profile=plan.package_bound_profiles.get(package_id),
+                    bound_profile=plan.bound_profile,
                     hook_names=hook_names,
                 )
             )
@@ -2167,17 +2218,17 @@ def collect_pending_selection_items_for_operation(
         for (package_id, target_name), hook_names in standalone_hook_targets.items():
             selection_items.append(
                 PendingSelectionItem(
-                    binding_label=binding_label,
+                    selection_label=selection_label,
                     package_id=package_id,
                     target_name=target_name,
                     action="hooks",
                     kind="target_hook_noop",
-                    bound_profile=plan.package_bound_profiles.get(package_id),
+                    bound_profile=plan.bound_profile,
                     hook_names=hook_names,
                 )
             )
     if isinstance(plans, OperationPlan):
-        provisional_binding_plans = [
+        provisional_package_plans = [
             replace(
                 plan,
                 hooks=(
@@ -2190,26 +2241,26 @@ def collect_pending_selection_items_for_operation(
                     else plan.hooks
                 ),
             )
-            for plan in binding_plans
+            for plan in package_plans
         ]
         for repo_name in plans.repo_order:
-            repo_binding_plans = [plan for plan in provisional_binding_plans if plan.binding.repo == repo_name]
+            repo_package_plans = [plan for plan in provisional_package_plans if plan.repo_name == repo_name]
             hook_source = (plans.repo_hook_plans or {}).get(repo_name, {}) if use_raw_hook_plans else plans.repo_hooks.get(repo_name, {})
             finalized_repo_hooks = (
                 finalize_repo_hook_plans(
                     hook_source,
-                    repo_binding_plans,
+                    repo_package_plans,
                     allow_standalone_noop_hooks=run_noop,
                 )
                 if use_raw_hook_plans
                 else hook_source
             )
-            hook_names = standalone_repo_hook_summary(finalized_repo_hooks, repo_binding_plans)
+            hook_names = standalone_repo_hook_summary(finalized_repo_hooks, repo_package_plans)
             if hook_names is None:
                 continue
             selection_items.append(
                 PendingSelectionItem(
-                    binding_label=f"{repo_name}:repo@repo",
+                    selection_label=f"{repo_name}:repo@repo",
                     package_id=repo_name,
                     action="hooks",
                     kind="repo_hook_noop",
@@ -2222,7 +2273,7 @@ def collect_pending_selection_items_for_operation(
 
 def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full_paths: bool | None = None) -> None:
     full_paths = _effective_full_paths(full_paths)
-    repo_name = item.repo_name or repo_name_from_binding_label(item.binding_label)
+    repo_name = item.repo_name or repo_name_from_binding_label(item.selection_label)
     if item.kind in {"package_hook_noop", "target_hook_noop", "repo_hook_noop"}:
         if item.kind == "repo_hook_noop":
             owner_label = repo_name
@@ -2341,17 +2392,17 @@ def filter_plans_for_interactive_selection(
     for excluded_index in excluded_indexes:
         item = selection_items[excluded_index - 1]
         if item.kind == "package_hook_noop":
-            excluded_standalone_packages.add((item.binding_label, item.package_id))
+            excluded_standalone_packages.add((item.selection_label, item.package_id))
             continue
         if item.kind == "target_hook_noop":
-            excluded_standalone_targets.add((item.binding_label, item.package_id, item.target_name or ""))
+            excluded_standalone_targets.add((item.selection_label, item.package_id, item.target_name or ""))
             continue
         if item.kind == "repo_hook_noop":
-            excluded_repo_names.add(item.repo_name or repo_name_from_binding_label(item.binding_label))
+            excluded_repo_names.add(item.repo_name or repo_name_from_binding_label(item.selection_label))
             continue
         excluded_targets.add(
             (
-                item.binding_label,
+                item.selection_label,
                 item.package_id,
                 item.target_name or "",
                 item.source_path or "",
@@ -2359,10 +2410,10 @@ def filter_plans_for_interactive_selection(
             )
         )
 
-    binding_plans = binding_plans_for_operation_plan(plans)
+    package_plans = package_plans_for_operation_plan(plans)
     filtered_plans = []
-    for plan in binding_plans:
-        binding_label = f"{plan.binding.repo}:{plan.binding.selector}@{plan.binding.profile}"
+    for plan in package_plans:
+        selection_label = plan.selection_label
         filtered_targets = []
         for target in plan.target_plans:
             if target.directory_items:
@@ -2370,7 +2421,7 @@ def filter_plans_for_interactive_selection(
                     item
                     for item in target.directory_items
                     if selection_item_identity(
-                        binding_label=binding_label,
+                        selection_label=selection_label,
                         package_id=target.package_id,
                         target_name=target.target_name,
                         operation=operation,
@@ -2385,7 +2436,7 @@ def filter_plans_for_interactive_selection(
                     filtered_targets.append(replace(target, action="noop", directory_items=()))
                 continue
             if selection_item_identity(
-                binding_label=binding_label,
+                selection_label=selection_label,
                 package_id=target.package_id,
                 target_name=target.target_name,
                 operation=operation,
@@ -2403,13 +2454,13 @@ def filter_plans_for_interactive_selection(
                     allow_standalone_noop_hooks=run_noop,
                     excluded_standalone_package_ids={
                         package_id
-                        for current_binding_label, package_id in excluded_standalone_packages
-                        if current_binding_label == binding_label
+                        for current_selection_label, package_id in excluded_standalone_packages
+                        if current_selection_label == selection_label
                     },
                     excluded_standalone_target_ids={
                         (package_id, target_name)
-                        for current_binding_label, package_id, target_name in excluded_standalone_targets
-                        if current_binding_label == binding_label
+                        for current_selection_label, package_id, target_name in excluded_standalone_targets
+                        if current_selection_label == selection_label
                     },
                 ),
                 target_plans=filtered_targets,
@@ -2419,7 +2470,7 @@ def filter_plans_for_interactive_selection(
         repo_hooks = {
             repo_name: finalize_repo_hook_plans(
                 (plans.repo_hook_plans or {}).get(repo_name, {}),
-                [plan for plan in filtered_plans if plan.binding.repo == repo_name],
+                [plan for plan in filtered_plans if plan.repo_name == repo_name],
                 allow_standalone_noop_hooks=run_noop,
                 excluded_repo_names=excluded_repo_names,
             )
@@ -2428,7 +2479,7 @@ def filter_plans_for_interactive_selection(
         repo_hooks = {repo_name: hooks for repo_name, hooks in repo_hooks.items() if hooks}
         return replace(
             plans,
-            binding_plans=tuple(filtered_plans),
+            package_plans=tuple(filtered_plans),
             repo_hooks=repo_hooks,
         )
     return filtered_plans
@@ -2436,7 +2487,7 @@ def filter_plans_for_interactive_selection(
 
 def print_review_item(index: int, item: ReviewItem, *, full_paths: bool | None = None) -> None:
     full_paths = _effective_full_paths(full_paths)
-    repo_name = repo_name_from_binding_label(item.binding_label)
+    repo_name = repo_name_from_binding_label(item.selection_label)
     bound_profile = getattr(item, "bound_profile", None)
     package_target = package_label_text(
         repo_name=repo_name,
@@ -2476,7 +2527,7 @@ def review_diff_header(review_item: ReviewItem, *, index: int, total: int) -> st
     return (
         f"Diff {index}/{total}: "
         f"{package_label_text(
-            repo_name=repo_name_from_binding_label(review_item.binding_label),
+            repo_name=repo_name_from_binding_label(review_item.selection_label),
             package_id=review_item.package_id,
             target_name=review_item.target_name,
         )} "
@@ -2491,7 +2542,7 @@ def print_review_diff_header(review_item: ReviewItem, *, index: int, total: int)
         print()
         print(f"{separator} {header_text} {separator}")
         return
-    repo_name = repo_name_from_binding_label(review_item.binding_label)
+    repo_name = repo_name_from_binding_label(review_item.selection_label)
     prefix_text = style_text(f"Diff {index}/{total}:", *MENU_HINT_STYLE)
     package_label = render_package_target_label(
         repo_name=repo_name,
@@ -2609,8 +2660,8 @@ def _push_symlink_hazard_description(hazard: cli_emit.PushSymlinkHazard, *, full
     live_path = cli_emit.display_cli_path(hazard.live_path, full_paths=full_paths)
     symlink_target = hazard.symlink_target or "<unknown>"
     return (
-        f"{hazard.binding_label} "
-        f"{cli_style.package_label_text(repo_name=hazard.binding_label.split(':', 1)[0], package_id=hazard.package_id, target_name=hazard.target_name)} "
+        f"{hazard.selection_label} "
+        f"{cli_style.package_label_text(repo_name=hazard.selection_label.split(':', 1)[0], package_id=hazard.package_id, target_name=hazard.target_name)} "
         f"({live_path} -> {symlink_target})"
     )
 

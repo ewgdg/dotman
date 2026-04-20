@@ -15,7 +15,8 @@ from dotman.diff_review import (
     run_review_item_diff,
     run_review_item_edit,
 )
-from dotman.models import Binding, BindingPlan, TargetPlan
+from dotman.models import TargetPlan
+from tests.helpers import make_package_plan
 
 
 def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) -> None:
@@ -24,11 +25,11 @@ def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) ->
     repo_path.write_text("raw repo\n", encoding="utf-8")
     live_path.write_text("raw live\n", encoding="utf-8")
 
-    plan = BindingPlan(
+    plan = make_package_plan(
         operation="pull",
-        binding=Binding(repo="example", selector="git", profile="basic"),
-        selector_kind="package",
-        package_ids=["git"],
+        repo_name="example",
+        package_id="git",
+        requested_profile="basic",
         variables={},
         hooks={},
         target_plans=[
@@ -59,7 +60,7 @@ def test_run_review_item_diff_invokes_git_diff(monkeypatch) -> None:
     repo_path = Path.home() / ".config" / "repo-file"
     live_path = Path.home() / ".local" / "share" / "live-file"
     review_item = ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
@@ -100,7 +101,7 @@ def test_run_review_item_diff_materializes_absolute_paths_under_temp_root(monkey
     repo_path = Path("/etc/sddm.conf.d/kde_settings.conf")
     live_path = Path("/var/lib/sddm.conf.d/kde_settings.conf")
     review_item = ReviewItem(
-        binding_label="main:sddm@basic",
+        selection_label="main:sddm@basic",
         package_id="sddm",
         target_name="kde_settings.conf",
         action="update",
@@ -136,7 +137,7 @@ def test_run_review_item_diff_uses_repo_and_live_labels_for_pull(monkeypatch) ->
     repo_path = Path.home() / ".gitconfig"
     live_path = Path.home() / ".config" / "git" / "config"
     review_item = ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
@@ -172,7 +173,7 @@ def test_run_review_item_diff_uses_explicit_pager_when_stdout_is_tty(monkeypatch
     repo_path = Path.home() / ".config" / "repo-file"
     live_path = Path.home() / ".local" / "share" / "live-file"
     review_item = ReviewItem(
-        binding_label="example:git@basic",
+        selection_label="example:git@basic",
         package_id="git",
         target_name="gitconfig",
         action="update",
@@ -251,7 +252,7 @@ def test_select_review_pager_command_replaces_explicit_git_pager_cat_with_less(m
 
 def test_run_review_item_edit_prefers_pull_reconcile_command(monkeypatch, tmp_path: Path) -> None:
     review_item = ReviewItem(
-        binding_label="example:nvim@basic",
+        selection_label="example:nvim@basic",
         package_id="nvim",
         target_name="init_lua",
         action="update",
@@ -308,7 +309,7 @@ def test_run_review_item_edit_runs_builtin_jinja_reconcile(monkeypatch, tmp_path
     live_path.write_text("raw live\n", encoding="utf-8")
     (tmp_path / "shared.txt").write_text("shared\n", encoding="utf-8")
     review_item = ReviewItem(
-        binding_label="example:nvim@basic",
+        selection_label="example:nvim@basic",
         package_id="nvim",
         target_name="init_lua",
         action="update",
@@ -363,7 +364,7 @@ def test_run_review_item_edit_uses_planning_views_for_plain_pull_editor(monkeypa
     repo_path.write_text("raw repo\n", encoding="utf-8")
     live_path.write_text("raw live\n", encoding="utf-8")
     review_item = ReviewItem(
-        binding_label="example:nvim@basic",
+        selection_label="example:nvim@basic",
         package_id="nvim",
         target_name="init_lua",
         action="update",
@@ -417,7 +418,7 @@ def test_edit_status_keeps_reconcile_pull_only(tmp_path: Path) -> None:
     live_path.write_text("live\n", encoding="utf-8")
 
     push_item = ReviewItem(
-        binding_label="example:nvim@basic",
+        selection_label="example:nvim@basic",
         package_id="nvim",
         target_name="init_lua",
         action="update",
@@ -429,7 +430,7 @@ def test_edit_status_keeps_reconcile_pull_only(tmp_path: Path) -> None:
         reconcile_command="sh hooks/reconcile.sh",
     )
     pull_item = ReviewItem(
-        binding_label="example:nvim@basic",
+        selection_label="example:nvim@basic",
         package_id="nvim",
         target_name="init_lua",
         action="update",

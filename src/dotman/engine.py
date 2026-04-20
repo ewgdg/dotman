@@ -8,7 +8,6 @@ from dotman.config import load_manager_config
 from dotman.ignore import list_directory_files, matches_ignore_pattern
 from dotman.models import (
     Binding,
-    BindingPlan,
     PackagePlan,
     ResolvedPackageIdentity,
     ResolvedPackageSelection,
@@ -152,10 +151,6 @@ class DotmanEngine:
             raise ValueError(f"selector '{selector}' is ambiguous: {candidates}")
         raise ValueError(f"selector '{selector}' did not match any package or group")
 
-    def resolve_binding(self, binding_text: str, *, profile: str | None = None) -> tuple[Repository, Binding, str]:
-        repo, query, selector_kind = self.resolve_selector_query_text(binding_text, profile=profile)
-        return repo, Binding(repo=repo.config.name, selector=query.selector, profile=query.profile or ""), selector_kind
-
     def resolve_selector_query_text(self, query_text: str, *, profile: str | None = None) -> tuple[Repository, SelectorQuery, str]:
         explicit_repo, selector, selector_profile = parse_binding_text(query_text)
         repo, resolved_selector, selector_kind = self.resolve_selector(selector, explicit_repo)
@@ -225,18 +220,6 @@ class DotmanEngine:
             for selection in selections
         ]
         return self._build_operation_plan(plans, operation="pull")
-
-    def plan_push_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
-        operation_plan = self.plan_push_query(binding_text, profile=profile)
-        if len(operation_plan.package_plans) != 1:
-            raise ValueError("package-centric planning returns multiple package plans; use plan_push_query")
-        return operation_plan.package_plans[0]
-
-    def plan_pull_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
-        operation_plan = self.plan_pull_query(binding_text, profile=profile)
-        if len(operation_plan.package_plans) != 1:
-            raise ValueError("package-centric planning returns multiple package plans; use plan_pull_query")
-        return operation_plan.package_plans[0]
 
     def resolve_tracked_binding(
         self,
@@ -651,21 +634,6 @@ class DotmanEngine:
 
         return planning
 
-    def _build_plan(self, repo: Repository, binding: Binding, selector_kind: str, *, operation: str) -> BindingPlan:
-        del selector_kind
-        return self._build_package_plan(
-            repo,
-            self._resolved_package_selection(
-                repo=repo,
-                package_id=binding.selector,
-                requested_profile=binding.profile,
-                explicit=True,
-                source_kind="selector_query",
-                source_selector=binding.selector,
-            ),
-            operation=operation,
-        )
-
     def _build_package_plan(self, repo: Repository, selection: ResolvedPackageSelection, *, operation: str) -> PackagePlan:
         return self._planning_helpers().build_package_plan(
             self,
@@ -701,23 +669,11 @@ class DotmanEngine:
         operation: str,
         bindings_by_repo: dict[str, list[Binding]] | None = None,
         entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
-    ) -> tuple[list[BindingPlan], dict[Path, list[TrackedTargetCandidate]]]:
+    ) -> tuple[list[PackagePlan], dict[Path, list[TrackedTargetCandidate]]]:
         return self._planning_helpers().collect_tracked_candidates(
             self,
             operation=operation,
             entries_by_repo=entries_by_repo or self._tracked_entries_by_repo_from_bindings(bindings_by_repo),
-        )
-
-    def preview_binding_implicit_overrides(self, binding: Binding) -> list[TrackedTargetOverride]:
-        return self.preview_package_selection_implicit_overrides(
-            self._resolved_package_selection(
-                repo=self.get_repo(binding.repo),
-                package_id=binding.selector,
-                requested_profile=binding.profile,
-                explicit=True,
-                source_kind="selector_query",
-                source_selector=binding.selector,
-            )
         )
 
     def preview_package_selection_implicit_overrides(self, selection: ResolvedPackageSelection) -> list[TrackedTargetOverride]:

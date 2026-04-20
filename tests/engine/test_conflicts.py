@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
+from dotman.models import Binding
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
@@ -81,7 +82,7 @@ def test_package_reserved_paths_conflict_with_other_package_target(
         ValueError,
         match=r"reserved path conflict: alpha reserves .+shared and beta:beta maps to .+shared/beta\.conf",
     ):
-        engine.plan_push_binding("fixture:all@default")
+        engine.plan_push_query("fixture:all@default")
 
 def test_package_reserved_paths_conflict_with_other_package_reserved_paths(
     tmp_path: Path,
@@ -138,7 +139,7 @@ def test_package_reserved_paths_conflict_with_other_package_reserved_paths(
         ValueError,
         match=r"reserved path conflict: alpha reserves .+shared and beta reserves .+shared/session",
     ):
-        engine.plan_push_binding("fixture:all@default")
+        engine.plan_push_query("fixture:all@default")
 
 def test_record_binding_rejects_conflicting_explicit_targets(
     tmp_path: Path,
@@ -150,13 +151,19 @@ def test_record_binding_rejects_conflicting_explicit_targets(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    engine.record_tracked_package_entry(engine.resolve_binding("example:git@basic")[1])
+    repo, selector_query, _selector_kind = engine.resolve_selector_query_text("example:git@basic")
+    engine.record_tracked_package_entry(
+        Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
+    )
 
     with pytest.raises(
         ValueError,
         match=r"conflicting explicit tracked targets for .+\.gitconfig: example:git@basic -> example:git\.gitconfig, example:work/git@work -> example:work/git\.gitconfig",
     ):
-        engine.record_tracked_package_entry(engine.resolve_binding("example:work/git@work")[1])
+        repo, selector_query, _selector_kind = engine.resolve_selector_query_text("example:work/git@work")
+        engine.record_tracked_package_entry(
+            Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
+        )
 
 def test_remove_binding_rejects_removal_that_exposes_implicit_conflict(
     tmp_path: Path,
@@ -201,7 +208,7 @@ def test_remove_binding_rejects_removal_that_exposes_implicit_conflict(
         match=(
             r"cannot untrack 'fixture:shared@direct': removing this binding would expose "
             r"conflicting implicit tracked targets for .+shared\.conf: "
-            r"fixture:stack-a@work -> fixture:shared\.shared, fixture:stack-b@personal -> fixture:shared\.shared"
+            r"fixture:shared@personal -> fixture:shared\.shared, fixture:shared@work -> fixture:shared\.shared"
         ),
     ):
         engine.remove_tracked_package_entry("fixture:shared@direct")
