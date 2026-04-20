@@ -180,7 +180,7 @@ class DotmanEngine:
                 f"{repo.config.name}:{binding.selector}@{binding.profile}"
                 for repo, binding in exact_matches
             )
-            raise ValueError(f"binding '{binding_label}' is ambiguous: {candidates}")
+            raise ValueError(f"tracked package entry '{binding_label}' is ambiguous: {candidates}")
 
         if len(partial_matches) == 1:
             repo, binding = partial_matches[0]
@@ -192,7 +192,7 @@ class DotmanEngine:
                 f"{repo.config.name}:{binding.selector}@{binding.profile}"
                 for repo, binding in partial_matches
             )
-            raise ValueError(f"binding '{binding_label}' is ambiguous: {candidates}")
+            raise ValueError(f"tracked package entry '{binding_label}' is ambiguous: {candidates}")
 
         if owner_bindings:
             if allow_package_owners:
@@ -207,7 +207,7 @@ class DotmanEngine:
                     f"{repo.config.name}:{binding.selector}@{binding.profile}"
                     for repo, binding in owner_bindings
                 )
-                raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked bindings: {candidates}")
+                raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked package entries: {candidates}")
             owners = ", ".join(
                 f"{repo.config.name}:{binding.selector}@{binding.profile}"
                 for repo, binding in owner_bindings
@@ -215,10 +215,10 @@ class DotmanEngine:
             required_repo = explicit_repo or owner_bindings[0][0].config.name
             required_ref = f"{required_repo}:{selector}"
             raise ValueError(
-                f"cannot {operation} '{required_ref}': required by tracked bindings: {owners}"
+                f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
             )
 
-        raise ValueError(f"binding '{binding_label}' is not currently tracked")
+        raise ValueError(f"tracked package entry '{binding_label}' is not currently tracked")
 
     def find_tracked_binding_matches(
         self,

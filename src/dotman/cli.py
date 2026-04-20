@@ -717,7 +717,7 @@ def confirm_tracked_binding_replacement(
     assume_yes: bool = False,
 ) -> bool:
     binding_scope = f"{replacement_binding.repo}:{replacement_binding.selector}"
-    print_selection_header(f"Confirm tracked binding replacement for {binding_scope}:")
+    print_selection_header(f"Confirm tracked package entry replacement for {binding_scope}:")
     print(
         "  existing: "
         + render_binding_label(
@@ -771,7 +771,7 @@ def ensure_track_binding_replacement_confirmed(
                 replacement_binding=replacement_binding,
                 assume_yes=True,
             )
-        print_selection_header(f"Confirm tracked binding replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
+        print_selection_header(f"Confirm tracked package entry replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
         for existing_binding, replacement_binding in replacements:
             print(f"  existing: {render_binding_reference(existing_binding)}")
             print(f"  new:      {render_binding_reference(replacement_binding)}")
@@ -780,7 +780,7 @@ def ensure_track_binding_replacement_confirmed(
         existing_binding, replacement_binding = replacements[0]
         if not interactive_mode_enabled(json_output=json_output):
             raise ValueError(
-                f"refusing to replace tracked binding '{existing_binding.repo}:{existing_binding.selector}@"
+                f"refusing to replace tracked package entry '{existing_binding.repo}:{existing_binding.selector}@"
                 f"{existing_binding.profile}' with '{replacement_binding.repo}:{replacement_binding.selector}@{replacement_binding.profile}' "
                 "in non-interactive mode"
             )
@@ -795,10 +795,10 @@ def ensure_track_binding_replacement_confirmed(
     )
     if not interactive_mode_enabled(json_output=json_output):
         raise ValueError(
-            f"refusing to replace tracked bindings for '{binding.repo}:{binding.selector}@{binding.profile}' "
+            f"refusing to replace tracked package entries for '{binding.repo}:{binding.selector}@{binding.profile}' "
             f"in non-interactive mode: {replacement_labels}"
         )
-    print_selection_header(f"Confirm tracked binding replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
+    print_selection_header(f"Confirm tracked package entry replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
     for existing_binding, replacement_binding in replacements:
         print(f"  existing: {render_binding_reference(existing_binding)}")
         print(f"  new:      {render_binding_reference(replacement_binding)}")
@@ -824,7 +824,7 @@ def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
 def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Sequence, assume_yes: bool = False) -> bool:
     binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
     print_selection_header(f"Confirm explicit override for {binding_label}:")
-    print("  this explicit binding will replace implicitly tracked package owners:")
+    print("  this track request will replace implicitly tracked package owners:")
     for override in overrides:
         print(f"    new: {override.winner.binding_label} ({override.winner.package_id})")
         for contender in override.overridden:
@@ -1190,7 +1190,7 @@ def resolve_tracked_binding_text(
                 include_repo_context=True,
             )
             return ValueError(
-                f"cannot {operation} '{required_ref}': required by tracked bindings: {owners}"
+                f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
             )
 
         filtered_package_matches = [
@@ -1215,16 +1215,16 @@ def resolve_tracked_binding_text(
                 + [("package", package) for package in filtered_package_matches],
                 query_text=binding_label,
                 interactive=True,
-                exact_header_text=f"Select a tracked binding for '{binding_label}':",
+                exact_header_text=f"Select a tracked package entry for '{binding_label}':",
                 partial_header_text=(
                     f"Select an untrack target for '{binding_label}':"
                     if filtered_package_matches
-                    else f"Select a tracked binding for '{binding_label}':"
+                    else f"Select a tracked package entry for '{binding_label}':"
                 ),
                 option_resolver=combined_option,
                 exact_error_text="unused",
                 partial_error_text="unused",
-                not_found_text=f"binding '{binding_label}' is not currently tracked",
+                not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
             )
             if selected_kind == "binding":
                 return selected_item.repo, selected_item.binding
@@ -1235,7 +1235,7 @@ def resolve_tracked_binding_text(
             return record.repo, record.binding
         if len(exact_matches) > 1:
             raise ValueError(
-                f"binding '{binding_label}' is ambiguous: "
+                f"tracked package entry '{binding_label}' is ambiguous: "
                 + ", ".join(
                     f"{record.binding.repo}:{record.binding.selector}@{record.binding.profile}"
                     for record in exact_matches
@@ -1249,7 +1249,7 @@ def resolve_tracked_binding_text(
                     for package in filtered_package_matches
                 )
                 raise ValueError(
-                    f"binding '{binding_label}' is ambiguous: tracked packages: {package_candidates}"
+                    f"tracked package entry '{binding_label}' is ambiguous: tracked packages: {package_candidates}"
                 )
             if len(partial_matches) == 1:
                 record = partial_matches[0]
@@ -1257,7 +1257,7 @@ def resolve_tracked_binding_text(
                     f"no exact match for '{binding_label}'; use exact name '{persisted_option(record).display_label}'"
                 )
             raise ValueError(
-                f"binding '{binding_label}' is ambiguous: "
+                f"tracked package entry '{binding_label}' is ambiguous: "
                 + ", ".join(
                     f"{record.binding.repo}:{record.binding.selector}@{record.binding.profile}"
                     for record in partial_matches
@@ -1267,14 +1267,14 @@ def resolve_tracked_binding_text(
         if filtered_package_matches:
             if len(filtered_package_matches) > 1:
                 raise ValueError(
-                    f"binding '{binding_label}' is ambiguous: tracked packages: "
+                    f"tracked package entry '{binding_label}' is ambiguous: tracked packages: "
                     + ", ".join(
                         f"{package.repo}:{package.package_ref}" for package in filtered_package_matches
                     )
                 )
             raise package_owner_error(filtered_package_matches[0])
 
-        raise ValueError(f"binding '{binding_label}' is not currently tracked")
+        raise ValueError(f"tracked package entry '{binding_label}' is not currently tracked")
 
     repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
     lookup_repo, lookup_selector = parse_slash_qualified_query(
@@ -1409,12 +1409,12 @@ def resolve_tracked_binding_text(
             partial_matches=combined_partial_matches,
             query_text=binding_label,
             interactive=interactive,
-            exact_header_text=f"Select a tracked binding for '{binding_label}':",
-            partial_header_text=f"Select a tracked binding for '{binding_label}':",
+            exact_header_text=f"Select a tracked package entry for '{binding_label}':",
+            partial_header_text=f"Select a tracked package entry for '{binding_label}':",
             option_resolver=combined_resolver,
-            exact_error_text=f"binding '{binding_label}' is ambiguous: "
+            exact_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
             + ", ".join(owner_target_error_label(match) for match in owner_exact_matches),
-            partial_error_text=f"binding '{binding_label}' is ambiguous: "
+            partial_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
             + ", ".join(
                 [
                     *(
@@ -1427,7 +1427,7 @@ def resolve_tracked_binding_text(
                     ),
                 ]
             ),
-            not_found_text=f"binding '{binding_label}' is not currently tracked",
+            not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
         )
         if selected_kind == "binding":
             return selected_item
@@ -1439,14 +1439,14 @@ def resolve_tracked_binding_text(
             partial_matches=partial_matches,
             query_text=binding_label,
             interactive=interactive,
-            exact_header_text=f"Select a tracked binding for '{binding_label}':",
-            partial_header_text=f"Select a tracked binding for '{binding_label}':",
+            exact_header_text=f"Select a tracked package entry for '{binding_label}':",
+            partial_header_text=f"Select a tracked package entry for '{binding_label}':",
             option_resolver=binding_resolver,
-            exact_error_text=f"binding '{binding_label}' is ambiguous: "
+            exact_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
             + ", ".join(f"{repo.config.name}:{binding.selector}@{binding.profile}" for repo, binding in exact_matches),
-            partial_error_text=f"binding '{binding_label}' is ambiguous: "
+            partial_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
             + ", ".join(f"{repo.config.name}:{binding.selector}@{binding.profile}" for repo, binding in partial_matches),
-            not_found_text=f"binding '{binding_label}' is not currently tracked",
+            not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
         )
     except ValueError as exc:
         if allow_package_owners and owner_bindings:
@@ -1458,11 +1458,11 @@ def resolve_tracked_binding_text(
                     partial_matches=owner_bindings,
                     query_text=binding_label,
                     interactive=interactive,
-                    exact_header_text=f"Select a tracked binding for '{binding_label}':",
-                    partial_header_text=f"Select a tracked binding for '{binding_label}':",
+                    exact_header_text=f"Select a tracked package entry for '{binding_label}':",
+                    partial_header_text=f"Select a tracked package entry for '{binding_label}':",
                     option_resolver=binding_resolver,
                     exact_error_text="unused",
-                    partial_error_text=f"{operation} target '{binding_label}' is ambiguous across tracked bindings: "
+                    partial_error_text=f"{operation} target '{binding_label}' is ambiguous across tracked package entries: "
                     + ", ".join(
                         f"{repo.config.name}:{binding.selector}@{binding.profile}"
                         for repo, binding in owner_bindings
@@ -1474,7 +1474,7 @@ def resolve_tracked_binding_text(
                     f"{repo.config.name}:{binding.selector}@{binding.profile}"
                     for repo, binding in owner_bindings
                 )
-                raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked bindings: {candidates}") from None
+                raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked package entries: {candidates}") from None
             return binding_from_owner_match((owner_repo, owner_binding))
         if owner_bindings and not allow_package_owners:
             owners = ", ".join(
@@ -1485,7 +1485,7 @@ def resolve_tracked_binding_text(
             required_repo = repo_name or lookup_repo or owner_bindings[0][0].config.name
             required_ref = f"{required_repo}:{resolved_selector}"
             raise ValueError(
-                f"cannot {operation} '{required_ref}': required by tracked bindings: {owners}"
+                f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
             ) from None
         raise exc
 
@@ -1596,11 +1596,11 @@ def resolve_tracked_target_text(
 
 def _parse_edit_query_text(query_text: str) -> tuple[str, str | None, str, str | None]:
     if any(marker in query_text for marker in ("@", "<", ">")):
-        raise ValueError("edit query does not accept binding syntax; use explicit edit package or edit target")
+        raise ValueError("edit query does not accept selector@profile syntax; use explicit edit package or edit target")
 
     explicit_repo, selector, selector_profile = parse_binding_text(query_text)
     if selector_profile is not None:
-        raise ValueError("edit query does not accept binding syntax; use explicit edit package or edit target")
+        raise ValueError("edit query does not accept selector@profile syntax; use explicit edit package or edit target")
 
     if "." in selector:
         package_id, separator, target_name = selector.partition(".")

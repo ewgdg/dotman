@@ -205,7 +205,7 @@ def test_untrack_cli_reports_dependency_owner_for_untracked_package_selector(
     )
 
     assert exit_code == 2
-    assert "cannot untrack 'example:nvim': required by tracked bindings: example:core-cli-meta@basic" in capsys.readouterr().err
+    assert "cannot untrack 'example:nvim': required by tracked package entries: example:core-cli-meta@basic" in capsys.readouterr().err
 
 def test_untrack_cli_rejects_removal_that_would_expose_implicit_conflict(
     tmp_path: Path,

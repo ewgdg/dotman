@@ -454,7 +454,7 @@ def test_track_cli_confirms_before_updating_existing_binding_profile(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select a profile for example:git:" in output
-    assert "Confirm tracked binding replacement for example:git:" in output
+    assert "Confirm tracked package entry replacement for example:git:" in output
     assert "tracked example:git@work" in output
     assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -507,8 +507,8 @@ def test_track_cli_keeps_existing_binding_when_profile_replacement_is_declined(
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Confirm tracked binding replacement for example:git:" in output
-    assert "kept existing tracked binding example:git@basic" in output
+    assert "Confirm tracked package entry replacement for example:git:" in output
+    assert "kept existing tracked package entry example:git@basic" in output
     assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
         [
             "version = 1",
@@ -558,7 +558,7 @@ def test_track_cli_refuses_silent_profile_replacement_in_non_interactive_mode(
 
     assert exit_code == 2
     assert (
-        "refusing to replace tracked binding 'example:git@basic' with 'example:git@work' in non-interactive mode"
+        "refusing to replace tracked package entry 'example:git@basic' with 'example:git@work' in non-interactive mode"
         in capsys.readouterr().err
     )
     assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(

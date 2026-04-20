@@ -148,7 +148,7 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a tracked binding for 'sunshine':" in output
+    assert "Select a tracked package entry for 'sunshine':" in output
     assert "alpha:sunshine@host/linux" in output
     assert "beta:sunshine@host/linux" in output
     assert "sunshine.selected_config -> create" in output
@@ -223,7 +223,7 @@ def test_push_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert selected_menu["header_text"] == "Select a tracked binding for 'git':"
+    assert selected_menu["header_text"] == "Select a tracked package entry for 'git':"
     assert any("example:git@basic" in label for label in selected_menu["option_labels"])
     assert any("example:work/git@work" in label for label in selected_menu["option_labels"])
     assert ":: example:git@basic" in output

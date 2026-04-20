@@ -1008,7 +1008,7 @@ def emit_kept_binding(*, binding: Any, json_output: bool, use_color: bool) -> in
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"kept existing tracked binding {cli_style.render_binding_reference(binding, use_color=use_color)}")
+    print(f"kept existing tracked package entry {cli_style.render_binding_reference(binding, use_color=use_color)}")
     return 0
 
 

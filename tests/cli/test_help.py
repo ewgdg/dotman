@@ -24,23 +24,24 @@ from tests.helpers import (
 )
 
 
-def test_track_help_uses_explicit_binding_placeholder(capsys) -> None:
+def test_track_help_uses_explicit_selector_profile_placeholder(capsys) -> None:
     output = capture_parser_help(capsys, "track")
-    assert "usage: dotman track [-h] [--yes] <binding>" in output
+    assert "usage: dotman track [-h] [--yes] [<repo>:]<selector>[@<profile>]" in output
     assert "positional arguments:" in output
-    assert "<binding>" in output
+    assert "[<repo>:]<selector>[@<profile>]" in output
 
 def test_push_help_lists_dry_run_and_full_path_flags(capsys) -> None:
     output = capture_parser_help(capsys, "push")
-    assert "usage: dotman push [-h] [-d] [--full-path] [--yes] [--run-noop] [<binding>]" in output
-    assert "[<binding>]" in output
+    assert "usage: dotman push [-h] [-d] [--full-path] [--yes] [--run-noop]" in output
+    assert "[[<repo>:]<package>[@<profile>]]" in output
     assert "-d, --dry-run" in output
     assert "--full-path" in output
 
 
 def test_pull_help_lists_dry_run_and_full_path_flags(capsys) -> None:
     output = capture_parser_help(capsys, "pull")
-    assert "usage: dotman pull [-h] [-d] [--full-path] [--yes] [--run-noop] [<binding>]" in output
+    assert "usage: dotman pull [-h] [-d] [--full-path] [--yes] [--run-noop]" in output
+    assert "[[<repo>:]<package>[@<profile>]]" in output
     assert "-d, --dry-run" in output
     assert "--full-path" in output
 
@@ -62,8 +63,8 @@ def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     assert "[--file-symlink-mode <mode>] [--dir-symlink-mode <mode>]" in output
     assert "<command>" in output
     assert "commands:" in output
-    assert "Track a binding in manager state" in output
-    assert "Diagnose manager config and tracked state" in output
+    assert "Track packages in manager state" in output
+    assert "Diagnose manager config and tracked package state" in output
     assert "Patch review content back into repo source" in output
     assert "Open a tracked package or target path" in output
     assert "Re-run a reconcile helper subcommand" in output

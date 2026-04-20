@@ -3,12 +3,21 @@ from __future__ import annotations
 import argparse
 
 
-def add_binding_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:
+def add_track_request_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:
     parser.add_argument(
         "binding",
         nargs=None if required else "?",
-        metavar="<binding>",
-        help="Binding argument in the form <repo>:<selector>[@<profile>]",
+        metavar="[<repo>:]<selector>[@<profile>]",
+        help="Track request; repo may be omitted when unique",
+    )
+
+
+def add_tracked_package_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:
+    parser.add_argument(
+        "binding",
+        nargs=None if required else "?",
+        metavar="[<repo>:]<package>[@<profile>]",
+        help="Tracked package selector; repo may be omitted when unique",
     )
 
 
@@ -153,10 +162,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     track_parser = subparsers.add_parser(
         "track",
-        help="Track a binding in manager state",
-        description="Track a binding in manager state",
+        help="Track packages in manager state",
+        description="Track packages in manager state",
     )
-    add_binding_argument(track_parser)
+    add_track_request_argument(track_parser)
     add_assume_yes_argument(track_parser)
 
     add_parser = subparsers.add_parser(
@@ -212,7 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_dry_run_argument(push_parser)
     add_full_path_argument(push_parser)
-    add_binding_argument(push_parser, required=False)
+    add_tracked_package_argument(push_parser, required=False)
     add_assume_yes_argument(push_parser)
     add_run_noop_argument(push_parser)
 
@@ -223,14 +232,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_dry_run_argument(pull_parser)
     add_full_path_argument(pull_parser)
-    add_binding_argument(pull_parser, required=False)
+    add_tracked_package_argument(pull_parser, required=False)
     add_assume_yes_argument(pull_parser)
     add_run_noop_argument(pull_parser)
 
     subparsers.add_parser(
         "doctor",
-        help="Diagnose manager config and tracked state",
-        description="Diagnose manager config and tracked state",
+        help="Diagnose manager config and tracked package state",
+        description="Diagnose manager config and tracked package state",
     )
 
     rollback_parser = subparsers.add_parser(
@@ -245,22 +254,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     untrack_parser = subparsers.add_parser(
         "untrack",
-        help="Remove a tracked binding from manager state",
-        description="Remove a tracked binding from manager state",
+        help="Remove a tracked package entry from manager state",
+        description="Remove a tracked package entry from manager state",
     )
-    add_binding_argument(untrack_parser)
+    add_tracked_package_argument(untrack_parser)
 
     forget_parser = subparsers.add_parser(
         "forget",
         help="Alias for untrack",
         description="Alias for untrack",
     )
-    add_binding_argument(forget_parser)
+    add_tracked_package_argument(forget_parser)
 
     list_parser = subparsers.add_parser(
         "list",
-        help="List tracked state items",
-        description="List tracked state items",
+        help="List tracked package state items",
+        description="List tracked package state items",
     )
     list_subparsers = list_parser.add_subparsers(
         dest="list_command",
@@ -285,8 +294,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     info_parser = subparsers.add_parser(
         "info",
-        help="Show detailed information about tracked state items",
-        description="Show detailed information about tracked state items",
+        help="Show detailed information about tracked package state items",
+        description="Show detailed information about tracked package state items",
     )
     info_subparsers = info_parser.add_subparsers(
         dest="info_command",

@@ -388,7 +388,7 @@ def remove_binding(
         return engine.remove_persisted_binding(exact_matches[0], operation=operation)
     if len(exact_matches) > 1:
         raise ValueError(
-            f"binding '{binding_label}' is ambiguous: {engine._format_persisted_binding_candidates(exact_matches)}"
+            f"tracked package entry '{binding_label}' is ambiguous: {engine._format_persisted_binding_candidates(exact_matches)}"
         )
 
     package_matches, owner_bindings = engine._tracked_package_matches_for_untrack(
@@ -409,7 +409,7 @@ def remove_binding(
             binding_candidates = engine._format_persisted_binding_candidates(partial_matches)
             package_candidates = engine._format_tracked_package_candidates(package_matches)
             raise ValueError(
-                f"binding '{binding_label}' is ambiguous: tracked bindings: {binding_candidates}; tracked packages: {package_candidates}"
+                f"tracked package entry '{binding_label}' is ambiguous: tracked package entries: {binding_candidates}; tracked packages: {package_candidates}"
             )
         if len(partial_matches) == 1:
             record = partial_matches[0]
@@ -417,20 +417,20 @@ def remove_binding(
                 f"no exact match for '{binding_label}'; use exact name '{record.binding.repo}:{record.binding.selector}@{record.binding.profile}'"
             )
         raise ValueError(
-            f"binding '{binding_label}' is ambiguous: {engine._format_persisted_binding_candidates(partial_matches)}"
+            f"tracked package entry '{binding_label}' is ambiguous: {engine._format_persisted_binding_candidates(partial_matches)}"
         )
 
     if package_matches:
         if len(package_matches) > 1:
             raise ValueError(
-                f"binding '{binding_label}' is ambiguous: tracked packages: {engine._format_tracked_package_candidates(package_matches)}"
+                f"tracked package entry '{binding_label}' is ambiguous: tracked packages: {engine._format_tracked_package_candidates(package_matches)}"
             )
         owners = engine._format_owner_bindings(owner_bindings)
         required_repo = parse_binding_text(binding_text)[0] or package_matches[0].repo
         required_ref = f"{required_repo}:{selector}"
-        raise ValueError(f"cannot {operation} '{required_ref}': required by tracked bindings: {owners}")
+        raise ValueError(f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}")
 
-    raise ValueError(f"binding '{binding_label}' is not currently tracked")
+    raise ValueError(f"tracked package entry '{binding_label}' is not currently tracked")
 
 
 

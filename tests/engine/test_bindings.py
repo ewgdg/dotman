@@ -655,6 +655,6 @@ def test_remove_binding_reports_tracked_owner_when_selector_is_only_a_dependency
 
     with pytest.raises(
         ValueError,
-        match=r"cannot untrack 'example:nvim': required by tracked bindings: example:core-cli-meta@basic",
+        match=r"cannot untrack 'example:nvim': required by tracked package entries: example:core-cli-meta@basic",
     ):
         engine.remove_binding("nvim@basic")
