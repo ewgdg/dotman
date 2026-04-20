@@ -158,6 +158,67 @@ def write_repo_and_target_hook_repo(
     return repo_root
 
 
+def write_target_ref_repo(
+    tmp_path: Path,
+    *,
+    alpha_manifest: list[str] | None = None,
+    beta_manifest: list[str] | None = None,
+    gamma_manifest: list[str] | None = None,
+    include_alpha_shared_target: bool = True,
+) -> Path:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    (repo_root / "packages" / "alpha" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "alpha" / "files" / "shared.conf").write_text("shared\n", encoding="utf-8")
+    alpha_target_lines = [
+        "",
+        "[targets.shared]",
+        'source = "files/shared.conf"',
+        'path = "~/.config/shared.conf"',
+    ] if include_alpha_shared_target else []
+    (repo_root / "packages" / "alpha" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "alpha"',
+                *(alpha_manifest or []),
+                *alpha_target_lines,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    if beta_manifest is not None:
+        (repo_root / "packages" / "beta").mkdir(parents=True)
+        (repo_root / "packages" / "beta" / "package.toml").write_text(
+            "\n".join(
+                [
+                    'id = "beta"',
+                    *beta_manifest,
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    if gamma_manifest is not None:
+        (repo_root / "packages" / "gamma").mkdir(parents=True)
+        (repo_root / "packages" / "gamma" / "package.toml").write_text(
+            "\n".join(
+                [
+                    'id = "gamma"',
+                    *gamma_manifest,
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    return repo_root
+
+
 def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -439,6 +500,125 @@ def test_target_hook_override_replaces_metadata_when_merging_extends(
     hook = engine.get_repo("fixture").resolve_package("child").targets["config"].hooks["pre_push"]
     assert hook.commands == ("echo child target",)
     assert hook.run_noop is True
+
+
+def test_target_refs_canonicalize_target_plans_and_keep_ref_package_hooks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_target_ref_repo(
+        tmp_path,
+        alpha_manifest=[
+            "[hooks]",
+            'pre_push = ["echo alpha-package"]',
+            "",
+            "[targets.shared.hooks]",
+            'pre_push = ["echo alpha-target"]',
+        ],
+        beta_manifest=[
+            "[target_refs]",
+            'shared = "alpha.shared"',
+            "",
+            "[hooks]",
+            'pre_push = ["echo beta-package"]',
+        ],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    plan = engine.plan_push_binding("fixture:beta@default")
+
+    assert plan.package_ids == ["beta", "alpha"]
+    assert [(target.package_id, target.target_name) for target in plan.target_plans] == [("alpha", "shared")]
+    assert plan.target_plans[0].contributor_package_ids == ("beta", "alpha")
+    assert [
+        (step.package_id, step.target_name)
+        for step in plan.target_plans[0].ref_chains[0].steps
+    ] == [("beta", "shared"), ("alpha", "shared")]
+
+    package_hooks = [hook for hook in plan.hooks["pre_push"] if hook.scope_kind == "package"]
+    target_hooks = [hook for hook in plan.hooks["pre_push"] if hook.scope_kind == "target"]
+    assert [hook.package_id for hook in package_hooks] == ["beta", "alpha"]
+    assert [(hook.package_id, hook.target_name) for hook in target_hooks] == [("alpha", "shared")]
+
+
+def test_target_refs_allow_single_canonical_action_when_real_target_and_ref_are_selected_together(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_target_ref_repo(
+        tmp_path,
+        beta_manifest=[
+            'depends = ["alpha"]',
+            "",
+            "[target_refs]",
+            'shared = "alpha.shared"',
+        ],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    plan = engine.plan_push_binding("fixture:beta@default")
+
+    assert [(target.package_id, target.target_name) for target in plan.target_plans] == [("alpha", "shared")]
+    assert plan.target_plans[0].contributor_package_ids == ("beta", "alpha")
+
+
+def test_target_refs_reject_invalid_reference_syntax(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_target_ref_repo(
+        tmp_path,
+        beta_manifest=[
+            "[target_refs]",
+            'shared = "alpha"',
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"package manifest .+ target ref 'shared' must use <package>\.<target> syntax",
+    ):
+        DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+
+def test_target_refs_reject_cycles_with_full_cycle_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_target_ref_repo(
+        tmp_path,
+        alpha_manifest=[
+            "[target_refs]",
+            'shared = "beta.shared"',
+        ],
+        beta_manifest=[
+            "[target_refs]",
+            'shared = "gamma.shared"',
+        ],
+        gamma_manifest=[
+            "[target_refs]",
+            'shared = "alpha.shared"',
+        ],
+        include_alpha_shared_target=False,
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    with pytest.raises(
+        ValueError,
+        match=r"target ref cycle detected in repo 'fixture': alpha\.shared -> beta\.shared -> gamma\.shared -> alpha\.shared",
+    ):
+        engine.plan_push_binding("fixture:alpha@default")
 
 
 def test_package_sync_policy_is_inherited_through_extends(

@@ -25,6 +25,7 @@ This document captures the current repository structure and configuration schema
 - Group dependencies expand to their member packages during dependency resolution.
 - Dependency resolution de-duplicates revisits and truncates cycles, including mixed package/group cycles, so traversal stays finite.
 - Packages that exist only for hard dependency aggregation should use a `-meta` suffix by convention.
+- Packages may define `target_refs` to reuse a real target from another package in the same repo without creating a second execution action.
 - A package's target live paths are implicitly reserved.
 - Packages may define `reserved_paths = [...]` for additional live paths that must stay exclusive to that package.
 - A package directly under `packages/` is in the default namespace.
@@ -73,6 +74,7 @@ This document captures the current repository structure and configuration schema
 - Target-level `sync_policy` overrides the package default for that target.
 - Package inheritance should merge `sync_policy` with last-wins behavior, just like other scalar fields.
 - Target and reserved-path collision rules apply across all resolved package instances, including instances that come from the same `multi_instance` package definition.
+- `target_refs` are explicit target reuse, not collision tolerance. Independent real targets still keep normal hard collision rules.
 
 ## Package Binding Modes
 
@@ -124,6 +126,8 @@ chmod = "600"
 ```
 
 ## Targets
+
+See [`target-refs.md`](./target-refs.md) for explicit target reuse with `target_refs`.
 
 - Targets may define `path` for the live destination.
 - Target keys are arbitrary manifest identifiers.

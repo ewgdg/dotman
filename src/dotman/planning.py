@@ -56,7 +56,8 @@ def build_plan(
     *,
     operation: str,
 ) -> BindingPlan:
-    package_ids = engine._resolve_package_ids(repo, binding.selector, selector_kind)
+    declaration_package_ids = engine._resolve_package_ids(repo, binding.selector, selector_kind)
+    package_ids = repo.expand_target_ref_package_ids(declaration_package_ids)
     resolved_packages = [repo.resolve_package(package_id) for package_id in package_ids]
     profile_vars, lineage = repo.compose_profile(binding.profile)
     package_vars: dict[str, Any] = {}
@@ -72,6 +73,7 @@ def build_plan(
         binding=binding,
         operation=operation,
         inferred_os=inferred_os,
+        declaration_package_ids=set(declaration_package_ids),
     )
     hook_plans = engine._plan_hooks(
         repo,
@@ -158,7 +160,8 @@ def collect_tracked_candidates(
             plan_index = len(plans)
             plans.append(plan)
             for target_index, target in enumerate(plan.target_plans):
-                precedence_name = "explicit" if target.package_id in selected_packages else "implicit"
+                contributor_package_ids = set(target.contributor_package_ids or (target.package_id,))
+                precedence_name = "explicit" if contributor_package_ids & selected_packages else "implicit"
                 candidates_by_live_path[target.live_path].append(
                     TrackedTargetCandidate(
                         plan_index=plan_index,

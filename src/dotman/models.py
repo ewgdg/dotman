@@ -57,6 +57,54 @@ class ManagerConfig:
 
 
 @dataclass(frozen=True)
+class TargetRefSpec:
+    name: str
+    declared_in: Path
+    package_id: str
+    target_name: str
+
+
+@dataclass(frozen=True)
+class TargetRefStep:
+    package_id: str
+    target_name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "package_id": self.package_id,
+            "target_name": self.target_name,
+        }
+
+
+@dataclass(frozen=True)
+class TargetRefChain:
+    steps: tuple[TargetRefStep, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "steps": [step.to_dict() for step in self.steps],
+        }
+
+
+@dataclass(frozen=True)
+class ResolvedTargetReference:
+    local_package_id: str
+    local_target_name: str
+    canonical_package_id: str
+    canonical_target_name: str
+    chain: tuple[TargetRefStep, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "local_package_id": self.local_package_id,
+            "local_target_name": self.local_target_name,
+            "canonical_package_id": self.canonical_package_id,
+            "canonical_target_name": self.canonical_target_name,
+            "chain": [step.to_dict() for step in self.chain],
+        }
+
+
+@dataclass(frozen=True)
 class TargetSpec:
     name: str
     declared_in: Path
@@ -96,6 +144,7 @@ class PackageSpec:
     reserved_paths: tuple[str, ...] | None = None
     vars: dict[str, Any] | None = None
     targets: dict[str, TargetSpec] | None = None
+    target_refs: dict[str, TargetRefSpec] | None = None
     hooks: dict[str, HookSpec] | None = None
     remove: tuple[str, ...] | None = None
     append: dict[str, Any] | None = None
@@ -279,12 +328,30 @@ class InstalledOwnedTargetDetail:
 
 
 @dataclass(frozen=True)
+class InstalledTargetRefDetail:
+    target_name: str
+    chain: tuple[TargetRefStep, ...]
+
+    @property
+    def canonical(self) -> TargetRefStep:
+        return self.chain[-1]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_name": self.target_name,
+            "chain": [step.to_dict() for step in self.chain],
+            "canonical": self.canonical.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
 class InstalledPackageDetail:
     repo: str
     package_id: str
     description: str | None
     bindings: list[InstalledPackageBindingDetail]
     owned_targets: list[InstalledOwnedTargetDetail]
+    target_refs: list[InstalledTargetRefDetail] = field(default_factory=list)
     bound_profile: str | None = None
 
     @property
@@ -300,6 +367,7 @@ class InstalledPackageDetail:
             "description": self.description,
             "bindings": [binding.to_dict() for binding in self.bindings],
             "owned_targets": [target.to_dict() for target in self.owned_targets],
+            "target_refs": [target_ref.to_dict() for target_ref in self.target_refs],
         }
 
 
@@ -334,6 +402,22 @@ class TargetPlan:
     review_before_bytes: bytes | None = field(default=None, repr=False)
     review_after_bytes: bytes | None = field(default=None, repr=False)
     directory_items: tuple["DirectoryPlanItem", ...] = ()
+    contributor_package_ids: tuple[str, ...] = ()
+    ref_chains: tuple[TargetRefChain, ...] = ()
+
+    @property
+    def ref_labels(self) -> tuple[str, ...]:
+        labels: list[str] = []
+        for chain in self.ref_chains:
+            if not chain.steps:
+                continue
+            label = target_ref_text(
+                package_id=chain.steps[0].package_id,
+                target_name=chain.steps[0].target_name,
+            )
+            if label not in labels:
+                labels.append(label)
+        return tuple(labels)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -355,6 +439,8 @@ class TargetPlan:
             "pull_ignore": list(self.pull_ignore),
             "chmod": self.chmod,
             "directory_items": [item.to_dict() for item in self.directory_items],
+            "contributor_package_ids": list(self.contributor_package_ids),
+            "ref_chains": [chain.to_dict() for chain in self.ref_chains],
         }
 
 
@@ -366,11 +452,12 @@ def filter_hook_plans_for_targets(
 
 
 def executable_package_ids_for_targets(target_plans: list[TargetPlan]) -> set[str]:
-    executable_package_ids = {
-        target.package_id
-        for target in target_plans
-        if target.action != "noop"
-    }
+    executable_package_ids: set[str] = set()
+    for target in target_plans:
+        if target.action == "noop":
+            continue
+        contributor_package_ids = target.contributor_package_ids or (target.package_id,)
+        executable_package_ids.update(contributor_package_ids)
     return executable_package_ids
 
 

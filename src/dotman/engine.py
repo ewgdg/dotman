@@ -671,6 +671,7 @@ class DotmanEngine:
         binding: Binding,
         operation: str,
         inferred_os: str,
+        declaration_package_ids: set[str],
     ) -> list[Any]:
         return self._planning_helpers().plan_targets(
             self,
@@ -680,6 +681,7 @@ class DotmanEngine:
             binding=binding,
             operation=operation,
             inferred_os=inferred_os,
+            declaration_package_ids=declaration_package_ids,
         )
 
     def _validate_target_collisions(self, rendered_targets: list[Any]) -> None:

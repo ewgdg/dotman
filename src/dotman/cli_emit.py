@@ -1042,6 +1042,25 @@ def render_hook_command_lines(command: str, *, command_count: int, index: int) -
     ]
 
 
+def _render_target_ref_chain(package_detail: Any, target_ref: Any, *, use_color: bool) -> str:
+    chain_labels: list[str] = [
+        cli_style.style_text(target_ref.target_name, "1") if use_color else target_ref.target_name
+    ]
+    for step in target_ref.chain[1:]:
+        chain_labels.append(
+            cli_style.render_package_label(
+                repo_name=package_detail.repo,
+                package_id=step.package_id,
+                target_name=step.target_name,
+                package_first=True,
+                include_repo_context=False,
+                use_color=use_color,
+            )
+        )
+    arrow_text = cli_style.style_text("->", *cli_style.MENU_HINT_STYLE) if use_color else "->"
+    return f" {arrow_text} ".join(chain_labels)
+
+
 def emit_tracked_package_detail(*, package_detail: Any, json_output: bool, use_color: bool) -> int:
     payload = {
         "mode": "dry-run",
@@ -1101,6 +1120,11 @@ def emit_tracked_package_detail(*, package_detail: Any, json_output: bool, use_c
     for target in package_detail.owned_targets:
         target_name = cli_style.style_text(target.target.target_name, '1') if use_color else target.target.target_name
         print(f"    {target_name} -> {target.target.live_path}")
+    if package_detail.target_refs:
+        print()
+        print(cli_style.render_info_section_header("target refs", use_color=use_color))
+    for target_ref in package_detail.target_refs:
+        print(f"    {_render_target_ref_chain(package_detail, target_ref, use_color=use_color)}")
     return 0
 
 

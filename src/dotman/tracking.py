@@ -12,6 +12,7 @@ from dotman.models import (
     InstalledPackageBindingDetail,
     InstalledPackageDetail,
     InstalledPackageSummary,
+    InstalledTargetRefDetail,
     TrackedBindingIssue,
     package_ref_text,
 )
@@ -162,6 +163,15 @@ def describe_tracked_package(engine: Any, package_text: str) -> InstalledPackage
         package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
         raise ValueError(f"package '{repo.config.name}:{package_ref}' is not currently tracked")
 
+    resolved_package = repo.resolve_package(package_id)
+    target_refs = [
+        InstalledTargetRefDetail(
+            target_name=target_name,
+            chain=repo.resolve_target_reference(package_id, target_name).chain,
+        )
+        for target_name in sorted(resolved_package.target_refs or {})
+    ]
+
     return InstalledPackageDetail(
         repo=repo.config.name,
         package_id=package_id,
@@ -172,6 +182,7 @@ def describe_tracked_package(engine: Any, package_text: str) -> InstalledPackage
             package_id,
             bound_profile,
         ),
+        target_refs=target_refs,
         bound_profile=bound_profile,
     )
 
