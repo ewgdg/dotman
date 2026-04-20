@@ -53,7 +53,7 @@ def build_selector_field_kinds() -> tuple[str, ...]:
     )
 
 
-def build_binding_match_fields(*, repo_name: str, selector: str, profile: str) -> tuple[str, ...]:
+def build_full_spec_selector_match_fields(*, repo_name: str, selector: str, profile: str) -> tuple[str, ...]:
     return normalize_match_fields(
         selector,
         f"{repo_name}:{selector}",
@@ -64,7 +64,7 @@ def build_binding_match_fields(*, repo_name: str, selector: str, profile: str) -
     )
 
 
-def build_binding_field_kinds() -> tuple[str, ...]:
+def build_full_spec_selector_field_kinds() -> tuple[str, ...]:
     return normalize_field_kinds(
         "selector",
         "selector",

@@ -298,7 +298,7 @@ def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(
     )
 
     assert exit_code == 0
-    assert f"untracked {cli.render_binding_label(repo_name='example', selector='git', profile='basic')}" in capsys.readouterr().out
+    assert f"untracked {cli.render_full_spec_selector_label(repo_name='example', selector='git', profile='basic')}" in capsys.readouterr().out
 
 def test_untrack_cli_reports_remaining_package_tracking_after_success(
     tmp_path: Path,

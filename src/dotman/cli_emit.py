@@ -809,7 +809,7 @@ def emit_variables(*, variables: Sequence[Any], json_output: bool, use_color: bo
         return 0
 
     for variable in variables:
-        binding_label = cli_style.render_binding_label(
+        binding_label = cli_style.render_full_spec_selector_label(
             repo_name=variable.repo,
             selector=variable.selector,
             profile=variable.profile,
@@ -838,7 +838,7 @@ def emit_variable_detail(*, variable_detail: Any, json_output: bool, use_color: 
     for index, occurrence in enumerate(variable_detail.occurrences):
         if index > 0:
             print()
-        binding_label = cli_style.render_binding_label(
+        binding_label = cli_style.render_full_spec_selector_label(
             repo_name=occurrence.repo,
             selector=occurrence.selector,
             profile=occurrence.profile,
@@ -878,10 +878,10 @@ def emit_untracked_package_entry(*, binding: Any, still_tracked_package: Any, js
             "package_id": still_tracked_package.package_id,
             "package_entries": [
                 {
-                    **binding_detail.binding.to_dict(),
+                    **binding_detail.package_entry.to_dict(),
                     "tracked_reason": binding_detail.tracked_reason,
                 }
-                for binding_detail in still_tracked_package.bindings
+                for binding_detail in still_tracked_package.package_entries
             ],
         }
     if json_output:
@@ -890,20 +890,20 @@ def emit_untracked_package_entry(*, binding: Any, still_tracked_package: Any, js
 
     print(
         "untracked "
-        + cli_style.render_binding_reference(binding, use_color=use_color)
+        + cli_style.render_full_spec_selector_reference(binding, use_color=use_color)
     )
     if still_tracked_package is not None:
         print(
             f"{cli_style.render_package_label(repo_name=still_tracked_package.repo, package_id=still_tracked_package.package_id, bound_profile=still_tracked_package.bound_profile, use_color=use_color)} "
             "remains tracked via:"
         )
-        for binding_detail in still_tracked_package.bindings:
+        for binding_detail in still_tracked_package.package_entries:
             print(
                 f"  {cli_style.render_tracked_reason(binding_detail.tracked_reason, use_color=use_color)}: "
-                + cli_style.render_binding_label(
-                    repo_name=binding_detail.binding.repo,
-                    selector=binding_detail.binding.selector,
-                    profile=binding_detail.binding.profile,
+                + cli_style.render_full_spec_selector_label(
+                    repo_name=binding_detail.package_entry.repo,
+                    selector=binding_detail.package_entry.selector,
+                    profile=binding_detail.package_entry.profile,
                     use_color=use_color,
                 )
             )
@@ -924,7 +924,7 @@ def emit_tracked_package_entry(*, binding: Any, json_output: bool, use_color: bo
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"tracked {cli_style.render_binding_reference(binding, use_color=use_color)}")
+    print(f"tracked {cli_style.render_full_spec_selector_reference(binding, use_color=use_color)}")
     return 0
 
 
@@ -993,7 +993,7 @@ def emit_noop_add_result(*, json_output: bool) -> int:
     return 0
 
 
-def emit_kept_binding(*, binding: Any, json_output: bool, use_color: bool) -> int:
+def emit_kept_package_entry(*, binding: Any, json_output: bool, use_color: bool) -> int:
     payload = {
         "mode": "state-only",
         "operation": "track",
@@ -1008,7 +1008,7 @@ def emit_kept_binding(*, binding: Any, json_output: bool, use_color: bool) -> in
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"kept existing tracked package entry {cli_style.render_binding_reference(binding, use_color=use_color)}")
+    print(f"kept existing tracked package entry {cli_style.render_full_spec_selector_reference(binding, use_color=use_color)}")
     return 0
 
 
@@ -1027,7 +1027,7 @@ def emit_skipped_tracking(*, binding: Any, json_output: bool, use_color: bool) -
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    print(f"skipped tracking {cli_style.render_binding_reference(binding, use_color=use_color)}")
+    print(f"skipped tracking {cli_style.render_full_spec_selector_reference(binding, use_color=use_color)}")
     return 0
 
 
@@ -1081,27 +1081,30 @@ def emit_tracked_package_detail(*, package_detail: Any, json_output: bool, use_c
     )
     if package_detail.description:
         print(f"  {package_detail.description}")
-    if package_detail.bindings:
+    if package_detail.package_entries:
         print()
         print(cli_style.render_info_section_header("provenance", use_color=use_color))
-    for binding in package_detail.bindings:
-        binding_label = cli_style.render_binding_label(
-            repo_name=binding.binding.repo,
-            selector=binding.binding.selector,
-            profile=binding.binding.profile,
+    for package_entry_detail in package_detail.package_entries:
+        package_entry_label = cli_style.render_full_spec_selector_label(
+            repo_name=package_entry_detail.package_entry.repo,
+            selector=package_entry_detail.package_entry.selector,
+            profile=package_entry_detail.package_entry.profile,
             use_color=use_color,
         )
-        print(f"    {cli_style.render_tracked_reason(binding.tracked_reason, use_color=use_color)}: {binding_label}")
+        print(
+            f"    {cli_style.render_tracked_reason(package_entry_detail.tracked_reason, use_color=use_color)}: "
+            f"{package_entry_label}"
+        )
 
-    bindings_with_hooks = [binding for binding in package_detail.bindings if binding.hooks]
-    if bindings_with_hooks:
+    package_entries_with_hooks = [package_entry_detail for package_entry_detail in package_detail.package_entries if package_entry_detail.hooks]
+    if package_entries_with_hooks:
         print()
         print(cli_style.render_info_section_header("hooks", use_color=use_color))
     # Hook output stays package-centric here. Under the current tracked-winner model,
-    # a package instance has one effective hook-bearing binding, so repeating the
-    # provenance binding under ::hooks only adds noise.
-    for binding in bindings_with_hooks:
-        for hook_name, hook_plans in binding.hooks.items():
+    # a package instance has one effective hook-bearing package entry, so repeating the
+    # provenance package entry under ::hooks only adds noise.
+    for package_entry_detail in package_entries_with_hooks:
+        for hook_name, hook_plans in package_entry_detail.hooks.items():
             hook_label = f"[{hook_name}]"
             if use_color:
                 hook_label = cli_style.style_text(hook_label, *cli_style.MENU_HINT_STYLE)

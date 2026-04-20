@@ -22,15 +22,15 @@ class CliCommandHandlers:
     run_jinja_reconcile: Callable[..., int]
     run_jinja_render: Callable[..., int]
     run_patch_capture: Callable[..., int]
-    resolve_binding_text: Callable[..., Any]
-    ensure_track_binding_replacement_confirmed: Callable[..., bool]
-    find_recorded_bindings_for_scope: Callable[..., list[Any]]
-    emit_kept_binding: Callable[..., int]
+    resolve_track_selector_text: Callable[..., Any]
+    ensure_track_package_entry_replacement_confirmed: Callable[..., bool]
+    find_recorded_package_entries_for_scope: Callable[..., list[Any]]
+    emit_kept_package_entry: Callable[..., int]
     emit_skipped_tracking: Callable[..., int]
-    prompt_for_conflicting_package_binding: Callable[..., Any]
+    prompt_for_conflicting_package_entry: Callable[..., Any]
     select_non_conflicting_track_profile: Callable[..., Any]
-    ensure_track_binding_implicit_overrides_confirmed: Callable[..., bool]
-    find_recorded_binding_exact: Callable[..., Any]
+    ensure_track_package_entry_implicit_overrides_confirmed: Callable[..., bool]
+    find_recorded_package_entry_exact: Callable[..., Any]
     emit_tracked_package_entry: Callable[..., int]
     resolve_add_package_text: Callable[..., tuple[str, str]]
     interactive_mode_enabled: Callable[..., bool]
@@ -42,7 +42,7 @@ class CliCommandHandlers:
     emit_kept_add_result: Callable[..., int]
     open_editor_path: Callable[..., int]
     resolve_edit_query_text: Callable[..., Any]
-    resolve_tracked_binding_text: Callable[..., Any]
+    resolve_tracked_package_entry_text: Callable[..., Any]
     resolve_tracked_target_text: Callable[..., Any]
     filter_plans_for_interactive_selection: Callable[..., Any]
     review_plans_for_interactive_diffs: Callable[..., bool]
@@ -189,22 +189,22 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
 
 def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
     assume_yes = getattr(args, "assume_yes", False)
-    binding = handlers.resolve_binding_text(engine, args.binding, json_output=args.json_output)
+    binding = handlers.resolve_track_selector_text(engine, args.binding, json_output=args.json_output)
     while True:
-        if not handlers.ensure_track_binding_replacement_confirmed(
+        if not handlers.ensure_track_package_entry_replacement_confirmed(
             engine,
             binding=binding,
             json_output=args.json_output,
             assume_yes=assume_yes,
         ):
-            existing_bindings = handlers.find_recorded_bindings_for_scope(engine, binding)
+            existing_bindings = handlers.find_recorded_package_entries_for_scope(engine, binding)
             if len(existing_bindings) == 1:
-                return handlers.emit_kept_binding(binding=existing_bindings[0], json_output=args.json_output)
+                return handlers.emit_kept_package_entry(binding=existing_bindings[0], json_output=args.json_output)
             return handlers.emit_skipped_tracking(binding=binding, json_output=args.json_output)
         try:
             engine.validate_tracked_package_entry(binding)
         except TrackedTargetConflictError as exc:
-            promoted_binding = handlers.prompt_for_conflicting_package_binding(
+            promoted_binding = handlers.prompt_for_conflicting_package_entry(
                 engine,
                 binding=binding,
                 conflict=exc,
@@ -222,15 +222,15 @@ def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> in
                 raise
             binding = binding.with_profile(alternative_profile)
             continue
-        if not handlers.ensure_track_binding_implicit_overrides_confirmed(
+        if not handlers.ensure_track_package_entry_implicit_overrides_confirmed(
             engine,
             binding=binding,
             json_output=args.json_output,
             assume_yes=assume_yes,
         ):
-            existing_binding = handlers.find_recorded_binding_exact(engine, binding)
+            existing_binding = handlers.find_recorded_package_entry_exact(engine, binding)
             if existing_binding is not None:
-                return handlers.emit_kept_binding(binding=existing_binding, json_output=args.json_output)
+                return handlers.emit_kept_package_entry(binding=existing_binding, json_output=args.json_output)
             return handlers.emit_skipped_tracking(binding=binding, json_output=args.json_output)
         engine.record_tracked_package_entry(binding)
         return handlers.emit_tracked_package_entry(binding=binding, json_output=args.json_output)
@@ -308,7 +308,7 @@ def _handle_edit(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
 
 def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, operation: str) -> Any:
     if args.binding:
-        _repo, binding = handlers.resolve_tracked_binding_text(
+        _repo, binding = handlers.resolve_tracked_package_entry_text(
             engine,
             args.binding,
             operation=operation,
@@ -455,7 +455,7 @@ def _handle_rollback(*, args: Any, engine: Any, handlers: CliCommandHandlers, fu
 
 
 def _handle_untrack(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
-    _repo, binding = handlers.resolve_tracked_binding_text(
+    _repo, binding = handlers.resolve_tracked_package_entry_text(
         engine,
         args.binding,
         operation="untrack",

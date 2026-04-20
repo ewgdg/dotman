@@ -21,7 +21,7 @@ from dotman.diff_review import (
     build_review_items,
     run_review_item_diff,
 )
-from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text, parse_package_ref_text
+from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_full_spec_selector_text, parse_package_ref_text
 from dotman.models import (
     FullSpecSelector,
     OperationPlan,
@@ -43,8 +43,8 @@ from dotman.snapshot import (
 from dotman.terminal import read_prompt_line
 from dotman.resolver import (
     ResolverOption,
-    build_binding_field_kinds,
-    build_binding_match_fields,
+    build_full_spec_selector_field_kinds,
+    build_full_spec_selector_match_fields,
     build_package_field_kinds,
     build_package_match_fields,
     build_profile_field_kinds,
@@ -190,8 +190,8 @@ def render_package_profile_label(*, repo_name: str, package_id: str, profile: st
     )
 
 
-def binding_label_text(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
-    return cli_style.binding_label_text(
+def full_spec_selector_label_text(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
+    return cli_style.full_spec_selector_label_text(
         repo_name=repo_name,
         selector=selector,
         profile=profile,
@@ -199,8 +199,8 @@ def binding_label_text(*, repo_name: str, selector: str, profile: str, selector_
     )
 
 
-def render_binding_label(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
-    return cli_style.render_binding_label(
+def render_full_spec_selector_label(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
+    return cli_style.render_full_spec_selector_label(
         repo_name=repo_name,
         selector=selector,
         profile=profile,
@@ -209,8 +209,8 @@ def render_binding_label(*, repo_name: str, selector: str, profile: str, selecto
     )
 
 
-def render_binding_reference(binding: FullSpecSelector) -> str:
-    return cli_style.render_binding_reference(binding, use_color=colors_enabled())
+def render_full_spec_selector_reference(binding: FullSpecSelector) -> str:
+    return cli_style.render_full_spec_selector_reference(binding, use_color=colors_enabled())
 
 
 def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: FullSpecSelector):
@@ -669,33 +669,33 @@ def interactive_mode_enabled(*, json_output: bool) -> bool:
     return not json_output and sys.stdin.isatty()
 
 
-def binding_replacement_scope(engine: DotmanEngine, binding: FullSpecSelector) -> tuple[str, str, str | None]:
+def tracked_package_entry_replacement_scope(engine: DotmanEngine, binding: FullSpecSelector) -> tuple[str, str, str | None]:
     repo = engine.get_repo(binding.repo)
     if binding.selector in repo.packages and repo.resolve_package(binding.selector).binding_mode == "multi_instance":
         return (binding.repo, binding.selector, binding.profile)
     return (binding.repo, binding.selector, None)
 
 
-def find_recorded_bindings_for_scope(engine: DotmanEngine, binding: FullSpecSelector) -> list[FullSpecSelector]:
+def find_recorded_package_entries_for_scope(engine: DotmanEngine, binding: FullSpecSelector) -> list[FullSpecSelector]:
     repo = engine.get_repo(binding.repo)
     existing_by_scope = {
-        binding_replacement_scope(engine, existing): existing
+        tracked_package_entry_replacement_scope(engine, existing): existing
         for existing in engine.read_effective_tracked_package_entries(repo)
     }
     matches: list[FullSpecSelector] = []
     for expanded_binding in engine.expand_tracked_package_entry(binding):
-        existing = existing_by_scope.get(binding_replacement_scope(engine, expanded_binding))
+        existing = existing_by_scope.get(tracked_package_entry_replacement_scope(engine, expanded_binding))
         if existing is not None and existing not in matches:
             matches.append(existing)
     return matches
 
 
-def find_recorded_binding_for_scope(engine: DotmanEngine, binding: FullSpecSelector) -> FullSpecSelector | None:
-    matches = find_recorded_bindings_for_scope(engine, binding)
+def find_recorded_package_entry_for_scope(engine: DotmanEngine, binding: FullSpecSelector) -> FullSpecSelector | None:
+    matches = find_recorded_package_entries_for_scope(engine, binding)
     return matches[0] if len(matches) == 1 else None
 
 
-def find_recorded_binding_exact(engine: DotmanEngine, binding: FullSpecSelector) -> FullSpecSelector | None:
+def find_recorded_package_entry_exact(engine: DotmanEngine, binding: FullSpecSelector) -> FullSpecSelector | None:
     repo = engine.get_repo(binding.repo)
     expanded_bindings = engine.expand_tracked_package_entry(binding)
     if len(expanded_bindings) != 1:
@@ -711,7 +711,7 @@ def find_recorded_binding_exact(engine: DotmanEngine, binding: FullSpecSelector)
     return None
 
 
-def confirm_tracked_binding_replacement(
+def confirm_tracked_package_entry_replacement(
     *,
     existing_binding: FullSpecSelector,
     replacement_binding: FullSpecSelector,
@@ -721,7 +721,7 @@ def confirm_tracked_binding_replacement(
     print_selection_header(f"Confirm tracked package entry replacement for {binding_scope}:")
     print(
         "  existing: "
-        + render_binding_label(
+        + render_full_spec_selector_label(
             repo_name=existing_binding.repo,
             selector=existing_binding.selector,
             profile=existing_binding.profile,
@@ -729,7 +729,7 @@ def confirm_tracked_binding_replacement(
     )
     print(
         "  new:      "
-        + render_binding_label(
+        + render_full_spec_selector_label(
             repo_name=replacement_binding.repo,
             selector=replacement_binding.selector,
             profile=replacement_binding.profile,
@@ -746,7 +746,7 @@ def confirm_tracked_binding_replacement(
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
-def ensure_track_binding_replacement_confirmed(
+def ensure_track_package_entry_replacement_confirmed(
     engine: DotmanEngine,
     *,
     binding: FullSpecSelector,
@@ -754,12 +754,12 @@ def ensure_track_binding_replacement_confirmed(
     assume_yes: bool = False,
 ) -> bool:
     expanded_bindings = engine.expand_tracked_package_entry(binding)
-    existing_bindings = find_recorded_bindings_for_scope(engine, binding)
+    existing_bindings = find_recorded_package_entries_for_scope(engine, binding)
     replacements = [
         (existing_binding, expanded_binding)
         for expanded_binding in expanded_bindings
         for existing_binding in existing_bindings
-        if binding_replacement_scope(engine, existing_binding) == binding_replacement_scope(engine, expanded_binding)
+        if tracked_package_entry_replacement_scope(engine, existing_binding) == tracked_package_entry_replacement_scope(engine, expanded_binding)
         and existing_binding.profile != expanded_binding.profile
     ]
     if not replacements:
@@ -767,15 +767,15 @@ def ensure_track_binding_replacement_confirmed(
     if assume_yes:
         if len(replacements) == 1:
             existing_binding, replacement_binding = replacements[0]
-            return confirm_tracked_binding_replacement(
+            return confirm_tracked_package_entry_replacement(
                 existing_binding=existing_binding,
                 replacement_binding=replacement_binding,
                 assume_yes=True,
             )
         print_selection_header(f"Confirm tracked package entry replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
         for existing_binding, replacement_binding in replacements:
-            print(f"  existing: {render_binding_reference(existing_binding)}")
-            print(f"  new:      {render_binding_reference(replacement_binding)}")
+            print(f"  existing: {render_full_spec_selector_reference(existing_binding)}")
+            print(f"  new:      {render_full_spec_selector_reference(replacement_binding)}")
         return True
     if len(replacements) == 1:
         existing_binding, replacement_binding = replacements[0]
@@ -785,7 +785,7 @@ def ensure_track_binding_replacement_confirmed(
                 f"{existing_binding.profile}' with '{replacement_binding.repo}:{replacement_binding.selector}@{replacement_binding.profile}' "
                 "in non-interactive mode"
             )
-        return confirm_tracked_binding_replacement(
+        return confirm_tracked_package_entry_replacement(
             existing_binding=existing_binding,
             replacement_binding=replacement_binding,
             assume_yes=False,
@@ -801,8 +801,8 @@ def ensure_track_binding_replacement_confirmed(
         )
     print_selection_header(f"Confirm tracked package entry replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
     for existing_binding, replacement_binding in replacements:
-        print(f"  existing: {render_binding_reference(existing_binding)}")
-        print(f"  new:      {render_binding_reference(replacement_binding)}")
+        print(f"  existing: {render_full_spec_selector_reference(existing_binding)}")
+        print(f"  new:      {render_full_spec_selector_reference(replacement_binding)}")
     while True:
         answer = prompt(confirmation_prompt()).strip().lower()
         if answer in {"", "n", "no"}:
@@ -822,7 +822,7 @@ def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
-def confirm_track_binding_implicit_overrides(*, binding: FullSpecSelector, overrides: Sequence, assume_yes: bool = False) -> bool:
+def confirm_track_package_entry_implicit_overrides(*, binding: FullSpecSelector, overrides: Sequence, assume_yes: bool = False) -> bool:
     binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
     print_selection_header(f"Confirm explicit override for {binding_label}:")
     print("  this track request will replace implicitly tracked package owners:")
@@ -841,7 +841,7 @@ def confirm_track_binding_implicit_overrides(*, binding: FullSpecSelector, overr
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
-def ensure_track_binding_implicit_overrides_confirmed(
+def ensure_track_package_entry_implicit_overrides_confirmed(
     engine: DotmanEngine,
     *,
     binding: FullSpecSelector,
@@ -880,7 +880,7 @@ def ensure_track_binding_implicit_overrides_confirmed(
     if not overrides:
         return True
     if assume_yes:
-        return confirm_track_binding_implicit_overrides(
+        return confirm_track_package_entry_implicit_overrides(
             binding=binding,
             overrides=overrides,
             assume_yes=True,
@@ -890,7 +890,7 @@ def ensure_track_binding_implicit_overrides_confirmed(
             f"refusing to let '{binding.repo}:{binding.selector}@{binding.profile}' explicitly override implicitly tracked targets "
             "in non-interactive mode"
         )
-    return confirm_track_binding_implicit_overrides(binding=binding, overrides=overrides)
+    return confirm_track_package_entry_implicit_overrides(binding=binding, overrides=overrides)
 
 
 def confirm_add_manifest_write(*, repo_name: str, package_id: str, assume_yes: bool = False) -> bool:
@@ -919,7 +919,7 @@ def confirm_push_symlink_replacement(*, assume_yes: bool = False) -> bool:
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
-def prompt_for_conflicting_package_binding(
+def prompt_for_conflicting_package_entry(
     engine: DotmanEngine,
     *,
     binding: FullSpecSelector,
@@ -1066,13 +1066,13 @@ def resolve_candidate_match(
     raise ValueError(not_found_text)
 
 
-def resolve_binding_text(
+def resolve_track_selector_text(
     engine: DotmanEngine,
     binding_text: str,
     *,
     json_output: bool,
 ) -> FullSpecSelector:
-    explicit_repo, selector, selector_profile = parse_binding_text(binding_text)
+    explicit_repo, selector, selector_profile = parse_full_spec_selector_text(binding_text)
     repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
     lookup_repo, lookup_selector = parse_slash_qualified_query(
         repo_names=repo_names,
@@ -1165,7 +1165,7 @@ def resolve_binding_text(
     return resolved_selector_ref.with_profile(resolved_profile)
 
 
-def resolve_tracked_binding_text(
+def resolve_tracked_package_entry_text(
     engine: DotmanEngine,
     binding_text: str,
     *,
@@ -1173,7 +1173,7 @@ def resolve_tracked_binding_text(
     allow_package_owners: bool,
     json_output: bool,
 ) -> tuple[object | None, FullSpecSelector]:
-    explicit_repo, selector, profile = parse_binding_text(binding_text)
+    explicit_repo, selector, profile = parse_full_spec_selector_text(binding_text)
     interactive = interactive_mode_enabled(json_output=json_output)
     binding_label = selector if profile is None else f"{selector}@{profile}"
 
@@ -1186,24 +1186,24 @@ def resolve_tracked_binding_text(
         )
 
         def persisted_option(record) -> ResolverOption:
-            base_label = render_binding_label(
-                repo_name=record.binding.repo,
-                selector=record.binding.selector,
-                profile=record.binding.profile,
+            base_label = render_full_spec_selector_label(
+                repo_name=record.package_entry.repo,
+                selector=record.package_entry.selector,
+                profile=record.package_entry.profile,
                 selector_first=True,
             )
             state_badge = ""
-            if record.repo is None or record.state_key != record.binding.repo:
+            if record.repo is None or record.state_key != record.package_entry.repo:
                 state_badge = render_menu_badge(f"[{record.state_key}]")
             return ResolverOption(
                 display_label=join_menu_display_fields(base_label, state_badge),
                 display_fields=(base_label, state_badge) if state_badge else (base_label,),
-                match_fields=build_binding_match_fields(
-                    repo_name=record.binding.repo,
-                    selector=record.binding.selector,
-                    profile=record.binding.profile,
+                match_fields=build_full_spec_selector_match_fields(
+                    repo_name=record.package_entry.repo,
+                    selector=record.package_entry.selector,
+                    profile=record.package_entry.profile,
                 ),
-                field_kinds=build_binding_field_kinds(),
+                field_kinds=build_full_spec_selector_field_kinds(),
             )
 
         def package_option(package) -> ResolverOption:
@@ -1227,11 +1227,11 @@ def resolve_tracked_binding_text(
         def package_owner_error(package) -> ValueError:
             matching_owner_package_entries = [
                 binding
-                for binding in package.bindings
+                for binding in package.package_entries
                 if profile is None or binding.profile == profile
             ]
             owners = ", ".join(
-                render_binding_label(
+                render_full_spec_selector_label(
                     repo_name=binding.repo,
                     selector=binding.selector,
                     profile=binding.profile,
@@ -1255,7 +1255,7 @@ def resolve_tracked_binding_text(
             package
             for package in package_matches
             if not any(
-                record.binding.repo == package.repo and record.binding.selector == package.package_id
+                record.package_entry.repo == package.repo and record.package_entry.selector == package.package_id
                 for record in partial_matches
             )
         ]
@@ -1285,17 +1285,17 @@ def resolve_tracked_binding_text(
                 not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
             )
             if selected_kind == "binding":
-                return selected_item.repo, selected_item.binding
+                return selected_item.repo, selected_item.package_entry
             raise package_owner_error(selected_item)
 
         if len(exact_matches) == 1:
             record = exact_matches[0]
-            return record.repo, record.binding
+            return record.repo, record.package_entry
         if len(exact_matches) > 1:
             raise ValueError(
                 f"tracked package entry '{binding_label}' is ambiguous: "
                 + ", ".join(
-                    f"{record.binding.repo}:{record.binding.selector}@{record.binding.profile}"
+                    f"{record.package_entry.repo}:{record.package_entry.selector}@{record.package_entry.profile}"
                     for record in exact_matches
                 )
             )
@@ -1317,7 +1317,7 @@ def resolve_tracked_binding_text(
             raise ValueError(
                 f"tracked package entry '{binding_label}' is ambiguous: "
                 + ", ".join(
-                    f"{record.binding.repo}:{record.binding.selector}@{record.binding.profile}"
+                    f"{record.package_entry.repo}:{record.package_entry.selector}@{record.package_entry.profile}"
                     for record in partial_matches
                 )
             )
@@ -1346,21 +1346,21 @@ def resolve_tracked_binding_text(
     if profile is not None:
         lookup_binding_text = f"{lookup_binding_text}@{profile}"
     resolved_selector, resolved_profile, exact_matches, partial_matches, owner_package_entries = (
-        engine.find_tracked_binding_matches(lookup_binding_text)
+        engine.find_tracked_package_entry_matches(lookup_binding_text)
     )
     binding_resolver = lambda match: ResolverOption(
-        display_label=render_binding_label(
+        display_label=render_full_spec_selector_label(
             repo_name=match[0].config.name,
             selector=match[1].selector,
             profile=match[1].profile,
             selector_first=True,
         ),
-        match_fields=build_binding_match_fields(
+        match_fields=build_full_spec_selector_match_fields(
             repo_name=match[0].config.name,
             selector=match[1].selector,
             profile=match[1].profile,
         ),
-        field_kinds=build_binding_field_kinds(),
+        field_kinds=build_full_spec_selector_field_kinds(),
     )
 
     package_matches, _package_owner_package_entries = engine._tracked_package_matches_for_untrack(
@@ -1376,7 +1376,7 @@ def resolve_tracked_binding_text(
     seen_owner_target_matches: set[tuple[str, str, str, str]] = set()
     for package in package_matches:
         repo = engine.get_repo(package.repo)
-        for owner_binding in package.bindings:
+        for owner_binding in package.package_entries:
             if resolved_profile is not None and owner_binding.profile != resolved_profile:
                 continue
             if (package.repo, package.package_id, owner_binding.profile) in direct_binding_match_keys:
@@ -1413,7 +1413,7 @@ def resolve_tracked_binding_text(
             package_id=package_id,
             profile=owner_binding.profile,
         )
-        owner_label = binding_label_text(
+        owner_label = full_spec_selector_label_text(
             repo_name=owner_repo.config.name,
             selector=owner_binding.selector,
             profile=owner_binding.profile,
@@ -1423,12 +1423,12 @@ def resolve_tracked_binding_text(
         return ResolverOption(
             display_label=target_label,
             display_fields=(target_label, owner_badge),
-            match_fields=build_binding_match_fields(
+            match_fields=build_full_spec_selector_match_fields(
                 repo_name=owner_repo.config.name,
                 selector=package_id,
                 profile=owner_binding.profile,
             ),
-            field_kinds=build_binding_field_kinds(),
+            field_kinds=build_full_spec_selector_field_kinds(),
         )
 
     def owner_target_error_label(match) -> str:
@@ -1541,7 +1541,7 @@ def resolve_tracked_binding_text(
                 f"{repo.config.name}:{binding.selector}@{binding.profile}"
                 for repo, binding in owner_package_entries
             )
-            repo_name, _selector, _profile = parse_binding_text(binding_text)
+            repo_name, _selector, _profile = parse_full_spec_selector_text(binding_text)
             required_repo = repo_name or lookup_repo or owner_package_entries[0][0].config.name
             required_ref = f"{required_repo}:{resolved_selector}"
             raise ValueError(
@@ -1658,7 +1658,7 @@ def _parse_edit_query_text(query_text: str) -> tuple[str, str | None, str, str |
     if any(marker in query_text for marker in ("@", "<", ">")):
         raise ValueError("edit query does not accept selector@profile syntax; use explicit edit package or edit target")
 
-    explicit_repo, selector, selector_profile = parse_binding_text(query_text)
+    explicit_repo, selector, selector_profile = parse_full_spec_selector_text(query_text)
     if selector_profile is not None:
         raise ValueError("edit query does not accept selector@profile syntax; use explicit edit package or edit target")
 
@@ -1882,7 +1882,7 @@ def parse_add_package_query(
     engine: DotmanEngine,
     package_query: str,
 ) -> tuple[str | None, str]:
-    explicit_repo, selector, profile = parse_binding_text(package_query)
+    explicit_repo, selector, profile = parse_full_spec_selector_text(package_query)
     if profile is not None:
         raise ValueError("add package query expects a package selector, not a binding")
     repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
@@ -2956,8 +2956,8 @@ emit_noop_add_result = cli_emit.emit_noop_add_result
 
 
 
-def emit_kept_binding(*, binding, json_output: bool) -> int:
-    return cli_emit.emit_kept_binding(
+def emit_kept_package_entry(*, binding, json_output: bool) -> int:
+    return cli_emit.emit_kept_package_entry(
         binding=binding,
         json_output=json_output,
         use_color=colors_enabled(),
@@ -3102,15 +3102,15 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         run_jinja_reconcile=run_jinja_reconcile,
         run_jinja_render=run_jinja_render,
         run_patch_capture=run_patch_capture,
-        resolve_binding_text=resolve_binding_text,
-        ensure_track_binding_replacement_confirmed=ensure_track_binding_replacement_confirmed,
-        find_recorded_bindings_for_scope=find_recorded_bindings_for_scope,
-        emit_kept_binding=emit_kept_binding,
+        resolve_track_selector_text=resolve_track_selector_text,
+        ensure_track_package_entry_replacement_confirmed=ensure_track_package_entry_replacement_confirmed,
+        find_recorded_package_entries_for_scope=find_recorded_package_entries_for_scope,
+        emit_kept_package_entry=emit_kept_package_entry,
         emit_skipped_tracking=emit_skipped_tracking,
-        prompt_for_conflicting_package_binding=prompt_for_conflicting_package_binding,
+        prompt_for_conflicting_package_entry=prompt_for_conflicting_package_entry,
         select_non_conflicting_track_profile=select_non_conflicting_track_profile,
-        ensure_track_binding_implicit_overrides_confirmed=ensure_track_binding_implicit_overrides_confirmed,
-        find_recorded_binding_exact=find_recorded_binding_exact,
+        ensure_track_package_entry_implicit_overrides_confirmed=ensure_track_package_entry_implicit_overrides_confirmed,
+        find_recorded_package_entry_exact=find_recorded_package_entry_exact,
         emit_tracked_package_entry=emit_tracked_package_entry,
         resolve_add_package_text=resolve_add_package_text,
         interactive_mode_enabled=interactive_mode_enabled,
@@ -3122,7 +3122,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_kept_add_result=emit_kept_add_result,
         open_editor_path=open_editor_path,
         resolve_edit_query_text=resolve_edit_query_text,
-        resolve_tracked_binding_text=resolve_tracked_binding_text,
+        resolve_tracked_package_entry_text=resolve_tracked_package_entry_text,
         resolve_tracked_target_text=resolve_tracked_target_text,
         filter_plans_for_interactive_selection=filter_plans_for_interactive_selection,
         review_plans_for_interactive_diffs=review_plans_for_interactive_diffs,

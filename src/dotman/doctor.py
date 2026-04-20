@@ -68,13 +68,13 @@ def doctor_engine(engine: Any) -> DoctorSummary:
     for repo_config in engine.config.ordered_repos:
         repo = engine.get_repo(repo_config.name)
         checks.extend(_doctor_repo_checks(repo))
-        raw_bindings, binding_checks = _read_configured_bindings_for_doctor(engine, repo)
+        raw_bindings, binding_checks = _read_configured_package_entries_for_doctor(engine, repo)
         checks.extend(binding_checks)
         if raw_bindings is not None:
             raw_tracked_package_entries_by_repo[repo.config.name] = raw_bindings
 
-    invalid_package_entries = engine.list_invalid_explicit_bindings(bindings_by_repo=raw_tracked_package_entries_by_repo)
-    orphan_issues, orphan_checks = _collect_orphan_binding_issues(engine)
+    invalid_package_entries = engine.list_invalid_explicit_package_entries(bindings_by_repo=raw_tracked_package_entries_by_repo)
+    orphan_issues, orphan_checks = _collect_orphan_package_entry_issues(engine)
     checks.extend(orphan_checks)
 
     checks.extend(_doctor_snapshot_checks(engine))
@@ -276,7 +276,7 @@ def _doctor_repo_checks(repo: Any) -> list[DoctorCheck]:
     return checks
 
 
-def _read_configured_bindings_for_doctor(engine: Any, repo: Any) -> tuple[list[Any] | None, list[DoctorCheck]]:
+def _read_configured_package_entries_for_doctor(engine: Any, repo: Any) -> tuple[list[Any] | None, list[DoctorCheck]]:
     state_path = repo.config.state_path / "tracked-packages.toml"
     try:
         bindings = engine._read_tracked_package_entries_file(state_path)
@@ -318,7 +318,7 @@ def _read_configured_bindings_for_doctor(engine: Any, repo: Any) -> tuple[list[A
     ]
 
 
-def _collect_orphan_binding_issues(engine: Any) -> tuple[list[TrackedPackageEntryIssue], list[DoctorCheck]]:
+def _collect_orphan_package_entry_issues(engine: Any) -> tuple[list[TrackedPackageEntryIssue], list[DoctorCheck]]:
     state_root = default_state_root() / "repos"
     if not state_root.exists():
         return [], []

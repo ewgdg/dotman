@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dotman.resolver import (
     ResolverOption,
-    build_binding_field_kinds,
-    build_binding_match_fields,
+    build_full_spec_selector_field_kinds,
+    build_full_spec_selector_match_fields,
     build_profile_field_kinds,
     build_profile_match_fields,
     build_selector_field_kinds,
@@ -32,21 +32,21 @@ def test_rank_resolver_option_prefers_leftmost_selector_segment() -> None:
 def test_rank_resolver_option_treats_profile_matches_as_weaker_fallback() -> None:
     selector_hit = ResolverOption(
         display_label="sandbox/host/linux-meta@default",
-        match_fields=build_binding_match_fields(
+        match_fields=build_full_spec_selector_match_fields(
             repo_name="sandbox",
             selector="host/linux-meta",
             profile="default",
         ),
-        field_kinds=build_binding_field_kinds(),
+        field_kinds=build_full_spec_selector_field_kinds(),
     )
     profile_only_hit = ResolverOption(
         display_label="sandbox/sunshine@host/linux",
-        match_fields=build_binding_match_fields(
+        match_fields=build_full_spec_selector_match_fields(
             repo_name="sandbox",
             selector="sunshine",
             profile="host/linux",
         ),
-        field_kinds=build_binding_field_kinds(),
+        field_kinds=build_full_spec_selector_field_kinds(),
     )
 
     assert rank_resolver_option(query="linux", option=selector_hit) < rank_resolver_option(
@@ -98,7 +98,7 @@ def test_selector_match_fields_prefer_canonical_repo_qualified_form_before_alias
 
 
 def test_binding_match_fields_keep_canonical_repo_qualified_binding_before_slash_alias() -> None:
-    assert build_binding_match_fields(repo_name="sandbox", selector="sunshine", profile="host/linux") == (
+    assert build_full_spec_selector_match_fields(repo_name="sandbox", selector="sunshine", profile="host/linux") == (
         "sunshine",
         "sandbox:sunshine",
         "sandbox/sunshine",

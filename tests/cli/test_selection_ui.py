@@ -63,7 +63,7 @@ def test_prompt_for_excluded_items_uses_archived_colored_style(
 def test_render_tracked_binding_label_uses_selection_menu_style(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: True)
 
-    assert cli.render_binding_label(repo_name="example", selector="git", profile="basic") == (
+    assert cli.render_full_spec_selector_label(repo_name="example", selector="git", profile="basic") == (
         "\033[2;34mexample\033[0m"
         "\033[2m:\033[0m"
         "\033[1mgit\033[0m"
@@ -80,10 +80,10 @@ def test_render_package_label_can_prioritize_package_name(monkeypatch) -> None:
         include_repo_context=True,
     ) == "example:git"
 
-def test_render_binding_label_can_prioritize_selector_name(monkeypatch) -> None:
+def test_render_full_spec_selector_label_can_prioritize_selector_name(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
-    assert cli.render_binding_label(
+    assert cli.render_full_spec_selector_label(
         repo_name="example",
         selector="git",
         profile="basic",
@@ -977,18 +977,18 @@ def test_confirm_push_symlink_replacement_skips_prompt_when_assume_yes(monkeypat
     assert cli.confirm_push_symlink_replacement(assume_yes=True) is True
 
 
-def test_ensure_track_binding_replacement_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
+def test_ensure_track_package_entry_replacement_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
     binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="package", profile="current")
     existing_binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="package", profile="existing")
     replacement_binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="package", profile="replacement")
     engine = SimpleNamespace(get_repo=lambda _repo_name: SimpleNamespace(packages={}), expand_tracked_package_entry=lambda _binding: [replacement_binding])
-    monkeypatch.setattr(cli, "find_recorded_bindings_for_scope", lambda _engine, _binding: [existing_binding])
+    monkeypatch.setattr(cli, "find_recorded_package_entries_for_scope", lambda _engine, _binding: [existing_binding])
     monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
 
-    assert cli.ensure_track_binding_replacement_confirmed(engine, binding=binding, json_output=False, assume_yes=True) is True
+    assert cli.ensure_track_package_entry_replacement_confirmed(engine, binding=binding, json_output=False, assume_yes=True) is True
 
 
-def test_ensure_track_binding_implicit_overrides_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
+def test_ensure_track_package_entry_implicit_overrides_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
     binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="group", profile="current")
     engine = SimpleNamespace(
         get_repo=lambda _repo_name: SimpleNamespace(),
@@ -1014,7 +1014,7 @@ def test_ensure_track_binding_implicit_overrides_confirmed_skips_prompt_when_ass
     )
     monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
 
-    assert cli.ensure_track_binding_implicit_overrides_confirmed(engine, binding=binding, json_output=False, assume_yes=True) is True
+    assert cli.ensure_track_package_entry_implicit_overrides_confirmed(engine, binding=binding, json_output=False, assume_yes=True) is True
 
 
 def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) -> None:

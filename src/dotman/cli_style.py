@@ -5,7 +5,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Sequence
 
-from dotman.engine import parse_binding_text
+from dotman.engine import parse_full_spec_selector_text
 from dotman.models import FullSpecSelector, package_ref_text, repo_qualified_target_text, target_ref_text
 
 
@@ -167,13 +167,13 @@ def render_package_profile_label(*, repo_name: str, package_id: str, profile: st
     )
 
 
-def binding_label_text(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
+def full_spec_selector_label_text(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
     return f"{repo_qualified_selector_text(repo_name=repo_name, selector=selector)}@{profile}"
 
 
-def render_binding_label(*, repo_name: str, selector: str, profile: str, selector_first: bool = False, use_color: bool) -> str:
+def render_full_spec_selector_label(*, repo_name: str, selector: str, profile: str, selector_first: bool = False, use_color: bool) -> str:
     if not use_color:
-        return binding_label_text(
+        return full_spec_selector_label_text(
             repo_name=repo_name,
             selector=selector,
             profile=profile,
@@ -187,11 +187,11 @@ def render_binding_label(*, repo_name: str, selector: str, profile: str, selecto
     )
 
 
-def render_binding_reference(binding: FullSpecSelector, *, use_color: bool) -> str:
-    return render_binding_label(
-        repo_name=binding.repo,
-        selector=binding.selector,
-        profile=binding.profile,
+def render_full_spec_selector_reference(package_entry: FullSpecSelector, *, use_color: bool) -> str:
+    return render_full_spec_selector_label(
+        repo_name=package_entry.repo,
+        selector=package_entry.selector,
+        profile=package_entry.profile,
         use_color=use_color,
     )
 
@@ -266,7 +266,7 @@ def render_snapshot_provenance(
     if repo_name is None or package_id is None or target_name is None:
         return selection_label
     if selection_label is not None:
-        binding_repo, _binding_selector, _binding_profile = parse_binding_text(selection_label)
+        binding_repo, _binding_selector, _binding_profile = parse_full_spec_selector_text(selection_label)
         if binding_repo is not None:
             repo_name = binding_repo
     return render_package_target_label(

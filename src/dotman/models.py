@@ -342,7 +342,7 @@ class TrackedPackageSummary:
     repo: str
     package_id: str
     description: str | None
-    bindings: list[TrackedPackageEntrySummary]
+    package_entries: list[TrackedPackageEntrySummary]
     state: str
     bound_profile: str | None = None
 
@@ -358,7 +358,7 @@ class TrackedPackageSummary:
             "bound_profile": self.bound_profile,
             "description": self.description,
             "state": self.state,
-            "package_entries": [binding.to_dict() for binding in self.bindings],
+            "package_entries": [package_entry.to_dict() for package_entry in self.package_entries],
         }
 
 
@@ -386,14 +386,14 @@ class TrackedPackageEntryIssue:
 
 @dataclass(frozen=True)
 class TrackedPackageEntryDetail:
-    binding: TrackedPackageEntrySummary
+    package_entry: TrackedPackageEntrySummary
     tracked_reason: str
     targets: list[TrackedTargetSummary]
     hooks: dict[str, list[HookPlan]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            **self.binding.to_dict(),
+            **self.package_entry.to_dict(),
             "tracked_reason": self.tracked_reason,
             "targets": [target.to_dict() for target in self.targets],
             "hooks": {name: [item.to_dict() for item in items] for name, items in self.hooks.items()},
@@ -402,12 +402,12 @@ class TrackedPackageEntryDetail:
 
 @dataclass(frozen=True)
 class TrackedOwnedTargetDetail:
-    binding: TrackedPackageEntrySummary
+    package_entry: TrackedPackageEntrySummary
     target: TrackedTargetSummary
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            **self.binding.to_dict(),
+            **self.package_entry.to_dict(),
             **self.target.to_dict(),
         }
 
@@ -434,7 +434,7 @@ class TrackedPackageDetail:
     repo: str
     package_id: str
     description: str | None
-    bindings: list[TrackedPackageEntryDetail]
+    package_entries: list[TrackedPackageEntryDetail]
     owned_targets: list[TrackedOwnedTargetDetail]
     target_refs: list[TrackedTargetRefDetail] = field(default_factory=list)
     bound_profile: str | None = None
@@ -450,7 +450,7 @@ class TrackedPackageDetail:
             "package_ref": self.package_ref,
             "bound_profile": self.bound_profile,
             "description": self.description,
-            "package_entries": [binding.to_dict() for binding in self.bindings],
+            "package_entries": [package_entry.to_dict() for package_entry in self.package_entries],
             "owned_targets": [target.to_dict() for target in self.owned_targets],
             "target_refs": [target_ref.to_dict() for target_ref in self.target_refs],
         }

@@ -68,10 +68,10 @@ def find_tracked_target_matches(
     engine: Any,
     target_text: str,
     *,
-    parse_binding_text: Any,
+    parse_full_spec_selector_text: Any,
     parse_package_ref_text: Any,
 ) -> tuple[str, list[TrackedTargetMatch], list[TrackedTargetMatch]]:
-    _explicit_repo, selector, profile = parse_binding_text(target_text)
+    _explicit_repo, selector, profile = parse_full_spec_selector_text(target_text)
     if profile is not None:
         raise ValueError("tracked target lookup expects a target selector, not a binding")
     if "." in selector:
@@ -167,7 +167,7 @@ def find_tracked_package_matches(
 
 
 
-def describe_package_binding(
+def describe_tracked_package_entry(
     engine: Any,
     repo: Repository,
     binding: FullSpecSelector,
@@ -212,7 +212,7 @@ def describe_package_binding(
     tracked_reason = "explicit" if selection.explicit else "implicit"
 
     return TrackedPackageEntryDetail(
-        binding=TrackedPackageEntrySummary(
+        package_entry=TrackedPackageEntrySummary(
             repo=repo.config.name,
             selector=binding.selector,
             profile=binding.profile,
@@ -312,7 +312,7 @@ def describe_owned_package_targets(
                 continue
             owned_targets.append(
                 TrackedOwnedTargetDetail(
-                    binding=TrackedPackageEntrySummary(
+                    package_entry=TrackedPackageEntrySummary(
                         repo=plan.repo_name,
                         selector=plan.selection.source_selector or plan.package_id,
                         profile=plan.requested_profile,
@@ -325,29 +325,29 @@ def describe_owned_package_targets(
         owned_targets,
         key=lambda item: (
             item.target.target_name,
-            item.binding.profile,
-            item.binding.selector,
-            item.binding.repo,
+            item.package_entry.profile,
+            item.package_entry.selector,
+            item.package_entry.repo,
         ),
     )
 
 
 
-def effective_package_binding_keys(
+def effective_tracked_package_entry_keys(
     engine: Any,
     repo_name: str,
     package_id: str,
     bound_profile: str | None,
 ) -> set[tuple[str, str, str]]:
-    effective_bindings: set[tuple[str, str, str]] = set()
+    effective_package_entries: set[tuple[str, str, str]] = set()
     for plan in engine.plan_push():
         if plan.repo_name != repo_name:
             continue
         if bound_profile is not None and plan.requested_profile != bound_profile:
             continue
-        # `info tracked` should report hooks for the binding that currently owns the package's
+        # `info tracked` should report hooks for the package entry that currently owns the package's
         # winning targets, even when the live files already match and push would be all-noop.
         if not any(target.package_id == package_id for target in plan.target_plans):
             continue
-        effective_bindings.add((plan.repo_name, plan.selection.source_selector or plan.package_id, plan.requested_profile))
-    return effective_bindings
+        effective_package_entries.add((plan.repo_name, plan.selection.source_selector or plan.package_id, plan.requested_profile))
+    return effective_package_entries

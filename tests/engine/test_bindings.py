@@ -96,8 +96,8 @@ def test_group_selected_package_is_marked_explicit_in_tracked_detail(
 
     package_detail = engine.describe_tracked_package("example:core-cli-meta")
 
-    assert [binding.binding.selector for binding in package_detail.bindings] == ["core-cli-meta"]
-    assert [binding.tracked_reason for binding in package_detail.bindings] == ["explicit"]
+    assert [package_entry.package_entry.selector for package_entry in package_detail.package_entries] == ["core-cli-meta"]
+    assert [package_entry.tracked_reason for package_entry in package_detail.package_entries] == ["explicit"]
 
 def test_info_tracked_drops_hooks_for_non_effective_provenance_binding(
     tmp_path: Path,
@@ -134,9 +134,9 @@ def test_info_tracked_drops_hooks_for_non_effective_provenance_binding(
 
     package_detail = engine.describe_tracked_package("example:git")
 
-    assert [binding.binding.selector for binding in package_detail.bindings] == ["core-cli-meta", "git"]
-    assert package_detail.bindings[0].hooks == {}
-    assert set(package_detail.bindings[1].hooks) == {"guard_push", "pre_push", "post_push"}
+    assert [package_entry.package_entry.selector for package_entry in package_detail.package_entries] == ["core-cli-meta", "git"]
+    assert package_detail.package_entries[0].hooks == {}
+    assert set(package_detail.package_entries[1].hooks) == {"guard_push", "pre_push", "post_push"}
 
 def test_plan_push_uses_current_tracked_state_without_writing_new_state(
     tmp_path: Path,
@@ -385,7 +385,7 @@ def test_record_binding_keeps_distinct_profiles_for_multi_instance_package(
     package_detail = engine.describe_tracked_package("fixture:profiled<work>")
     assert package_detail.package_ref == "profiled<work>"
     assert package_detail.bound_profile == "work"
-    assert [binding.binding.profile for binding in package_detail.bindings] == ["work"]
+    assert [package_entry.package_entry.profile for package_entry in package_detail.package_entries] == ["work"]
 
 
 def test_engine_drops_installed_alias_helpers() -> None:
