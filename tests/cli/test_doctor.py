@@ -17,7 +17,7 @@ def test_doctor_cli_reports_ok_for_valid_config(tmp_path: Path, capsys) -> None:
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["config_path"] == str(config_path.resolve())
-    assert payload["invalid_bindings"] == []
+    assert payload["invalid_package_entries"] == []
     assert payload["ok"] is True
     assert payload["repo_count"] == 2
     assert all(check["status"] != "failed" for check in payload["checks"])
@@ -67,7 +67,7 @@ def test_doctor_cli_reports_missing_repo_path(tmp_path: Path, capsys) -> None:
     assert exit_code == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
-    assert payload["invalid_bindings"] == []
+    assert payload["invalid_package_entries"] == []
     assert any(
         check["key"] == "repo_path"
         and check["repo_name"] == "fixture"

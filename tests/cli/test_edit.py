@@ -102,18 +102,18 @@ def _write_tracked_binding_states(
 ) -> None:
     state_dir = state_root / "dotman" / "repos" / repo_name
     state_dir.mkdir(parents=True, exist_ok=True)
-    lines = ["version = 1", ""]
+    lines = ["schema_version = 1", ""]
     for selector, profile in bindings:
         lines.extend(
             [
-                "[[bindings]]",
+                "[[packages]]",
                 f'repo = "{repo_name}"',
-                f'selector = "{selector}"',
+                f'package_id = "{selector}"',
                 f'profile = "{profile}"',
                 "",
             ]
         )
-    (state_dir / "bindings.toml").write_text("\n".join(lines), encoding="utf-8")
+    (state_dir / "tracked-packages.toml").write_text("\n".join(lines), encoding="utf-8")
 
 
 def _write_tracked_binding_state(state_root: Path, *, repo_name: str, selector: str, profile: str) -> None:

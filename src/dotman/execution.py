@@ -131,11 +131,11 @@ class ExecutionStepResult:
             "action": step.action,
             "package_id": step.package_id,
             "repo": step.repo_name,
-            "binding": None
+            "package_entry": None
             if step.binding_plan is None
             else {
                 "repo": step.binding_plan.binding.repo,
-                "selector": step.binding_plan.binding.selector,
+                "package_id": step.binding_plan.binding.selector,
                 "profile": step.binding_plan.binding.profile,
             },
             "status": self.status,
@@ -161,8 +161,8 @@ class PackageExecutionResult:
     def to_dict(self) -> dict[str, object]:
         return {
             "repo": self.unit.repo_name,
-            "binding": {
-                "selector": self.unit.binding_selector,
+            "package_entry": {
+                "package_id": self.unit.binding_selector,
                 "profile": self.unit.profile,
             },
             "package_id": self.unit.package_id,

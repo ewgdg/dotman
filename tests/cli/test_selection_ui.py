@@ -965,7 +965,7 @@ def test_ensure_track_binding_replacement_confirmed_skips_prompt_when_assume_yes
     binding = Binding(repo="fixture", selector="stack", profile="current")
     existing_binding = Binding(repo="fixture", selector="stack", profile="existing")
     replacement_binding = Binding(repo="fixture", selector="stack", profile="replacement")
-    engine = SimpleNamespace(get_repo=lambda _repo_name: SimpleNamespace(packages={}), expand_binding_for_tracking=lambda _binding: [replacement_binding])
+    engine = SimpleNamespace(get_repo=lambda _repo_name: SimpleNamespace(packages={}), expand_tracked_package_entry=lambda _binding: [replacement_binding])
     monkeypatch.setattr(cli, "find_recorded_bindings_for_scope", lambda _engine, _binding: [existing_binding])
     monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
 

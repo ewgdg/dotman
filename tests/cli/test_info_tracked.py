@@ -82,14 +82,14 @@ def test_info_tracked_cli_interactively_selects_ambiguous_package(
     for repo_name in ("alpha", "beta"):
         state_dir = tmp_path / "state" / "dotman" / "repos" / repo_name
         state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "bindings.toml").write_text(
+        (state_dir / "tracked-packages.toml").write_text(
             "\n".join(
                 [
-                    "version = 1",
+                    "schema_version = 1",
                     "",
-                    "[[bindings]]",
+                    "[[packages]]",
                     f'repo = "{repo_name}"',
-                    'selector = "sunshine"',
+                    'package_id = "sunshine"',
                     'profile = "host/linux"',
                     "",
                 ]
@@ -126,19 +126,19 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -164,13 +164,14 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
     assert package["repo"] == "example"
     assert package["package_id"] == "git"
     assert package["description"] == "Base Git configuration"
-    assert [binding["selector"] for binding in package["bindings"]] == ["core-cli-meta", "git"]
-    assert [binding["tracked_reason"] for binding in package["bindings"]] == ["implicit", "explicit"]
+    assert [binding["package_id"] for binding in package["package_entries"]] == ["core-cli-meta", "git"]
+    assert [binding["tracked_reason"] for binding in package["package_entries"]] == ["implicit", "explicit"]
     assert package["owned_targets"] == [
         {
             "capture_command": None,
             "chmod": "600",
             "live_path": str(home / ".gitconfig"),
+            "package_id": "git",
             "profile": "basic",
             "pull_ignore": [],
             "pull_view_live": "raw",
@@ -181,16 +182,14 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
             "render_command": "jinja",
             "repo": "example",
             "repo_path": str(EXAMPLE_REPO / "packages" / "git" / "files" / "gitconfig"),
-            "selector": "git",
-            "selector_kind": "package",
             "target_kind": "file",
             "target_name": "gitconfig",
         }
     ]
-    target_names = {target["target_name"] for target in package["bindings"][0]["targets"]}
+    target_names = {target["target_name"] for target in package["package_entries"][0]["targets"]}
     assert target_names == {"gitconfig"}
-    assert package["bindings"][0]["hooks"] == {}
-    pre_push = package["bindings"][1]["hooks"]["pre_push"]
+    assert package["package_entries"][0]["hooks"] == {}
+    pre_push = package["package_entries"][1]["hooks"]["pre_push"]
     assert pre_push[0]["package_id"] == "git"
     assert "git" in pre_push[0]["command"]
 
@@ -207,19 +206,19 @@ def test_info_tracked_cli_emits_readable_text_output(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -296,14 +295,14 @@ def test_info_tracked_cli_handles_empty_directory_targets_when_repo_source_is_mi
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "claude"',
+                'package_id = "claude"',
                 'profile = "default"',
                 "",
             ]
@@ -333,14 +332,14 @@ def test_info_var_cli_emits_provenance_for_resolved_variable(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -394,14 +393,14 @@ def test_info_var_cli_emits_readable_text_output(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -461,14 +460,14 @@ def test_info_tracked_cli_shows_effective_values_for_target_preset(
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "shell"',
+                'package_id = "shell"',
                 'profile = "default"',
                 "",
             ]
@@ -529,14 +528,14 @@ def test_info_tracked_cli_shows_capture_and_editor_values_for_target_preset(
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "shell"',
+                'package_id = "shell"',
                 'profile = "default"',
                 "",
             ]
@@ -580,14 +579,14 @@ def test_info_tracked_cli_emits_hooks_even_when_package_targets_are_noop(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -631,14 +630,14 @@ def test_info_tracked_cli_emits_target_ref_chain_in_json(
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "beta"',
+                'package_id = "beta"',
                 'profile = "default"',
                 "",
             ]
@@ -678,14 +677,14 @@ def test_info_tracked_cli_emits_target_ref_chain_in_text_output(
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "beta"',
+                'package_id = "beta"',
                 'profile = "default"',
                 "",
             ]
@@ -723,19 +722,19 @@ def test_info_tracked_cli_requires_specific_multi_instance_package_identity_in_n
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "profiled"',
+                'package_id = "profiled"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "profiled"',
+                'package_id = "profiled"',
                 'profile = "work"',
                 "",
             ]
@@ -772,7 +771,7 @@ def test_info_tracked_cli_requires_specific_multi_instance_package_identity_in_n
     payload = json.loads(capsys.readouterr().out)
     assert payload["package"]["package_ref"] == "profiled<work>"
     assert payload["package"]["bound_profile"] == "work"
-    assert [binding["profile"] for binding in payload["package"]["bindings"]] == ["work"]
+    assert [binding["profile"] for binding in payload["package"]["package_entries"]] == ["work"]
 
 def test_info_tracked_cli_uses_resolver_for_ambiguous_multi_instance_identity_in_interactive_mode(
     tmp_path: Path,
@@ -791,19 +790,19 @@ def test_info_tracked_cli_uses_resolver_for_ambiguous_multi_instance_identity_in
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "profiled"',
+                'package_id = "profiled"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "profiled"',
+                'package_id = "profiled"',
                 'profile = "work"',
                 "",
             ]

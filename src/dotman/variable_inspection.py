@@ -148,7 +148,7 @@ def _build_resolved_variable_occurrences_for_binding(
 
 def list_resolved_variables(engine: Any) -> list[ResolvedVariableOccurrence]:
     occurrences: list[ResolvedVariableOccurrence] = []
-    for repo, binding, selector_kind, package_ids in engine._iter_tracked_bindings():
+    for repo, binding, selector_kind, package_ids in engine._iter_tracked_package_entries():
         occurrences.extend(
             _build_resolved_variable_occurrences_for_binding(
                 engine,
@@ -164,7 +164,7 @@ def list_resolved_variables(engine: Any) -> list[ResolvedVariableOccurrence]:
 def list_winning_variables(engine: Any) -> list[ResolvedVariableOccurrence]:
     winning_by_key: dict[tuple[str, str], ResolvedVariableOccurrence] = {}
     seen_keys: set[tuple[str, str]] = set()
-    for repo, binding, selector_kind, package_ids in engine._iter_tracked_bindings():
+    for repo, binding, selector_kind, package_ids in engine._iter_tracked_package_entries():
         for occurrence in _build_resolved_variable_occurrences_for_binding(
             engine,
             repo,

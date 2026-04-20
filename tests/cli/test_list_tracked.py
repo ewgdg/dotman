@@ -46,19 +46,19 @@ def test_list_tracked_cli_lists_unique_tracked_packages(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -79,14 +79,14 @@ def test_list_tracked_cli_lists_unique_tracked_packages(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["operation"] == "list-tracked"
-    assert payload["invalid_bindings"] == []
+    assert payload["invalid_package_entries"] == []
     assert [item["package_id"] for item in payload["packages"]] == ["core-cli-meta", "git", "nvim"]
     packages = {item["package_id"]: item for item in payload["packages"]}
     assert set(packages) == {"core-cli-meta", "git", "nvim"}
     assert packages["core-cli-meta"]["state"] == "explicit"
     assert packages["git"]["state"] == "explicit"
     assert packages["nvim"]["state"] == "implicit"
-    assert [binding["selector"] for binding in packages["git"]["bindings"]] == ["core-cli-meta", "git"]
+    assert [binding["package_id"] for binding in packages["git"]["package_entries"]] == ["core-cli-meta", "git"]
     assert packages["git"]["description"] == "Base Git configuration"
 
 def test_list_tracked_cli_emits_readable_text_output(
@@ -102,19 +102,19 @@ def test_list_tracked_cli_emits_readable_text_output(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -154,19 +154,19 @@ def test_list_vars_cli_emits_resolved_values_and_provenance_in_json(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -219,14 +219,14 @@ def test_list_vars_cli_emits_readable_text_output(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -261,19 +261,19 @@ def test_list_tracked_cli_lists_multi_instance_packages_per_bound_profile(
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "profiled"',
+                'package_id = "profiled"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "profiled"',
+                'package_id = "profiled"',
                 'profile = "work"',
                 "",
             ]
@@ -301,7 +301,7 @@ def test_list_tracked_cli_lists_multi_instance_packages_per_bound_profile(
     assert [package["state"] for package in payload["packages"]] == ["explicit", "explicit"]
 
 
-def test_list_tracked_cli_reports_invalid_bindings_in_json_and_human_output(
+def test_list_tracked_cli_reports_invalid_package_entries_in_json_and_human_output(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -314,19 +314,19 @@ def test_list_tracked_cli_reports_invalid_bindings_in_json_and_human_output(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "old-meta"',
+                'package_id = "old-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -347,13 +347,13 @@ def test_list_tracked_cli_reports_invalid_bindings_in_json_and_human_output(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert [package["package_id"] for package in payload["packages"]] == ["git"]
-    assert payload["invalid_bindings"] == [
+    assert payload["invalid_package_entries"] == [
         {
             "message": "unknown selector",
             "profile": "basic",
             "reason": "unknown_selector",
             "repo": "example",
-            "selector": "old-meta",
+            "package_id": "old-meta",
             "state": "invalid",
             "state_key": "example",
         }
@@ -394,19 +394,19 @@ def test_list_tracked_cli_human_output_sorts_orphans_before_invalids_after_packa
     config_path = write_single_repo_config_with_state_key(tmp_path, repo_name="example", repo_path=EXAMPLE_REPO)
     configured_state_dir = state_home / "dotman" / "repos" / "example"
     configured_state_dir.mkdir(parents=True, exist_ok=True)
-    (configured_state_dir / "bindings.toml").write_text(
+    (configured_state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "old-meta"',
+                'package_id = "old-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -415,14 +415,14 @@ def test_list_tracked_cli_human_output_sorts_orphans_before_invalids_after_packa
     )
     orphan_state_dir = state_home / "dotman" / "repos" / "removed"
     orphan_state_dir.mkdir(parents=True, exist_ok=True)
-    (orphan_state_dir / "bindings.toml").write_text(
+    (orphan_state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "removed-repo"',
-                'selector = "linux"',
+                'package_id = "linux"',
                 'profile = "basic"',
                 "",
             ]
@@ -465,14 +465,14 @@ def test_list_tracked_cli_discovers_orphan_bindings_under_state_root(
     config_path = write_single_repo_config_with_state_key(tmp_path, repo_name="example", repo_path=EXAMPLE_REPO)
     configured_state_dir = state_home / "dotman" / "repos" / "example"
     configured_state_dir.mkdir(parents=True, exist_ok=True)
-    (configured_state_dir / "bindings.toml").write_text(
+    (configured_state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -481,14 +481,14 @@ def test_list_tracked_cli_discovers_orphan_bindings_under_state_root(
     )
     orphan_state_dir = state_home / "dotman" / "repos" / "removed"
     orphan_state_dir.mkdir(parents=True, exist_ok=True)
-    (orphan_state_dir / "bindings.toml").write_text(
+    (orphan_state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "removed-repo"',
-                'selector = "linux"',
+                'package_id = "linux"',
                 'profile = "basic"',
                 "",
             ]
@@ -509,13 +509,13 @@ def test_list_tracked_cli_discovers_orphan_bindings_under_state_root(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert [package["package_id"] for package in payload["packages"]] == ["git"]
-    assert payload["invalid_bindings"] == [
+    assert payload["invalid_package_entries"] == [
         {
             "message": "repo not in config",
             "profile": "basic",
             "reason": "unknown_repo",
             "repo": "removed-repo",
-            "selector": "linux",
+            "package_id": "linux",
             "state": "orphan",
             "state_key": "removed",
         }

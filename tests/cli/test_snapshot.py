@@ -49,14 +49,14 @@ def _write_snapshot_execution_repo(
 def _write_tracked_binding(state_root: Path, *, repo_name: str = "fixture", selector: str = "app") -> None:
     state_dir = state_root / "dotman" / "repos" / repo_name
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 f'repo = "{repo_name}"',
-                f'selector = "{selector}"',
+                f'package_id = "{selector}"',
                 'profile = "default"',
                 "",
             ]

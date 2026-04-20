@@ -9,8 +9,8 @@ from dotman.ignore import list_directory_files, matches_ignore_pattern
 from dotman.models import (
     Binding,
     BindingPlan,
-    TrackedBindingSummary,
-    TrackedPackageBindingDetail,
+    TrackedPackageEntrySummary,
+    TrackedPackageEntryDetail,
     TrackedPackageDetail,
     TrackedPackageSummary,
     TrackedOwnedTargetDetail,
@@ -18,7 +18,7 @@ from dotman.models import (
     ManagerConfig,
     OperationPlan,
     PackageSpec,
-    TrackedBindingIssue,
+    TrackedPackageEntryIssue,
 )
 from dotman.planning import (
     HOOK_NAMES_BY_OPERATION,
@@ -29,7 +29,7 @@ from dotman.planning import (
 from dotman.profiles import rank_profiles
 from dotman.repository import Repository
 from dotman.tracking import (
-    PersistedBindingRecord,
+    PersistedTrackedPackageEntryRecord,
     TrackedStateSummary,
 )
 from dotman import tracked_packages, tracking, variable_inspection
@@ -171,7 +171,7 @@ class DotmanEngine:
         allow_package_owners: bool = False,
     ) -> tuple[Repository, Binding]:
         explicit_repo, _parsed_selector, _parsed_profile = parse_binding_text(binding_text)
-        selector, profile, exact_matches, partial_matches, owner_bindings = self.find_tracked_binding_matches(binding_text)
+        selector, profile, exact_matches, partial_matches, owner_package_entries = self.find_tracked_binding_matches(binding_text)
         binding_label = selector if profile is None else f"{selector}@{profile}"
         if len(exact_matches) == 1:
             return exact_matches[0]
@@ -194,10 +194,10 @@ class DotmanEngine:
             )
             raise ValueError(f"tracked package entry '{binding_label}' is ambiguous: {candidates}")
 
-        if owner_bindings:
+        if owner_package_entries:
             if allow_package_owners:
-                if len(owner_bindings) == 1:
-                    owner_repo, owner_binding = owner_bindings[0]
+                if len(owner_package_entries) == 1:
+                    owner_repo, owner_binding = owner_package_entries[0]
                     return owner_repo, Binding(
                         repo=owner_repo.config.name,
                         selector=selector,
@@ -205,14 +205,14 @@ class DotmanEngine:
                     )
                 candidates = ", ".join(
                     f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                    for repo, binding in owner_bindings
+                    for repo, binding in owner_package_entries
                 )
                 raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked package entries: {candidates}")
             owners = ", ".join(
                 f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                for repo, binding in owner_bindings
+                for repo, binding in owner_package_entries
             )
-            required_repo = explicit_repo or owner_bindings[0][0].config.name
+            required_repo = explicit_repo or owner_package_entries[0][0].config.name
             required_ref = f"{required_repo}:{selector}"
             raise ValueError(
                 f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
@@ -229,7 +229,7 @@ class DotmanEngine:
         tracked = [
             (repo, binding)
             for repo in candidate_repos
-            for binding in self.read_effective_bindings(repo)
+            for binding in self.read_effective_tracked_package_entries(repo)
             if profile is None or binding.profile == profile
         ]
 
@@ -239,10 +239,10 @@ class DotmanEngine:
             (repo.config.name, binding.selector, binding.profile): (repo, binding)
             for repo, binding in partial_matches
         }
-        owner_bindings = self._find_tracked_package_owners(candidate_repos, selector, profile)
+        owner_package_entries = self._find_tracked_package_owners(candidate_repos, selector, profile)
         unique_owners = {
             (repo.config.name, binding.selector, binding.profile): (repo, binding)
-            for repo, binding in owner_bindings
+            for repo, binding in owner_package_entries
         }
         return selector, profile, exact_matches, list(unique_partials.values()), list(unique_owners.values())
 
@@ -262,13 +262,13 @@ class DotmanEngine:
         self,
         *,
         bindings_by_repo: dict[str, list[Binding]] | None = None,
-    ) -> list[TrackedBindingIssue]:
+    ) -> list[TrackedPackageEntryIssue]:
         return self._tracking_helpers().list_invalid_explicit_bindings(
             self,
             bindings_by_repo=bindings_by_repo,
         )
 
-    def list_orphan_explicit_bindings(self) -> list[TrackedBindingIssue]:
+    def list_orphan_explicit_bindings(self) -> list[TrackedPackageEntryIssue]:
         return self._tracking_helpers().list_orphan_explicit_bindings(self)
 
     def list_tracked_packages(self) -> list[TrackedPackageSummary]:
@@ -286,32 +286,32 @@ class DotmanEngine:
     def find_variable_matches(self, variable_text: str) -> tuple[list[str], list[str]]:
         return variable_inspection.find_variable_matches(self, variable_text)
 
-    def _read_bindings_file(self, state_path: Path) -> list[Binding]:
-        return self._tracking_helpers().read_bindings_file(state_path)
+    def _read_tracked_package_entries_file(self, state_path: Path) -> list[Binding]:
+        return self._tracking_helpers().read_tracked_package_entries_file(state_path)
 
-    def read_bindings(self, repo: Repository) -> list[Binding]:
-        return self._tracking_helpers().read_bindings(self, repo)
+    def read_tracked_package_entries(self, repo: Repository) -> list[Binding]:
+        return self._tracking_helpers().read_tracked_package_entries(self, repo)
 
-    def read_effective_bindings(self, repo: Repository) -> list[Binding]:
-        return self._tracking_helpers().read_effective_bindings(self, repo)
+    def read_effective_tracked_package_entries(self, repo: Repository) -> list[Binding]:
+        return self._tracking_helpers().read_effective_tracked_package_entries(self, repo)
 
-    def expand_binding_for_tracking(self, binding: Binding) -> list[Binding]:
-        return self._tracking_helpers().expand_binding_for_tracking(self, binding)
+    def expand_tracked_package_entry(self, binding: Binding) -> list[Binding]:
+        return self._tracking_helpers().expand_tracked_package_entry(self, binding)
 
-    def _raw_bindings_by_repo(self) -> dict[str, list[Binding]]:
-        return self._tracking_helpers().raw_bindings_by_repo(self)
+    def _raw_tracked_package_entries_by_repo(self) -> dict[str, list[Binding]]:
+        return self._tracking_helpers().raw_tracked_package_entries_by_repo(self)
 
-    def _effective_bindings_by_repo(
+    def _effective_tracked_package_entries_by_repo(
         self,
-        raw_bindings_by_repo: dict[str, list[Binding]] | None = None,
+        raw_tracked_package_entries_by_repo: dict[str, list[Binding]] | None = None,
     ) -> dict[str, list[Binding]]:
-        return self._tracking_helpers().effective_bindings_by_repo(
+        return self._tracking_helpers().effective_tracked_package_entries_by_repo(
             self,
-            raw_bindings_by_repo=raw_bindings_by_repo,
+            raw_tracked_package_entries_by_repo=raw_tracked_package_entries_by_repo,
         )
 
-    def _binding_scope_key(self, repo: Repository, binding: Binding) -> tuple[str, str, str | None]:
-        return self._tracking_helpers().binding_scope_key(self, repo, binding)
+    def _tracked_package_entry_scope_key(self, repo: Repository, binding: Binding) -> tuple[str, str, str | None]:
+        return self._tracking_helpers().tracked_package_entry_scope_key(self, repo, binding)
 
     def _bound_profile_for_package(
         self,
@@ -326,39 +326,39 @@ class DotmanEngine:
             binding_profile,
         )
 
-    def _normalize_recorded_bindings(self, bindings: list[Binding], binding: Binding) -> list[Binding]:
-        return self._tracking_helpers().normalize_recorded_bindings(self, bindings, binding)
+    def _normalize_tracked_package_entries(self, bindings: list[Binding], binding: Binding) -> list[Binding]:
+        return self._tracking_helpers().normalize_tracked_package_entries(self, bindings, binding)
 
-    def _normalize_recorded_binding_set(self, bindings: list[Binding], additions: list[Binding]) -> list[Binding]:
-        return self._tracking_helpers().normalize_recorded_binding_set(self, bindings, additions)
+    def _normalize_tracked_package_entry_set(self, bindings: list[Binding], additions: list[Binding]) -> list[Binding]:
+        return self._tracking_helpers().normalize_tracked_package_entry_set(self, bindings, additions)
 
-    def _expand_binding_for_tracking(self, repo: Repository, binding: Binding) -> list[Binding]:
-        return self._tracking_helpers().expand_binding_for_tracking_in_repo(repo, binding)
+    def _expand_tracked_package_entry(self, repo: Repository, binding: Binding) -> list[Binding]:
+        return self._tracking_helpers().expand_tracked_package_entry_in_repo(repo, binding)
 
-    def _effective_bindings_for_repo(self, repo: Repository, raw_bindings: list[Binding]) -> list[Binding]:
-        return self._tracking_helpers().effective_bindings_for_repo(self, repo, raw_bindings)
+    def _effective_tracked_package_entries_for_repo(self, repo: Repository, raw_bindings: list[Binding]) -> list[Binding]:
+        return self._tracking_helpers().effective_tracked_package_entries_for_repo(self, repo, raw_bindings)
 
-    def _validate_tracked_bindings(self, bindings_by_repo: dict[str, list[Binding]]) -> None:
-        self._tracking_helpers().validate_tracked_bindings(self, bindings_by_repo)
+    def _validate_tracked_package_entries(self, bindings_by_repo: dict[str, list[Binding]]) -> None:
+        self._tracking_helpers().validate_tracked_package_entries(self, bindings_by_repo)
 
-    def record_binding(self, binding: Binding) -> None:
-        self._tracking_helpers().record_binding(self, binding)
+    def record_tracked_package_entry(self, binding: Binding) -> None:
+        self._tracking_helpers().record_tracked_package_entry(self, binding)
 
-    def validate_recorded_binding(self, binding: Binding) -> None:
-        self._tracking_helpers().validate_recorded_binding(self, binding)
+    def validate_tracked_package_entry(self, binding: Binding) -> None:
+        self._tracking_helpers().validate_tracked_package_entry(self, binding)
 
-    def find_persisted_binding_matches(
+    def find_persisted_tracked_package_entry_matches(
         self,
         binding_text: str,
-    ) -> tuple[str, str | None, list[PersistedBindingRecord], list[PersistedBindingRecord]]:
-        return self._tracking_helpers().find_persisted_binding_matches(
+    ) -> tuple[str, str | None, list[PersistedTrackedPackageEntryRecord], list[PersistedTrackedPackageEntryRecord]]:
+        return self._tracking_helpers().find_persisted_tracked_package_entry_matches(
             self,
             binding_text,
             parse_binding_text=parse_binding_text,
         )
 
-    def remove_binding(self, binding_text: str, *, operation: str = "untrack") -> Binding:
-        return self._tracking_helpers().remove_binding(
+    def remove_tracked_package_entry(self, binding_text: str, *, operation: str = "untrack") -> Binding:
+        return self._tracking_helpers().remove_tracked_package_entry(
             self,
             binding_text,
             operation=operation,
@@ -378,44 +378,44 @@ class DotmanEngine:
             profile,
         )
 
-    def write_bindings(self, repo: Repository, bindings: list[Binding]) -> None:
-        self._tracking_helpers().write_bindings(self, repo, bindings)
+    def write_tracked_package_entries(self, repo: Repository, bindings: list[Binding]) -> None:
+        self._tracking_helpers().write_tracked_package_entries(self, repo, bindings)
 
-    def _write_bindings_file(self, state_dir: Path, bindings: list[Binding]) -> None:
-        self._tracking_helpers().write_bindings_file(state_dir, bindings)
+    def _write_tracked_package_entries_file(self, state_dir: Path, bindings: list[Binding]) -> None:
+        self._tracking_helpers().write_tracked_package_entries_file(state_dir, bindings)
 
-    def remove_persisted_binding(self, record: PersistedBindingRecord, *, operation: str = "untrack") -> Binding:
-        return self._tracking_helpers().remove_persisted_binding(
+    def remove_persisted_tracked_package_entry(self, record: PersistedTrackedPackageEntryRecord, *, operation: str = "untrack") -> Binding:
+        return self._tracking_helpers().remove_persisted_tracked_package_entry(
             self,
             record,
             operation=operation,
             tracked_target_conflict_error=TrackedTargetConflictError,
         )
 
-    def _remove_binding_record(self, bindings: list[Binding], target: Binding) -> list[Binding]:
-        return self._tracking_helpers().remove_binding_record(bindings, target)
+    def _remove_tracked_package_entry_record(self, bindings: list[Binding], target: Binding) -> list[Binding]:
+        return self._tracking_helpers().remove_tracked_package_entry_record(bindings, target)
 
-    def _iter_tracked_bindings(self) -> list[tuple[Repository, Binding, str, list[str]]]:
-        return self._tracking_helpers().iter_tracked_bindings(self)
+    def _iter_tracked_package_entries(self) -> list[tuple[Repository, Binding, str, list[str]]]:
+        return self._tracking_helpers().iter_tracked_package_entries(self)
 
-    def _configured_persisted_binding_records(
+    def _configured_persisted_tracked_package_entry_records(
         self,
         *,
         bindings_by_repo: dict[str, list[Binding]] | None = None,
-    ) -> tuple[list[PersistedBindingRecord], list[PersistedBindingRecord]]:
-        return self._tracking_helpers().configured_persisted_binding_records(
+    ) -> tuple[list[PersistedTrackedPackageEntryRecord], list[PersistedTrackedPackageEntryRecord]]:
+        return self._tracking_helpers().configured_persisted_tracked_package_entry_records(
             self,
             bindings_by_repo=bindings_by_repo,
         )
 
-    def _orphan_persisted_binding_records(self) -> list[PersistedBindingRecord]:
-        return self._tracking_helpers().orphan_persisted_binding_records(self)
+    def _orphan_persisted_tracked_package_entry_records(self) -> list[PersistedTrackedPackageEntryRecord]:
+        return self._tracking_helpers().orphan_persisted_tracked_package_entry_records(self)
 
-    def _all_persisted_binding_records(self) -> list[PersistedBindingRecord]:
-        return self._tracking_helpers().all_persisted_binding_records(self)
+    def _all_persisted_tracked_package_entry_records(self) -> list[PersistedTrackedPackageEntryRecord]:
+        return self._tracking_helpers().all_persisted_tracked_package_entry_records(self)
 
-    def _resolve_persisted_binding(self, repo: Repository, binding: Binding) -> list[Binding]:
-        return self._tracking_helpers().resolve_persisted_binding(self, repo, binding)
+    def _resolve_persisted_tracked_package_entry(self, repo: Repository, binding: Binding) -> list[Binding]:
+        return self._tracking_helpers().resolve_persisted_tracked_package_entry(self, repo, binding)
 
     def _tracked_package_matches_for_untrack(
         self,
@@ -423,7 +423,7 @@ class DotmanEngine:
         selector: str,
         profile: str | None,
         repo_name: str | None,
-    ) -> tuple[list[TrackedPackageSummary], list[TrackedBindingSummary]]:
+    ) -> tuple[list[TrackedPackageSummary], list[TrackedPackageEntrySummary]]:
         return self._tracking_helpers().tracked_package_matches_for_untrack(
             self,
             selector=selector,
@@ -431,17 +431,17 @@ class DotmanEngine:
             repo_name=repo_name,
         )
 
-    def _sorted_binding_issues(self, issues: list[TrackedBindingIssue]) -> list[TrackedBindingIssue]:
-        return self._tracking_helpers().sorted_binding_issues(issues)
+    def _sorted_tracked_package_entry_issues(self, issues: list[TrackedPackageEntryIssue]) -> list[TrackedPackageEntryIssue]:
+        return self._tracking_helpers().sorted_tracked_package_entry_issues(issues)
 
-    def _format_persisted_binding_candidates(self, records: list[PersistedBindingRecord]) -> str:
-        return self._tracking_helpers().format_persisted_binding_candidates(records)
+    def _format_persisted_tracked_package_entry_candidates(self, records: list[PersistedTrackedPackageEntryRecord]) -> str:
+        return self._tracking_helpers().format_persisted_tracked_package_entry_candidates(records)
 
     def _format_tracked_package_candidates(self, packages: list[TrackedPackageSummary]) -> str:
         return self._tracking_helpers().format_tracked_package_candidates(packages)
 
-    def _format_owner_bindings(self, bindings: list[TrackedBindingSummary]) -> str:
-        return self._tracking_helpers().format_owner_bindings(bindings)
+    def _format_owner_package_entries(self, bindings: list[TrackedPackageEntrySummary]) -> str:
+        return self._tracking_helpers().format_owner_package_entries(bindings)
 
     def _selected_package_ids(self, repo: Repository, selector: str, selector_kind: str) -> list[str]:
         return [selector] if selector_kind == "package" else repo.expand_group(selector)
@@ -479,7 +479,7 @@ class DotmanEngine:
         package_ids: list[str],
         *,
         executable: bool,
-    ) -> TrackedPackageBindingDetail:
+    ) -> TrackedPackageEntryDetail:
         return self._tracked_package_helpers().describe_package_binding(
             self,
             repo,

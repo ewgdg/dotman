@@ -31,7 +31,7 @@ class CliCommandHandlers:
     select_non_conflicting_track_profile: Callable[..., Any]
     ensure_track_binding_implicit_overrides_confirmed: Callable[..., bool]
     find_recorded_binding_exact: Callable[..., Any]
-    emit_tracked_binding: Callable[..., int]
+    emit_tracked_package_entry: Callable[..., int]
     resolve_add_package_text: Callable[..., tuple[str, str]]
     interactive_mode_enabled: Callable[..., bool]
     add_editor_available: Callable[[], bool]
@@ -58,7 +58,7 @@ class CliCommandHandlers:
     review_rollback_actions_for_interactive_diffs: Callable[..., bool]
     emit_rollback_payload: Callable[..., int]
     run_rollback_execution: Callable[..., int]
-    emit_forgotten_binding: Callable[..., int]
+    emit_untracked_package_entry: Callable[..., int]
     find_remaining_tracked_package_after_untrack: Callable[..., Any]
     emit_tracked_packages: Callable[..., int]
     resolve_tracked_package_text: Callable[..., Any]
@@ -100,14 +100,14 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
             return _handle_pull(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
         if args.command == "rollback":
             return _handle_rollback(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
-        if args.command in {"untrack", "forget"}:
+        if args.command == "untrack":
             return _handle_untrack(args=args, engine=engine, handlers=handlers)
         if args.command == "list" and args.list_command == "tracked":
             tracked_state = engine.list_tracked_state()
             return handlers.emit_tracked_packages(
                 engine=engine,
                 packages=tracked_state.packages,
-                invalid_bindings=tracked_state.invalid_bindings,
+                invalid_package_entries=tracked_state.invalid_package_entries,
                 json_output=args.json_output,
             )
         if args.command == "list" and args.list_command == "vars":
@@ -203,7 +203,7 @@ def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> in
                 return handlers.emit_kept_binding(binding=existing_bindings[0], json_output=args.json_output)
             return handlers.emit_skipped_tracking(binding=binding, json_output=args.json_output)
         try:
-            engine.validate_recorded_binding(binding)
+            engine.validate_tracked_package_entry(binding)
         except TrackedTargetConflictError as exc:
             promoted_binding = handlers.prompt_for_conflicting_package_binding(
                 engine,
@@ -235,8 +235,8 @@ def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> in
             if existing_binding is not None:
                 return handlers.emit_kept_binding(binding=existing_binding, json_output=args.json_output)
             return handlers.emit_skipped_tracking(binding=binding, json_output=args.json_output)
-        engine.record_binding(binding)
-        return handlers.emit_tracked_binding(binding=binding, json_output=args.json_output)
+        engine.record_tracked_package_entry(binding)
+        return handlers.emit_tracked_package_entry(binding=binding, json_output=args.json_output)
 
 
 
@@ -465,11 +465,11 @@ def _handle_untrack(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> 
         allow_package_owners=False,
         json_output=args.json_output,
     )
-    removed_binding = engine.remove_binding(
+    removed_binding = engine.remove_tracked_package_entry(
         f"{binding.repo}:{binding.selector}@{binding.profile}",
         operation="untrack",
     )
-    return handlers.emit_forgotten_binding(
+    return handlers.emit_untracked_package_entry(
         binding=removed_binding,
         still_tracked_package=handlers.find_remaining_tracked_package_after_untrack(engine, removed_binding),
         json_output=args.json_output,

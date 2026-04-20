@@ -149,7 +149,7 @@ def collect_tracked_candidates(
 ) -> tuple[list[BindingPlan], dict[Path, list[TrackedTargetCandidate]]]:
     plans: list[BindingPlan] = []
     candidates_by_live_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
-    current_bindings = bindings_by_repo or engine._effective_bindings_by_repo()
+    current_bindings = bindings_by_repo or engine._effective_tracked_package_entries_by_repo()
 
     for repo_config in engine.config.ordered_repos:
         repo = engine.get_repo(repo_config.name)
@@ -187,14 +187,14 @@ def collect_tracked_candidates(
 
 def preview_binding_implicit_overrides(engine: Any, binding: Binding) -> list[TrackedTargetOverride]:
     repo = engine.get_repo(binding.repo)
-    raw_bindings_by_repo = engine._raw_bindings_by_repo()
-    raw_bindings_by_repo[repo.config.name] = engine._normalize_recorded_binding_set(
-        engine._effective_bindings_for_repo(repo, raw_bindings_by_repo.get(repo.config.name, [])),
-        engine._expand_binding_for_tracking(repo, binding),
+    raw_tracked_package_entries_by_repo = engine._raw_tracked_package_entries_by_repo()
+    raw_tracked_package_entries_by_repo[repo.config.name] = engine._normalize_tracked_package_entry_set(
+        engine._effective_tracked_package_entries_for_repo(repo, raw_tracked_package_entries_by_repo.get(repo.config.name, [])),
+        engine._expand_tracked_package_entry(repo, binding),
     )
     _plans, candidates_by_live_path = engine._collect_tracked_candidates(
         operation="push",
-        bindings_by_repo=engine._effective_bindings_by_repo(raw_bindings_by_repo),
+        bindings_by_repo=engine._effective_tracked_package_entries_by_repo(raw_tracked_package_entries_by_repo),
     )
 
     overrides_by_package: dict[

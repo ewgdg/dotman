@@ -36,14 +36,14 @@ def test_push_cli_uses_tracked_binding_profile_without_prompting(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -65,9 +65,9 @@ def test_push_cli_uses_tracked_binding_profile_without_prompting(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["operation"] == "push"
-    assert payload["bindings"][0]["selector"] == "git"
-    assert payload["bindings"][0]["profile"] == "basic"
-    assert payload["bindings"][0]["targets"][0]["action"] == "create"
+    assert payload["package_entries"][0]["package_id"] == "git"
+    assert payload["package_entries"][0]["profile"] == "basic"
+    assert payload["package_entries"][0]["targets"][0]["action"] == "create"
 
 def test_push_cli_errors_for_untracked_binding(
     tmp_path: Path,
@@ -121,14 +121,14 @@ def test_push_cli_interactively_selects_ambiguous_tracked_binding(
     for repo_name in ("alpha", "beta"):
         state_dir = tmp_path / "state" / "dotman" / "repos" / repo_name
         state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "bindings.toml").write_text(
+        (state_dir / "tracked-packages.toml").write_text(
             "\n".join(
                 [
-                    "version = 1",
+                    "schema_version = 1",
                     "",
-                    "[[bindings]]",
+                    "[[packages]]",
                     f'repo = "{repo_name}"',
-                    'selector = "sunshine"',
+                    'package_id = "sunshine"',
                     'profile = "host/linux"',
                     "",
                 ]
@@ -191,19 +191,19 @@ def test_push_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "work/git"',
+                'package_id = "work/git"',
                 'profile = "work"',
                 "",
             ]
@@ -260,14 +260,14 @@ def test_push_cli_accepts_partial_owned_package_match(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -305,14 +305,14 @@ def test_push_cli_accepts_short_dry_run_flag(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -334,8 +334,8 @@ def test_push_cli_accepts_short_dry_run_flag(
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "dry-run"
     assert payload["operation"] == "push"
-    assert payload["bindings"][0]["selector"] == "git"
-    assert payload["bindings"][0]["profile"] == "basic"
+    assert payload["package_entries"][0]["package_id"] == "git"
+    assert payload["package_entries"][0]["profile"] == "basic"
 
 
 def test_push_cli_uses_state_bindings_in_dry_run_json(
@@ -350,14 +350,14 @@ def test_push_cli_uses_state_bindings_in_dry_run_json(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -378,8 +378,8 @@ def test_push_cli_uses_state_bindings_in_dry_run_json(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["operation"] == "push"
-    assert payload["bindings"][0]["selector"] == "git"
-    assert payload["bindings"][0]["profile"] == "basic"
+    assert payload["package_entries"][0]["package_id"] == "git"
+    assert payload["package_entries"][0]["profile"] == "basic"
 
 
 def test_push_cli_human_dry_run_output_includes_context_and_hooks(
@@ -394,14 +394,14 @@ def test_push_cli_human_dry_run_output_includes_context_and_hooks(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -447,14 +447,14 @@ def test_push_cli_human_dry_run_output_uses_full_path_when_requested(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -492,14 +492,14 @@ def test_push_cli_human_dry_run_output_highlights_leaf_packages_not_root_binding
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -537,19 +537,19 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "nvim"',
+                'package_id = "nvim"',
                 'profile = "basic"',
                 "",
             ]
@@ -618,14 +618,14 @@ def test_push_cli_reviews_diffs_before_selection(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -681,14 +681,14 @@ def test_push_cli_runs_diff_review_menu_when_user_accepts_default_yes(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -734,19 +734,19 @@ def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "nvim"',
+                'package_id = "nvim"',
                 'profile = "basic"',
                 "",
             ]
@@ -788,14 +788,14 @@ def test_push_cli_skips_diff_review_for_json_output(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -827,14 +827,14 @@ def test_push_cli_allows_package_selected_through_tracked_owner_binding(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -856,6 +856,6 @@ def test_push_cli_allows_package_selected_through_tracked_owner_binding(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["operation"] == "push"
-    assert payload["bindings"][0]["selector"] == "nvim"
-    assert payload["bindings"][0]["profile"] == "basic"
-    assert payload["bindings"][0]["targets"][0]["action"] == "create"
+    assert payload["package_entries"][0]["package_id"] == "nvim"
+    assert payload["package_entries"][0]["profile"] == "basic"
+    assert payload["package_entries"][0]["targets"][0]["action"] == "create"

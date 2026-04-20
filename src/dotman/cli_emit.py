@@ -339,7 +339,7 @@ def emit_payload(
     payload = {
         "mode": mode,
         "operation": operation,
-        "bindings": [plan.to_dict() for plan in visible_plans],
+        "package_entries": [plan.to_dict() for plan in visible_plans],
     }
     if isinstance(visible_operation_plans, OperationPlan) and visible_operation_plans.repo_hooks:
         payload["repo_hooks"] = {
@@ -684,7 +684,7 @@ def emit_tracked_packages(
     *,
     engine: Any,
     packages: Sequence[Any],
-    invalid_bindings: Sequence[Any],
+    invalid_package_entries: Sequence[Any],
     json_output: bool,
     use_color: bool,
 ) -> int:
@@ -692,7 +692,7 @@ def emit_tracked_packages(
         "mode": "dry-run",
         "operation": "list-tracked",
         "packages": [package.to_dict() for package in packages],
-        "invalid_bindings": [binding.to_dict() for binding in invalid_bindings],
+        "invalid_package_entries": [binding.to_dict() for binding in invalid_package_entries],
     }
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -708,7 +708,7 @@ def emit_tracked_packages(
             )
             + f" {cli_style.render_tracked_state(package.state, use_color=use_color)}"
         )
-    for binding in invalid_bindings:
+    for binding in invalid_package_entries:
         print(
             f"{_render_tracked_issue_label(engine, binding, use_color=use_color)} "
             f"{cli_style.render_tracked_state(binding.state, use_color=use_color)}"
@@ -732,7 +732,7 @@ def _doctor_check_category(check: Any) -> str:
         return "environment"
     if check.key in {"repo_path", "profiles"}:
         return "repository"
-    if check.key in {"state_dir", "bindings_file", "orphan_bindings_file", "snapshots"}:
+    if check.key in {"state_dir", "tracked_packages_file", "orphan_tracked_packages_file", "snapshots"}:
         return "state"
     return "other"
 
@@ -780,14 +780,14 @@ def emit_doctor_summary(*, engine: Any, summary: Any, json_output: bool, use_col
             f"  {cli_style.render_error_metadata_label('warnings:', use_color=use_color)} {len(summary.warning_checks)}"
         )
         _print_doctor_check_list(checks=summary.warning_checks, use_color=use_color)
-    if summary.invalid_bindings:
+    if summary.invalid_package_entries:
         print(
-            f"  {cli_style.render_error_metadata_label('invalid bindings:', use_color=use_color)} {len(summary.invalid_bindings)}"
+            f"  {cli_style.render_error_metadata_label('invalid package entries:', use_color=use_color)} {len(summary.invalid_package_entries)}"
         )
         print(
             "  issues:"
         )
-        for issue in summary.invalid_bindings:
+        for issue in summary.invalid_package_entries:
             print(
                 "  - "
                 f"{_render_tracked_issue_label(engine, issue, use_color=use_color)} "
@@ -862,13 +862,13 @@ def emit_variable_detail(*, variable_detail: Any, json_output: bool, use_color: 
     return 0
 
 
-def emit_forgotten_binding(*, binding: Any, still_tracked_package: Any, json_output: bool, use_color: bool) -> int:
+def emit_untracked_package_entry(*, binding: Any, still_tracked_package: Any, json_output: bool, use_color: bool) -> int:
     payload = {
         "mode": "state-only",
         "operation": "untrack",
-        "binding": {
+        "package_entry": {
             "repo": binding.repo,
-            "selector": binding.selector,
+            "package_id": binding.selector,
             "profile": binding.profile,
         },
     }
@@ -876,7 +876,7 @@ def emit_forgotten_binding(*, binding: Any, still_tracked_package: Any, json_out
         payload["still_tracked_package"] = {
             "repo": still_tracked_package.repo,
             "package_id": still_tracked_package.package_id,
-            "bindings": [
+            "package_entries": [
                 {
                     **binding_detail.binding.to_dict(),
                     "tracked_reason": binding_detail.tracked_reason,
@@ -910,13 +910,13 @@ def emit_forgotten_binding(*, binding: Any, still_tracked_package: Any, json_out
     return 0
 
 
-def emit_tracked_binding(*, binding: Any, json_output: bool, use_color: bool) -> int:
+def emit_tracked_package_entry(*, binding: Any, json_output: bool, use_color: bool) -> int:
     payload = {
         "mode": "state-only",
         "operation": "track",
-        "binding": {
+        "package_entry": {
             "repo": binding.repo,
-            "selector": binding.selector,
+            "package_id": binding.selector,
             "profile": binding.profile,
         },
     }
@@ -997,9 +997,9 @@ def emit_kept_binding(*, binding: Any, json_output: bool, use_color: bool) -> in
     payload = {
         "mode": "state-only",
         "operation": "track",
-        "binding": {
+        "package_entry": {
             "repo": binding.repo,
-            "selector": binding.selector,
+            "package_id": binding.selector,
             "profile": binding.profile,
         },
         "recorded": False,
@@ -1016,9 +1016,9 @@ def emit_skipped_tracking(*, binding: Any, json_output: bool, use_color: bool) -
     payload = {
         "mode": "state-only",
         "operation": "track",
-        "binding": {
+        "package_entry": {
             "repo": binding.repo,
-            "selector": binding.selector,
+            "package_id": binding.selector,
             "profile": binding.profile,
         },
         "recorded": False,

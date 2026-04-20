@@ -9,9 +9,9 @@ from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
 from dotman.projection import default_pull_view_live, infer_target_kind
 from dotman.models import (
     Binding,
-    TrackedBindingSummary,
+    TrackedPackageEntrySummary,
     TrackedOwnedTargetDetail,
-    TrackedPackageBindingDetail,
+    TrackedPackageEntryDetail,
     TrackedTargetSummary,
     PackageSpec,
     TargetPlan,
@@ -142,7 +142,7 @@ def find_tracked_package_matches(
             package_id,
             engine._bound_profile_for_package(repo, package_id, binding.profile),
         ): repo
-        for repo, binding, _selector_kind, package_ids in engine._iter_tracked_bindings()
+        for repo, binding, _selector_kind, package_ids in engine._iter_tracked_package_entries()
         if repo in candidate_repos
         for package_id in package_ids
     }
@@ -175,7 +175,7 @@ def describe_package_binding(
     package_ids: list[str],
     *,
     executable: bool,
-) -> TrackedPackageBindingDetail:
+) -> TrackedPackageEntryDetail:
     resolved_packages = [repo.resolve_package(candidate_id) for candidate_id in package_ids]
     profile_vars, lineage = repo.compose_profile(binding.profile)
     package_vars: dict[str, Any] = {}
@@ -202,8 +202,8 @@ def describe_package_binding(
     targets = summarize_targets(repo, package, context)
     tracked_reason = "explicit" if package_id in engine._selected_package_ids(repo, binding.selector, selector_kind) else "implicit"
 
-    return TrackedPackageBindingDetail(
-        binding=TrackedBindingSummary(
+    return TrackedPackageEntryDetail(
+        binding=TrackedPackageEntrySummary(
             repo=repo.config.name,
             selector=binding.selector,
             profile=binding.profile,
@@ -303,7 +303,7 @@ def describe_owned_package_targets(
                 continue
             owned_targets.append(
                 TrackedOwnedTargetDetail(
-                    binding=TrackedBindingSummary(
+                    binding=TrackedPackageEntrySummary(
                         repo=plan.binding.repo,
                         selector=plan.binding.selector,
                         profile=plan.binding.profile,

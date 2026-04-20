@@ -40,14 +40,14 @@ def test_pull_cli_accepts_explicit_binding_and_does_not_write_state(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "nvim"',
+                'package_id = "nvim"',
                 'profile = "basic"',
                 "",
             ]
@@ -69,18 +69,18 @@ def test_pull_cli_accepts_explicit_binding_and_does_not_write_state(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["operation"] == "pull"
-    assert len(payload["bindings"]) == 1
-    assert payload["bindings"][0]["repo"] == "example"
-    assert payload["bindings"][0]["selector"] == "nvim"
-    assert payload["bindings"][0]["profile"] == "basic"
-    assert payload["bindings"][0]["targets"][0]["action"] == "update"
-    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert len(payload["package_entries"]) == 1
+    assert payload["package_entries"][0]["repo"] == "example"
+    assert payload["package_entries"][0]["package_id"] == "nvim"
+    assert payload["package_entries"][0]["profile"] == "basic"
+    assert payload["package_entries"][0]["targets"][0]["action"] == "update"
+    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "example"',
-            'selector = "nvim"',
+            'package_id = "nvim"',
             'profile = "basic"',
             "",
         ]
@@ -132,14 +132,14 @@ def test_pull_cli_reviews_diffs_before_selection(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "nvim"',
+                'package_id = "nvim"',
                 'profile = "basic"',
                 "",
             ]
@@ -187,14 +187,14 @@ def test_pull_cli_returns_130_when_diff_review_aborts(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "nvim"',
+                'package_id = "nvim"',
                 'profile = "basic"',
                 "",
             ]
@@ -252,19 +252,19 @@ def test_pull_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "work/git"',
+                'package_id = "work/git"',
                 'profile = "work"',
                 "",
             ]
@@ -321,14 +321,14 @@ def test_pull_cli_accepts_partial_owned_package_match(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -368,14 +368,14 @@ def test_pull_cli_accepts_long_dry_run_flag(
     monkeypatch.setenv("HOME", str(home))
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "nvim"',
+                'package_id = "nvim"',
                 'profile = "basic"',
                 "",
             ]
@@ -398,9 +398,9 @@ def test_pull_cli_accepts_long_dry_run_flag(
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "dry-run"
     assert payload["operation"] == "pull"
-    assert payload["bindings"][0]["repo"] == "example"
-    assert payload["bindings"][0]["selector"] == "nvim"
-    assert payload["bindings"][0]["targets"][0]["action"] == "update"
+    assert payload["package_entries"][0]["repo"] == "example"
+    assert payload["package_entries"][0]["package_id"] == "nvim"
+    assert payload["package_entries"][0]["targets"][0]["action"] == "update"
 
 
 def test_pull_cli_emits_dry_run_json(
@@ -417,14 +417,14 @@ def test_pull_cli_emits_dry_run_json(
     monkeypatch.setenv("HOME", str(home))
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "nvim"',
+                'package_id = "nvim"',
                 'profile = "basic"',
                 "",
             ]
@@ -447,9 +447,9 @@ def test_pull_cli_emits_dry_run_json(
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "dry-run"
     assert payload["operation"] == "pull"
-    assert payload["bindings"][0]["repo"] == "example"
-    assert payload["bindings"][0]["selector"] == "nvim"
-    assert payload["bindings"][0]["targets"][0]["action"] == "update"
+    assert payload["package_entries"][0]["repo"] == "example"
+    assert payload["package_entries"][0]["package_id"] == "nvim"
+    assert payload["package_entries"][0]["targets"][0]["action"] == "update"
 
 
 def test_pull_cli_human_dry_run_output_includes_header_and_context(
@@ -466,14 +466,14 @@ def test_pull_cli_human_dry_run_output_includes_header_and_context(
     monkeypatch.setenv("HOME", str(home))
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "nvim"',
+                'package_id = "nvim"',
                 'profile = "basic"',
                 "",
             ]
@@ -514,14 +514,14 @@ def test_pull_cli_uses_tracked_binding_profile_without_prompting(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -543,9 +543,9 @@ def test_pull_cli_uses_tracked_binding_profile_without_prompting(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["operation"] == "pull"
-    assert payload["bindings"][0]["selector"] == "git"
-    assert payload["bindings"][0]["profile"] == "basic"
-    assert payload["bindings"][0]["targets"][0]["action"] == "delete"
+    assert payload["package_entries"][0]["package_id"] == "git"
+    assert payload["package_entries"][0]["profile"] == "basic"
+    assert payload["package_entries"][0]["targets"][0]["action"] == "delete"
 
 def test_pull_cli_allows_package_selected_through_tracked_owner_binding(
     tmp_path: Path,
@@ -559,14 +559,14 @@ def test_pull_cli_allows_package_selected_through_tracked_owner_binding(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -588,6 +588,6 @@ def test_pull_cli_allows_package_selected_through_tracked_owner_binding(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["operation"] == "pull"
-    assert payload["bindings"][0]["selector"] == "nvim"
-    assert payload["bindings"][0]["profile"] == "basic"
-    assert payload["bindings"][0]["targets"][0]["action"] == "delete"
+    assert payload["package_entries"][0]["package_id"] == "nvim"
+    assert payload["package_entries"][0]["profile"] == "basic"
+    assert payload["package_entries"][0]["targets"][0]["action"] == "delete"

@@ -679,10 +679,10 @@ def find_recorded_bindings_for_scope(engine: DotmanEngine, binding: Binding) -> 
     repo = engine.get_repo(binding.repo)
     existing_by_scope = {
         binding_replacement_scope(engine, existing): existing
-        for existing in engine.read_effective_bindings(repo)
+        for existing in engine.read_effective_tracked_package_entries(repo)
     }
     matches: list[Binding] = []
-    for expanded_binding in engine.expand_binding_for_tracking(binding):
+    for expanded_binding in engine.expand_tracked_package_entry(binding):
         existing = existing_by_scope.get(binding_replacement_scope(engine, expanded_binding))
         if existing is not None and existing not in matches:
             matches.append(existing)
@@ -696,11 +696,11 @@ def find_recorded_binding_for_scope(engine: DotmanEngine, binding: Binding) -> B
 
 def find_recorded_binding_exact(engine: DotmanEngine, binding: Binding) -> Binding | None:
     repo = engine.get_repo(binding.repo)
-    expanded_bindings = engine.expand_binding_for_tracking(binding)
+    expanded_bindings = engine.expand_tracked_package_entry(binding)
     if len(expanded_bindings) != 1:
         return None
     expanded_binding = expanded_bindings[0]
-    for existing in engine.read_effective_bindings(repo):
+    for existing in engine.read_effective_tracked_package_entries(repo):
         if (
             existing.repo == expanded_binding.repo
             and existing.selector == expanded_binding.selector
@@ -752,7 +752,7 @@ def ensure_track_binding_replacement_confirmed(
     json_output: bool,
     assume_yes: bool = False,
 ) -> bool:
-    expanded_bindings = engine.expand_binding_for_tracking(binding)
+    expanded_bindings = engine.expand_tracked_package_entry(binding)
     existing_bindings = find_recorded_bindings_for_scope(engine, binding)
     replacements = [
         (existing_binding, expanded_binding)
@@ -899,7 +899,7 @@ def prompt_for_conflicting_package_binding(
 ) -> Binding | None:
     if conflict.precedence != "implicit" or not interactive_mode_enabled(json_output=json_output):
         return None
-    candidate_bindings = set(engine.expand_binding_for_tracking(binding))
+    candidate_bindings = set(engine.expand_tracked_package_entry(binding))
     package_ids = sorted(
         {
             candidate.package_id
@@ -1120,8 +1120,8 @@ def resolve_tracked_binding_text(
     binding_label = selector if profile is None else f"{selector}@{profile}"
 
     if operation == "untrack":
-        resolved_selector, _resolved_profile, exact_matches, partial_matches = engine.find_persisted_binding_matches(binding_text)
-        package_matches, owner_bindings = engine._tracked_package_matches_for_untrack(
+        resolved_selector, _resolved_profile, exact_matches, partial_matches = engine.find_persisted_tracked_package_entry_matches(binding_text)
+        package_matches, owner_package_entries = engine._tracked_package_matches_for_untrack(
             selector=resolved_selector,
             profile=profile,
             repo_name=explicit_repo,
@@ -1167,7 +1167,7 @@ def resolve_tracked_binding_text(
             )
 
         def package_owner_error(package) -> ValueError:
-            matching_owner_bindings = [
+            matching_owner_package_entries = [
                 binding
                 for binding in package.bindings
                 if profile is None or binding.profile == profile
@@ -1179,7 +1179,7 @@ def resolve_tracked_binding_text(
                     profile=binding.profile,
                     selector_first=True,
                 )
-                for binding in matching_owner_bindings
+                for binding in matching_owner_package_entries
             )
             required_repo = explicit_repo or package.repo
             required_ref = render_package_label(
@@ -1287,7 +1287,7 @@ def resolve_tracked_binding_text(
     )
     if profile is not None:
         lookup_binding_text = f"{lookup_binding_text}@{profile}"
-    resolved_selector, resolved_profile, exact_matches, partial_matches, owner_bindings = (
+    resolved_selector, resolved_profile, exact_matches, partial_matches, owner_package_entries = (
         engine.find_tracked_binding_matches(lookup_binding_text)
     )
     binding_resolver = lambda match: ResolverOption(
@@ -1305,7 +1305,7 @@ def resolve_tracked_binding_text(
         field_kinds=build_binding_field_kinds(),
     )
 
-    package_matches, _package_owner_bindings = engine._tracked_package_matches_for_untrack(
+    package_matches, _package_owner_package_entries = engine._tracked_package_matches_for_untrack(
         selector=resolved_selector,
         profile=resolved_profile,
         repo_name=lookup_repo,
@@ -1449,13 +1449,13 @@ def resolve_tracked_binding_text(
             not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
         )
     except ValueError as exc:
-        if allow_package_owners and owner_bindings:
-            if len(owner_bindings) == 1:
-                owner_repo, owner_binding = owner_bindings[0]
+        if allow_package_owners and owner_package_entries:
+            if len(owner_package_entries) == 1:
+                owner_repo, owner_binding = owner_package_entries[0]
             elif interactive:
                 owner_repo, owner_binding = resolve_candidate_match(
                     exact_matches=[],
-                    partial_matches=owner_bindings,
+                    partial_matches=owner_package_entries,
                     query_text=binding_label,
                     interactive=interactive,
                     exact_header_text=f"Select a tracked package entry for '{binding_label}':",
@@ -1465,24 +1465,24 @@ def resolve_tracked_binding_text(
                     partial_error_text=f"{operation} target '{binding_label}' is ambiguous across tracked package entries: "
                     + ", ".join(
                         f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                        for repo, binding in owner_bindings
+                        for repo, binding in owner_package_entries
                     ),
                     not_found_text="unused",
                 )
             else:
                 candidates = ", ".join(
                     f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                    for repo, binding in owner_bindings
+                    for repo, binding in owner_package_entries
                 )
                 raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked package entries: {candidates}") from None
             return binding_from_owner_match((owner_repo, owner_binding))
-        if owner_bindings and not allow_package_owners:
+        if owner_package_entries and not allow_package_owners:
             owners = ", ".join(
                 f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                for repo, binding in owner_bindings
+                for repo, binding in owner_package_entries
             )
             repo_name, _selector, _profile = parse_binding_text(binding_text)
-            required_repo = repo_name or lookup_repo or owner_bindings[0][0].config.name
+            required_repo = repo_name or lookup_repo or owner_package_entries[0][0].config.name
             required_ref = f"{required_repo}:{resolved_selector}"
             raise ValueError(
                 f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
@@ -2041,7 +2041,7 @@ def select_non_conflicting_track_profile(
             continue
         _repo, candidate_binding, _selector_kind = engine.resolve_binding(binding_text, profile=candidate_profile)
         try:
-            engine.validate_recorded_binding(candidate_binding)
+            engine.validate_tracked_package_entry(candidate_binding)
         except ValueError:
             continue
         valid_profiles.append(candidate_profile)
@@ -2823,11 +2823,11 @@ def run_execution(
 
 
 
-def emit_tracked_packages(*, engine: DotmanEngine, packages: Sequence, invalid_bindings: Sequence, json_output: bool) -> int:
+def emit_tracked_packages(*, engine: DotmanEngine, packages: Sequence, invalid_package_entries: Sequence, json_output: bool) -> int:
     return cli_emit.emit_tracked_packages(
         engine=engine,
         packages=packages,
-        invalid_bindings=invalid_bindings,
+        invalid_package_entries=invalid_package_entries,
         json_output=json_output,
         use_color=colors_enabled(),
     )
@@ -2859,8 +2859,8 @@ def emit_variable_detail(*, variable_detail, json_output: bool) -> int:
 
 
 
-def emit_forgotten_binding(*, binding, still_tracked_package, json_output: bool) -> int:
-    return cli_emit.emit_forgotten_binding(
+def emit_untracked_package_entry(*, binding, still_tracked_package, json_output: bool) -> int:
+    return cli_emit.emit_untracked_package_entry(
         binding=binding,
         still_tracked_package=still_tracked_package,
         json_output=json_output,
@@ -2869,8 +2869,8 @@ def emit_forgotten_binding(*, binding, still_tracked_package, json_output: bool)
 
 
 
-def emit_tracked_binding(*, binding, json_output: bool) -> int:
-    return cli_emit.emit_tracked_binding(
+def emit_tracked_package_entry(*, binding, json_output: bool) -> int:
+    return cli_emit.emit_tracked_package_entry(
         binding=binding,
         json_output=json_output,
         use_color=colors_enabled(),
@@ -3055,7 +3055,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         select_non_conflicting_track_profile=select_non_conflicting_track_profile,
         ensure_track_binding_implicit_overrides_confirmed=ensure_track_binding_implicit_overrides_confirmed,
         find_recorded_binding_exact=find_recorded_binding_exact,
-        emit_tracked_binding=emit_tracked_binding,
+        emit_tracked_package_entry=emit_tracked_package_entry,
         resolve_add_package_text=resolve_add_package_text,
         interactive_mode_enabled=interactive_mode_enabled,
         add_editor_available=add_editor_available,
@@ -3082,7 +3082,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         review_rollback_actions_for_interactive_diffs=review_rollback_actions_for_interactive_diffs,
         emit_rollback_payload=emit_rollback_payload,
         run_rollback_execution=run_rollback_execution,
-        emit_forgotten_binding=emit_forgotten_binding,
+        emit_untracked_package_entry=emit_untracked_package_entry,
         find_remaining_tracked_package_after_untrack=find_remaining_tracked_package_after_untrack,
         emit_tracked_packages=emit_tracked_packages,
         resolve_tracked_package_text=resolve_tracked_package_text,

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from dotman.config import default_state_root
-from dotman.models import TrackedBindingIssue
+from dotman.models import TrackedPackageEntryIssue
 from dotman.toml_utils import TomlLoadError
 
 
@@ -37,7 +37,7 @@ class DoctorSummary:
     config_path: Path
     repo_count: int
     checks: list[DoctorCheck]
-    invalid_bindings: list[TrackedBindingIssue]
+    invalid_package_entries: list[TrackedPackageEntryIssue]
 
     @property
     def failed_checks(self) -> list[DoctorCheck]:
@@ -49,13 +49,13 @@ class DoctorSummary:
 
     @property
     def ok(self) -> bool:
-        return not self.failed_checks and not self.invalid_bindings
+        return not self.failed_checks and not self.invalid_package_entries
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "config_path": str(self.config_path),
             "checks": [check.to_dict() for check in self.checks],
-            "invalid_bindings": [issue.to_dict() for issue in self.invalid_bindings],
+            "invalid_package_entries": [issue.to_dict() for issue in self.invalid_package_entries],
             "ok": self.ok,
             "repo_count": self.repo_count,
         }
@@ -63,7 +63,7 @@ class DoctorSummary:
 
 def doctor_engine(engine: Any) -> DoctorSummary:
     checks: list[DoctorCheck] = [*_doctor_dependency_checks()]
-    raw_bindings_by_repo: dict[str, list[Any]] = {}
+    raw_tracked_package_entries_by_repo: dict[str, list[Any]] = {}
 
     for repo_config in engine.config.ordered_repos:
         repo = engine.get_repo(repo_config.name)
@@ -71,9 +71,9 @@ def doctor_engine(engine: Any) -> DoctorSummary:
         raw_bindings, binding_checks = _read_configured_bindings_for_doctor(engine, repo)
         checks.extend(binding_checks)
         if raw_bindings is not None:
-            raw_bindings_by_repo[repo.config.name] = raw_bindings
+            raw_tracked_package_entries_by_repo[repo.config.name] = raw_bindings
 
-    invalid_bindings = engine.list_invalid_explicit_bindings(bindings_by_repo=raw_bindings_by_repo)
+    invalid_package_entries = engine.list_invalid_explicit_bindings(bindings_by_repo=raw_tracked_package_entries_by_repo)
     orphan_issues, orphan_checks = _collect_orphan_binding_issues(engine)
     checks.extend(orphan_checks)
 
@@ -83,7 +83,7 @@ def doctor_engine(engine: Any) -> DoctorSummary:
         config_path=engine.config.config_path,
         repo_count=len(engine.config.repos),
         checks=checks,
-        invalid_bindings=engine._sorted_binding_issues([*invalid_bindings, *orphan_issues]),
+        invalid_package_entries=engine._sorted_tracked_package_entry_issues([*invalid_package_entries, *orphan_issues]),
     )
 
 
@@ -277,40 +277,40 @@ def _doctor_repo_checks(repo: Any) -> list[DoctorCheck]:
 
 
 def _read_configured_bindings_for_doctor(engine: Any, repo: Any) -> tuple[list[Any] | None, list[DoctorCheck]]:
-    state_path = repo.config.state_path / "bindings.toml"
+    state_path = repo.config.state_path / "tracked-packages.toml"
     try:
-        bindings = engine._read_bindings_file(state_path)
+        bindings = engine._read_tracked_package_entries_file(state_path)
     except TomlLoadError as exc:
         return None, [
             DoctorCheck(
-                key="bindings_file",
+                key="tracked_packages_file",
                 status="failed",
-                detail="tracked bindings file has invalid TOML",
+                detail="tracked packages file has invalid TOML",
                 path=exc.path or state_path,
                 repo_name=repo.config.name,
-                hint="Fix or remove the broken bindings.toml file.",
+                hint="Fix or remove the broken tracked-packages.toml file.",
             )
         ]
     except OSError as exc:
         return None, [
             DoctorCheck(
-                key="bindings_file",
+                key="tracked_packages_file",
                 status="failed",
-                detail=f"tracked bindings file could not be read: {exc.strerror or exc}",
+                detail=f"tracked packages file could not be read: {exc.strerror or exc}",
                 path=state_path,
                 repo_name=repo.config.name,
-                hint="Fix the filesystem path or remove the broken bindings.toml file.",
+                hint="Fix the filesystem path or remove the broken tracked-packages.toml file.",
             )
         ]
 
     return bindings, [
         DoctorCheck(
-            key="bindings_file",
+            key="tracked_packages_file",
             status="ok",
             detail=(
-                "tracked bindings file is readable"
+                "tracked packages file is readable"
                 if state_path.exists()
-                else "tracked bindings file not present yet"
+                else "tracked packages file not present yet"
             ),
             path=state_path,
             repo_name=repo.config.name,
@@ -318,50 +318,50 @@ def _read_configured_bindings_for_doctor(engine: Any, repo: Any) -> tuple[list[A
     ]
 
 
-def _collect_orphan_binding_issues(engine: Any) -> tuple[list[TrackedBindingIssue], list[DoctorCheck]]:
+def _collect_orphan_binding_issues(engine: Any) -> tuple[list[TrackedPackageEntryIssue], list[DoctorCheck]]:
     state_root = default_state_root() / "repos"
     if not state_root.exists():
         return [], []
 
     configured_state_keys = {repo_config.state_key for repo_config in engine.config.ordered_repos}
-    orphan_issues: list[TrackedBindingIssue] = []
+    orphan_issues: list[TrackedPackageEntryIssue] = []
     checks: list[DoctorCheck] = []
     for state_dir in sorted(path for path in state_root.iterdir() if path.is_dir()):
         if state_dir.name in configured_state_keys:
             continue
-        state_path = state_dir / "bindings.toml"
+        state_path = state_dir / "tracked-packages.toml"
         if not state_path.exists():
             continue
         try:
-            bindings = engine._read_bindings_file(state_path)
+            bindings = engine._read_tracked_package_entries_file(state_path)
         except TomlLoadError as exc:
             checks.append(
                 DoctorCheck(
-                    key="orphan_bindings_file",
+                    key="orphan_tracked_packages_file",
                     status="failed",
-                    detail="orphan bindings file has invalid TOML",
+                    detail="orphan tracked packages file has invalid TOML",
                     path=exc.path or state_path,
                     repo_name=None,
-                    hint="Fix or remove this orphan bindings.toml file, or add matching repo config.",
+                    hint="Fix or remove this orphan tracked-packages.toml file, or add matching repo config.",
                 )
             )
             continue
         except OSError as exc:
             checks.append(
                 DoctorCheck(
-                    key="orphan_bindings_file",
+                    key="orphan_tracked_packages_file",
                     status="failed",
-                    detail=f"orphan bindings file could not be read: {exc.strerror or exc}",
+                    detail=f"orphan tracked packages file could not be read: {exc.strerror or exc}",
                     path=state_path,
                     repo_name=None,
-                    hint="Fix or remove this orphan bindings.toml file, or add matching repo config.",
+                    hint="Fix or remove this orphan tracked-packages.toml file, or add matching repo config.",
                 )
             )
             continue
 
         for binding in bindings:
             orphan_issues.append(
-                TrackedBindingIssue(
+                TrackedPackageEntryIssue(
                     state_key=state_dir.name,
                     repo=binding.repo,
                     selector=binding.selector,

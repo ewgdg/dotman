@@ -36,19 +36,19 @@ def test_untrack_cli_updates_state(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -70,31 +70,30 @@ def test_untrack_cli_updates_state(
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "state-only"
     assert payload["operation"] == "untrack"
-    assert payload["binding"] == {
+    assert payload["package_entry"] == {
         "repo": "example",
-        "selector": "git",
+        "package_id": "git",
         "profile": "basic",
     }
     assert payload["still_tracked_package"] == {
         "repo": "example",
         "package_id": "git",
-        "bindings": [
+        "package_entries": [
             {
                 "repo": "example",
-                "selector": "core-cli-meta",
+                "package_id": "core-cli-meta",
                 "profile": "basic",
-                "selector_kind": "package",
                 "tracked_reason": "implicit",
             }
         ],
     }
-    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "example"',
-            'selector = "core-cli-meta"',
+            'package_id = "core-cli-meta"',
             'profile = "basic"',
             "",
         ]
@@ -112,14 +111,14 @@ def test_untrack_cli_allows_selector_only_when_unique(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -139,9 +138,9 @@ def test_untrack_cli_allows_selector_only_when_unique(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["binding"] == {
+    assert payload["package_entry"] == {
         "repo": "example",
-        "selector": "git",
+        "package_id": "git",
         "profile": "basic",
     }
 
@@ -180,14 +179,14 @@ def test_untrack_cli_reports_dependency_owner_for_untracked_package_selector(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]
@@ -224,26 +223,26 @@ def test_untrack_cli_rejects_removal_that_would_expose_implicit_conflict(
     state_dir.mkdir(parents=True, exist_ok=True)
     original_state = "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "fixture"',
-            'selector = "shared"',
+            'package_id = "shared"',
             'profile = "direct"',
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "fixture"',
-            'selector = "stack-a"',
+            'package_id = "stack-a"',
             'profile = "work"',
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "fixture"',
-            'selector = "stack-b"',
+            'package_id = "stack-b"',
             'profile = "personal"',
             "",
         ]
     )
-    (state_dir / "bindings.toml").write_text(original_state, encoding="utf-8")
+    (state_dir / "tracked-packages.toml").write_text(original_state, encoding="utf-8")
 
     exit_code = main(
         [
@@ -259,7 +258,7 @@ def test_untrack_cli_rejects_removal_that_would_expose_implicit_conflict(
     assert "cannot untrack 'fixture:shared@direct': removing this binding would expose conflicting implicit tracked targets" in error_output
     assert "fixture:stack-a@work -> fixture:shared.shared" in error_output
     assert "fixture:stack-b@personal -> fixture:shared.shared" in error_output
-    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == original_state
+    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == original_state
 
 def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(
     tmp_path: Path,
@@ -274,14 +273,14 @@ def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -313,19 +312,19 @@ def test_untrack_cli_reports_remaining_package_tracking_after_success(
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "core-cli-meta"',
+                'package_id = "core-cli-meta"',
                 'profile = "basic"',
                 "",
             ]

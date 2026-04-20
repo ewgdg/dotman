@@ -354,7 +354,6 @@ This document captures the current command and selector direction for `dotman`.
 - If the selector only names a package that is present through another explicit package entry, dotman should explain which tracked package entries currently include it instead of just saying "not tracked".
 - `untrack` should validate the resulting tracked package set before writing state.
 - If removing one explicit package entry would expose a tracked-target conflict among the remaining entries, `untrack` should fail and keep state unchanged.
-- `forget` may remain as a compatibility alias for `untrack` during transition, but `untrack` is the primary name.
 - Repo qualification may still be omitted when the tracked package entry is unique across configured repos.
 - Examples:
   - `dotman untrack main:git@default`
@@ -403,21 +402,21 @@ For v1, dotman should persist explicit package entries only.
 - no persisted target ownership yet
 - no persisted resolved package graph yet
 
-Current file format still uses `bindings.toml` and `[[bindings]]`, but each row represents one explicit tracked package entry.
+Tracked package state now uses `tracked-packages.toml` and `[[packages]]`, and each row represents one explicit tracked package entry.
 
 For example:
 
 ```toml
-version = 1
+schema_version = 1
 
-[[bindings]]
+[[packages]]
 repo = "main"
-selector = "desktop/niri"
+package_id = "desktop/niri"
 profile = "basic"
 
-[[bindings]]
+[[packages]]
 repo = "test"
-selector = "git"
+package_id = "git"
 profile = "personal"
 ```
 

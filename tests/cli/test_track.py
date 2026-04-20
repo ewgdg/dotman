@@ -47,16 +47,16 @@ def test_track_cli_emits_state_only_json(
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "state-only"
     assert payload["operation"] == "track"
-    assert payload["binding"]["repo"] == "example"
-    assert payload["binding"]["selector"] == "git"
-    assert payload["binding"]["profile"] == "basic"
-    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert payload["package_entry"]["repo"] == "example"
+    assert payload["package_entry"]["package_id"] == "git"
+    assert payload["package_entry"]["profile"] == "basic"
+    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "example"',
-            'selector = "git"',
+            'package_id = "git"',
             'profile = "basic"',
             "",
         ]
@@ -87,13 +87,13 @@ def test_track_cli_interactively_selects_profile_when_missing(
     output = capsys.readouterr().out
     assert "Select a profile for example:git:" in output
     assert "tracked example:git@basic" in output
-    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "example"',
-            'selector = "git"',
+            'package_id = "git"',
             'profile = "basic"',
             "",
         ]
@@ -115,14 +115,14 @@ def test_track_cli_interactively_switches_to_non_conflicting_profile(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "beta"',
+                'package_id = "beta"',
                 'profile = "basic"',
                 "",
             ]
@@ -147,19 +147,19 @@ def test_track_cli_interactively_switches_to_non_conflicting_profile(
     assert "Select a profile for fixture:alpha:" in output
     assert "Select a non-conflicting profile for fixture:alpha:" in output
     assert "tracked fixture:alpha@work" in output
-    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "fixture"',
-            'selector = "beta"',
-            'profile = "basic"',
-            "",
-            "[[bindings]]",
-            'repo = "fixture"',
-            'selector = "alpha"',
+            'package_id = "alpha"',
             'profile = "work"',
+            "",
+            "[[packages]]",
+            'repo = "fixture"',
+            'package_id = "beta"',
+            'profile = "basic"',
             "",
         ]
     )
@@ -223,13 +223,13 @@ def test_track_cli_interactively_selects_repo_for_exact_selector_collision(
     assert "alpha:sunshine [package]" in output
     assert "beta:sunshine [package]" in output
     assert "tracked beta:sunshine@host/linux" in output
-    assert (tmp_path / "state" / "dotman" / "repos" / "beta" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (tmp_path / "state" / "dotman" / "repos" / "beta" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "beta"',
-            'selector = "sunshine"',
+            'package_id = "sunshine"',
             'profile = "host/linux"',
             "",
         ]
@@ -260,13 +260,13 @@ def test_track_cli_interactively_selects_partial_selector_match(
     output = capsys.readouterr().out
     assert "Select a selector match for '1pass':" in output
     assert "tracked sandbox:linux/1password@host/linux" in output
-    assert (tmp_path / "state" / "dotman" / "repos" / "sandbox" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (tmp_path / "state" / "dotman" / "repos" / "sandbox" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "sandbox"',
-            'selector = "linux/1password"',
+            'package_id = "linux/1password"',
             'profile = "host/linux"',
             "",
         ]
@@ -301,9 +301,9 @@ def test_track_cli_accepts_slash_qualified_repo_selector_lookup(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["binding"]["repo"] == "beta"
-    assert payload["binding"]["selector"] == "sunshine"
-    assert payload["binding"]["profile"] == "host/linux"
+    assert payload["package_entry"]["repo"] == "beta"
+    assert payload["package_entry"]["package_id"] == "sunshine"
+    assert payload["package_entry"]["profile"] == "host/linux"
 
 def test_track_cli_rejects_unique_partial_profile_in_non_interactive_mode(
     tmp_path: Path,
@@ -427,14 +427,14 @@ def test_track_cli_confirms_before_updating_existing_binding_profile(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -456,13 +456,13 @@ def test_track_cli_confirms_before_updating_existing_binding_profile(
     assert "Select a profile for example:git:" in output
     assert "Confirm tracked package entry replacement for example:git:" in output
     assert "tracked example:git@work" in output
-    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "example"',
-            'selector = "git"',
+            'package_id = "git"',
             'profile = "work"',
             "",
         ]
@@ -481,14 +481,14 @@ def test_track_cli_keeps_existing_binding_when_profile_replacement_is_declined(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -509,13 +509,13 @@ def test_track_cli_keeps_existing_binding_when_profile_replacement_is_declined(
     output = capsys.readouterr().out
     assert "Confirm tracked package entry replacement for example:git:" in output
     assert "kept existing tracked package entry example:git@basic" in output
-    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "example"',
-            'selector = "git"',
+            'package_id = "git"',
             'profile = "basic"',
             "",
         ]
@@ -532,14 +532,14 @@ def test_track_cli_refuses_silent_profile_replacement_in_non_interactive_mode(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "git"',
+                'package_id = "git"',
                 'profile = "basic"',
                 "",
             ]
@@ -561,13 +561,13 @@ def test_track_cli_refuses_silent_profile_replacement_in_non_interactive_mode(
         "refusing to replace tracked package entry 'example:git@basic' with 'example:git@work' in non-interactive mode"
         in capsys.readouterr().err
     )
-    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "example"',
-            'selector = "git"',
+            'package_id = "git"',
             'profile = "basic"',
             "",
         ]
@@ -586,14 +586,14 @@ def test_track_cli_confirms_before_overriding_implicit_targets(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "os/arch"',
+                'package_id = "os/arch"',
                 'profile = "basic"',
                 "",
             ]
@@ -627,14 +627,14 @@ def test_track_cli_refuses_implicit_override_in_non_interactive_mode(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "example"',
-                'selector = "os/arch"',
+                'package_id = "os/arch"',
                 'profile = "basic"',
                 "",
             ]
@@ -665,7 +665,7 @@ def test_track_cli_writes_expanded_package_bindings_for_group_selector(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
-    state_path = tmp_path / "state" / "dotman" / "repos" / "example" / "bindings.toml"
+    state_path = tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml"
 
     exit_code = main(
         [
@@ -679,11 +679,11 @@ def test_track_cli_writes_expanded_package_bindings_for_group_selector(
     assert exit_code == 0
     assert state_path.read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "example"',
-            'selector = "core-cli-meta"',
+            'package_id = "core-cli-meta"',
             'profile = "basic"',
             "",
         ]
@@ -706,14 +706,14 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "beta-stack"',
+                'package_id = "beta-stack"',
                 'profile = "basic"',
                 "",
             ]
@@ -740,18 +740,18 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
     assert "Confirm explicit override for fixture:alpha@basic:" in output
     assert "implicit: fixture:beta-meta@basic (beta)" in output
     assert "tracked fixture:alpha@basic" in output
-    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == "\n".join(
+    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "fixture"',
-            'selector = "beta-meta"',
+            'package_id = "alpha"',
             'profile = "basic"',
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "fixture"',
-            'selector = "alpha"',
+            'package_id = "beta-meta"',
             'profile = "basic"',
             "",
         ]
@@ -774,14 +774,14 @@ def test_track_cli_lists_package_override_once_for_multi_target_package(
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 'repo = "fixture"',
-                'selector = "beta-stack"',
+                'package_id = "beta-stack"',
                 'profile = "basic"',
                 "",
             ]

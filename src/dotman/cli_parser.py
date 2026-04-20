@@ -259,13 +259,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_tracked_package_argument(untrack_parser)
 
-    forget_parser = subparsers.add_parser(
-        "forget",
-        help="Alias for untrack",
-        description="Alias for untrack",
-    )
-    add_tracked_package_argument(forget_parser)
-
     list_parser = subparsers.add_parser(
         "list",
         help="List tracked package state items",

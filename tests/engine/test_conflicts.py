@@ -150,13 +150,13 @@ def test_record_binding_rejects_conflicting_explicit_targets(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    engine.record_binding(engine.resolve_binding("example:git@basic")[1])
+    engine.record_tracked_package_entry(engine.resolve_binding("example:git@basic")[1])
 
     with pytest.raises(
         ValueError,
         match=r"conflicting explicit tracked targets for .+\.gitconfig: example:git@basic -> example:git\.gitconfig, example:work/git@work -> example:work/git\.gitconfig",
     ):
-        engine.record_binding(engine.resolve_binding("example:work/git@work")[1])
+        engine.record_tracked_package_entry(engine.resolve_binding("example:work/git@work")[1])
 
 def test_remove_binding_rejects_removal_that_exposes_implicit_conflict(
     tmp_path: Path,
@@ -173,26 +173,26 @@ def test_remove_binding_rejects_removal_that_exposes_implicit_conflict(
     state_dir.mkdir(parents=True, exist_ok=True)
     original_state = "\n".join(
         [
-            "version = 1",
+            "schema_version = 1",
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "fixture"',
-            'selector = "shared"',
+            'package_id = "shared"',
             'profile = "direct"',
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "fixture"',
-            'selector = "stack-a"',
+            'package_id = "stack-a"',
             'profile = "work"',
             "",
-            "[[bindings]]",
+            "[[packages]]",
             'repo = "fixture"',
-            'selector = "stack-b"',
+            'package_id = "stack-b"',
             'profile = "personal"',
             "",
         ]
     )
-    (state_dir / "bindings.toml").write_text(original_state, encoding="utf-8")
+    (state_dir / "tracked-packages.toml").write_text(original_state, encoding="utf-8")
 
     engine = DotmanEngine.from_config_path(config_path)
 
@@ -204,6 +204,6 @@ def test_remove_binding_rejects_removal_that_exposes_implicit_conflict(
             r"fixture:stack-a@work -> fixture:shared\.shared, fixture:stack-b@personal -> fixture:shared\.shared"
         ),
     ):
-        engine.remove_binding("fixture:shared@direct")
+        engine.remove_tracked_package_entry("fixture:shared@direct")
 
-    assert (state_dir / "bindings.toml").read_text(encoding="utf-8") == original_state
+    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == original_state

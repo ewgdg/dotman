@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from dotman.cli import build_parser
 from dotman.cli_commands import CliCommandHandlers, dispatch_command
 
@@ -34,7 +36,7 @@ def test_dispatch_command_uses_parsed_full_path_default() -> None:
         select_non_conflicting_track_profile=lambda **kwargs: None,
         ensure_track_binding_implicit_overrides_confirmed=lambda **kwargs: True,
         find_recorded_binding_exact=lambda **kwargs: None,
-        emit_tracked_binding=lambda **kwargs: 0,
+        emit_tracked_package_entry=lambda **kwargs: 0,
         resolve_add_package_text=lambda **kwargs: ("repo", "package"),
         interactive_mode_enabled=lambda **kwargs: False,
         add_editor_available=lambda: False,
@@ -61,7 +63,7 @@ def test_dispatch_command_uses_parsed_full_path_default() -> None:
         review_rollback_actions_for_interactive_diffs=lambda **kwargs: True,
         emit_rollback_payload=lambda **kwargs: 0,
         run_rollback_execution=lambda **kwargs: 0,
-        emit_forgotten_binding=lambda **kwargs: 0,
+        emit_untracked_package_entry=lambda **kwargs: 0,
         find_remaining_tracked_package_after_untrack=lambda **kwargs: None,
         emit_tracked_packages=emit_tracked_packages,
         resolve_tracked_package_text=lambda **kwargs: None,
@@ -76,11 +78,16 @@ def test_dispatch_command_uses_parsed_full_path_default() -> None:
     args = build_parser().parse_args(["list", "tracked"])
     engine = SimpleNamespace(
         config=SimpleNamespace(selection_menu=SimpleNamespace(full_paths=True)),
-        list_tracked_state=lambda: SimpleNamespace(packages=[], invalid_bindings=[]),
+        list_tracked_state=lambda: SimpleNamespace(packages=[], invalid_package_entries=[]),
     )
 
     exit_code = dispatch_command(args=args, engine_factory=lambda _: engine, handlers=handlers)
 
     assert exit_code == 0
     assert recorded["json_output"] is False
+
+
+def test_parser_rejects_removed_forget_command() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["forget", "example:git"])
 

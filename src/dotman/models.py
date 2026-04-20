@@ -179,7 +179,21 @@ class Binding:
 
 
 @dataclass(frozen=True)
-class TrackedBindingSummary:
+class SelectorQuery:
+    selector: str
+    repo: str | None = None
+    profile: str | None = None
+
+
+@dataclass(frozen=True)
+class TrackedPackageEntry:
+    repo: str
+    package_id: str
+    profile: str
+
+
+@dataclass(frozen=True)
+class TrackedPackageEntrySummary:
     repo: str
     selector: str
     profile: str
@@ -188,9 +202,8 @@ class TrackedBindingSummary:
     def to_dict(self) -> dict[str, Any]:
         return {
             "repo": self.repo,
-            "selector": self.selector,
+            "package_id": self.selector,
             "profile": self.profile,
-            "selector_kind": self.selector_kind,
         }
 
 
@@ -257,7 +270,7 @@ class TrackedPackageSummary:
     repo: str
     package_id: str
     description: str | None
-    bindings: list[TrackedBindingSummary]
+    bindings: list[TrackedPackageEntrySummary]
     state: str
     bound_profile: str | None = None
 
@@ -273,12 +286,12 @@ class TrackedPackageSummary:
             "bound_profile": self.bound_profile,
             "description": self.description,
             "state": self.state,
-            "bindings": [binding.to_dict() for binding in self.bindings],
+            "package_entries": [binding.to_dict() for binding in self.bindings],
         }
 
 
 @dataclass(frozen=True)
-class TrackedBindingIssue:
+class TrackedPackageEntryIssue:
     state_key: str
     repo: str
     selector: str
@@ -291,7 +304,7 @@ class TrackedBindingIssue:
         return {
             "state_key": self.state_key,
             "repo": self.repo,
-            "selector": self.selector,
+            "package_id": self.selector,
             "profile": self.profile,
             "state": self.state,
             "reason": self.reason,
@@ -300,8 +313,8 @@ class TrackedBindingIssue:
 
 
 @dataclass(frozen=True)
-class TrackedPackageBindingDetail:
-    binding: TrackedBindingSummary
+class TrackedPackageEntryDetail:
+    binding: TrackedPackageEntrySummary
     tracked_reason: str
     targets: list[TrackedTargetSummary]
     hooks: dict[str, list[HookPlan]]
@@ -317,7 +330,7 @@ class TrackedPackageBindingDetail:
 
 @dataclass(frozen=True)
 class TrackedOwnedTargetDetail:
-    binding: TrackedBindingSummary
+    binding: TrackedPackageEntrySummary
     target: TrackedTargetSummary
 
     def to_dict(self) -> dict[str, Any]:
@@ -349,7 +362,7 @@ class TrackedPackageDetail:
     repo: str
     package_id: str
     description: str | None
-    bindings: list[TrackedPackageBindingDetail]
+    bindings: list[TrackedPackageEntryDetail]
     owned_targets: list[TrackedOwnedTargetDetail]
     target_refs: list[TrackedTargetRefDetail] = field(default_factory=list)
     bound_profile: str | None = None
@@ -365,7 +378,7 @@ class TrackedPackageDetail:
             "package_ref": self.package_ref,
             "bound_profile": self.bound_profile,
             "description": self.description,
-            "bindings": [binding.to_dict() for binding in self.bindings],
+            "package_entries": [binding.to_dict() for binding in self.bindings],
             "owned_targets": [target.to_dict() for target in self.owned_targets],
             "target_refs": [target_ref.to_dict() for target_ref in self.target_refs],
         }
@@ -575,9 +588,8 @@ class BindingPlan:
     def to_dict(self) -> dict[str, Any]:
         return {
             "repo": self.binding.repo,
-            "selector": self.binding.selector,
+            "package_id": self.binding.selector,
             "profile": self.binding.profile,
-            "selector_kind": self.selector_kind,
             "packages": self.package_ids,
             "targets": [target.to_dict() for target in self.target_plans],
             "hooks": {name: [item.to_dict() for item in items] for name, items in self.hooks.items()},
@@ -603,7 +615,7 @@ class OperationPlan:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "bindings": [plan.to_dict() for plan in self.binding_plans],
+            "package_entries": [plan.to_dict() for plan in self.binding_plans],
             "repo_hooks": {
                 repo_name: {hook_name: [item.to_dict() for item in items] for hook_name, items in hooks.items()}
                 for repo_name, hooks in self.repo_hooks.items()

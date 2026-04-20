@@ -278,14 +278,14 @@ def _write_capture_fallback_execution_repo(repo_root: Path) -> None:
 def _write_tracked_binding(state_root: Path, *, repo_name: str = "fixture", selector: str = "app") -> None:
     state_dir = state_root / "dotman" / "repos" / repo_name
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "bindings.toml").write_text(
+    (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
-                "version = 1",
+                "schema_version = 1",
                 "",
-                "[[bindings]]",
+                "[[packages]]",
                 f'repo = "{repo_name}"',
-                f'selector = "{selector}"',
+                f'package_id = "{selector}"',
                 'profile = "default"',
                 "",
             ]
@@ -359,7 +359,7 @@ def test_push_cli_dry_run_emits_symlink_hazard_metadata(
     assert warning["live_path"] == str(live_root / "config.txt")
     assert warning["symlink_target"] == str(symlink_target)
     assert warning["target_kind"] == "file"
-    assert payload["bindings"][0]["selector"] == "app"
+    assert payload["package_entries"][0]["package_id"] == "app"
 
 
 
@@ -866,8 +866,8 @@ def test_push_cli_run_noop_dry_run_json_shows_hook_only_package(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["bindings"][0]["targets"] == []
-    assert set(payload["bindings"][0]["hooks"]) == {"guard_push", "pre_push", "post_push"}
+    assert payload["package_entries"][0]["targets"] == []
+    assert set(payload["package_entries"][0]["hooks"]) == {"guard_push", "pre_push", "post_push"}
 
 
 def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_and_does_not_create_snapshot(
