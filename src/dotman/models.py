@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 def package_ref_text(*, package_id: str, bound_profile: str | None = None) -> str:
@@ -172,13 +172,6 @@ class RepoIgnoreDefaults:
 
 
 @dataclass(frozen=True)
-class Binding:
-    repo: str
-    selector: str
-    profile: str
-
-
-@dataclass(frozen=True)
 class SelectorQuery:
     selector: str
     repo: str | None = None
@@ -186,10 +179,62 @@ class SelectorQuery:
 
 
 @dataclass(frozen=True)
+class Binding:
+    repo: str
+    selector: str
+    profile: str
+
+
+@dataclass(frozen=True)
 class TrackedPackageEntry:
     repo: str
     package_id: str
     profile: str
+
+
+@dataclass(frozen=True)
+class ResolvedPackageIdentity:
+    repo: str
+    package_id: str
+    bound_profile: str | None
+
+
+PackageSelectionSourceKind = Literal["selector_query", "tracked_entry", "dependency"]
+
+
+@dataclass(frozen=True)
+class ResolvedPackageSelection:
+    identity: ResolvedPackageIdentity
+    requested_profile: str
+    explicit: bool
+    source_kind: PackageSelectionSourceKind
+    source_selector: str | None = None
+    owner_identity: ResolvedPackageIdentity | None = None
+
+    @property
+    def repo_name(self) -> str:
+        return self.identity.repo
+
+    @property
+    def package_id(self) -> str:
+        return self.identity.package_id
+
+    @property
+    def bound_profile(self) -> str | None:
+        return self.identity.bound_profile
+
+    @property
+    def selection_label(self) -> str:
+        selector = self.source_selector or self.identity.package_id
+        return f"{self.identity.repo}:{selector}@{self.requested_profile}"
+
+
+def resolved_package_identity_key(identity: ResolvedPackageIdentity) -> tuple[str, str, str | None]:
+    return (identity.repo, identity.package_id, identity.bound_profile)
+
+
+def resolved_package_selection_key(selection: ResolvedPackageSelection) -> tuple[str, str, str | None]:
+    return resolved_package_identity_key(selection.identity)
 
 
 @dataclass(frozen=True)
@@ -571,51 +616,92 @@ def standalone_hook_target_summaries(
 
 
 @dataclass(frozen=True)
-class BindingPlan:
+class PackagePlan:
     operation: str
-    binding: Binding
-    selector_kind: str
-    package_ids: list[str]
+    selection: ResolvedPackageSelection
     variables: dict[str, Any]
     hooks: dict[str, list[HookPlan]]
     target_plans: list[TargetPlan]
     hook_plans: dict[str, list[HookPlan]] | None = field(default=None, repr=False)
-    package_bound_profiles: dict[str, str | None] = field(default_factory=dict, repr=False)
     repo_root: Path | None = None
     state_path: Path | None = None
     inferred_os: str | None = None
 
+    @property
+    def repo_name(self) -> str:
+        return self.selection.identity.repo
+
+    @property
+    def package_id(self) -> str:
+        return self.selection.identity.package_id
+
+    @property
+    def bound_profile(self) -> str | None:
+        return self.selection.identity.bound_profile
+
+    @property
+    def requested_profile(self) -> str:
+        return self.selection.requested_profile
+
+    @property
+    def binding(self) -> Binding:
+        return Binding(
+            repo=self.selection.identity.repo,
+            selector=self.selection.source_selector or self.selection.identity.package_id,
+            profile=self.selection.requested_profile,
+        )
+
+    @property
+    def selector_kind(self) -> str:
+        if self.selection.source_selector is not None and self.selection.source_selector != self.selection.identity.package_id:
+            return "group"
+        return "package"
+
+    @property
+    def package_ids(self) -> list[str]:
+        return [self.selection.identity.package_id]
+
     def to_dict(self) -> dict[str, Any]:
         return {
-            "repo": self.binding.repo,
-            "package_id": self.binding.selector,
-            "profile": self.binding.profile,
-            "packages": self.package_ids,
+            "repo": self.selection.identity.repo,
+            "package_id": self.selection.identity.package_id,
+            "bound_profile": self.selection.identity.bound_profile,
+            "requested_profile": self.selection.requested_profile,
+            "explicit": self.selection.explicit,
+            "source_kind": self.selection.source_kind,
+            "source_selector": self.selection.source_selector,
             "targets": [target.to_dict() for target in self.target_plans],
             "hooks": {name: [item.to_dict() for item in items] for name, items in self.hooks.items()},
         }
 
 
+BindingPlan = PackagePlan
+
+
 @dataclass(frozen=True)
 class OperationPlan:
     operation: str
-    binding_plans: tuple[BindingPlan, ...]
+    package_plans: tuple[PackagePlan, ...]
     repo_hooks: dict[str, dict[str, list[HookPlan]]] = field(default_factory=dict)
     repo_hook_plans: dict[str, dict[str, list[HookPlan]]] | None = field(default=None, repr=False)
     repo_order: tuple[str, ...] = ()
 
     def __iter__(self):
-        return iter(self.binding_plans)
+        return iter(self.package_plans)
+
+    @property
+    def binding_plans(self) -> tuple[PackagePlan, ...]:
+        return self.package_plans
 
     def __len__(self) -> int:
-        return len(self.binding_plans)
+        return len(self.package_plans)
 
-    def __getitem__(self, index: int) -> BindingPlan:
-        return self.binding_plans[index]
+    def __getitem__(self, index: int) -> PackagePlan:
+        return self.package_plans[index]
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "package_entries": [plan.to_dict() for plan in self.binding_plans],
+            "packages": [plan.to_dict() for plan in self.package_plans],
             "repo_hooks": {
                 repo_name: {hook_name: [item.to_dict() for item in items] for hook_name, items in hooks.items()}
                 for repo_name, hooks in self.repo_hooks.items()
@@ -623,10 +709,14 @@ class OperationPlan:
         }
 
 
-def binding_plans_for_operation_plan(plans: OperationPlan | list[BindingPlan] | tuple[BindingPlan, ...]) -> list[BindingPlan]:
+def package_plans_for_operation_plan(plans: OperationPlan | list[PackagePlan] | tuple[PackagePlan, ...]) -> list[PackagePlan]:
     if isinstance(plans, OperationPlan):
-        return list(plans.binding_plans)
+        return list(plans.package_plans)
     return list(plans)
+
+
+def binding_plans_for_operation_plan(plans: OperationPlan | list[PackagePlan] | tuple[PackagePlan, ...]) -> list[PackagePlan]:
+    return package_plans_for_operation_plan(plans)
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,7 @@ from typing import Any
 from dotman.config import expand_path
 from dotman.ignore import IgnoreMatcher
 from dotman.manifest import merge_ignore_patterns
-from dotman.models import Binding, PackageSpec, TargetPlan, TargetSpec
+from dotman.models import PackageSpec, ResolvedPackageSelection, TargetPlan, TargetSpec
 from dotman.templates import render_template_string
 
 
@@ -37,12 +37,26 @@ class TrackedTargetCandidate:
     live_path: Path
     precedence: int
     precedence_name: str
-    binding: Binding
-    binding_label: str
+    selection: ResolvedPackageSelection
+    selection_label: str
     package_id: str
     target_name: str
     target_label: str
     signature: tuple[Any, ...]
+
+    @property
+    def binding_label(self) -> str:
+        return self.selection_label
+
+    @property
+    def binding(self):
+        from dotman.models import Binding
+
+        return Binding(
+            repo=self.selection.identity.repo,
+            selector=self.selection.source_selector or self.selection.identity.package_id,
+            profile=self.selection.requested_profile,
+        )
 
 
 @dataclass(frozen=True)
@@ -98,13 +112,13 @@ def resolve_tracked_target_winners(
                 live_path=live_path,
                 precedence=first.precedence_name,
                 contenders=[
-                    f"{candidate.binding_label} -> {candidate.target_label}"
-                    for candidate in sorted(contenders, key=lambda item: (item.binding_label, item.target_label))
+                    f"{candidate.selection_label} -> {candidate.target_label}"
+                    for candidate in sorted(contenders, key=lambda item: (item.selection_label, item.target_label))
                 ],
                 candidates=sorted(
                     contenders,
                     key=lambda item: (
-                        item.binding_label,
+                        item.selection_label,
                         item.target_label,
                     ),
                 ),

@@ -9,6 +9,11 @@ from dotman.ignore import list_directory_files, matches_ignore_pattern
 from dotman.models import (
     Binding,
     BindingPlan,
+    PackagePlan,
+    ResolvedPackageIdentity,
+    ResolvedPackageSelection,
+    SelectorQuery,
+    TrackedPackageEntry,
     TrackedPackageEntrySummary,
     TrackedPackageEntryDetail,
     TrackedPackageDetail,
@@ -148,20 +153,90 @@ class DotmanEngine:
         raise ValueError(f"selector '{selector}' did not match any package or group")
 
     def resolve_binding(self, binding_text: str, *, profile: str | None = None) -> tuple[Repository, Binding, str]:
-        explicit_repo, selector, selector_profile = parse_binding_text(binding_text)
+        repo, query, selector_kind = self.resolve_selector_query_text(binding_text, profile=profile)
+        return repo, Binding(repo=repo.config.name, selector=query.selector, profile=query.profile or ""), selector_kind
+
+    def resolve_selector_query_text(self, query_text: str, *, profile: str | None = None) -> tuple[Repository, SelectorQuery, str]:
+        explicit_repo, selector, selector_profile = parse_binding_text(query_text)
         repo, resolved_selector, selector_kind = self.resolve_selector(selector, explicit_repo)
         resolved_profile = profile or selector_profile
         if not resolved_profile:
             raise ValueError("profile is required in non-interactive mode")
-        return repo, Binding(repo=repo.config.name, selector=resolved_selector, profile=resolved_profile), selector_kind
+        return repo, SelectorQuery(selector=resolved_selector, repo=repo.config.name, profile=resolved_profile), selector_kind
+
+    def _resolved_package_identity(self, repo: Repository, package_id: str, requested_profile: str) -> ResolvedPackageIdentity:
+        return ResolvedPackageIdentity(
+            repo=repo.config.name,
+            package_id=package_id,
+            bound_profile=self._bound_profile_for_package(repo, package_id, requested_profile),
+        )
+
+    def _resolved_package_selection(
+        self,
+        *,
+        repo: Repository,
+        package_id: str,
+        requested_profile: str,
+        explicit: bool,
+        source_kind: str,
+        source_selector: str | None = None,
+        owner_identity: ResolvedPackageIdentity | None = None,
+    ) -> ResolvedPackageSelection:
+        return ResolvedPackageSelection(
+            identity=self._resolved_package_identity(repo, package_id, requested_profile),
+            requested_profile=requested_profile,
+            explicit=explicit,
+            source_kind=source_kind,
+            source_selector=source_selector,
+            owner_identity=owner_identity,
+        )
+
+    def _tracked_entry_from_binding(self, binding: Binding) -> TrackedPackageEntry:
+        return TrackedPackageEntry(repo=binding.repo, package_id=binding.selector, profile=binding.profile)
+
+    def _tracked_entries_by_repo_from_bindings(
+        self,
+        bindings_by_repo: dict[str, list[Any]] | None,
+    ) -> dict[str, list[TrackedPackageEntry]] | None:
+        if bindings_by_repo is None:
+            return None
+        return {
+            repo_name: [
+                entry if isinstance(entry, TrackedPackageEntry) else self._tracked_entry_from_binding(entry)
+                for entry in entries
+            ]
+            for repo_name, entries in bindings_by_repo.items()
+        }
+
+    def plan_push_query(self, query_text: str, *, profile: str | None = None) -> OperationPlan:
+        _repo, query, _selector_kind = self.resolve_selector_query_text(query_text, profile=profile)
+        selections = self._planning_helpers().resolve_selector_query(self, query, operation="push")
+        plans = [
+            self._build_package_plan(self.get_repo(selection.identity.repo), selection, operation="push")
+            for selection in selections
+        ]
+        return self._build_operation_plan(plans, operation="push")
+
+    def plan_pull_query(self, query_text: str, *, profile: str | None = None) -> OperationPlan:
+        _repo, query, _selector_kind = self.resolve_selector_query_text(query_text, profile=profile)
+        selections = self._planning_helpers().resolve_selector_query(self, query, operation="pull")
+        plans = [
+            self._build_package_plan(self.get_repo(selection.identity.repo), selection, operation="pull")
+            for selection in selections
+        ]
+        return self._build_operation_plan(plans, operation="pull")
 
     def plan_push_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
-        repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
-        return self._build_plan(repo, binding, selector_kind, operation="push")
+        operation_plan = self.plan_push_query(binding_text, profile=profile)
+        if len(operation_plan.package_plans) != 1:
+            raise ValueError("package-centric planning returns multiple package plans; use plan_push_query")
+        return operation_plan.package_plans[0]
 
     def plan_pull_binding(self, binding_text: str, *, profile: str | None = None) -> BindingPlan:
-        repo, binding, selector_kind = self.resolve_binding(binding_text, profile=profile)
-        return self._build_plan(repo, binding, selector_kind, operation="pull")
+        operation_plan = self.plan_pull_query(binding_text, profile=profile)
+        if len(operation_plan.package_plans) != 1:
+            raise ValueError("package-centric planning returns multiple package plans; use plan_pull_query")
+        return operation_plan.package_plans[0]
 
     def resolve_tracked_binding(
         self,
@@ -577,11 +652,25 @@ class DotmanEngine:
         return planning
 
     def _build_plan(self, repo: Repository, binding: Binding, selector_kind: str, *, operation: str) -> BindingPlan:
-        return self._planning_helpers().build_plan(
+        del selector_kind
+        return self._build_package_plan(
+            repo,
+            self._resolved_package_selection(
+                repo=repo,
+                package_id=binding.selector,
+                requested_profile=binding.profile,
+                explicit=True,
+                source_kind="selector_query",
+                source_selector=binding.selector,
+            ),
+            operation=operation,
+        )
+
+    def _build_package_plan(self, repo: Repository, selection: ResolvedPackageSelection, *, operation: str) -> PackagePlan:
+        return self._planning_helpers().build_package_plan(
             self,
             repo,
-            binding,
-            selector_kind,
+            selection,
             operation=operation,
         )
 
@@ -594,10 +683,10 @@ class DotmanEngine:
         return self._planning_helpers().build_tracked_plans(
             self,
             operation=operation,
-            bindings_by_repo=bindings_by_repo,
+            entries_by_repo=self._tracked_entries_by_repo_from_bindings(bindings_by_repo),
         )
 
-    def _build_operation_plan(self, plans: list[BindingPlan], *, operation: str, allow_standalone_noop_hooks: bool = False, excluded_repo_names: set[str] | None = None) -> OperationPlan:
+    def _build_operation_plan(self, plans: list[PackagePlan], *, operation: str, allow_standalone_noop_hooks: bool = False, excluded_repo_names: set[str] | None = None) -> OperationPlan:
         return self._planning_helpers().build_operation_plan(
             plans,
             repo_by_name={repo_config.name: self.get_repo(repo_config.name) for repo_config in self.config.ordered_repos},
@@ -611,15 +700,28 @@ class DotmanEngine:
         *,
         operation: str,
         bindings_by_repo: dict[str, list[Binding]] | None = None,
+        entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
     ) -> tuple[list[BindingPlan], dict[Path, list[TrackedTargetCandidate]]]:
         return self._planning_helpers().collect_tracked_candidates(
             self,
             operation=operation,
-            bindings_by_repo=bindings_by_repo,
+            entries_by_repo=entries_by_repo or self._tracked_entries_by_repo_from_bindings(bindings_by_repo),
         )
 
     def preview_binding_implicit_overrides(self, binding: Binding) -> list[TrackedTargetOverride]:
-        return self._planning_helpers().preview_binding_implicit_overrides(self, binding)
+        return self.preview_package_selection_implicit_overrides(
+            self._resolved_package_selection(
+                repo=self.get_repo(binding.repo),
+                package_id=binding.selector,
+                requested_profile=binding.profile,
+                explicit=True,
+                source_kind="selector_query",
+                source_selector=binding.selector,
+            )
+        )
+
+    def preview_package_selection_implicit_overrides(self, selection: ResolvedPackageSelection) -> list[TrackedTargetOverride]:
+        return self._planning_helpers().preview_package_selection_implicit_overrides(self, selection)
 
     def _tracked_target_signature(self, target: Any) -> tuple[Any, ...]:
         return self._planning_helpers().tracked_target_signature(target)
@@ -636,7 +738,7 @@ class DotmanEngine:
         packages: list[PackageSpec],
         context: dict[str, Any],
         *,
-        binding: Binding,
+        selection: ResolvedPackageSelection,
         operation: str | None = None,
         inferred_os: str,
         variables: dict[str, Any],
@@ -646,7 +748,7 @@ class DotmanEngine:
             repo,
             packages,
             context,
-            binding=binding,
+            selection=selection,
             operation=operation,
             inferred_os=inferred_os,
             variables=variables,
@@ -659,7 +761,7 @@ class DotmanEngine:
         repo: Repository,
         packages: list[PackageSpec],
         context: dict[str, Any],
-        binding: Binding,
+        selection: ResolvedPackageSelection,
         operation: str,
         inferred_os: str,
         declaration_package_ids: set[str],
@@ -669,7 +771,7 @@ class DotmanEngine:
             repo=repo,
             packages=packages,
             context=context,
-            binding=binding,
+            selection=selection,
             operation=operation,
             inferred_os=inferred_os,
             declaration_package_ids=declaration_package_ids,
@@ -704,7 +806,7 @@ class DotmanEngine:
         live_path: Path,
         render_command: str | None,
         context: dict[str, Any],
-        binding: Binding,
+        selection: ResolvedPackageSelection,
         operation: str,
         inferred_os: str,
     ) -> tuple[bytes, str]:
@@ -717,7 +819,7 @@ class DotmanEngine:
             live_path=live_path,
             render_command=render_command,
             context=context,
-            binding=binding,
+            selection=selection,
             operation=operation,
             inferred_os=inferred_os,
         )
@@ -751,7 +853,7 @@ class DotmanEngine:
         render_command: str | None,
         capture_command: str | None,
         context: dict[str, Any],
-        binding: Binding,
+        selection: ResolvedPackageSelection,
         operation: str,
         inferred_os: str,
         pull_view_repo: str,
@@ -768,7 +870,7 @@ class DotmanEngine:
             render_command=render_command,
             capture_command=capture_command,
             context=context,
-            binding=binding,
+            selection=selection,
             operation=operation,
             inferred_os=inferred_os,
             pull_view_repo=pull_view_repo,
@@ -787,7 +889,7 @@ class DotmanEngine:
         render_command: str | None,
         capture_command: str | None,
         context: dict[str, Any],
-        binding: Binding,
+        selection: ResolvedPackageSelection,
         operation: str,
         inferred_os: str,
         pull_view_repo: str,
@@ -804,7 +906,7 @@ class DotmanEngine:
             render_command=render_command,
             capture_command=capture_command,
             context=context,
-            binding=binding,
+            selection=selection,
             operation=operation,
             inferred_os=inferred_os,
             pull_view_repo=pull_view_repo,
@@ -824,7 +926,7 @@ class DotmanEngine:
         render_command: str | None,
         capture_command: str | None,
         context: dict[str, Any],
-        binding: Binding,
+        selection: ResolvedPackageSelection,
         operation: str,
         inferred_os: str,
     ) -> bytes:
@@ -840,7 +942,7 @@ class DotmanEngine:
             render_command=render_command,
             capture_command=capture_command,
             context=context,
-            binding=binding,
+            selection=selection,
             operation=operation,
             inferred_os=inferred_os,
         )
@@ -854,7 +956,7 @@ class DotmanEngine:
         repo_path: Path,
         live_path: Path,
         command: str,
-        binding: Binding,
+        selection: ResolvedPackageSelection,
         operation: str,
         inferred_os: str,
         context: dict[str, Any],
@@ -867,7 +969,7 @@ class DotmanEngine:
             repo_path=repo_path,
             live_path=live_path,
             command=command,
-            binding=binding,
+            selection=selection,
             operation=operation,
             inferred_os=inferred_os,
             context=context,
@@ -881,7 +983,7 @@ class DotmanEngine:
         target: Any,
         repo_path: Path,
         live_path: Path,
-        binding: Binding,
+        selection: ResolvedPackageSelection,
         operation: str,
         inferred_os: str,
         context: dict[str, Any],
@@ -892,7 +994,7 @@ class DotmanEngine:
             target=target,
             repo_path=repo_path,
             live_path=live_path,
-            binding=binding,
+            selection=selection,
             operation=operation,
             inferred_os=inferred_os,
             context=context,
