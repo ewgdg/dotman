@@ -23,8 +23,9 @@ from dotman.diff_review import (
 )
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_binding_text, parse_package_ref_text
 from dotman.models import (
-    Binding,
+    FullSpecSelector,
     OperationPlan,
+    ResolvedSelector,
     finalize_hook_plans_for_targets,
     package_ref_text,
     package_plans_for_operation_plan,
@@ -119,8 +120,8 @@ def style_text(text: str, *codes: str) -> str:
     return cli_style.style_text(text, *codes)
 
 
-def repo_name_from_binding_label(binding_label: str) -> str:
-    return cli_style.repo_name_from_binding_label(binding_label)
+def repo_name_from_selection_label(selection_label: str) -> str:
+    return cli_style.repo_name_from_selection_label(selection_label)
 
 
 def repo_qualified_selector_text(*, repo_name: str, selector: str) -> str:
@@ -208,11 +209,11 @@ def render_binding_label(*, repo_name: str, selector: str, profile: str, selecto
     )
 
 
-def render_binding_reference(binding: Binding) -> str:
+def render_binding_reference(binding: FullSpecSelector) -> str:
     return cli_style.render_binding_reference(binding, use_color=colors_enabled())
 
 
-def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: Binding):
+def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: FullSpecSelector):
     try:
         repo = engine.get_repo(binding.repo)
     except ValueError:
@@ -325,12 +326,12 @@ def render_snapshot_metadata_label(label: str) -> str:
     return cli_style.render_snapshot_metadata_label(label, use_color=colors_enabled())
 
 
-def render_snapshot_provenance(*, repo_name: str | None, package_id: str | None, target_name: str | None, binding_label: str | None) -> str | None:
+def render_snapshot_provenance(*, repo_name: str | None, package_id: str | None, target_name: str | None, selection_label: str | None) -> str | None:
     return cli_style.render_snapshot_provenance(
         repo_name=repo_name,
         package_id=package_id,
         target_name=target_name,
-        binding_label=binding_label,
+        selection_label=selection_label,
         use_color=colors_enabled(),
     )
 
@@ -668,20 +669,20 @@ def interactive_mode_enabled(*, json_output: bool) -> bool:
     return not json_output and sys.stdin.isatty()
 
 
-def binding_replacement_scope(engine: DotmanEngine, binding: Binding) -> tuple[str, str, str | None]:
+def binding_replacement_scope(engine: DotmanEngine, binding: FullSpecSelector) -> tuple[str, str, str | None]:
     repo = engine.get_repo(binding.repo)
     if binding.selector in repo.packages and repo.resolve_package(binding.selector).binding_mode == "multi_instance":
         return (binding.repo, binding.selector, binding.profile)
     return (binding.repo, binding.selector, None)
 
 
-def find_recorded_bindings_for_scope(engine: DotmanEngine, binding: Binding) -> list[Binding]:
+def find_recorded_bindings_for_scope(engine: DotmanEngine, binding: FullSpecSelector) -> list[FullSpecSelector]:
     repo = engine.get_repo(binding.repo)
     existing_by_scope = {
         binding_replacement_scope(engine, existing): existing
         for existing in engine.read_effective_tracked_package_entries(repo)
     }
-    matches: list[Binding] = []
+    matches: list[FullSpecSelector] = []
     for expanded_binding in engine.expand_tracked_package_entry(binding):
         existing = existing_by_scope.get(binding_replacement_scope(engine, expanded_binding))
         if existing is not None and existing not in matches:
@@ -689,12 +690,12 @@ def find_recorded_bindings_for_scope(engine: DotmanEngine, binding: Binding) -> 
     return matches
 
 
-def find_recorded_binding_for_scope(engine: DotmanEngine, binding: Binding) -> Binding | None:
+def find_recorded_binding_for_scope(engine: DotmanEngine, binding: FullSpecSelector) -> FullSpecSelector | None:
     matches = find_recorded_bindings_for_scope(engine, binding)
     return matches[0] if len(matches) == 1 else None
 
 
-def find_recorded_binding_exact(engine: DotmanEngine, binding: Binding) -> Binding | None:
+def find_recorded_binding_exact(engine: DotmanEngine, binding: FullSpecSelector) -> FullSpecSelector | None:
     repo = engine.get_repo(binding.repo)
     expanded_bindings = engine.expand_tracked_package_entry(binding)
     if len(expanded_bindings) != 1:
@@ -712,8 +713,8 @@ def find_recorded_binding_exact(engine: DotmanEngine, binding: Binding) -> Bindi
 
 def confirm_tracked_binding_replacement(
     *,
-    existing_binding: Binding,
-    replacement_binding: Binding,
+    existing_binding: FullSpecSelector,
+    replacement_binding: FullSpecSelector,
     assume_yes: bool = False,
 ) -> bool:
     binding_scope = f"{replacement_binding.repo}:{replacement_binding.selector}"
@@ -748,7 +749,7 @@ def confirm_tracked_binding_replacement(
 def ensure_track_binding_replacement_confirmed(
     engine: DotmanEngine,
     *,
-    binding: Binding,
+    binding: FullSpecSelector,
     json_output: bool,
     assume_yes: bool = False,
 ) -> bool:
@@ -821,7 +822,7 @@ def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
-def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Sequence, assume_yes: bool = False) -> bool:
+def confirm_track_binding_implicit_overrides(*, binding: FullSpecSelector, overrides: Sequence, assume_yes: bool = False) -> bool:
     binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
     print_selection_header(f"Confirm explicit override for {binding_label}:")
     print("  this track request will replace implicitly tracked package owners:")
@@ -843,17 +844,14 @@ def confirm_track_binding_implicit_overrides(*, binding: Binding, overrides: Seq
 def ensure_track_binding_implicit_overrides_confirmed(
     engine: DotmanEngine,
     *,
-    binding: Binding,
+    binding: FullSpecSelector,
     json_output: bool,
     assume_yes: bool = False,
 ) -> bool:
-    repo, query, selector_kind = engine.resolve_selector_query_text(
-        f"{binding.repo}:{binding.selector}@{binding.profile}"
-    )
-    if selector_kind == "group":
+    if binding.selector_kind == "group":
         overrides = []
         seen_override_keys: set[tuple[str, str, str | None, str]] = set()
-        for selection in engine._planning_helpers().resolve_selector_query(engine, query, operation="push"):
+        for selection in engine._planning_helpers().resolve_full_spec_selector(engine, binding, operation="push"):
             if not selection.explicit:
                 continue
             for override in engine.preview_package_selection_implicit_overrides(selection):
@@ -868,14 +866,15 @@ def ensure_track_binding_implicit_overrides_confirmed(
                 seen_override_keys.add(key)
                 overrides.append(override)
     else:
+        repo = engine.get_repo(binding.repo)
         overrides = engine.preview_package_selection_implicit_overrides(
             engine._resolved_package_selection(
                 repo=repo,
-                package_id=query.selector,
-                requested_profile=query.profile or "",
+                package_id=binding.selector,
+                requested_profile=binding.profile,
                 explicit=True,
                 source_kind="selector_query",
-                source_selector=query.selector,
+                source_selector=binding.selector,
             )
         )
     if not overrides:
@@ -923,18 +922,19 @@ def confirm_push_symlink_replacement(*, assume_yes: bool = False) -> bool:
 def prompt_for_conflicting_package_binding(
     engine: DotmanEngine,
     *,
-    binding: Binding,
+    binding: FullSpecSelector,
     conflict: TrackedTargetConflictError,
     json_output: bool,
-) -> Binding | None:
+) -> FullSpecSelector | None:
     if conflict.precedence != "implicit" or not interactive_mode_enabled(json_output=json_output):
         return None
     candidate_bindings = set(engine.expand_tracked_package_entry(binding))
 
-    def candidate_binding(candidate) -> Binding:
-        return Binding(
+    def candidate_binding(candidate) -> FullSpecSelector:
+        return FullSpecSelector(
             repo=candidate.selection.identity.repo,
             selector=candidate.selection.source_selector or candidate.package_id,
+            selector_kind="package",
             profile=candidate.selection.requested_profile,
         )
 
@@ -955,7 +955,12 @@ def prompt_for_conflicting_package_binding(
     binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
     if len(package_ids) == 1:
         package_id = package_ids[0]
-        promoted_binding = Binding(repo=binding.repo, selector=package_id, profile=binding.profile)
+        promoted_binding = FullSpecSelector(
+            repo=binding.repo,
+            selector=package_id,
+            selector_kind="package",
+            profile=binding.profile,
+        )
         print_selection_header(f"Resolve implicit conflict for {binding_label}:")
         print(f"  target path: {conflict.live_path}")
         print(f"  requested: {binding_label}")
@@ -973,7 +978,12 @@ def prompt_for_conflicting_package_binding(
         header_text=f"Select a conflicting package to track explicitly for {binding_label}:",
         option_labels=package_ids,
     )
-    return Binding(repo=binding.repo, selector=package_ids[selected_index], profile=binding.profile)
+    return FullSpecSelector(
+        repo=binding.repo,
+        selector=package_ids[selected_index],
+        selector_kind="package",
+        profile=binding.profile,
+    )
 
 
 def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | None]:
@@ -1061,7 +1071,7 @@ def resolve_binding_text(
     binding_text: str,
     *,
     json_output: bool,
-) -> tuple[str, str]:
+) -> FullSpecSelector:
     explicit_repo, selector, selector_profile = parse_binding_text(binding_text)
     repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
     lookup_repo, lookup_selector = parse_slash_qualified_query(
@@ -1071,7 +1081,7 @@ def resolve_binding_text(
     )
     exact_matches, partial_matches = engine.find_selector_matches(lookup_selector, lookup_repo)
     interactive = interactive_mode_enabled(json_output=json_output)
-    repo, resolved_selector, _selector_kind = resolve_candidate_match(
+    repo, resolved_selector, selector_kind = resolve_candidate_match(
         exact_matches=exact_matches,
         partial_matches=partial_matches,
         query_text=selector,
@@ -1100,6 +1110,11 @@ def resolve_binding_text(
         partial_error_text=f"selector '{selector}' is ambiguous: "
         + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches),
         not_found_text=f"selector '{selector}' did not match any package or group",
+    )
+    resolved_selector_ref = ResolvedSelector(
+        repo=repo.config.name,
+        selector=resolved_selector,
+        selector_kind=selector_kind,
     )
 
     available_profiles = engine.list_profiles(repo.config.name)
@@ -1147,7 +1162,7 @@ def resolve_binding_text(
     else:
         raise ValueError("profile is required in non-interactive mode")
 
-    return f"{repo.config.name}:{resolved_selector}", resolved_profile
+    return resolved_selector_ref.with_profile(resolved_profile)
 
 
 def resolve_tracked_binding_text(
@@ -1157,7 +1172,7 @@ def resolve_tracked_binding_text(
     operation: str,
     allow_package_owners: bool,
     json_output: bool,
-) -> tuple[object | None, Binding]:
+) -> tuple[object | None, FullSpecSelector]:
     explicit_repo, selector, profile = parse_binding_text(binding_text)
     interactive = interactive_mode_enabled(json_output=json_output)
     binding_label = selector if profile is None else f"{selector}@{profile}"
@@ -1357,7 +1372,7 @@ def resolve_tracked_binding_text(
         (repo.config.name, binding.selector, binding.profile)
         for repo, binding in [*exact_matches, *partial_matches]
     }
-    owner_target_matches: list[tuple[object, str, Binding]] = []
+    owner_target_matches: list[tuple[object, str, FullSpecSelector]] = []
     seen_owner_target_matches: set[tuple[str, str, str, str]] = set()
     for package in package_matches:
         repo = engine.get_repo(package.repo)
@@ -1379,9 +1394,10 @@ def resolve_tracked_binding_text(
                 (
                     repo,
                     package.package_id,
-                    Binding(
+                    FullSpecSelector(
                         repo=owner_binding.repo,
                         selector=owner_binding.selector,
+                        selector_kind=owner_binding.selector_kind,
                         profile=owner_binding.profile,
                     ),
                 )
@@ -1422,11 +1438,12 @@ def resolve_tracked_binding_text(
             f" via {owner_repo.config.name}:{owner_binding.selector}@{owner_binding.profile}"
         )
 
-    def binding_from_owner_match(match) -> tuple[object, Binding]:
+    def binding_from_owner_match(match) -> tuple[object, FullSpecSelector]:
         owner_repo, package_id, owner_binding = match
-        return owner_repo, Binding(
+        return owner_repo, FullSpecSelector(
             repo=owner_repo.config.name,
             selector=package_id,
+            selector_kind="package",
             profile=owner_binding.profile,
         )
 
@@ -2069,28 +2086,16 @@ def resolve_add_package_text(
 def select_non_conflicting_track_profile(
     engine: DotmanEngine,
     *,
-    binding_text: str,
-    current_profile: str,
+    binding: FullSpecSelector,
     json_output: bool,
 ) -> str | None:
     if not interactive_mode_enabled(json_output=json_output):
         return None
-    repo_name, _selector, _profile = parse_binding_text(binding_text)
-    if repo_name is None:
-        return None
     valid_profiles: list[str] = []
-    for candidate_profile in engine.list_profiles(repo_name):
-        if candidate_profile == current_profile:
+    for candidate_profile in engine.list_profiles(binding.repo):
+        if candidate_profile == binding.profile:
             continue
-        candidate_repo, selector_query, _selector_kind = engine.resolve_selector_query_text(
-            binding_text,
-            profile=candidate_profile,
-        )
-        candidate_binding = Binding(
-            repo=candidate_repo.config.name,
-            selector=selector_query.selector,
-            profile=selector_query.profile or "",
-        )
+        candidate_binding = binding.with_profile(candidate_profile)
         try:
             engine.validate_tracked_package_entry(candidate_binding)
         except ValueError:
@@ -2099,7 +2104,7 @@ def select_non_conflicting_track_profile(
     if not valid_profiles:
         return None
     selected_index = select_menu_option(
-        header_text=f"Select a non-conflicting profile for {binding_text}:",
+        header_text=f"Select a non-conflicting profile for {binding.repo}:{binding.selector}@{binding.profile}:",
         option_labels=valid_profiles,
     )
     return valid_profiles[selected_index]
@@ -2273,7 +2278,7 @@ def collect_pending_selection_items_for_operation(
 
 def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full_paths: bool | None = None) -> None:
     full_paths = _effective_full_paths(full_paths)
-    repo_name = item.repo_name or repo_name_from_binding_label(item.selection_label)
+    repo_name = item.repo_name or repo_name_from_selection_label(item.selection_label)
     if item.kind in {"package_hook_noop", "target_hook_noop", "repo_hook_noop"}:
         if item.kind == "repo_hook_noop":
             owner_label = repo_name
@@ -2398,7 +2403,7 @@ def filter_plans_for_interactive_selection(
             excluded_standalone_targets.add((item.selection_label, item.package_id, item.target_name or ""))
             continue
         if item.kind == "repo_hook_noop":
-            excluded_repo_names.add(item.repo_name or repo_name_from_binding_label(item.selection_label))
+            excluded_repo_names.add(item.repo_name or repo_name_from_selection_label(item.selection_label))
             continue
         excluded_targets.add(
             (
@@ -2487,7 +2492,7 @@ def filter_plans_for_interactive_selection(
 
 def print_review_item(index: int, item: ReviewItem, *, full_paths: bool | None = None) -> None:
     full_paths = _effective_full_paths(full_paths)
-    repo_name = repo_name_from_binding_label(item.selection_label)
+    repo_name = repo_name_from_selection_label(item.selection_label)
     bound_profile = getattr(item, "bound_profile", None)
     package_target = package_label_text(
         repo_name=repo_name,
@@ -2527,7 +2532,7 @@ def review_diff_header(review_item: ReviewItem, *, index: int, total: int) -> st
     return (
         f"Diff {index}/{total}: "
         f"{package_label_text(
-            repo_name=repo_name_from_binding_label(review_item.selection_label),
+            repo_name=repo_name_from_selection_label(review_item.selection_label),
             package_id=review_item.package_id,
             target_name=review_item.target_name,
         )} "
@@ -2542,7 +2547,7 @@ def print_review_diff_header(review_item: ReviewItem, *, index: int, total: int)
         print()
         print(f"{separator} {header_text} {separator}")
         return
-    repo_name = repo_name_from_binding_label(review_item.selection_label)
+    repo_name = repo_name_from_selection_label(review_item.selection_label)
     prefix_text = style_text(f"Diff {index}/{total}:", *MENU_HINT_STYLE)
     package_label = render_package_target_label(
         repo_name=repo_name,

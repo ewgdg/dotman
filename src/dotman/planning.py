@@ -19,7 +19,7 @@ from dotman.collisions import (
 from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os
 from dotman.models import (
-    Binding,
+    FullSpecSelector,
     executable_package_ids_for_targets,
     filter_hook_plans_for_targets,
     HookPlan,
@@ -30,7 +30,6 @@ from dotman.models import (
     ResolvedPackageIdentity,
     ResolvedPackageSelection,
     resolved_package_selection_key,
-    SelectorQuery,
     TrackedPackageEntry,
 )
 from dotman.projection import (
@@ -112,20 +111,17 @@ def _resolved_package_selections_from_roots(
     return selections
 
 
-def resolve_selector_query(engine: Any, query: SelectorQuery, *, operation: str) -> list[ResolvedPackageSelection]:
+def resolve_full_spec_selector(engine: Any, query: FullSpecSelector, *, operation: str) -> list[ResolvedPackageSelection]:
     del operation
-    repo, resolved_selector, selector_kind = engine.resolve_selector(query.selector, query.repo)
-    resolved_profile = query.profile
-    if not resolved_profile:
-        raise ValueError("profile is required in non-interactive mode")
-    root_package_ids = engine._selected_package_ids(repo, resolved_selector, selector_kind)
+    repo = engine.get_repo(query.repo)
+    root_package_ids = engine._selected_package_ids(repo, query.selector, query.selector_kind)
     return _resolved_package_selections_from_roots(
         engine,
         repo,
         root_package_ids=root_package_ids,
-        requested_profile=resolved_profile,
+        requested_profile=query.profile,
         source_kind="selector_query",
-        source_selector=resolved_selector,
+        source_selector=query.selector,
     )
 
 
@@ -345,7 +341,7 @@ def preview_package_selection_implicit_overrides(
             repo,
             raw_bindings_by_repo.get(repo.config.name, []),
         ),
-        [Binding(repo=entry.repo, selector=entry.package_id, profile=entry.profile)],
+        [FullSpecSelector(repo=entry.repo, selector=entry.package_id, selector_kind="package", profile=entry.profile)],
     )
     _plans, candidates_by_live_path = engine._collect_tracked_candidates(
         operation="push",

@@ -65,7 +65,7 @@ $XDG_DATA_HOME/dotman/snapshots/
   - the original symlink target when the live path itself was a symlink
   - the symlink handling mode needed for rollback
   - the push action that triggered snapshot capture, for example `create`, `update`, or `delete`
-- Provenance such as repo, selector+profile, package, and target labels may be recorded for human inspection, but rollback correctness must not depend on them.
+- Provenance such as repo, selection label, package, and target labels may be recorded for human inspection, but rollback correctness must not depend on them.
 
 ## Rollback Semantics
 

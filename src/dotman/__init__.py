@@ -1,4 +1,4 @@
-"""dotman engine and binding state manager."""
+"""dotman engine and tracked-package state manager."""
 
 __all__ = [
     "__version__",

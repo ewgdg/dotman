@@ -171,17 +171,26 @@ class RepoIgnoreDefaults:
     pull: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
-class SelectorQuery:
-    selector: str
-    repo: str | None = None
-    profile: str | None = None
+SelectorKind = Literal["package", "group"]
 
 
 @dataclass(frozen=True)
-class Binding:
+class ResolvedSelector:
     repo: str
     selector: str
+    selector_kind: SelectorKind
+
+    def with_profile(self, profile: str) -> FullSpecSelector:
+        return FullSpecSelector(
+            repo=self.repo,
+            selector=self.selector,
+            selector_kind=self.selector_kind,
+            profile=profile,
+        )
+
+
+@dataclass(frozen=True)
+class FullSpecSelector(ResolvedSelector):
     profile: str
 
 
@@ -260,7 +269,7 @@ class TrackedPackageEntrySummary:
     repo: str
     selector: str
     profile: str
-    selector_kind: str
+    selector_kind: SelectorKind
 
     def to_dict(self) -> dict[str, Any]:
         return {

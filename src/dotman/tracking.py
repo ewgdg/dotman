@@ -7,7 +7,7 @@ from typing import Any
 from dotman.config import default_state_root
 from dotman.toml_utils import load_toml_file
 from dotman.models import (
-    Binding,
+    FullSpecSelector,
     TrackedPackageEntry,
     TrackedPackageEntrySummary,
     TrackedPackageEntryDetail,
@@ -35,7 +35,7 @@ class PersistedTrackedPackageEntryResolutionError(ValueError):
 class PersistedTrackedPackageEntryRecord:
     state_key: str
     state_dir: Path
-    binding: Binding
+    binding: FullSpecSelector
     repo: Repository | None = None
     selector_kind: str | None = None
     package_ids: tuple[str, ...] = ()
@@ -65,7 +65,7 @@ def list_tracked_state(engine: Any) -> TrackedStateSummary:
 def list_invalid_explicit_bindings(
     engine: Any,
     *,
-    bindings_by_repo: dict[str, list[Binding]] | None = None,
+    bindings_by_repo: dict[str, list[FullSpecSelector]] | None = None,
 ) -> list[TrackedPackageEntryIssue]:
     _valid_records, invalid_records = engine._configured_persisted_tracked_package_entry_records(bindings_by_repo=bindings_by_repo)
     return engine._sorted_tracked_package_entry_issues([record.issue for record in invalid_records if record.issue is not None])
@@ -209,31 +209,31 @@ def read_tracked_packages_file(state_path: Path) -> list[TrackedPackageEntry]:
     return tracked_packages
 
 
-def read_tracked_package_entries_file(state_path: Path) -> list[Binding]:
+def read_tracked_package_entries_file(state_path: Path) -> list[FullSpecSelector]:
     return [
-        Binding(repo=entry.repo, selector=entry.package_id, profile=entry.profile)
+        FullSpecSelector(repo=entry.repo, selector=entry.package_id, selector_kind="package", profile=entry.profile)
         for entry in read_tracked_packages_file(state_path)
     ]
 
 
 
-def read_tracked_package_entries(engine: Any, repo: Repository) -> list[Binding]:
+def read_tracked_package_entries(engine: Any, repo: Repository) -> list[FullSpecSelector]:
     return read_tracked_package_entries_file(tracked_packages_file_path(repo.config.state_path))
 
 
 
-def read_effective_tracked_package_entries(engine: Any, repo: Repository) -> list[Binding]:
+def read_effective_tracked_package_entries(engine: Any, repo: Repository) -> list[FullSpecSelector]:
     return engine._effective_tracked_package_entries_for_repo(repo, engine.read_tracked_package_entries(repo))
 
 
 
-def expand_tracked_package_entry(engine: Any, binding: Binding) -> list[Binding]:
+def expand_tracked_package_entry(engine: Any, binding: FullSpecSelector) -> list[FullSpecSelector]:
     repo = engine.get_repo(binding.repo)
     return engine._expand_tracked_package_entry(repo, binding)
 
 
 
-def raw_tracked_package_entries_by_repo(engine: Any) -> dict[str, list[Binding]]:
+def raw_tracked_package_entries_by_repo(engine: Any) -> dict[str, list[FullSpecSelector]]:
     return {
         repo_config.name: engine.read_tracked_package_entries(engine.get_repo(repo_config.name))
         for repo_config in engine.config.ordered_repos
@@ -243,8 +243,8 @@ def raw_tracked_package_entries_by_repo(engine: Any) -> dict[str, list[Binding]]
 
 def effective_tracked_package_entries_by_repo(
     engine: Any,
-    raw_tracked_package_entries_by_repo: dict[str, list[Binding]] | None = None,
-) -> dict[str, list[Binding]]:
+    raw_tracked_package_entries_by_repo: dict[str, list[FullSpecSelector]] | None = None,
+) -> dict[str, list[FullSpecSelector]]:
     current_raw_bindings = raw_tracked_package_entries_by_repo or engine._raw_tracked_package_entries_by_repo()
     return {
         repo_config.name: engine._effective_tracked_package_entries_for_repo(
@@ -256,7 +256,7 @@ def effective_tracked_package_entries_by_repo(
 
 
 
-def tracked_package_entry_scope_key(engine: Any, repo: Repository, binding: Binding) -> tuple[str, str, str | None]:
+def tracked_package_entry_scope_key(engine: Any, repo: Repository, binding: FullSpecSelector) -> tuple[str, str, str | None]:
     if binding.selector in repo.packages and repo.package_binding_mode(binding.selector) == "multi_instance":
         return (binding.repo, binding.selector, binding.profile)
     return (binding.repo, binding.selector, None)
@@ -275,11 +275,11 @@ def bound_profile_for_package(
 
 
 
-def normalize_tracked_package_entries(engine: Any, bindings: list[Binding], binding: Binding) -> list[Binding]:
+def normalize_tracked_package_entries(engine: Any, bindings: list[FullSpecSelector], binding: FullSpecSelector) -> list[FullSpecSelector]:
     repo = engine.get_repo(binding.repo)
     target_scope = engine._tracked_package_entry_scope_key(repo, binding)
     updated = False
-    normalized: list[Binding] = []
+    normalized: list[FullSpecSelector] = []
     for existing in bindings:
         if engine._tracked_package_entry_scope_key(repo, existing) == target_scope:
             if not updated:
@@ -293,7 +293,7 @@ def normalize_tracked_package_entries(engine: Any, bindings: list[Binding], bind
 
 
 
-def normalize_tracked_package_entry_set(engine: Any, bindings: list[Binding], additions: list[Binding]) -> list[Binding]:
+def normalize_tracked_package_entry_set(engine: Any, bindings: list[FullSpecSelector], additions: list[FullSpecSelector]) -> list[FullSpecSelector]:
     normalized = list(bindings)
     for binding in additions:
         normalized = engine._normalize_tracked_package_entries(normalized, binding)
@@ -301,7 +301,7 @@ def normalize_tracked_package_entry_set(engine: Any, bindings: list[Binding], ad
 
 
 
-def expand_tracked_package_entry_in_repo(repo: Repository, binding: Binding) -> list[Binding]:
+def expand_tracked_package_entry_in_repo(repo: Repository, binding: FullSpecSelector) -> list[FullSpecSelector]:
     if binding.profile not in repo.profiles:
         raise PersistedTrackedPackageEntryResolutionError(reason="unknown_profile", message="unknown profile")
     package_match = binding.selector in repo.packages
@@ -319,12 +319,15 @@ def expand_tracked_package_entry_in_repo(repo: Repository, binding: Binding) -> 
             reason="dependency_resolution_failed",
             message="dependency resolution failed",
         ) from exc
-    return [Binding(repo=binding.repo, selector=package_id, profile=binding.profile) for package_id in package_ids]
+    return [
+        FullSpecSelector(repo=binding.repo, selector=package_id, selector_kind="package", profile=binding.profile)
+        for package_id in package_ids
+    ]
 
 
 
-def effective_tracked_package_entries_for_repo(engine: Any, repo: Repository, raw_bindings: list[Binding]) -> list[Binding]:
-    effective_bindings: list[Binding] = []
+def effective_tracked_package_entries_for_repo(engine: Any, repo: Repository, raw_bindings: list[FullSpecSelector]) -> list[FullSpecSelector]:
+    effective_bindings: list[FullSpecSelector] = []
     for binding in raw_bindings:
         try:
             expanded_bindings = engine._expand_tracked_package_entry(repo, binding)
@@ -335,13 +338,13 @@ def effective_tracked_package_entries_for_repo(engine: Any, repo: Repository, ra
 
 
 
-def validate_tracked_package_entries(engine: Any, bindings_by_repo: dict[str, list[Binding]]) -> None:
+def validate_tracked_package_entries(engine: Any, bindings_by_repo: dict[str, list[FullSpecSelector]]) -> None:
     # Tracked-state validity is defined by the resolved push winner set for live targets.
     engine._build_tracked_plans(operation="push", bindings_by_repo=bindings_by_repo)
 
 
 
-def record_tracked_package_entry(engine: Any, binding: Binding) -> None:
+def record_tracked_package_entry(engine: Any, binding: FullSpecSelector) -> None:
     repo = engine.get_repo(binding.repo)
     raw_tracked_package_entries_by_repo = engine._raw_tracked_package_entries_by_repo()
     normalized = engine._normalize_tracked_package_entry_set(
@@ -355,7 +358,7 @@ def record_tracked_package_entry(engine: Any, binding: Binding) -> None:
 
 
 
-def validate_tracked_package_entry(engine: Any, binding: Binding) -> None:
+def validate_tracked_package_entry(engine: Any, binding: FullSpecSelector) -> None:
     repo = engine.get_repo(binding.repo)
     raw_tracked_package_entries_by_repo = engine._raw_tracked_package_entries_by_repo()
     raw_tracked_package_entries_by_repo[repo.config.name] = engine._normalize_tracked_package_entry_set(
@@ -403,7 +406,7 @@ def remove_tracked_package_entry(
     *,
     operation: str = "untrack",
     parse_binding_text: Any,
-) -> Binding:
+) -> FullSpecSelector:
     selector, profile, exact_matches, partial_matches = engine.find_persisted_tracked_package_entry_matches(binding_text)
     binding_label = selector if profile is None else f"{selector}@{profile}"
     if len(exact_matches) == 1:
@@ -461,8 +464,8 @@ def find_tracked_package_owners(
     candidate_repos: list[Repository],
     selector: str,
     profile: str | None,
-) -> list[tuple[Repository, Binding]]:
-    owners: list[tuple[Repository, Binding]] = []
+) -> list[tuple[Repository, FullSpecSelector]]:
+    owners: list[tuple[Repository, FullSpecSelector]] = []
     candidate_repo_names = {repo.config.name for repo in candidate_repos}
     for repo, binding, _selector_kind, package_ids in engine._iter_tracked_package_entries():
         if repo.config.name not in candidate_repo_names:
@@ -475,12 +478,12 @@ def find_tracked_package_owners(
 
 
 
-def write_tracked_package_entries(engine: Any, repo: Repository, bindings: list[Binding]) -> None:
+def write_tracked_package_entries(engine: Any, repo: Repository, bindings: list[FullSpecSelector]) -> None:
     write_tracked_package_entries_file(repo.config.state_path, bindings)
 
 
 
-def write_tracked_package_entries_file(state_dir: Path, bindings: list[Binding]) -> None:
+def write_tracked_package_entries_file(state_dir: Path, bindings: list[FullSpecSelector]) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = tracked_packages_file_path(state_dir)
     temp_path = state_path.with_suffix(".tmp")
@@ -513,7 +516,7 @@ def remove_persisted_tracked_package_entry(
     *,
     operation: str = "untrack",
     tracked_target_conflict_error: type[Exception],
-) -> Binding:
+) -> FullSpecSelector:
     state_path = tracked_packages_file_path(record.state_dir)
     if record.repo is not None and record.issue is None:
         raw_tracked_package_entries_by_repo = engine._raw_tracked_package_entries_by_repo()
@@ -547,9 +550,9 @@ def remove_persisted_tracked_package_entry(
 
 
 
-def remove_tracked_package_entry_record(bindings: list[Binding], target: Binding) -> list[Binding]:
+def remove_tracked_package_entry_record(bindings: list[FullSpecSelector], target: FullSpecSelector) -> list[FullSpecSelector]:
     removed = False
-    remaining: list[Binding] = []
+    remaining: list[FullSpecSelector] = []
     for binding in bindings:
         if not removed and binding == target:
             removed = True
@@ -559,7 +562,7 @@ def remove_tracked_package_entry_record(bindings: list[Binding], target: Binding
 
 
 
-def iter_tracked_package_entries(engine: Any) -> list[tuple[Repository, Binding, str, list[str]]]:
+def iter_tracked_package_entries(engine: Any) -> list[tuple[Repository, FullSpecSelector, str, list[str]]]:
     valid_records, _invalid_records = engine._configured_persisted_tracked_package_entry_records()
     return [
         (record.repo, record.binding, record.selector_kind or "package", list(record.package_ids))
@@ -569,7 +572,7 @@ def iter_tracked_package_entries(engine: Any) -> list[tuple[Repository, Binding,
 def configured_persisted_tracked_package_entry_records(
     engine: Any,
     *,
-    bindings_by_repo: dict[str, list[Binding]] | None = None,
+    bindings_by_repo: dict[str, list[FullSpecSelector]] | None = None,
 ) -> tuple[list[PersistedTrackedPackageEntryRecord], list[PersistedTrackedPackageEntryRecord]]:
     valid_records: list[PersistedTrackedPackageEntryRecord] = []
     invalid_records: list[PersistedTrackedPackageEntryRecord] = []
@@ -652,7 +655,7 @@ def all_persisted_tracked_package_entry_records(engine: Any) -> list[PersistedTr
 
 
 
-def resolve_persisted_tracked_package_entry(engine: Any, repo: Repository, binding: Binding) -> list[Binding]:
+def resolve_persisted_tracked_package_entry(engine: Any, repo: Repository, binding: FullSpecSelector) -> list[FullSpecSelector]:
     if binding.selector not in repo.packages:
         if binding.selector in repo.groups:
             raise PersistedTrackedPackageEntryResolutionError(

@@ -46,10 +46,16 @@ Current execution shape is intentionally nested:
 
 - operation plan
 - repo-scoped hook buckets
-- selector/package plans
+- resolved package selections / package plans
 - target plans and target-scoped hooks
 
 That structure keeps repo/package/target hook ordering explicit instead of hiding it in ad hoc sorting.
+
+Planning is package-centric now:
+
+- selector queries and tracked package entries resolve into `ResolvedPackageSelection`
+- execution/review/snapshot flows consume `OperationPlan.package_plans`
+- tracked-package persistence remains a separate storage concern from runtime package planning
 
 If a new engine feature clearly belongs to one of those areas, put it there first and keep `engine.py` as the public facade.
 

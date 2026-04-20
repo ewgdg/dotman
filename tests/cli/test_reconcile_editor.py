@@ -9,7 +9,7 @@ import dotman.cli as cli
 import dotman.reconcile as reconcile_module
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,

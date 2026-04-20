@@ -6,7 +6,7 @@ from typing import Any, Callable
 from dotman.add import prepare_add_to_package, write_add_result
 from dotman.engine import TrackedTargetConflictError
 from dotman.file_access import sudo_session
-from dotman.models import Binding, package_ref_text
+from dotman.models import FullSpecSelector, package_ref_text
 from dotman.selection_menu_context import selection_menu_config_scope
 from dotman.snapshot import (
     build_rollback_actions,
@@ -189,9 +189,7 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
 
 def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
     assume_yes = getattr(args, "assume_yes", False)
-    binding_text, profile = handlers.resolve_binding_text(engine, args.binding, json_output=args.json_output)
-    repo, selector_query, _selector_kind = engine.resolve_selector_query_text(binding_text, profile=profile)
-    binding = Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
+    binding = handlers.resolve_binding_text(engine, args.binding, json_output=args.json_output)
     while True:
         if not handlers.ensure_track_binding_replacement_confirmed(
             engine,
@@ -214,21 +212,15 @@ def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> in
             )
             if promoted_binding is not None:
                 binding = promoted_binding
-                binding_text = f"{binding.repo}:{binding.selector}"
                 continue
             alternative_profile = handlers.select_non_conflicting_track_profile(
                 engine,
-                binding_text=binding_text,
-                current_profile=binding.profile,
+                binding=binding,
                 json_output=args.json_output,
             )
             if alternative_profile is None:
                 raise
-            repo, selector_query, _selector_kind = engine.resolve_selector_query_text(
-                binding_text,
-                profile=alternative_profile,
-            )
-            binding = Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
+            binding = binding.with_profile(alternative_profile)
             continue
         if not handlers.ensure_track_binding_implicit_overrides_confirmed(
             engine,

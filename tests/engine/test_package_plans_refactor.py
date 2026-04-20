@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.models import Binding
+from dotman.models import FullSpecSelector
 from tests.helpers import (
     write_manager_config,
     write_multi_instance_repo,
@@ -91,7 +91,7 @@ def test_tracked_plan_returns_package_plans_for_explicit_and_implicit_packages(
     repo_root = tmp_path / "repo"
     write_shared_stack_repo(repo_root)
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-    engine.record_tracked_package_entry(Binding(repo="fixture", selector="shared-stack", profile="basic"))
+    engine.record_tracked_package_entry(FullSpecSelector(repo="fixture", selector="shared-stack", selector_kind="package", profile="basic"))
 
     operation_plan = engine.plan_push()
 

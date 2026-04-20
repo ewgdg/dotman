@@ -8,7 +8,8 @@ from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
 from dotman.projection import default_pull_view_live, infer_target_kind
 from dotman.models import (
-    Binding,
+    FullSpecSelector,
+    SelectorKind,
     TrackedPackageEntrySummary,
     TrackedOwnedTargetDetail,
     TrackedPackageEntryDetail,
@@ -169,8 +170,8 @@ def find_tracked_package_matches(
 def describe_package_binding(
     engine: Any,
     repo: Repository,
-    binding: Binding,
-    selector_kind: str,
+    binding: FullSpecSelector,
+    selector_kind: SelectorKind,
     package_id: str,
     package_ids: list[str],
     *,

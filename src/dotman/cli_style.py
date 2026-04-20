@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 from dotman.engine import parse_binding_text
-from dotman.models import Binding, package_ref_text, repo_qualified_target_text, target_ref_text
+from dotman.models import FullSpecSelector, package_ref_text, repo_qualified_target_text, target_ref_text
 
 
 ANSI_RESET = "\033[0m"
@@ -53,8 +53,8 @@ def style_text(text: str, *codes: str) -> str:
     return f"\033[{';'.join(codes)}m{text}{ANSI_RESET}"
 
 
-def repo_name_from_binding_label(binding_label: str) -> str:
-    return binding_label.split(":", 1)[0]
+def repo_name_from_selection_label(selection_label: str) -> str:
+    return selection_label.split(":", 1)[0]
 
 
 def repo_qualified_selector_text(*, repo_name: str, selector: str) -> str:
@@ -187,7 +187,7 @@ def render_binding_label(*, repo_name: str, selector: str, profile: str, selecto
     )
 
 
-def render_binding_reference(binding: Binding, *, use_color: bool) -> str:
+def render_binding_reference(binding: FullSpecSelector, *, use_color: bool) -> str:
     return render_binding_label(
         repo_name=binding.repo,
         selector=binding.selector,
@@ -260,13 +260,13 @@ def render_snapshot_provenance(
     repo_name: str | None,
     package_id: str | None,
     target_name: str | None,
-    binding_label: str | None,
+    selection_label: str | None,
     use_color: bool,
 ) -> str | None:
     if repo_name is None or package_id is None or target_name is None:
-        return binding_label
-    if binding_label is not None:
-        binding_repo, _binding_selector, _binding_profile = parse_binding_text(binding_label)
+        return selection_label
+    if selection_label is not None:
+        binding_repo, _binding_selector, _binding_profile = parse_binding_text(selection_label)
         if binding_repo is not None:
             repo_name = binding_repo
     return render_package_target_label(

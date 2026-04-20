@@ -10,16 +10,18 @@ Replace selector/binding-centric planning with package-centric planning.
 
 Target end state:
 
-- `SelectorQuery` is raw user input only
+- `ResolvedSelector` is selector-disambiguation result only
+- `FullSpecSelector` is selector+profile request input only
 - `TrackedPackageEntry` is persisted tracked-state row only
 - planner resolves queries/entries into canonical package selections
 - one executable plan exists per resolved package instance
 - `OperationPlan` aggregates `PackagePlan`, not `BindingPlan`
 - binding-named planning/execution APIs are removed
+- tracked-state helpers may still use binding-themed method names until that surface is renamed independently
 
 ## Why this refactor exists
 
-Current planner still centers `Binding` / `BindingPlan` even though tracked state is now package-entry-based.
+Current planner still centers binding-shaped request/plan objects even though tracked state is now package-entry-based.
 
 That mismatch leaks into:
 
@@ -57,6 +59,12 @@ In scope:
 - make conflict resolution operate across package plans
 - update CLI/review/snapshot/execution terminology where it still reflects planner model
 - update tests and docs
+
+Implementation note:
+
+- planner/execution migration is complete in this refactor
+- selector-input DTOs now use `ResolvedSelector` and `FullSpecSelector`
+- some tracked-state helpers still use binding-themed method names; renaming that surface is separate cleanup, not required for package-centric planning
 
 Out of scope:
 
@@ -160,33 +168,39 @@ Rules:
 - no `binding` field
 - hooks/targets/variables are already package-scoped
 
-### 5. Keep `SelectorQuery` as raw input type
+### 5. Keep resolved/full-spec selector input types
 
-`SelectorQuery` stays raw command/query layer.
+`ResolvedSelector` and `FullSpecSelector` stay command/query layer.
 
 Recommended shape remains:
 
 ```py
 @dataclass(frozen=True)
-class SelectorQuery:
+class ResolvedSelector:
+    repo: str
     selector: str
-    repo: str | None = None
-    profile: str | None = None
+    selector_kind: SelectorKind
+
+
+@dataclass(frozen=True)
+class FullSpecSelector(ResolvedSelector):
+    profile: str
 ```
 
 Rules:
 
-- parser/CLI produce this type from user text
+- parser/CLI first resolve text into `ResolvedSelector`
+- profile-aware command flow upgrades that into `FullSpecSelector`
 - command-specific resolvers decide whether package/group/target selectors are legal
-- planner never executes directly on `SelectorQuery`
+- planner never executes directly on raw selector text
 
 ### 6. Remove `Binding`
 
-`Binding` should be deleted after migration.
+`Binding` should be renamed to `FullSpecSelector` after migration.
 
 Layer replacement:
 
-- input/query layer: `SelectorQuery`
+- input/query layer: `ResolvedSelector` / `FullSpecSelector`
 - persisted tracked-state layer: `TrackedPackageEntry`
 - runtime planning layer: `ResolvedPackageSelection`
 
@@ -243,10 +257,15 @@ This planner refactor does not change tracked-state product behavior:
 
 ```py
 @dataclass(frozen=True)
-class SelectorQuery:
+class ResolvedSelector:
+    repo: str
     selector: str
-    repo: str | None = None
-    profile: str | None = None
+    selector_kind: SelectorKind
+
+
+@dataclass(frozen=True)
+class FullSpecSelector(ResolvedSelector):
+    profile: str
 
 
 @dataclass(frozen=True)
@@ -317,14 +336,14 @@ class OperationPlan:
 - tracked entry normalization key stays:
   - single-instance package: `(repo, package_id)`
   - multi-instance package: `(repo, package_id, profile)`
-- resolved package identity derives from tracked entry or selector query by applying package binding mode
+- resolved package identity derives from tracked entry or full-spec selector by applying package binding mode
 
 ### Resolution helpers to add
 
 Recommended helpers:
 
 ```py
-def resolve_selector_query(engine: Any, query: SelectorQuery, *, operation: str) -> list[ResolvedPackageSelection]:
+def resolve_full_spec_selector(engine: Any, request: FullSpecSelector, *, operation: str) -> list[ResolvedPackageSelection]:
     ...
 
 
@@ -353,7 +372,7 @@ Resolver rules:
 
 ### Core models
 
-- `Binding` -> split into `SelectorQuery`, `TrackedPackageEntry`, `ResolvedPackageSelection`
+- `Binding` -> renamed `FullSpecSelector`; selector resolution now uses `ResolvedSelector`
 - `BindingPlan` -> `PackagePlan`
 - `OperationPlan.binding_plans` -> `OperationPlan.package_plans`
 - `binding_plans_for_operation_plan` -> `package_plans_for_operation_plan`
@@ -437,7 +456,8 @@ But update internals that still use `Binding` payloads to use `TrackedPackageEnt
 
 ### 7. CLI/UI/output
 
-- parser produces `SelectorQuery`
+- parser resolves text into `ResolvedSelector`
+- profile-aware command flow upgrades to `FullSpecSelector`
 - interactive selectors resolve to `ResolvedPackageSelection`
 - prompts/errors stop referring to binding plans
 - machine-readable output should prefer package/package-selection terms over binding terms
@@ -488,9 +508,9 @@ Goal:
 
 Tasks:
 
-- add `resolve_selector_query(...)`
+- add `resolve_full_spec_selector(...)`
 - add tracked-entry -> resolved-selection helpers
-- make direct command flow parse into `SelectorQuery`
+- make direct command flow resolve text into `ResolvedSelector` / `FullSpecSelector`
 - resolve groups/packages into explicit `ResolvedPackageSelection`
 - resolve dependency closure into implicit `ResolvedPackageSelection`
 
@@ -620,7 +640,7 @@ Add/update coverage for:
 
 ## Done criteria
 
-- `Binding` removed
+- planner/execution no longer depend on `Binding`
 - `BindingPlan` removed
 - planner builds `PackagePlan` only
 - `OperationPlan` stores `package_plans` only
@@ -643,6 +663,7 @@ Add/update coverage for:
 - [x] Migrate execution/review/snapshot/CLI selection flows to `PackagePlan` / `package_plans`
 - [x] Update broader tests to package-plan/query APIs and package-selection labels
 - [x] Restore full green suite after package-plan migration (`uv run pytest -q`)
+- [x] Collapse selector-input DTOs into `ResolvedSelector` and `FullSpecSelector`, removing `Binding` and `SelectorQuery`
 
 ### In progress
 

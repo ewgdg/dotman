@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, DirectoryPlanItem, HookPlan, OperationPlan, SelectionMenuConfig, TargetPlan
+from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, OperationPlan, SelectionMenuConfig, TargetPlan
 from dotman.selection_menu_context import selection_menu_config_scope
 
 from tests.helpers import (
@@ -978,9 +978,9 @@ def test_confirm_push_symlink_replacement_skips_prompt_when_assume_yes(monkeypat
 
 
 def test_ensure_track_binding_replacement_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
-    binding = Binding(repo="fixture", selector="stack", profile="current")
-    existing_binding = Binding(repo="fixture", selector="stack", profile="existing")
-    replacement_binding = Binding(repo="fixture", selector="stack", profile="replacement")
+    binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="package", profile="current")
+    existing_binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="package", profile="existing")
+    replacement_binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="package", profile="replacement")
     engine = SimpleNamespace(get_repo=lambda _repo_name: SimpleNamespace(packages={}), expand_tracked_package_entry=lambda _binding: [replacement_binding])
     monkeypatch.setattr(cli, "find_recorded_bindings_for_scope", lambda _engine, _binding: [existing_binding])
     monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
@@ -989,16 +989,11 @@ def test_ensure_track_binding_replacement_confirmed_skips_prompt_when_assume_yes
 
 
 def test_ensure_track_binding_implicit_overrides_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
-    binding = Binding(repo="fixture", selector="stack", profile="current")
+    binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="group", profile="current")
     engine = SimpleNamespace(
         get_repo=lambda _repo_name: SimpleNamespace(),
-        resolve_selector_query_text=lambda _text: (
-            SimpleNamespace(config=SimpleNamespace(name="fixture")),
-            SimpleNamespace(selector="stack", profile="current"),
-            "group",
-        ),
         _planning_helpers=lambda: SimpleNamespace(
-            resolve_selector_query=lambda *_args, **_kwargs: [
+            resolve_full_spec_selector=lambda *_args, **_kwargs: [
                 SimpleNamespace(explicit=True, identity=SimpleNamespace(repo="fixture", package_id="stack"))
             ]
         ),

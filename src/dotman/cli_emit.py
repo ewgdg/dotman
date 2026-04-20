@@ -1139,7 +1139,7 @@ def build_rollback_review_items(snapshot: Any, actions: Sequence[Any]) -> list[R
             continue
         review_items.append(
             ReviewItem(
-                binding_label=f"snapshot:{snapshot.snapshot_id}",
+                selection_label=f"snapshot:{snapshot.snapshot_id}",
                 package_id="snapshot",
                 target_name=str(action.live_path),
                 action=action.action,
@@ -1247,7 +1247,7 @@ def emit_snapshot_detail(*, snapshot: Any, json_output: bool, full_paths: bool =
             repo_name=entry.repo_name,
             package_id=entry.package_id,
             target_name=entry.target_name,
-            binding_label=entry.selection_label,
+            selection_label=entry.selection_label,
             use_color=use_color,
         )
         if provenance is not None:

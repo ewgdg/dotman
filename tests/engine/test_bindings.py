@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from dotman.models import Binding
+from dotman.models import FullSpecSelector
 from dotman.engine import DotmanEngine
 from tests.helpers import (
     EXAMPLE_REPO,
@@ -228,9 +228,9 @@ def test_preview_package_selection_implicit_overrides_returns_unique_packages(
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     engine = DotmanEngine.from_config_path(config_path)
 
-    engine.record_tracked_package_entry(Binding(repo="fixture", selector="beta-meta", profile="basic"))
+    engine.record_tracked_package_entry(FullSpecSelector(repo="fixture", selector="beta-meta", selector_kind="package", profile="basic"))
 
-    alpha_repo, alpha_query, _alpha_selector_kind = engine.resolve_selector_query_text("fixture:alpha@basic")
+    alpha_repo, alpha_query = engine.resolve_full_spec_selector_text("fixture:alpha@basic")
     overrides = engine.preview_package_selection_implicit_overrides(
         engine._resolved_package_selection(
             repo=alpha_repo,
@@ -262,7 +262,9 @@ def test_record_binding_writes_resolved_binding_state(
     plan = single_package_plan(engine, "example:git@basic", operation="push")
     state_path = tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml"
 
-    engine.record_tracked_package_entry(Binding(repo=plan.repo_name, selector=plan.package_id, profile=plan.requested_profile))
+    engine.record_tracked_package_entry(
+        FullSpecSelector(repo=plan.repo_name, selector=plan.package_id, selector_kind="package", profile=plan.requested_profile)
+    )
 
     assert state_path.exists()
     assert state_path.read_text(encoding="utf-8") == "\n".join(
@@ -288,11 +290,10 @@ def test_record_binding_flattens_group_into_package_bindings(
 
     config_path = write_manager_config(tmp_path)
     engine = DotmanEngine.from_config_path(config_path)
-    repo, selector_query, selector_kind = engine.resolve_selector_query_text("example:os/arch@basic")
-    binding = Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
+    _repo, binding = engine.resolve_full_spec_selector_text("example:os/arch@basic")
     state_path = tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml"
 
-    assert selector_kind == "group"
+    assert binding.selector_kind == "group"
 
     engine.record_tracked_package_entry(binding)
 
@@ -342,7 +343,9 @@ def test_record_binding_replaces_existing_selector_binding_with_new_profile(
 
     plan = single_package_plan(engine, "example:git@work", operation="push")
 
-    engine.record_tracked_package_entry(Binding(repo=plan.repo_name, selector=plan.package_id, profile=plan.requested_profile))
+    engine.record_tracked_package_entry(
+        FullSpecSelector(repo=plan.repo_name, selector=plan.package_id, selector_kind="package", profile=plan.requested_profile)
+    )
 
     bindings = engine.read_tracked_package_entries(engine.get_repo("example"))
     assert [(binding.selector, binding.profile) for binding in bindings] == [
@@ -364,8 +367,8 @@ def test_record_binding_keeps_distinct_profiles_for_multi_instance_package(
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     engine = DotmanEngine.from_config_path(config_path)
 
-    engine.record_tracked_package_entry(Binding(repo="fixture", selector="profiled", profile="basic"))
-    engine.record_tracked_package_entry(Binding(repo="fixture", selector="profiled", profile="work"))
+    engine.record_tracked_package_entry(FullSpecSelector(repo="fixture", selector="profiled", selector_kind="package", profile="basic"))
+    engine.record_tracked_package_entry(FullSpecSelector(repo="fixture", selector="profiled", selector_kind="package", profile="work"))
 
     bindings = engine.read_tracked_package_entries(engine.get_repo("fixture"))
     assert [(binding.selector, binding.profile) for binding in bindings] == [
@@ -402,7 +405,7 @@ def test_models_use_tracked_package_type_names() -> None:
 
     assert not hasattr(models, "InstalledPackageSummary")
     assert not hasattr(models, "InstalledPackageDetail")
-    assert not hasattr(models, "InstalledBindingSummary")
+    assert not hasattr(models, "InstalledFullSpecSelectorSummary")
     assert not hasattr(models, "InstalledTargetSummary")
 
 def test_remove_binding_rejects_single_partial_match_in_non_interactive_mode(
@@ -510,7 +513,7 @@ def test_remove_binding_deletes_only_the_selected_tracked_binding(
     assert removed.selector == "git"
     assert removed.profile == "basic"
     assert engine.read_tracked_package_entries(engine.get_repo("example")) == [
-        removed.__class__(repo="example", selector="core-cli-meta", profile="basic")
+        removed.__class__(repo="example", selector="core-cli-meta", selector_kind="package", profile="basic")
     ]
 
 def test_remove_binding_allows_selector_only_when_tracked_binding_is_unique(
@@ -543,7 +546,7 @@ def test_remove_binding_allows_selector_only_when_tracked_binding_is_unique(
 
     removed = engine.remove_tracked_package_entry("example:git")
 
-    assert removed == removed.__class__(repo="example", selector="git", profile="basic")
+    assert removed == removed.__class__(repo="example", selector="git", selector_kind="package", profile="basic")
     assert engine.read_tracked_package_entries(engine.get_repo("example")) == []
 
 def test_remove_binding_can_remove_invalid_configured_binding(
@@ -581,9 +584,9 @@ def test_remove_binding_can_remove_invalid_configured_binding(
 
     removed = engine.remove_tracked_package_entry("example:old-meta@basic")
 
-    assert removed == removed.__class__(repo="example", selector="old-meta", profile="basic")
+    assert removed == removed.__class__(repo="example", selector="old-meta", selector_kind="package", profile="basic")
     assert engine.read_tracked_package_entries(engine.get_repo("example")) == [
-        removed.__class__(repo="example", selector="git", profile="basic")
+        removed.__class__(repo="example", selector="git", selector_kind="package", profile="basic")
     ]
 
 
@@ -626,7 +629,7 @@ def test_remove_binding_can_remove_orphan_binding_from_state_root(
 
     removed = engine.remove_tracked_package_entry("removed-repo:linux@basic")
 
-    assert removed == removed.__class__(repo="removed-repo", selector="linux", profile="basic")
+    assert removed == removed.__class__(repo="removed-repo", selector="linux", selector_kind="package", profile="basic")
     assert orphan_state_path.read_text(encoding="utf-8") == "\n".join(
         [
             "schema_version = 1",

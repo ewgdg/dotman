@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import Binding, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,
@@ -145,7 +145,7 @@ def test_track_cli_interactively_switches_to_non_conflicting_profile(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select a profile for fixture:alpha:" in output
-    assert "Select a non-conflicting profile for fixture:alpha:" in output
+    assert "Select a non-conflicting profile for fixture:alpha@basic:" in output
     assert "tracked fixture:alpha@work" in output
     assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.models import Binding
+from dotman.models import FullSpecSelector
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
@@ -151,19 +151,15 @@ def test_record_binding_rejects_conflicting_explicit_targets(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    repo, selector_query, _selector_kind = engine.resolve_selector_query_text("example:git@basic")
-    engine.record_tracked_package_entry(
-        Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
-    )
+    _repo, selector = engine.resolve_full_spec_selector_text("example:git@basic")
+    engine.record_tracked_package_entry(selector)
 
     with pytest.raises(
         ValueError,
         match=r"conflicting explicit tracked targets for .+\.gitconfig: example:git@basic -> example:git\.gitconfig, example:work/git@work -> example:work/git\.gitconfig",
     ):
-        repo, selector_query, _selector_kind = engine.resolve_selector_query_text("example:work/git@work")
-        engine.record_tracked_package_entry(
-            Binding(repo=repo.config.name, selector=selector_query.selector, profile=selector_query.profile or "")
-        )
+        _repo, selector = engine.resolve_full_spec_selector_text("example:work/git@work")
+        engine.record_tracked_package_entry(selector)
 
 def test_remove_binding_rejects_removal_that_exposes_implicit_conflict(
     tmp_path: Path,
