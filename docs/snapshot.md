@@ -33,8 +33,8 @@ This document captures the planned snapshot lifecycle and rollback semantics for
 - The default snapshot root should be `$XDG_DATA_HOME/dotman/snapshots/`.
 - If `XDG_DATA_HOME` is unset, dotman should fall back to `~/.local/share/dotman/snapshots/`.
 - Each snapshot should live in its own directory under that root.
-- Snapshot storage should be independent from repo binding state under `$XDG_STATE_HOME`.
-- Snapshot restore must not depend on the current repo contents or the current tracked binding set.
+- Snapshot storage should be independent from repo tracked package state under `$XDG_STATE_HOME`.
+- Snapshot restore must not depend on the current repo contents or the current tracked package set.
 
 Example layout:
 
@@ -65,7 +65,7 @@ $XDG_DATA_HOME/dotman/snapshots/
   - the original symlink target when the live path itself was a symlink
   - the symlink handling mode needed for rollback
   - the push action that triggered snapshot capture, for example `create`, `update`, or `delete`
-- Provenance such as repo, binding, package, and target labels may be recorded for human inspection, but rollback correctness must not depend on them.
+- Provenance such as repo, selector+profile, package, and target labels may be recorded for human inspection, but rollback correctness must not depend on them.
 
 ## Rollback Semantics
 

@@ -16,7 +16,7 @@ For a Jinja target, make the forward render explicit:
 
 - `render = 'dotman render jinja "$DOTMAN_SOURCE"'`
 
-Important: that command form is only equivalent when **dotman** launches it as a target command. In that case, dotman injects the resolved binding context through env vars such as `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`.
+Important: that command form is only equivalent when **dotman** launches it as a target command. In that case, dotman injects the resolved selector/profile context through env vars such as `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`.
 
 If you run `dotman render jinja ...` manually in your shell, dotman does **not** look up a repo, package, or profile on its own. You must provide context explicitly with `--profile`, `--os`, and `--var`, or export the corresponding `DOTMAN_*` env vars first.
 
@@ -271,13 +271,13 @@ Keep the explicit `dotman reconcile editor ... --additional-source ...` form whe
 
 It uses the same built-in renderer as `render = "jinja"`.
 
-When dotman runs it as a target command, it first resolves the binding context, then provides it through env vars.
+When dotman runs it as a target command, it first resolves the selector/profile context, then provides it through env vars.
 
 Resolution source:
 
-- `profile` comes from the binding itself, for example `...@basic`
+- `profile` comes from the selected selector+profile form, for example `...@basic`
 - template vars come from `package vars -> composed profile vars -> repo local override vars`
-- `os` is the inferred target OS for that binding
+- `os` is the inferred target OS for that selector/profile context
 
 Injected env:
 

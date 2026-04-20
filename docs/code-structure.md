@@ -36,7 +36,7 @@ Current responsibility split:
 
 - `repository.py` — repository loading and profile/group/package composition
 - `manifest.py` — manifest merge and schema helpers
-- `tracking.py` — persisted tracked-state and binding flows
+- `tracking.py` — persisted tracked-package state flows
 - `tracked_packages.py` — tracked package lookup and detail helpers
 - `planning.py` — high-level plan orchestration, including the top-level operation-plan wrapper used for repo-scoped hooks
 - `collisions.py` — tracked-target winner resolution and conflict checks
@@ -46,7 +46,7 @@ Current execution shape is intentionally nested:
 
 - operation plan
 - repo-scoped hook buckets
-- binding/package plans
+- selector/package plans
 - target plans and target-scoped hooks
 
 That structure keeps repo/package/target hook ordering explicit instead of hiding it in ad hoc sorting.

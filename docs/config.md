@@ -12,14 +12,14 @@ This document captures the user-level dotman manager configuration.
 - User config defines the available dotman repos, not the package/group/profile schema inside a repo.
 - Repos should be declared under `[repos.<name>]`.
 - Each repo entry must define `path`.
-- Repos may define `state_key` to control where binding state is stored under the manager state root.
+- Repos may define `state_key` to control where tracked package state is stored under the manager state root.
 - Repos should define `order`, where lower values are searched first.
 - Repo `order` values should be unique; ties should fail config validation.
 - Repo `state_key` values should be unique.
 - If `state_key` is omitted, dotman should default it to the repo name.
 - Dotman should derive the repo state dir as `$XDG_STATE_HOME/dotman/repos/<state_key>/`.
 - `state_key` must be a non-empty simple key and must not contain path separators or use `.` / `..`.
-- Legacy `state_path` is not supported. Migrate tracked bindings into the derived `$XDG_STATE_HOME/dotman/repos/<state_key>/` path instead.
+- Legacy `state_path` is not supported. Migrate tracked package entries into the derived `$XDG_STATE_HOME/dotman/repos/<state_key>/` path instead.
 - Repo names should be treated as stable identifiers, because dotman also uses the repo name to locate per-repo local overrides under XDG config.
 
 ## Local Overrides
@@ -43,7 +43,7 @@ This document captures the user-level dotman manager configuration.
 - A present but unreadable or malformed local override file should fail fast.
 - Local override loading should be independent per repo; one repo's local file should not affect another repo.
 - Local override data should participate only in variable resolution.
-- Local override data should not change tracked binding identity.
+- Local override data should not change tracked package identity.
 
 ## Symlink Handling
 
@@ -64,7 +64,7 @@ This document captures the user-level dotman manager configuration.
 - If `XDG_DATA_HOME` is unset, dotman should fall back to `~/.local/share/dotman/snapshots/`.
 - `max_generations` is optional, must be a positive integer, and defaults to `10`.
 - `max_generations` is count-based retention. Dotman should prune the oldest snapshots when the retained snapshot count exceeds that limit.
-- Snapshot storage is distinct from repo binding state. Snapshots belong under data home, while tracked binding state stays under state home.
+- Snapshot storage is distinct from repo tracked package state. Snapshots belong under data home, while tracked package state stays under state home.
 
 ## Selection Menu
 

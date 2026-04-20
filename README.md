@@ -51,7 +51,7 @@ uv tool install git+https://github.com/ewgdg/dotman.git
 dotman doctor
 ```
 
-This checks manager config, repo paths, tracked-state files, and external dependencies such as `git`, with optional dependency hints for tools like `fzf`.
+This checks manager config, repo paths, tracked package state files, and external dependencies such as `git`, with optional dependency hints for tools like `fzf`.
 
 ## Quick start
 

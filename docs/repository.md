@@ -59,8 +59,8 @@ This document captures the current repository structure and configuration schema
   - keyed maps use deep merge by key
   - scalars use last-wins replacement
   - lists replace the earlier value; they do not merge
-- A binding stores the selected bound profile.
-- Persisted tracked state stores package bindings, not group selectors.
+- Each persisted explicit package entry stores the selected bound profile.
+- Persisted tracked package state stores package selectors only, not group selectors.
 - The composed/effective profile is runtime resolution context, not package identity.
 - Packages with no file payload may still be useful as meta packages when they only declare `depends`.
 - Any string value may contain template expressions and is rendered during resolution.
@@ -76,10 +76,10 @@ This document captures the current repository structure and configuration schema
 - Target and reserved-path collision rules apply across all resolved package instances, including instances that come from the same `multi_instance` package definition.
 - `target_refs` are explicit target reuse, not collision tolerance. Independent real targets still keep normal hard collision rules.
 
-## Package Binding Modes
+## Package Identity Modes (`binding_mode`)
 
 - `binding_mode` controls package identity semantics, not file rendering semantics.
-- File naming conventions such as `.tmpl` should not change package binding behavior.
+- File naming conventions such as `.tmpl` should not change package identity behavior.
 - A `singleton` package is directly trackable as one package identity.
 - A `multi_instance` package definition is not itself a tracked package identity.
 - Tracking a `multi_instance` package always produces a package instance bound to one selected profile.
@@ -91,7 +91,7 @@ This document captures the current repository structure and configuration schema
 
 ## Package Inheritance
 
-- `extends` is for package reuse, not runtime binding or profile selection.
+- `extends` is for package reuse, not runtime package selection or profile selection.
 - `extends` should accept a list of package IDs.
 - Resolution order is:
   - first parent
@@ -142,7 +142,7 @@ See [`target-refs.md`](./target-refs.md) for explicit target reuse with `target_
 - Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow, `jinja-patch` for the narrow Jinja reverse-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.
 - Targets may define `render` as a forward transform used during `push`.
 - `render` may be a built-in renderer such as `jinja`, or a non-interactive stdout-producing command string.
-- Built-in renderers are shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` means dotman runs the built-in Jinja renderer as if it had executed `dotman render jinja "$DOTMAN_SOURCE"` **with the current binding context already injected through `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`**.
+- Built-in renderers are shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` means dotman runs the built-in Jinja renderer as if it had executed `dotman render jinja "$DOTMAN_SOURCE"` **with the current selector/profile context already injected through `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`**.
 - Running `dotman render jinja ...` manually is different: it does not resolve repo/profile context by itself, so manual use must pass `--profile` / `--os` / `--var` or set the matching `DOTMAN_*` env vars.
 - Targets may define `capture` as a non-interactive live-to-repo projection used during pull planning.
 - `capture` should be a non-interactive stdout producer.
@@ -286,7 +286,7 @@ run_noop = true
 - Standalone hook-only package execution must not fabricate target writes or snapshots.
 - Standalone hook-only target or repo execution must not fabricate target writes or snapshots.
 - Provenance alone should not cause hooks to execute.
-- Repo hook template expansion and env stay repo-scoped only. Dotman provides values such as `DOTMAN_REPO_NAME`, `DOTMAN_OPERATION`, `DOTMAN_REPO_ROOT`, and `DOTMAN_STATE_PATH`, but intentionally does not inject ambiguous single-binding values like `DOTMAN_PROFILE` or `DOTMAN_PACKAGE_ID` there.
+- Repo hook template expansion and env stay repo-scoped only. Dotman provides values such as `DOTMAN_REPO_NAME`, `DOTMAN_OPERATION`, `DOTMAN_REPO_ROOT`, and `DOTMAN_STATE_PATH`, but intentionally does not inject ambiguous single-package-entry values like `DOTMAN_PROFILE` or `DOTMAN_PACKAGE_ID` there.
 - Target hook env keeps the usual repo/package/profile vars and also includes `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, and `DOTMAN_TARGET_LIVE_PATH`.
 - Hook env also includes `DOTMAN_ASSUME_YES`, set to `1` when CLI `--yes` is active and `0` otherwise.
 - Repo-wide helper scripts live under `scripts/`.

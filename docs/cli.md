@@ -13,12 +13,12 @@ This document captures the current command and selector direction for `dotman`.
 ## Identifier Syntax
 
 - The canonical repo-qualified selector form is `repo:selector`.
-- The canonical repo-qualified binding form is `repo:selector@profile`.
+- The canonical repo-qualified selector+profile form is `repo:selector@profile`.
 - The canonical tracked package-instance form for a `multi_instance` package is `repo:package<profile>`.
 - The canonical human-facing target form is `repo:package.target`.
 - The canonical human-facing package-instance target form is `repo:package<profile>.target`.
 - `/` belongs inside selector IDs for namespacing, for example `work/git` or `os/arch`.
-- `<...>` is reserved for resolved tracked package instances, not root bindings or manifest IDs.
+- `<...>` is reserved for resolved tracked package instances, not selector+profile forms or manifest IDs.
 - `.` is reserved as the package/target separator in human-facing target labels.
 - When a menu, confirmation, diff banner, list output, or info view includes repo context, it should print the canonical colon-qualified form.
 - Slash-qualified repo input such as `repo/selector@profile` may remain accepted as a lookup alias for convenience, but dotman should normalize displays back to `repo:selector@profile`.
@@ -68,14 +68,14 @@ This document captures the current command and selector direction for `dotman`.
 - Profiles provide variable values used during resolution.
 - Profiles may include other profiles.
 - The selected top-level profile is the bound profile.
-- Bindings should store the top-level profile the user selected, not the flattened leaf profile set.
+- Persisted tracked package entries should store the top-level profile the user selected, not the flattened leaf profile set.
 - The composed/effective profile is runtime resolution context, not tracked package identity.
 - The same package or group should be applicable with different profiles.
 
-## Bindings
+## Track Requests
 
-- The CLI should treat the tracked unit as a binding: `repo:selector@profile`.
-- A binding combines what to manage with which variable context to resolve it under.
+- The CLI should treat user input as a track request: `repo:selector@profile`.
+- A track request combines what to manage with which variable context to resolve it under.
 - Examples:
   - `main:git@default`
   - `test:os/arch@basic`
@@ -83,8 +83,8 @@ This document captures the current command and selector direction for `dotman`.
 - CLI input may still omit the repo name when dotman can resolve it from configured repo search.
 - Profile should not be encoded into repository paths or package/group IDs.
 - A tracked `multi_instance` package instance is addressed as `package<bound-profile>` in tracked-package views.
-- `track` is the command that creates or replaces tracked bindings in persisted state.
-- `push` with no selector and `pull` with no selector should replay tracked bindings from persisted state.
+- `track` is command that creates or replaces persisted explicit package entries.
+- `push` with no selector and `pull` with no selector should replay persisted explicit package entries.
 - `push` and `pull` should resolve profile includes from the current repo state each time, not from stored leaf profiles.
 - `selector@profile` is a convenient shorthand when repo resolution is unambiguous.
 - A bare selector such as `git` or `os/arch` may still be accepted for interactive commands.
@@ -94,15 +94,16 @@ This document captures the current command and selector direction for `dotman`.
 
 ## Track
 
-- `track <binding>` should resolve the binding, prompt for a profile when needed, and persist the resulting package bindings into repo state.
+- `track <selector[@profile]>` should resolve the track request, prompt for a profile when needed, and persist the resulting explicit package entries into repo state.
 - If the input selector is a group, `track` should expand it exactly as if the user had listed each resolved package selector explicitly.
-- Re-tracking the same effective package binding should update that tracked binding instead of appending a duplicate entry.
-- A tracked `singleton` package should have at most one tracked binding per repo and package ID.
-- A tracked `multi_instance` package may keep one tracked binding per bound profile.
-- If tracking would replace an existing tracked package binding with a different profile, interactive mode should ask for confirmation before writing state.
-- In non-interactive mode, profile-replacing `track` should fail instead of silently overwriting the tracked package binding.
-- Tracking a `multi_instance` package with a different bound profile should add a distinct tracked binding instead of replacing the existing one.
-- If `track` would make a new explicit binding override existing implicit targets, interactive mode should ask for confirmation before writing state.
+- Persisted tracked package state should never keep historical group selectors; after tracking, state should contain package selectors only.
+- Re-tracking the same effective package entry should update that entry instead of appending a duplicate.
+- A tracked `singleton` package should have at most one explicit package entry per repo and package ID.
+- A tracked `multi_instance` package may keep one explicit package entry per bound profile.
+- If tracking would replace an existing explicit package entry with a different profile, interactive mode should ask for confirmation before writing state.
+- In non-interactive mode, profile-replacing `track` should fail instead of silently overwriting that explicit package entry.
+- Tracking a `multi_instance` package with a different bound profile should add a distinct explicit package entry instead of replacing the existing one.
+- If `track` would make a new explicit package entry override existing implicit targets, interactive mode should ask for confirmation before writing state.
 - In non-interactive mode, `track` should fail instead of silently overriding implicit tracked targets.
 - `track` is state-only in v1. It should not run repo-to-live work by itself.
 - Examples:
@@ -112,22 +113,22 @@ This document captures the current command and selector direction for `dotman`.
 ## Push
 
 - `push` is the repo-to-live command.
-- `push` should operate only on tracked state.
+- `push` should operate only on tracked package state.
 - `push` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
 - Plain `push` should perform real execution after planning, interactive exclusion, and diff review.
 - `push` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
 - `push` should accept `--yes` for the confirmation prompts that already have a safe default.
 - `push` should accept `--run-noop` so hook-bearing packages still execute when the finalized selected plan has only noop target steps.
-- `push <selector>` should resolve only within tracked state and reuse the tracked profile instead of prompting for a fresh profile.
-- Because groups are not tracked identities, tracked-state selector lookup for `push`, `pull`, `info tracked`, and `untrack` should resolve against tracked packages, not historical group names.
-- `push <package>` should also work when that package is currently included through a tracked higher-level binding; dotman should reuse the owning tracked profile in that case.
+- `push <selector>` should resolve only within tracked package state and reuse the tracked profile instead of prompting for a fresh profile.
+- Because groups are not tracked identities, tracked-package-state selector lookup for `push`, `pull`, `info tracked`, and `untrack` should resolve against tracked packages, not historical group names.
+- `push <package>` should also work when that package is currently included through another tracked explicit package entry; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
-- `push` with no binding should replay the current tracked bindings from persisted state without changing the tracked binding set.
+- `push` with no selector should replay the current explicit package entries from persisted state without changing that tracked package set.
 - If group membership or package `depends` change in the repo, `push` should pick up newly introduced managed packages and files.
 - `push` should only touch files within the current managed selection.
 - In interactive mode, `push` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
-- A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
+- An explicit package entry that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
 - Synthetic hook-only selection rows should stay owner-scoped, not per-hook command rows. Supported rows are repo (`[hooks] repo`), package (`[hooks] repo:package`), and target (`[hooks] repo:package.target`).
 - After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `push` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
@@ -161,21 +162,21 @@ This document captures the current command and selector direction for `dotman`.
 ## Pull
 
 - `pull` is the live-to-repo command for already modeled targets.
-- `pull` should operate only on tracked state.
+- `pull` should operate only on tracked package state.
 - `pull` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
 - Plain `pull` should perform real execution after planning, interactive exclusion, and diff review.
 - `pull` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
 - `pull` should accept `--yes` for the confirmation prompts that already have a safe default.
 - `pull` should accept `--run-noop` so hook-bearing packages still execute when the finalized selected plan has only noop target steps.
-- `pull <binding>` should resolve against tracked bindings and reuse the tracked profile/local context instead of prompting for a fresh profile choice.
-- `pull <package>` should also work when that package is currently included through a tracked higher-level binding; dotman should reuse the owning tracked profile in that case.
+- `pull <selector>` should resolve against tracked packages and reuse the tracked profile/local context instead of prompting for a fresh profile choice.
+- `pull <package>` should also work when that package is currently included through another tracked explicit package entry; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
-- `pull` with no binding should replay the current tracked bindings from persisted state.
+- `pull` with no selector should replay the current explicit package entries from persisted state.
 - If the requested selector is not currently tracked, `pull` should fail instead of implicitly creating state. The user should use `track` first.
 - `pull` should first build a reverse-sync plan before changing any sources.
 - In interactive mode, `pull` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
-- A binding that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
+- An explicit package entry that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
 - Synthetic hook-only selection rows should stay owner-scoped, not per-hook command rows. Supported rows are repo (`[hooks] repo`), package (`[hooks] repo:package`), and target (`[hooks] repo:package.target`).
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `pull` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
@@ -236,7 +237,7 @@ This document captures the current command and selector direction for `dotman`.
 ## Rollback
 
 - `rollback` should restore managed live paths from a previously recorded snapshot.
-- `rollback` should not resolve current repo manifests, tracked bindings, or profile state.
+- `rollback` should not resolve current repo manifests, current tracked package entries, or profile state.
 - `rollback` with no snapshot reference should target the latest restorable snapshot.
 - `rollback <snapshot>` should accept either `latest`, an exact snapshot ID, or a unique leading prefix such as a date or timestamp fragment.
 - If a snapshot reference matches multiple snapshots, interactive mode should prompt for one snapshot and non-interactive mode should fail with the candidates.
@@ -257,7 +258,7 @@ This document captures the current command and selector direction for `dotman`.
 ## Snapshot History
 
 - `list snapshots` should list available snapshots in newest-first order.
-- `list snapshots` should not require current repo resolution or tracked bindings.
+- `list snapshots` should not require current repo resolution or tracked package entries.
 - `list snapshots` should stay overview-oriented by default. It should show summary metadata, not dump every recorded path.
 - Each listed snapshot should include a human-readable creation time, a copyable snapshot ref, status, and a compact count of recorded path entries.
 - If a snapshot has been restored before, list output should also surface restore metadata such as restore count and most recent restore time.
@@ -290,7 +291,7 @@ This document captures the current command and selector direction for `dotman`.
 - Partial package text may help find an existing package, but dotman should not silently create a package from an unresolved partial query.
 - If the selected package does not exist yet, `add` should create `packages/<package-id>/package.toml`, including namespaced package paths such as `packages/work/git/package.toml`.
 - If the selected package already exists, `add` should update only that package's `package.toml`.
-- `add` should not modify tracked binding state.
+- `add` should not modify tracked package state.
 - `add` should not run `push`, `pull`, hooks, or any repo-to-live or live-to-repo execution.
 - `add` should not copy the live file or directory into the repo in v1; this phase is manifest-only.
 - `add` should derive a deterministic target key from the live destination path.
@@ -338,69 +339,71 @@ This document captures the current command and selector direction for `dotman`.
 
 ## Untrack
 
-- `untrack <binding>` should remove one tracked root binding from persisted state.
+- `untrack <selector[@profile]>` should remove one persisted explicit package entry from state.
 - `untrack` should be state-only in v1.
 - `untrack` should not delete live files, run hooks, or infer target ownership.
-- `untrack` should match tracked bindings, not current repo manifests, so stale bindings can still be untracked after repo changes.
+- `untrack` should match persisted explicit package entries, not current repo manifests, so stale entries can still be removed after repo changes.
 - `untrack` should accept either `selector` or `selector@profile`.
-- If the profile is omitted, dotman should untrack the unique exact tracked binding that matches the selector.
-- Omitting the profile for a tracked `multi_instance` root selector with multiple bound profiles should be an ambiguity error.
+- If the profile is omitted, dotman should untrack the unique exact explicit package entry that matches the selector.
+- Omitting the profile for a tracked `multi_instance` package selector with multiple bound profiles should be an ambiguity error.
 - A single fuzzy/partial match must not execute or mutate state silently.
 - In interactive mode, a single fuzzy/partial match should require explicit confirmation before dotman continues.
 - In non-interactive or JSON mode, a single fuzzy/partial match should fail without guessing.
 - Tracked package matches, including implicit packages, should participate in fuzzy-match ambiguity detection so `untrack` does not treat a destructive partial match as uniquely safe.
-- Exact invalid or orphan explicit bindings should still be removable by matching the persisted binding record.
-- If the selector only names a package that is present through another tracked binding, dotman should explain which tracked bindings currently include it instead of just saying "not tracked".
-- `untrack` should validate the resulting tracked binding set before writing state.
-- If removing one binding would expose a tracked-target conflict among the remaining bindings, `untrack` should fail and keep state unchanged.
+- Exact invalid or orphan explicit package entries should still be removable by matching the persisted state record.
+- If the selector only names a package that is present through another explicit package entry, dotman should explain which tracked package entries currently include it instead of just saying "not tracked".
+- `untrack` should validate the resulting tracked package set before writing state.
+- If removing one explicit package entry would expose a tracked-target conflict among the remaining entries, `untrack` should fail and keep state unchanged.
 - `forget` may remain as a compatibility alias for `untrack` during transition, but `untrack` is the primary name.
-- Repo qualification may still be omitted when the tracked binding is unique across configured repos.
+- Repo qualification may still be omitted when the tracked package entry is unique across configured repos.
 - Examples:
   - `dotman untrack main:git@default`
   - `dotman untrack git`
 
-## Tracked State
+## Tracked Package State
 
-- Snapshot history is separate from tracked binding state.
-- `list snapshots` and `rollback` should operate from snapshot manifests under the snapshot storage root, not from tracked binding state.
+- Snapshot history is separate from tracked package state.
+- `list snapshots` and `rollback` should operate from snapshot manifests under the snapshot storage root, not from tracked package state.
 
-- `list tracked` should report the packages currently tracked by persisted bindings.
-- `list tracked` should resolve the current binding state against the current repo manifests.
+- `list tracked` should report the packages currently tracked by persisted explicit package entries.
+- `list tracked` should resolve the current tracked package state against the current repo manifests.
 - `list tracked` should not guess from the live filesystem.
 - `list tracked` should not run push/pull planning or execute render/capture commands.
 - `list tracked` should include package-level `state` as `explicit` or `implicit`.
-- `list tracked` should include invalid explicit bindings for configured repos when persisted state no longer resolves cleanly.
-- `list tracked` should include orphan explicit bindings discovered under the manager state root when a persisted `state_key` no longer maps to configured repos.
+- `list tracked` should include invalid explicit package entries for configured repos when persisted state no longer resolves cleanly.
+- `list tracked` should include orphan explicit package entries discovered under the manager state root when a persisted `state_key` no longer maps to configured repos.
 - Human `list tracked` output should print one flat `repo:package-or-selector state` list.
-- Human `list tracked` output should list explicit and implicit packages first, then orphan bindings, then invalid bindings.
+- Human `list tracked` output should list explicit and implicit packages first, then orphan entries, then invalid entries.
 - `dotman list tracked` should list tracked package identities, not collapse `multi_instance` package instances by package definition.
 - `singleton` packages should be listed once by package ID.
 - `multi_instance` packages should be listed once per bound instance using `package<bound-profile>`.
 - `dotman list vars` should list only the winning variable occurrence per repo.
-- Human `list vars` output should keep the binding context visible, for example `name (repo:selector@profile)`.
+- Human `list vars` output should keep the selector+profile context visible, for example `name (repo:selector@profile)`.
 - `dotman info var <var>` should show every resolved occurrence of that variable key and its provenance.
 - Variable provenance should identify the winning source layer for the resolved value, such as a package, profile, or repo-local override.
 - `dotman info tracked <package>` should show detailed information for one currently tracked package identity.
 - `dotman info tracked package<bound-profile>` should address one tracked `multi_instance` package instance.
 - Package detail should include the owning repo, description, provenance entries with explicit or implicit reasons, owned targets after tracked-target winner resolution, the bound profile for `multi_instance` instances, and the effective hook commands for that package instance, even when the current push plan would be all-noop.
-- Human-readable `info tracked` hook output should stay package-centric. Do not repeat a provenance binding header under `::hooks`; the package instance already implies the single bound profile/effective hook-bearing binding.
+- Human-readable `info tracked` hook output should stay package-centric. Do not repeat a selector+profile provenance header under `::hooks`; the package instance already implies the single bound profile/effective hook-bearing source entry.
 - Package lookup for `info tracked` may use the same repo-qualified and partial-selector rules as other package-oriented commands, but it should search only tracked packages.
 - When tracked package lookup is ambiguous in interactive mode, `info tracked` should use the same shared selector menu as the other package-oriented commands.
 - When a `multi_instance` package name matches multiple tracked instances, `info tracked` should require or select a specific `package<bound-profile>` instance instead of silently collapsing them.
-- When tracked bindings resolve the same target path, explicit provenance should override implicit provenance.
+- When tracked package entries resolve the same target path, explicit provenance should override implicit provenance.
 - Conflicting explicit candidates should fail, and conflicting implicit-only candidates should also fail.
 - In interactive `track`, dotman may offer a non-conflicting profile switch before failing.
-- In interactive `track`, an implicit-only conflict may also offer promotion of a conflicting package from the requested binding into an explicit tracked binding.
+- In interactive `track`, an implicit-only conflict may also offer promotion of a conflicting package from the requested selector into an explicit package entry.
 
 ## State
 
 The CLI model implies persistent state.
 
-For v1, dotman should persist bindings only.
+For v1, dotman should persist explicit package entries only.
 
-- tracked root bindings
+- persisted explicit package entries only; group selectors must already be expanded
 - no persisted target ownership yet
 - no persisted resolved package graph yet
+
+Current file format still uses `bindings.toml` and `[[bindings]]`, but each row represents one explicit tracked package entry.
 
 For example:
 
@@ -409,7 +412,7 @@ version = 1
 
 [[bindings]]
 repo = "main"
-selector = "os/arch"
+selector = "desktop/niri"
 profile = "basic"
 
 [[bindings]]
@@ -418,9 +421,9 @@ selector = "git"
 profile = "personal"
 ```
 
-- `push` with no selector should recompute the current package set from persisted bindings and the current repo state.
-- `pull` with no selector should also recompute from persisted bindings and the current repo state.
-- `track` and `untrack` should update only the persisted binding set.
+- `push` with no selector should recompute the current package set from persisted explicit package entries and the current repo state.
+- `pull` with no selector should also recompute from persisted explicit package entries and the current repo state.
+- `track` and `untrack` should update only the persisted explicit package-entry set.
 - Target ownership and prune-oriented state can be added later when prune behavior is introduced.
 
 ## Host Entry Points
