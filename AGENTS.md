@@ -11,5 +11,5 @@
 - Use `repo:package<instance>.target` for package-instance targets.
 - Reserve `.` as package/target separator. Do not allow `.` inside package IDs or target names.
 - Use parentheses only for optional annotations such as hook summaries, not target identity.
-- Do not reveal the actual tracked root binding except in info command output.
+- Do not reveal the actual tracked root packages except in info command output.
 - Reuse the same rendering for keyword terms when possible to keep the color schema consistent.
