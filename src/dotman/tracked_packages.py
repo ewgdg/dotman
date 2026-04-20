@@ -9,10 +9,10 @@ from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
 from dotman.projection import default_pull_view_live, infer_target_kind
 from dotman.models import (
     Binding,
-    InstalledBindingSummary,
-    InstalledOwnedTargetDetail,
-    InstalledPackageBindingDetail,
-    InstalledTargetSummary,
+    TrackedBindingSummary,
+    TrackedOwnedTargetDetail,
+    TrackedPackageBindingDetail,
+    TrackedTargetSummary,
     PackageSpec,
     TargetPlan,
     package_ref_text,
@@ -32,11 +32,11 @@ class TrackedTargetMatch:
     bound_profile: str | None = None
 
 
-def resolve_installed_package(
+def resolve_tracked_package(
     engine: Any,
     package_text: str,
 ) -> tuple[Repository, str, str | None]:
-    selector, bound_profile, exact_matches, partial_matches = engine.find_installed_package_matches(package_text)
+    selector, bound_profile, exact_matches, partial_matches = engine.find_tracked_package_matches(package_text)
     if len(exact_matches) == 1:
         return exact_matches[0]
     if len(exact_matches) > 1:
@@ -128,7 +128,7 @@ def list_tracked_targets(engine: Any) -> list[TrackedTargetMatch]:
     )
 
 
-def find_installed_package_matches(
+def find_tracked_package_matches(
     engine: Any,
     package_text: str,
     *,
@@ -136,25 +136,25 @@ def find_installed_package_matches(
 ) -> tuple[str, str | None, list[tuple[Repository, str, str | None]], list[tuple[Repository, str, str | None]]]:
     explicit_repo, selector, bound_profile = parse_package_ref_text(package_text)
     candidate_repos = engine.candidate_repos(explicit_repo)
-    installed_ids = {
+    tracked_package_ids = {
         (
             repo.config.name,
             package_id,
             engine._bound_profile_for_package(repo, package_id, binding.profile),
         ): repo
-        for repo, binding, _selector_kind, package_ids in engine._iter_installed_bindings()
+        for repo, binding, _selector_kind, package_ids in engine._iter_tracked_bindings()
         if repo in candidate_repos
         for package_id in package_ids
     }
     exact_matches = [
         (repo, package_id, match_bound_profile)
-        for (repo_name, package_id, match_bound_profile), repo in installed_ids.items()
+        for (repo_name, package_id, match_bound_profile), repo in tracked_package_ids.items()
         if package_id == selector and repo_name == repo.config.name
         and (bound_profile is None or match_bound_profile == bound_profile)
     ]
     partial_matches = [
         (repo, package_id, match_bound_profile)
-        for (_repo_name, package_id, match_bound_profile), repo in installed_ids.items()
+        for (_repo_name, package_id, match_bound_profile), repo in tracked_package_ids.items()
         if selector in package_ref_text(package_id=package_id, bound_profile=match_bound_profile)
         and (bound_profile is None or match_bound_profile == bound_profile)
     ]
@@ -175,7 +175,7 @@ def describe_package_binding(
     package_ids: list[str],
     *,
     executable: bool,
-) -> InstalledPackageBindingDetail:
+) -> TrackedPackageBindingDetail:
     resolved_packages = [repo.resolve_package(candidate_id) for candidate_id in package_ids]
     profile_vars, lineage = repo.compose_profile(binding.profile)
     package_vars: dict[str, Any] = {}
@@ -202,8 +202,8 @@ def describe_package_binding(
     targets = summarize_targets(repo, package, context)
     tracked_reason = "explicit" if package_id in engine._selected_package_ids(repo, binding.selector, selector_kind) else "implicit"
 
-    return InstalledPackageBindingDetail(
-        binding=InstalledBindingSummary(
+    return TrackedPackageBindingDetail(
+        binding=TrackedBindingSummary(
             repo=repo.config.name,
             selector=binding.selector,
             profile=binding.profile,
@@ -220,8 +220,8 @@ def summarize_targets(
     repo: Repository,
     package: PackageSpec,
     context: dict[str, Any],
-) -> list[InstalledTargetSummary]:
-    target_summaries: list[InstalledTargetSummary] = []
+) -> list[TrackedTargetSummary]:
+    target_summaries: list[TrackedTargetSummary] = []
     for target in (package.targets or {}).values():
         if target.disabled:
             continue
@@ -247,7 +247,7 @@ def summarize_targets(
             else None
         )
         target_summaries.append(
-            InstalledTargetSummary(
+            TrackedTargetSummary(
                 target_name=target.name,
                 repo_path=repo_path,
                 live_path=live_path,
@@ -267,8 +267,8 @@ def summarize_targets(
 
 
 
-def installed_target_summary_from_plan(target: TargetPlan) -> InstalledTargetSummary:
-    return InstalledTargetSummary(
+def tracked_target_summary_from_plan(target: TargetPlan) -> TrackedTargetSummary:
+    return TrackedTargetSummary(
         target_name=target.target_name,
         repo_path=target.repo_path,
         live_path=target.live_path,
@@ -291,8 +291,8 @@ def describe_owned_package_targets(
     repo_name: str,
     package_id: str,
     bound_profile: str | None,
-) -> list[InstalledOwnedTargetDetail]:
-    owned_targets: list[InstalledOwnedTargetDetail] = []
+) -> list[TrackedOwnedTargetDetail]:
+    owned_targets: list[TrackedOwnedTargetDetail] = []
     for plan in engine.plan_push():
         if plan.binding.repo != repo_name:
             continue
@@ -302,14 +302,14 @@ def describe_owned_package_targets(
             if target.package_id != package_id:
                 continue
             owned_targets.append(
-                InstalledOwnedTargetDetail(
-                    binding=InstalledBindingSummary(
+                TrackedOwnedTargetDetail(
+                    binding=TrackedBindingSummary(
                         repo=plan.binding.repo,
                         selector=plan.binding.selector,
                         profile=plan.binding.profile,
                         selector_kind=plan.selector_kind,
                     ),
-                    target=installed_target_summary_from_plan(target),
+                    target=tracked_target_summary_from_plan(target),
                 )
             )
     return sorted(

@@ -102,7 +102,7 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
             return _handle_rollback(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
         if args.command in {"untrack", "forget"}:
             return _handle_untrack(args=args, engine=engine, handlers=handlers)
-        if args.command == "list" and args.list_command in {"tracked", "installed"}:
+        if args.command == "list" and args.list_command == "tracked":
             tracked_state = engine.list_tracked_state()
             return handlers.emit_tracked_packages(
                 engine=engine,
@@ -121,7 +121,7 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
                 json_output=args.json_output,
                 max_generations=engine.config.snapshots.max_generations,
             )
-        if args.command == "info" and args.info_command in {"tracked", "installed"}:
+        if args.command == "info" and args.info_command == "tracked":
             return _handle_info_tracked(args=args, engine=engine, handlers=handlers)
         if args.command == "info" and args.info_command == "var":
             resolved_variable = handlers.resolve_variable_text(

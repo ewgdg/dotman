@@ -8,11 +8,11 @@ from dotman.config import default_state_root
 from dotman.toml_utils import load_toml_file
 from dotman.models import (
     Binding,
-    InstalledBindingSummary,
-    InstalledPackageBindingDetail,
-    InstalledPackageDetail,
-    InstalledPackageSummary,
-    InstalledTargetRefDetail,
+    TrackedBindingSummary,
+    TrackedPackageBindingDetail,
+    TrackedPackageDetail,
+    TrackedPackageSummary,
+    TrackedTargetRefDetail,
     TrackedBindingIssue,
     package_ref_text,
 )
@@ -39,7 +39,7 @@ class PersistedBindingRecord:
 
 @dataclass(frozen=True)
 class TrackedStateSummary:
-    packages: list[InstalledPackageSummary]
+    packages: list[TrackedPackageSummary]
     invalid_bindings: list[TrackedBindingIssue]
 
 
@@ -74,11 +74,11 @@ def list_orphan_explicit_bindings(engine: Any) -> list[TrackedBindingIssue]:
 
 
 
-def list_tracked_packages(engine: Any) -> list[InstalledPackageSummary]:
-    installed: dict[tuple[str, str, str | None], InstalledPackageSummary] = {}
+def list_tracked_packages(engine: Any) -> list[TrackedPackageSummary]:
+    tracked_packages: dict[tuple[str, str, str | None], TrackedPackageSummary] = {}
     package_states: dict[tuple[str, str, str | None], str] = {}
     for repo, binding, selector_kind, package_ids in engine._iter_tracked_bindings():
-        binding_summary = InstalledBindingSummary(
+        binding_summary = TrackedBindingSummary(
             repo=repo.config.name,
             selector=binding.selector,
             profile=binding.profile,
@@ -89,9 +89,9 @@ def list_tracked_packages(engine: Any) -> list[InstalledPackageSummary]:
             bound_profile = engine._bound_profile_for_package(repo, package_id, binding.profile)
             key = (repo.config.name, package_id, bound_profile)
             package_state = "explicit" if selector_kind == "package" and binding.selector == package_id else "implicit"
-            existing = installed.get(key)
+            existing = tracked_packages.get(key)
             if existing is None:
-                installed[key] = InstalledPackageSummary(
+                tracked_packages[key] = TrackedPackageSummary(
                     repo=repo.config.name,
                     package_id=package_id,
                     description=package.description,
@@ -107,7 +107,7 @@ def list_tracked_packages(engine: Any) -> list[InstalledPackageSummary]:
                 package_states[key] = "explicit"
 
     return [
-        InstalledPackageSummary(
+        TrackedPackageSummary(
             repo=summary.repo,
             package_id=summary.package_id,
             description=summary.description,
@@ -116,7 +116,7 @@ def list_tracked_packages(engine: Any) -> list[InstalledPackageSummary]:
             bound_profile=summary.bound_profile,
         )
         for key, summary in sorted(
-            installed.items(),
+            tracked_packages.items(),
             key=lambda item: (
                 0 if package_states[item[0]] == "explicit" else 1,
                 item[0][0],
@@ -125,22 +125,14 @@ def list_tracked_packages(engine: Any) -> list[InstalledPackageSummary]:
             ),
         )
     ]
-
-
-
-def list_installed_packages(engine: Any) -> list[InstalledPackageSummary]:
-    return engine.list_tracked_packages()
-
-
-
-def describe_tracked_package(engine: Any, package_text: str) -> InstalledPackageDetail:
-    repo, package_id, bound_profile = engine._resolve_installed_package(package_text)
+def describe_tracked_package(engine: Any, package_text: str) -> TrackedPackageDetail:
+    repo, package_id, bound_profile = engine._resolve_tracked_package(package_text)
     effective_binding_keys = engine._effective_package_binding_keys(
         repo.config.name,
         package_id,
         bound_profile,
     )
-    details: list[InstalledPackageBindingDetail] = []
+    details: list[TrackedPackageBindingDetail] = []
     description = repo.resolve_package(package_id).description
 
     for candidate_repo, binding, selector_kind, package_ids in engine._iter_tracked_bindings():
@@ -165,14 +157,14 @@ def describe_tracked_package(engine: Any, package_text: str) -> InstalledPackage
 
     resolved_package = repo.resolve_package(package_id)
     target_refs = [
-        InstalledTargetRefDetail(
+        TrackedTargetRefDetail(
             target_name=target_name,
             chain=repo.resolve_target_reference(package_id, target_name).chain,
         )
         for target_name in sorted(resolved_package.target_refs or {})
     ]
 
-    return InstalledPackageDetail(
+    return TrackedPackageDetail(
         repo=repo.config.name,
         package_id=package_id,
         description=description,
@@ -185,14 +177,6 @@ def describe_tracked_package(engine: Any, package_text: str) -> InstalledPackage
         target_refs=target_refs,
         bound_profile=bound_profile,
     )
-
-
-
-def describe_installed_package(engine: Any, package_text: str) -> InstalledPackageDetail:
-    return engine.describe_tracked_package(package_text)
-
-
-
 def read_bindings_file(state_path: Path) -> list[Binding]:
     if not state_path.exists():
         return []
@@ -553,14 +537,6 @@ def iter_tracked_bindings(engine: Any) -> list[tuple[Repository, Binding, str, l
         for record in valid_records
         if record.repo is not None
     ]
-
-
-
-def iter_installed_bindings(engine: Any) -> list[tuple[Repository, Binding, str, list[str]]]:
-    return engine._iter_tracked_bindings()
-
-
-
 def configured_persisted_binding_records(
     engine: Any,
     *,
@@ -667,9 +643,9 @@ def tracked_package_matches_for_untrack(
     selector: str,
     profile: str | None,
     repo_name: str | None,
-) -> tuple[list[InstalledPackageSummary], list[InstalledBindingSummary]]:
-    package_matches: list[InstalledPackageSummary] = []
-    owner_bindings: dict[tuple[str, str, str], InstalledBindingSummary] = {}
+) -> tuple[list[TrackedPackageSummary], list[TrackedBindingSummary]]:
+    package_matches: list[TrackedPackageSummary] = []
+    owner_bindings: dict[tuple[str, str, str], TrackedBindingSummary] = {}
     if repo_name is not None and repo_name not in engine.repos:
         return package_matches, []
     candidate_repo_names = set(engine.repos) if repo_name is None else {repo_name}
@@ -722,10 +698,10 @@ def format_persisted_binding_candidates(records: list[PersistedBindingRecord]) -
 
 
 
-def format_tracked_package_candidates(packages: list[InstalledPackageSummary]) -> str:
+def format_tracked_package_candidates(packages: list[TrackedPackageSummary]) -> str:
     return ", ".join(f"{package.repo}:{package.package_ref}" for package in packages)
 
 
 
-def format_owner_bindings(bindings: list[InstalledBindingSummary]) -> str:
+def format_owner_bindings(bindings: list[TrackedBindingSummary]) -> str:
     return ", ".join(f"{binding.repo}:{binding.selector}@{binding.profile}" for binding in bindings)

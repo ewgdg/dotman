@@ -9,12 +9,12 @@ from dotman.ignore import list_directory_files, matches_ignore_pattern
 from dotman.models import (
     Binding,
     BindingPlan,
-    InstalledBindingSummary,
-    InstalledPackageBindingDetail,
-    InstalledPackageDetail,
-    InstalledPackageSummary,
-    InstalledOwnedTargetDetail,
-    InstalledTargetSummary,
+    TrackedBindingSummary,
+    TrackedPackageBindingDetail,
+    TrackedPackageDetail,
+    TrackedPackageSummary,
+    TrackedOwnedTargetDetail,
+    TrackedTargetSummary,
     ManagerConfig,
     OperationPlan,
     PackageSpec,
@@ -32,7 +32,7 @@ from dotman.tracking import (
     PersistedBindingRecord,
     TrackedStateSummary,
 )
-from dotman import installed, tracking, variable_inspection
+from dotman import tracked_packages, tracking, variable_inspection
 
 def parse_binding_text(binding_text: str) -> tuple[str | None, str, str | None]:
     repo_name: str | None = None
@@ -271,17 +271,11 @@ class DotmanEngine:
     def list_orphan_explicit_bindings(self) -> list[TrackedBindingIssue]:
         return self._tracking_helpers().list_orphan_explicit_bindings(self)
 
-    def list_tracked_packages(self) -> list[InstalledPackageSummary]:
+    def list_tracked_packages(self) -> list[TrackedPackageSummary]:
         return self._tracking_helpers().list_tracked_packages(self)
 
-    def list_installed_packages(self) -> list[InstalledPackageSummary]:
-        return self._tracking_helpers().list_installed_packages(self)
-
-    def describe_tracked_package(self, package_text: str) -> InstalledPackageDetail:
+    def describe_tracked_package(self, package_text: str) -> TrackedPackageDetail:
         return self._tracking_helpers().describe_tracked_package(self, package_text)
-
-    def describe_installed_package(self, package_text: str) -> InstalledPackageDetail:
-        return self._tracking_helpers().describe_installed_package(self, package_text)
 
     def list_variables(self) -> list[Any]:
         return variable_inspection.list_winning_variables(self)
@@ -404,9 +398,6 @@ class DotmanEngine:
     def _iter_tracked_bindings(self) -> list[tuple[Repository, Binding, str, list[str]]]:
         return self._tracking_helpers().iter_tracked_bindings(self)
 
-    def _iter_installed_bindings(self) -> list[tuple[Repository, Binding, str, list[str]]]:
-        return self._tracking_helpers().iter_installed_bindings(self)
-
     def _configured_persisted_binding_records(
         self,
         *,
@@ -432,7 +423,7 @@ class DotmanEngine:
         selector: str,
         profile: str | None,
         repo_name: str | None,
-    ) -> tuple[list[InstalledPackageSummary], list[InstalledBindingSummary]]:
+    ) -> tuple[list[TrackedPackageSummary], list[TrackedBindingSummary]]:
         return self._tracking_helpers().tracked_package_matches_for_untrack(
             self,
             selector=selector,
@@ -446,33 +437,33 @@ class DotmanEngine:
     def _format_persisted_binding_candidates(self, records: list[PersistedBindingRecord]) -> str:
         return self._tracking_helpers().format_persisted_binding_candidates(records)
 
-    def _format_tracked_package_candidates(self, packages: list[InstalledPackageSummary]) -> str:
+    def _format_tracked_package_candidates(self, packages: list[TrackedPackageSummary]) -> str:
         return self._tracking_helpers().format_tracked_package_candidates(packages)
 
-    def _format_owner_bindings(self, bindings: list[InstalledBindingSummary]) -> str:
+    def _format_owner_bindings(self, bindings: list[TrackedBindingSummary]) -> str:
         return self._tracking_helpers().format_owner_bindings(bindings)
 
     def _selected_package_ids(self, repo: Repository, selector: str, selector_kind: str) -> list[str]:
         return [selector] if selector_kind == "package" else repo.expand_group(selector)
 
-    def _installed_helpers(self):
-        return installed
+    def _tracked_package_helpers(self):
+        return tracked_packages
 
-    def _resolve_installed_package(self, package_text: str) -> tuple[Repository, str, str | None]:
-        return self._installed_helpers().resolve_installed_package(self, package_text)
+    def _resolve_tracked_package(self, package_text: str) -> tuple[Repository, str, str | None]:
+        return self._tracked_package_helpers().resolve_tracked_package(self, package_text)
 
-    def find_installed_package_matches(
+    def find_tracked_package_matches(
         self,
         package_text: str,
     ) -> tuple[str, str | None, list[tuple[Repository, str, str | None]], list[tuple[Repository, str, str | None]]]:
-        return self._installed_helpers().find_installed_package_matches(
+        return self._tracked_package_helpers().find_tracked_package_matches(
             self,
             package_text,
             parse_package_ref_text=parse_package_ref_text,
         )
 
     def find_tracked_target_matches(self, target_text: str) -> tuple[str, list[Any], list[Any]]:
-        return self._installed_helpers().find_tracked_target_matches(
+        return self._tracked_package_helpers().find_tracked_target_matches(
             self,
             target_text,
             parse_binding_text=parse_binding_text,
@@ -488,8 +479,8 @@ class DotmanEngine:
         package_ids: list[str],
         *,
         executable: bool,
-    ) -> InstalledPackageBindingDetail:
-        return self._installed_helpers().describe_package_binding(
+    ) -> TrackedPackageBindingDetail:
+        return self._tracked_package_helpers().describe_package_binding(
             self,
             repo,
             binding,
@@ -548,19 +539,19 @@ class DotmanEngine:
         repo: Repository,
         package: PackageSpec,
         context: dict[str, Any],
-    ) -> list[InstalledTargetSummary]:
-        return self._installed_helpers().summarize_targets(repo, package, context)
+    ) -> list[TrackedTargetSummary]:
+        return self._tracked_package_helpers().summarize_targets(repo, package, context)
 
-    def _installed_target_summary_from_plan(self, target: Any) -> InstalledTargetSummary:
-        return self._installed_helpers().installed_target_summary_from_plan(target)
+    def _tracked_target_summary_from_plan(self, target: Any) -> TrackedTargetSummary:
+        return self._tracked_package_helpers().tracked_target_summary_from_plan(target)
 
     def _describe_owned_package_targets(
         self,
         repo_name: str,
         package_id: str,
         bound_profile: str | None,
-    ) -> list[InstalledOwnedTargetDetail]:
-        return self._installed_helpers().describe_owned_package_targets(
+    ) -> list[TrackedOwnedTargetDetail]:
+        return self._tracked_package_helpers().describe_owned_package_targets(
             self,
             repo_name,
             package_id,
@@ -573,7 +564,7 @@ class DotmanEngine:
         package_id: str,
         bound_profile: str | None,
     ) -> set[tuple[str, str, str]]:
-        return self._installed_helpers().effective_package_binding_keys(
+        return self._tracked_package_helpers().effective_package_binding_keys(
             self,
             repo_name,
             package_id,

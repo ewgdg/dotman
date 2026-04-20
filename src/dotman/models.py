@@ -179,7 +179,7 @@ class Binding:
 
 
 @dataclass(frozen=True)
-class InstalledBindingSummary:
+class TrackedBindingSummary:
     repo: str
     selector: str
     profile: str
@@ -219,7 +219,7 @@ class HookPlan:
 
 
 @dataclass(frozen=True)
-class InstalledTargetSummary:
+class TrackedTargetSummary:
     target_name: str
     repo_path: Path
     live_path: Path
@@ -253,11 +253,11 @@ class InstalledTargetSummary:
 
 
 @dataclass(frozen=True)
-class InstalledPackageSummary:
+class TrackedPackageSummary:
     repo: str
     package_id: str
     description: str | None
-    bindings: list[InstalledBindingSummary]
+    bindings: list[TrackedBindingSummary]
     state: str
     bound_profile: str | None = None
 
@@ -300,10 +300,10 @@ class TrackedBindingIssue:
 
 
 @dataclass(frozen=True)
-class InstalledPackageBindingDetail:
-    binding: InstalledBindingSummary
+class TrackedPackageBindingDetail:
+    binding: TrackedBindingSummary
     tracked_reason: str
-    targets: list[InstalledTargetSummary]
+    targets: list[TrackedTargetSummary]
     hooks: dict[str, list[HookPlan]]
 
     def to_dict(self) -> dict[str, Any]:
@@ -316,9 +316,9 @@ class InstalledPackageBindingDetail:
 
 
 @dataclass(frozen=True)
-class InstalledOwnedTargetDetail:
-    binding: InstalledBindingSummary
-    target: InstalledTargetSummary
+class TrackedOwnedTargetDetail:
+    binding: TrackedBindingSummary
+    target: TrackedTargetSummary
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -328,7 +328,7 @@ class InstalledOwnedTargetDetail:
 
 
 @dataclass(frozen=True)
-class InstalledTargetRefDetail:
+class TrackedTargetRefDetail:
     target_name: str
     chain: tuple[TargetRefStep, ...]
 
@@ -345,13 +345,13 @@ class InstalledTargetRefDetail:
 
 
 @dataclass(frozen=True)
-class InstalledPackageDetail:
+class TrackedPackageDetail:
     repo: str
     package_id: str
     description: str | None
-    bindings: list[InstalledPackageBindingDetail]
-    owned_targets: list[InstalledOwnedTargetDetail]
-    target_refs: list[InstalledTargetRefDetail] = field(default_factory=list)
+    bindings: list[TrackedPackageBindingDetail]
+    owned_targets: list[TrackedOwnedTargetDetail]
+    target_refs: list[TrackedTargetRefDetail] = field(default_factory=list)
     bound_profile: str | None = None
 
     @property

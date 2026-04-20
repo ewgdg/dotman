@@ -37,7 +37,7 @@ Current responsibility split:
 - `repository.py` — repository loading and profile/group/package composition
 - `manifest.py` — manifest merge and schema helpers
 - `tracking.py` — persisted tracked-state and binding flows
-- `installed.py` — tracked/installed package inspection helpers
+- `tracked_packages.py` — tracked package lookup and detail helpers
 - `planning.py` — high-level plan orchestration, including the top-level operation-plan wrapper used for repo-scoped hooks
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `projection.py` — target projection and file/directory action planning

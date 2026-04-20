@@ -1506,7 +1506,7 @@ def resolve_tracked_package_text(
     )
     lookup_package_ref = package_ref_text(package_id=lookup_selector, bound_profile=bound_profile)
     lookup_package_text = f"{lookup_repo}:{lookup_package_ref}" if lookup_repo is not None else lookup_package_ref
-    selector, bound_profile, exact_matches, partial_matches = engine.find_installed_package_matches(lookup_package_text)
+    selector, bound_profile, exact_matches, partial_matches = engine.find_tracked_package_matches(lookup_package_text)
     return resolve_candidate_match(
         exact_matches=exact_matches,
         partial_matches=partial_matches,
@@ -1730,7 +1730,7 @@ def resolve_edit_query_text(
         return tracked_target.repo_path
 
     query = selector if explicit_repo is None else f"{explicit_repo}:{selector}"
-    _package_query, _package_bound_profile, package_exact_matches, package_partial_matches = engine.find_installed_package_matches(query)
+    _package_query, _package_bound_profile, package_exact_matches, package_partial_matches = engine.find_tracked_package_matches(query)
     _target_query, target_exact_matches, target_partial_matches = engine.find_tracked_target_matches(query)
 
     exact_candidates: list[_EditQueryCandidate] = []

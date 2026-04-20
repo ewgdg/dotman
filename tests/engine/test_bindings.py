@@ -91,7 +91,7 @@ def test_group_selected_package_is_marked_explicit_in_tracked_detail(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    package_detail = engine.describe_installed_package("example:core-cli-meta")
+    package_detail = engine.describe_tracked_package("example:core-cli-meta")
 
     assert [binding.binding.selector for binding in package_detail.bindings] == ["core-cli-meta"]
     assert [binding.tracked_reason for binding in package_detail.bindings] == ["explicit"]
@@ -129,7 +129,7 @@ def test_info_tracked_drops_hooks_for_non_effective_provenance_binding(
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    package_detail = engine.describe_installed_package("example:git")
+    package_detail = engine.describe_tracked_package("example:git")
 
     assert [binding.binding.selector for binding in package_detail.bindings] == ["core-cli-meta", "git"]
     assert package_detail.bindings[0].hooks == {}
@@ -358,16 +358,37 @@ def test_record_binding_keeps_distinct_profiles_for_multi_instance_package(
         ("profiled", "work"),
     ]
 
-    packages = engine.list_installed_packages()
+    packages = engine.list_tracked_packages()
     assert [(package.package_ref, package.bound_profile) for package in packages] == [
         ("profiled<basic>", "basic"),
         ("profiled<work>", "work"),
     ]
 
-    package_detail = engine.describe_installed_package("fixture:profiled<work>")
+    package_detail = engine.describe_tracked_package("fixture:profiled<work>")
     assert package_detail.package_ref == "profiled<work>"
     assert package_detail.bound_profile == "work"
     assert [binding.binding.profile for binding in package_detail.bindings] == ["work"]
+
+
+def test_engine_drops_installed_alias_helpers() -> None:
+    assert not hasattr(DotmanEngine, "list_installed_packages")
+    assert not hasattr(DotmanEngine, "describe_installed_package")
+    assert not hasattr(DotmanEngine, "find_installed_package_matches")
+    assert not hasattr(DotmanEngine, "_iter_installed_bindings")
+
+
+def test_models_use_tracked_package_type_names() -> None:
+    import dotman.models as models
+
+    assert hasattr(models, "TrackedPackageSummary")
+    assert hasattr(models, "TrackedPackageDetail")
+    assert hasattr(models, "TrackedBindingSummary")
+    assert hasattr(models, "TrackedTargetSummary")
+
+    assert not hasattr(models, "InstalledPackageSummary")
+    assert not hasattr(models, "InstalledPackageDetail")
+    assert not hasattr(models, "InstalledBindingSummary")
+    assert not hasattr(models, "InstalledTargetSummary")
 
 def test_remove_binding_rejects_single_partial_match_in_non_interactive_mode(
     tmp_path: Path,

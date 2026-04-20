@@ -259,8 +259,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser(
         "list",
-        help="List tracked or installed items",
-        description="List tracked or installed items",
+        help="List tracked state items",
+        description="List tracked state items",
     )
     list_subparsers = list_parser.add_subparsers(
         dest="list_command",
@@ -283,13 +283,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="List available snapshots",
         description="List available snapshots",
     )
-    list_subparsers.add_parser("installed", help=argparse.SUPPRESS)
-    hide_subparser_from_help(list_subparsers, "installed")
-
     info_parser = subparsers.add_parser(
         "info",
-        help="Show detailed information about tracked or installed items",
-        description="Show detailed information about tracked or installed items",
+        help="Show detailed information about tracked state items",
+        description="Show detailed information about tracked state items",
     )
     info_subparsers = info_parser.add_subparsers(
         dest="info_command",
@@ -316,10 +313,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_full_path_argument(info_snapshot_parser)
     add_snapshot_argument(info_snapshot_parser)
-    info_installed_parser = info_subparsers.add_parser("installed", help=argparse.SUPPRESS)
-    add_package_argument(info_installed_parser)
-    hide_subparser_from_help(info_subparsers, "installed")
-
     capture_parser = subparsers.add_parser(
         "capture",
         help="Patch review content back into repo source",

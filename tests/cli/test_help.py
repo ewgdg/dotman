@@ -99,6 +99,7 @@ def test_info_help_uses_nested_command_placeholder_and_summaries(capsys) -> None
     assert "info commands:" in output
     assert "Show tracked package details" in output
     assert "Show resolved variable details" in output
+    assert "installed" not in output
     assert "==SUPPRESS==" not in output
 
 
@@ -107,13 +108,31 @@ def test_info_var_help_uses_explicit_variable_placeholder(capsys) -> None:
     assert "usage: dotman info var [-h] <var>" in output
     assert "Show resolved variable details" in output
 
-def test_list_help_hides_hidden_installed_subcommand(capsys) -> None:
+def test_list_help_shows_only_tracked_state_subcommands(capsys) -> None:
     output = capture_parser_help(capsys, "list")
     assert "usage: dotman list [-h] <list-command> ..." in output
     assert "list commands:" in output
     assert "List tracked packages" in output
     assert "List resolved variables" in output
+    assert "installed" not in output
     assert "==SUPPRESS==" not in output
+
+
+@pytest.mark.parametrize(
+    ("args", "rejected_token"),
+    [
+        (("list", "installed"), "installed"),
+        (("info", "installed", "example:git"), "installed"),
+    ],
+)
+def test_removed_installed_subcommands_are_rejected(capsys, args: tuple[str, ...], rejected_token: str) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(list(args))
+
+    assert exc_info.value.code == 2
+    assert f"invalid choice: '{rejected_token}'" in capsys.readouterr().err
 
 def test_reconcile_editor_help_uses_explicit_option_placeholders(capsys) -> None:
     output = capture_parser_help(capsys, "reconcile", "editor")
