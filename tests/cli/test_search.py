@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import dotman.cli as cli
 from dotman.cli import main
 
 from tests.helpers import write_named_manager_config
@@ -67,6 +68,24 @@ def test_search_cli_emits_ranked_json_results(tmp_path: Path, capsys) -> None:
         "operation": "search",
         "query": "git",
     }
+
+
+def test_search_cli_emits_readable_text_output(tmp_path: Path, monkeypatch, capsys) -> None:
+    repo_root = tmp_path / "search-repo"
+    write_search_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    exit_code = main(["--config", str(config_path), "search", "git"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "\n".join(
+        [
+            "fixture:git [package] (Base Git configuration)",
+            "fixture:infra [group] (Git configuration collection)",
+            "",
+        ]
+    )
 
 
 def test_search_cli_emits_no_match_message(tmp_path: Path, capsys) -> None:

@@ -813,8 +813,16 @@ def emit_search_matches(*, matches: Sequence[Any], query: str, json_output: bool
         return 0
 
     for match in matches:
-        description = match.description or ""
-        print(f"{match.kind:<7}  {match.qualified_selector}  {description}")
+        badge = cli_style.render_menu_badge(f"[{match.kind}]", use_color=use_color)
+        description = cli_style.render_annotation_parentheses(match.description or "", use_color=use_color)
+        package_label = cli_style.render_package_label(
+            repo_name=match.repo,
+            package_id=match.selector,
+            package_first=True,
+            include_repo_context=True,
+            use_color=use_color,
+        )
+        print(f"{package_label} {badge}{description}")
     return 0
 
 
