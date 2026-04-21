@@ -54,6 +54,14 @@ def add_package_query_argument(parser: argparse.ArgumentParser, *, required: boo
     )
 
 
+def add_trackable_query_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "query",
+        metavar="<query>",
+        help="Package or group selector in the form [<repo>:]<selector>",
+    )
+
+
 def add_variable_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "variable",
@@ -302,6 +310,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Show tracked package details",
     )
     add_package_argument(info_tracked_parser)
+    info_trackable_parser = info_subparsers.add_parser(
+        "trackable",
+        help="Show package or group details with tracked status",
+        description="Show package or group details with tracked status",
+    )
+    add_trackable_query_argument(info_trackable_parser)
     info_var_parser = info_subparsers.add_parser(
         "var",
         help="Show resolved variable details",

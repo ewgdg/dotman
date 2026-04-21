@@ -1061,6 +1061,120 @@ def _render_target_ref_chain(package_detail: Any, target_ref: Any, *, use_color:
     return f" {arrow_text} ".join(chain_labels)
 
 
+def _render_trackable_header(*, repo_name: str, selector: str, selector_kind: str, use_color: bool) -> str:
+    return cli_style.join_menu_display_fields(
+        cli_style.render_package_label(
+            repo_name=repo_name,
+            package_id=selector,
+            use_color=use_color,
+        ),
+        cli_style.render_menu_badge(f"[{selector_kind}]", use_color=use_color),
+    )
+
+
+def _tracked_entry_reason_for_package(*, package_id: str, package_entry: Any) -> str:
+    if package_entry.selector_kind == "package" and package_entry.selector == package_id:
+        return "explicit"
+    return "implicit"
+
+
+def emit_trackable_detail(*, trackable_detail: Any, json_output: bool, use_color: bool) -> int:
+    payload = {
+        "mode": "dry-run",
+        "operation": "info-trackable",
+        "trackable": trackable_detail.to_dict(),
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(
+        _render_trackable_header(
+            repo_name=trackable_detail.repo,
+            selector=trackable_detail.selector,
+            selector_kind=trackable_detail.kind,
+            use_color=use_color,
+        )
+    )
+    if getattr(trackable_detail, "description", None):
+        print(f"  {trackable_detail.description}")
+
+    print()
+    print(cli_style.render_info_section_header("status", use_color=use_color))
+    if trackable_detail.kind == "package":
+        print(f"    tracked: {'yes' if trackable_detail.tracked else 'no'}")
+        show_tracked_instances = trackable_detail.binding_mode == "multi_instance" and bool(trackable_detail.tracked_instances)
+        if show_tracked_instances:
+            print("    tracked instances:")
+        for tracked_instance in trackable_detail.tracked_instances:
+            if not show_tracked_instances:
+                break
+            instance_label = cli_style.render_package_label(
+                repo_name=tracked_instance.repo,
+                package_id=tracked_instance.package_id,
+                bound_profile=tracked_instance.bound_profile,
+                use_color=use_color,
+            )
+            print(
+                f"      {cli_style.render_tracked_reason(tracked_instance.state, use_color=use_color)}: "
+                f"{instance_label}"
+            )
+
+        if trackable_detail.tracked_instances:
+            print()
+            print(cli_style.render_info_section_header("provenance", use_color=use_color))
+        show_instance_headers = len(trackable_detail.tracked_instances) > 1
+        for tracked_instance in trackable_detail.tracked_instances:
+            if show_instance_headers:
+                instance_label = cli_style.render_package_label(
+                    repo_name=tracked_instance.repo,
+                    package_id=tracked_instance.package_id,
+                    bound_profile=tracked_instance.bound_profile,
+                    use_color=use_color,
+                )
+                print(f"    {instance_label}")
+            for package_entry in tracked_instance.package_entries:
+                package_entry_label = cli_style.render_full_spec_selector_label(
+                    repo_name=package_entry.repo,
+                    selector=package_entry.selector,
+                    profile=package_entry.profile,
+                    use_color=use_color,
+                )
+                indent = "      " if show_instance_headers else "    "
+                reason = _tracked_entry_reason_for_package(
+                    package_id=tracked_instance.package_id,
+                    package_entry=package_entry,
+                )
+                print(f"{indent}{cli_style.render_tracked_reason(reason, use_color=use_color)}: {package_entry_label}")
+
+        if trackable_detail.targets:
+            print()
+            print(cli_style.render_info_section_header("targets", use_color=use_color))
+        for target in trackable_detail.targets:
+            target_name = cli_style.style_text(target.target_name, "1") if use_color else target.target_name
+            if target.path is None:
+                print(f"    {target_name}")
+                continue
+            print(f"    {target_name} -> {target.path}")
+        if trackable_detail.target_refs:
+            print()
+            print(cli_style.render_info_section_header("target refs", use_color=use_color))
+        for target_ref in trackable_detail.target_refs:
+            print(f"    {_render_target_ref_chain(trackable_detail, target_ref, use_color=use_color)}")
+        return 0
+
+    tracked_state = trackable_detail.tracked_state.replace("_", " ")
+    print(f"    tracked: {tracked_state}")
+    print(f"    tracked members: {trackable_detail.tracked_member_count}/{len(trackable_detail.members)}")
+    if trackable_detail.members:
+        print()
+        print(cli_style.render_info_section_header("members", use_color=use_color))
+    for member in trackable_detail.members:
+        badge = cli_style.render_menu_badge("[tracked]" if member.tracked else "[untracked]", use_color=use_color)
+        print(f"    {cli_style.join_menu_display_fields(member.package_id, badge)}")
+    return 0
+
+
 def emit_tracked_package_detail(*, package_detail: Any, json_output: bool, use_color: bool) -> int:
     payload = {
         "mode": "dry-run",

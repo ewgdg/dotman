@@ -13,6 +13,8 @@ from dotman.models import (
     ResolvedSelector,
     ResolvedPackageSelection,
     SelectorKind,
+    TrackableGroupDetail,
+    TrackablePackageDetail,
     TrackedPackageEntry,
     TrackedPackageEntrySummary,
     TrackedPackageEntryDetail,
@@ -348,6 +350,14 @@ class DotmanEngine:
 
     def list_tracked_packages(self) -> list[TrackedPackageSummary]:
         return self._tracking_helpers().list_tracked_packages(self)
+
+    def describe_trackable(self, *, repo_name: str, selector: str, selector_kind: SelectorKind) -> TrackablePackageDetail | TrackableGroupDetail:
+        return self._tracking_helpers().describe_trackable(
+            self,
+            repo_name=repo_name,
+            selector=selector,
+            selector_kind=selector_kind,
+        )
 
     def describe_tracked_package(self, package_text: str) -> TrackedPackageDetail:
         return self._tracking_helpers().describe_tracked_package(self, package_text)

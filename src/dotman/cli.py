@@ -1609,6 +1609,54 @@ def resolve_tracked_package_text(
     )
 
 
+def resolve_trackable_selector_text(
+    engine: DotmanEngine,
+    query_text: str,
+    *,
+    json_output: bool,
+):
+    explicit_repo, selector, selector_profile = parse_full_spec_selector_text(query_text)
+    if selector_profile is not None:
+        raise ValueError("trackable lookup does not accept selector@profile syntax")
+    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
+    lookup_repo, lookup_selector = parse_slash_qualified_query(
+        repo_names=repo_names,
+        explicit_repo=explicit_repo,
+        selector=selector,
+    )
+    exact_matches, partial_matches = engine.find_selector_matches(lookup_selector, lookup_repo)
+    return resolve_candidate_match(
+        exact_matches=exact_matches,
+        partial_matches=partial_matches,
+        query_text=selector,
+        interactive=interactive_mode_enabled(json_output=json_output),
+        exact_header_text=f"Select a package or group for '{selector}':",
+        partial_header_text=f"Select a package or group for '{selector}':",
+        option_resolver=lambda match: ResolverOption(
+            display_label=render_selector_match_label(
+                repo_name=match[0].config.name,
+                selector=match[1],
+                selector_kind=match[2],
+            ),
+            display_fields=build_selector_match_display_fields(
+                repo_name=match[0].config.name,
+                selector=match[1],
+                selector_kind=match[2],
+            ),
+            match_fields=build_selector_match_fields(
+                repo_name=match[0].config.name,
+                selector=match[1],
+            ),
+            field_kinds=build_selector_field_kinds(),
+        ),
+        exact_error_text=f"selector '{selector}' is defined in multiple repos: "
+        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_matches),
+        partial_error_text=f"selector '{selector}' is ambiguous: "
+        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches),
+        not_found_text=f"selector '{selector}' did not match any package or group",
+    )
+
+
 def resolve_tracked_target_text(
     engine: DotmanEngine,
     target_text: str,
@@ -2985,6 +3033,14 @@ def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
     )
 
 
+def emit_trackable_detail(*, trackable_detail, json_output: bool) -> int:
+    return cli_emit.emit_trackable_detail(
+        trackable_detail=trackable_detail,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
+
+
 def resolve_snapshot_record(snapshot_root: Path, snapshot_ref: str | None, *, json_output: bool) -> SnapshotRecord:
     matches = find_snapshot_matches(snapshot_root, snapshot_ref)
     if not matches:
@@ -3143,6 +3199,8 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_tracked_packages=emit_tracked_packages,
         resolve_tracked_package_text=resolve_tracked_package_text,
         emit_tracked_package_detail=emit_tracked_package_detail,
+        resolve_trackable_selector_text=resolve_trackable_selector_text,
+        emit_trackable_detail=emit_trackable_detail,
         resolve_variable_text=resolve_variable_text,
         emit_variables=emit_variables,
         emit_variable_detail=emit_variable_detail,

@@ -69,6 +69,8 @@ class CliCommandHandlers:
     emit_snapshot_list: Callable[..., int]
     emit_snapshot_detail: Callable[..., int]
     emit_doctor_summary: Callable[..., int] = field(default=lambda **kwargs: 0)
+    resolve_trackable_selector_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
+    emit_trackable_detail: Callable[..., int] = field(default=lambda **kwargs: 0)
 
 
 EngineFactory = Callable[[str | None], Any]
@@ -123,6 +125,8 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
             )
         if args.command == "info" and args.info_command == "tracked":
             return _handle_info_tracked(args=args, engine=engine, handlers=handlers)
+        if args.command == "info" and args.info_command == "trackable":
+            return _handle_info_trackable(args=args, engine=engine, handlers=handlers)
         if args.command == "info" and args.info_command == "var":
             resolved_variable = handlers.resolve_variable_text(
                 engine,
@@ -483,5 +487,21 @@ def _handle_info_tracked(*, args: Any, engine: Any, handlers: CliCommandHandlers
     package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
     return handlers.emit_tracked_package_detail(
         package_detail=engine.describe_tracked_package(f"{repo.config.name}:{package_ref}"),
+        json_output=args.json_output,
+    )
+
+
+def _handle_info_trackable(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
+    repo, selector, selector_kind = handlers.resolve_trackable_selector_text(
+        engine,
+        args.query,
+        json_output=args.json_output,
+    )
+    return handlers.emit_trackable_detail(
+        trackable_detail=engine.describe_trackable(
+            repo_name=repo.config.name,
+            selector=selector,
+            selector_kind=selector_kind,
+        ),
         json_output=args.json_output,
     )

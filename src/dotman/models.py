@@ -363,6 +363,120 @@ class TrackedPackageSummary:
 
 
 @dataclass(frozen=True)
+class TrackableTargetDetail:
+    target_name: str
+    source: str | None
+    path: str | None
+    render_command: str | None = None
+    capture_command: str | None = None
+    reconcile_command: str | None = None
+    reconcile_io: str | None = None
+    pull_view_repo: str | None = None
+    pull_view_live: str | None = None
+    push_ignore: tuple[str, ...] = ()
+    pull_ignore: tuple[str, ...] = ()
+    chmod: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_name": self.target_name,
+            "source": self.source,
+            "path": self.path,
+            "render_command": self.render_command,
+            "capture_command": self.capture_command,
+            "reconcile_command": self.reconcile_command,
+            "reconcile_io": self.reconcile_io,
+            "pull_view_repo": self.pull_view_repo,
+            "pull_view_live": self.pull_view_live,
+            "push_ignore": list(self.push_ignore),
+            "pull_ignore": list(self.pull_ignore),
+            "chmod": self.chmod,
+        }
+
+
+@dataclass(frozen=True)
+class TrackablePackageDetail:
+    repo: str
+    selector: str
+    description: str | None
+    binding_mode: str
+    tracked_instances: list[TrackedPackageSummary]
+    targets: list[TrackableTargetDetail]
+    target_refs: list[TrackedTargetRefDetail] = field(default_factory=list)
+    kind: str = field(init=False, default="package")
+
+    @property
+    def tracked(self) -> bool:
+        return bool(self.tracked_instances)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "repo": self.repo,
+            "selector": self.selector,
+            "description": self.description,
+            "binding_mode": self.binding_mode,
+            "tracked": self.tracked,
+            "tracked_instances": [instance.to_dict() for instance in self.tracked_instances],
+            "targets": [target.to_dict() for target in self.targets],
+            "target_refs": [target_ref.to_dict() for target_ref in self.target_refs],
+        }
+
+
+@dataclass(frozen=True)
+class TrackableGroupMemberDetail:
+    package_id: str
+    tracked_instances: list[TrackedPackageSummary]
+
+    @property
+    def tracked(self) -> bool:
+        return bool(self.tracked_instances)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "package_id": self.package_id,
+            "tracked": self.tracked,
+            "tracked_instances": [instance.to_dict() for instance in self.tracked_instances],
+        }
+
+
+@dataclass(frozen=True)
+class TrackableGroupDetail:
+    repo: str
+    selector: str
+    members: list[TrackableGroupMemberDetail]
+    kind: str = field(init=False, default="group")
+
+    @property
+    def tracked(self) -> bool:
+        return any(member.tracked for member in self.members)
+
+    @property
+    def tracked_member_count(self) -> int:
+        return sum(1 for member in self.members if member.tracked)
+
+    @property
+    def tracked_state(self) -> str:
+        if not self.members or self.tracked_member_count == 0:
+            return "untracked"
+        if self.tracked_member_count == len(self.members):
+            return "fully_tracked"
+        return "partially_tracked"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "repo": self.repo,
+            "selector": self.selector,
+            "tracked": self.tracked,
+            "tracked_state": self.tracked_state,
+            "tracked_member_count": self.tracked_member_count,
+            "member_count": len(self.members),
+            "members": [member.to_dict() for member in self.members],
+        }
+
+
+@dataclass(frozen=True)
 class TrackedPackageEntryIssue:
     state_key: str
     repo: str

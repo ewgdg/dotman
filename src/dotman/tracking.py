@@ -8,6 +8,10 @@ from dotman.config import default_state_root
 from dotman.toml_utils import load_toml_file
 from dotman.models import (
     FullSpecSelector,
+    TrackableGroupDetail,
+    TrackableGroupMemberDetail,
+    TrackablePackageDetail,
+    TrackableTargetDetail,
     TrackedPackageEntry,
     TrackedPackageEntrySummary,
     TrackedPackageEntryDetail,
@@ -130,6 +134,83 @@ def list_tracked_packages(engine: Any) -> list[TrackedPackageSummary]:
             ),
         )
     ]
+
+
+def _tracked_instances_for_package(engine: Any, *, repo_name: str, package_id: str) -> list[TrackedPackageSummary]:
+    return [
+        package
+        for package in engine.list_tracked_packages()
+        if package.repo == repo_name and package.package_id == package_id
+    ]
+
+
+def describe_trackable(engine: Any, *, repo_name: str, selector: str, selector_kind: str) -> Any:
+    repo = engine.get_repo(repo_name)
+    if selector_kind == "package":
+        return describe_trackable_package(engine, repo=repo, package_id=selector)
+    return describe_trackable_group(engine, repo=repo, group_id=selector)
+
+
+def describe_trackable_package(engine: Any, *, repo: Repository, package_id: str) -> TrackablePackageDetail:
+    package = repo.resolve_package(package_id)
+    targets = [
+        TrackableTargetDetail(
+            target_name=target_name,
+            source=target.source,
+            path=target.path,
+            render_command=target.render,
+            capture_command=target.capture,
+            reconcile_command=target.reconcile,
+            reconcile_io=target.reconcile_io,
+            pull_view_repo=target.pull_view_repo,
+            pull_view_live=target.pull_view_live,
+            push_ignore=target.push_ignore or (),
+            pull_ignore=target.pull_ignore or (),
+            chmod=target.chmod,
+        )
+        for target_name, target in sorted((package.targets or {}).items())
+        if not target.disabled
+    ]
+    target_refs = [
+        TrackedTargetRefDetail(
+            target_name=target_name,
+            chain=repo.resolve_target_reference(package_id, target_name).chain,
+        )
+        for target_name in sorted(package.target_refs or {})
+    ]
+    return TrackablePackageDetail(
+        repo=repo.config.name,
+        selector=package_id,
+        description=package.description,
+        binding_mode=package.binding_mode,
+        tracked_instances=_tracked_instances_for_package(
+            engine,
+            repo_name=repo.config.name,
+            package_id=package_id,
+        ),
+        targets=targets,
+        target_refs=target_refs,
+    )
+
+
+def describe_trackable_group(engine: Any, *, repo: Repository, group_id: str) -> TrackableGroupDetail:
+    return TrackableGroupDetail(
+        repo=repo.config.name,
+        selector=group_id,
+        members=[
+            TrackableGroupMemberDetail(
+                package_id=package_id,
+                tracked_instances=_tracked_instances_for_package(
+                    engine,
+                    repo_name=repo.config.name,
+                    package_id=package_id,
+                ),
+            )
+            for package_id in repo.expand_group(group_id)
+        ],
+    )
+
+
 def describe_tracked_package(engine: Any, package_text: str) -> TrackedPackageDetail:
     repo, package_id, bound_profile = engine._resolve_tracked_package(package_text)
     effective_binding_keys = engine._effective_tracked_package_entry_keys(
