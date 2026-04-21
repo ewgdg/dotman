@@ -2937,6 +2937,14 @@ def emit_tracked_packages(*, engine: DotmanEngine, packages: Sequence, invalid_p
     )
 
 
+def emit_trackables(*, trackables: Sequence, json_output: bool) -> int:
+    return cli_emit.emit_trackables(
+        trackables=trackables,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
+
+
 def emit_doctor_summary(*, engine: DotmanEngine, summary: DoctorSummary, json_output: bool) -> int:
     return cli_emit.emit_doctor_summary(
         engine=engine,
@@ -3207,6 +3215,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_untracked_package_entry=emit_untracked_package_entry,
         find_remaining_tracked_package_after_untrack=find_remaining_tracked_package_after_untrack,
         emit_tracked_packages=emit_tracked_packages,
+        emit_trackables=emit_trackables,
         resolve_tracked_package_text=resolve_tracked_package_text,
         emit_tracked_package_detail=emit_tracked_package_detail,
         resolve_trackable_selector_text=resolve_trackable_selector_text,

@@ -8,6 +8,7 @@ from dotman.config import default_state_root
 from dotman.toml_utils import load_toml_file
 from dotman.models import (
     FullSpecSelector,
+    TrackableCatalogEntry,
     TrackableGroupDetail,
     TrackableGroupMemberDetail,
     TrackablePackageDetail,
@@ -50,6 +51,30 @@ class PersistedTrackedPackageEntryRecord:
 class TrackedStateSummary:
     packages: list[TrackedPackageSummary]
     invalid_package_entries: list[TrackedPackageEntryIssue]
+
+
+def iter_trackable_catalog_entries(engine: Any):
+    for repo in engine.candidate_repos():
+        for package_id, package in sorted(repo.packages.items()):
+            yield repo, TrackableCatalogEntry(
+                kind="package",
+                repo=repo.config.name,
+                selector=package_id,
+                description=package.description,
+                binding_mode=package.binding_mode,
+            )
+        for group_id, group in sorted(repo.groups.items()):
+            yield repo, TrackableCatalogEntry(
+                kind="group",
+                repo=repo.config.name,
+                selector=group_id,
+                description=group.description,
+                member_count=len(group.members),
+            )
+
+
+def list_trackables(engine: Any) -> list[TrackableCatalogEntry]:
+    return [trackable for _repo, trackable in iter_trackable_catalog_entries(engine)]
 
 
 

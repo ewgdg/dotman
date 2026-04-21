@@ -280,8 +280,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser(
         "list",
-        help="List tracked package state items",
-        description="List tracked package state items",
+        help="List tracked package state and catalog items",
+        description="List tracked package state and catalog items",
     )
     list_subparsers = list_parser.add_subparsers(
         dest="list_command",
@@ -293,6 +293,11 @@ def build_parser() -> argparse.ArgumentParser:
         "tracked",
         help="List tracked packages",
         description="List tracked packages",
+    )
+    list_subparsers.add_parser(
+        "trackables",
+        help="List trackable packages and groups",
+        description="List trackable packages and groups",
     )
     list_subparsers.add_parser(
         "vars",

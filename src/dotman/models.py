@@ -500,6 +500,31 @@ class TrackableGroupDetail:
 
 
 @dataclass(frozen=True)
+class TrackableCatalogEntry:
+    kind: str
+    repo: str
+    selector: str
+    description: str | None
+    binding_mode: str | None = None
+    member_count: int | None = None
+
+    @property
+    def qualified_selector(self) -> str:
+        return f"{self.repo}:{self.selector}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "repo": self.repo,
+            "selector": self.selector,
+            "qualified_selector": self.qualified_selector,
+            "description": self.description,
+            "binding_mode": self.binding_mode,
+            "member_count": self.member_count,
+        }
+
+
+@dataclass(frozen=True)
 class TrackedPackageEntryIssue:
     state_key: str
     repo: str

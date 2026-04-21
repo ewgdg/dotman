@@ -15,6 +15,7 @@ from dotman.models import (
     SelectorKind,
     TrackableGroupDetail,
     TrackablePackageDetail,
+    TrackableCatalogEntry,
     SearchMatch,
     TrackedPackageEntry,
     TrackedPackageEntrySummary,
@@ -207,79 +208,46 @@ class DotmanEngine:
         query_lower = query.lower()
         ranked_matches: list[tuple[tuple[int, int, int, int, str], SearchMatch]] = []
 
-        for repo in self.candidate_repos():
-            for package_id, package in repo.packages.items():
-                selector = package_id
-                selector_lower = selector.lower()
-                qualified_selector = f"{repo.config.name}:{selector}"
-                qualified_selector_lower = qualified_selector.lower()
-                slash_qualified_selector_lower = f"{repo.config.name}/{selector}".lower()
-                description = package.description
-                description_lower = description.lower() if isinstance(description, str) else None
+        for repo, trackable in tracking.iter_trackable_catalog_entries(self):
+            selector = trackable.selector
+            selector_lower = selector.lower()
+            qualified_selector = trackable.qualified_selector
+            qualified_selector_lower = qualified_selector.lower()
+            slash_qualified_selector_lower = f"{repo.config.name}/{selector}".lower()
+            description = trackable.description
+            description_lower = description.lower() if isinstance(description, str) else None
 
-                match = _search_match_reason(
-                    query_lower=query_lower,
-                    selector_lower=selector_lower,
-                    qualified_selector_lower=qualified_selector_lower,
-                    slash_qualified_selector_lower=slash_qualified_selector_lower,
-                    description_lower=description_lower,
+            match = _search_match_reason(
+                query_lower=query_lower,
+                selector_lower=selector_lower,
+                qualified_selector_lower=qualified_selector_lower,
+                slash_qualified_selector_lower=slash_qualified_selector_lower,
+                description_lower=description_lower,
+            )
+            if match is None:
+                continue
+
+            match_reason, tier = match
+            ranked_matches.append(
+                (
+                    (tier, repo.config.order, 0 if trackable.kind == "package" else 1, len(selector), qualified_selector_lower),
+                    SearchMatch(
+                        kind=trackable.kind,
+                        repo=repo.config.name,
+                        selector=selector,
+                        qualified_selector=qualified_selector,
+                        description=description,
+                        match_reason=match_reason,
+                        rank=0,
+                    ),
                 )
-                if match is None:
-                    continue
-
-                match_reason, tier = match
-                ranked_matches.append(
-                    (
-                        (tier, repo.config.order, 0, len(selector), qualified_selector_lower),
-                        SearchMatch(
-                            kind="package",
-                            repo=repo.config.name,
-                            selector=selector,
-                            qualified_selector=qualified_selector,
-                            description=description,
-                            match_reason=match_reason,
-                            rank=0,
-                        ),
-                    )
-                )
-
-            for group_id, group in repo.groups.items():
-                selector = group_id
-                selector_lower = selector.lower()
-                qualified_selector = f"{repo.config.name}:{selector}"
-                qualified_selector_lower = qualified_selector.lower()
-                slash_qualified_selector_lower = f"{repo.config.name}/{selector}".lower()
-                description = group.description
-                description_lower = description.lower() if isinstance(description, str) else None
-
-                match = _search_match_reason(
-                    query_lower=query_lower,
-                    selector_lower=selector_lower,
-                    qualified_selector_lower=qualified_selector_lower,
-                    slash_qualified_selector_lower=slash_qualified_selector_lower,
-                    description_lower=description_lower,
-                )
-                if match is None:
-                    continue
-
-                match_reason, tier = match
-                ranked_matches.append(
-                    (
-                        (tier, repo.config.order, 1, len(selector), qualified_selector_lower),
-                        SearchMatch(
-                            kind="group",
-                            repo=repo.config.name,
-                            selector=selector,
-                            qualified_selector=qualified_selector,
-                            description=description,
-                            match_reason=match_reason,
-                            rank=0,
-                        ),
-                    )
-                )
+            )
 
         ranked_matches.sort(key=lambda item: item[0])
         return [replace(match, rank=index + 1) for index, (_sort_key, match) in enumerate(ranked_matches)]
+
+    def list_trackables(self) -> list[TrackableCatalogEntry]:
+        return tracking.list_trackables(self)
 
     def _resolved_package_identity(self, repo: Repository, package_id: str, requested_profile: str) -> ResolvedPackageIdentity:
         return ResolvedPackageIdentity(

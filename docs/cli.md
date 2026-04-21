@@ -62,6 +62,17 @@ This document captures the current command and selector direction for `dotman`.
 - Bottom-up selector menus should remain user-toggleable, but the default should favor bottom-up display.
 - Manager config may override the default under `[selection_menu]`, and `DOTMAN_MENU_BOTTOM_UP` should still act as a single-run override.
 
+## Search
+
+- `dotman search <query>` is the selector-discovery command.
+- It should search package IDs, group IDs, and descriptions across configured repos.
+- Search is read-only and does not mutate tracked state.
+- For full catalog browsing, use `dotman list trackables`.
+- Exact repo-qualified or bare selector matches should rank ahead of prefix, substring, and description matches.
+- Human output should render the selector as a badge-style label like `[package]` or `[group]`, followed by the canonical `repo:selector` form and a dim description in parentheses.
+- JSON output should include the operation name, original query, and the ordered `matches` list.
+- An empty query should fail fast.
+
 ## Profiles
 
 - Profiles are separate from selection.

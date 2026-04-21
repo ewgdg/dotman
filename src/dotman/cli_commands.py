@@ -62,6 +62,7 @@ class CliCommandHandlers:
     emit_untracked_package_entry: Callable[..., int]
     find_remaining_tracked_package_after_untrack: Callable[..., Any]
     emit_tracked_packages: Callable[..., int]
+    emit_trackables: Callable[..., int]
     resolve_tracked_package_text: Callable[..., Any]
     emit_tracked_package_detail: Callable[..., int]
     resolve_variable_text: Callable[..., Any]
@@ -118,6 +119,11 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
                 engine=engine,
                 packages=tracked_state.packages,
                 invalid_package_entries=tracked_state.invalid_package_entries,
+                json_output=args.json_output,
+            )
+        if args.command == "list" and args.list_command == "trackables":
+            return handlers.emit_trackables(
+                trackables=engine.list_trackables(),
                 json_output=args.json_output,
             )
         if args.command == "list" and args.list_command == "vars":

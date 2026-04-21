@@ -716,6 +716,34 @@ def emit_tracked_packages(
     return 0
 
 
+def emit_trackables(*, trackables: Sequence[Any], json_output: bool, use_color: bool) -> int:
+    payload = {
+        "mode": "dry-run",
+        "operation": "list-trackables",
+        "trackables": [trackable.to_dict() for trackable in trackables],
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    for trackable in trackables:
+        selector_label = cli_style.render_package_label(
+            repo_name=trackable.repo,
+            package_id=trackable.selector,
+            package_first=True,
+            include_repo_context=True,
+            use_color=use_color,
+        )
+        kind_badge = cli_style.render_menu_badge(f"[{trackable.kind}]", use_color=use_color)
+        if trackable.kind == "package":
+            meta_badge = cli_style.render_menu_badge(f"[{trackable.binding_mode}]", use_color=use_color)
+        else:
+            meta_badge = cli_style.render_menu_badge(f"[{trackable.member_count} members]", use_color=use_color)
+        description = cli_style.render_annotation_parentheses(trackable.description or "", use_color=use_color)
+        print(f"{cli_style.join_menu_display_fields(selector_label, kind_badge, meta_badge)}{description}")
+    return 0
+
+
 _DOCTOR_CHECK_CATEGORY_ORDER = {
     "dependencies": 0,
     "environment": 1,

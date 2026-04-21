@@ -117,11 +117,12 @@ def test_info_var_help_uses_explicit_variable_placeholder(capsys) -> None:
     assert "usage: dotman info var [-h] <var>" in output
     assert "Show resolved variable details" in output
 
-def test_list_help_shows_only_tracked_state_subcommands(capsys) -> None:
+def test_list_help_shows_tracked_state_and_catalog_subcommands(capsys) -> None:
     output = capture_parser_help(capsys, "list")
     assert "usage: dotman list [-h] <list-command> ..." in output
     assert "list commands:" in output
     assert "List tracked packages" in output
+    assert "List trackable packages and groups" in output
     assert "List resolved variables" in output
     assert "installed" not in output
     assert "==SUPPRESS==" not in output
