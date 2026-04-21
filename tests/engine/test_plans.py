@@ -502,127 +502,22 @@ def test_target_hook_override_replaces_metadata_when_merging_extends(
     assert hook.run_noop is True
 
 
-def test_target_refs_canonicalize_target_plans_and_keep_ref_package_hooks(
+def test_target_refs_manifest_is_rejected_like_other_unknown_keys(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
     repo_root = write_target_ref_repo(
         tmp_path,
-        alpha_manifest=[
-            "[hooks]",
-            'pre_push = ["echo alpha-package"]',
-            "",
-            "[targets.shared.hooks]",
-            'pre_push = ["echo alpha-target"]',
-        ],
         beta_manifest=[
             "[target_refs]",
             'shared = "alpha.shared"',
-            "",
-            "[hooks]",
-            'pre_push = ["echo beta-package"]',
-        ],
-    )
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    operation_plan = engine.plan_push_query("fixture:beta@default")
-    plans_by_package_id = {plan.package_id: plan for plan in operation_plan.package_plans}
-
-    assert [plan.package_id for plan in operation_plan.package_plans] == ["beta", "alpha"]
-    assert plans_by_package_id["beta"].target_plans == []
-    assert [(target.package_id, target.target_name) for target in plans_by_package_id["alpha"].target_plans] == [("alpha", "shared")]
-    assert plans_by_package_id["alpha"].target_plans[0].contributor_package_ids == ("beta", "alpha")
-    assert [
-        (step.package_id, step.target_name)
-        for step in plans_by_package_id["alpha"].target_plans[0].ref_chains[0].steps
-    ] == [("beta", "shared"), ("alpha", "shared")]
-
-    package_hooks = [hook for hook in plans_by_package_id["alpha"].hooks["pre_push"] if hook.scope_kind == "package"]
-    target_hooks = [hook for hook in plans_by_package_id["alpha"].hooks["pre_push"] if hook.scope_kind == "target"]
-    assert [hook.package_id for hook in package_hooks] == ["alpha"]
-    assert [(hook.package_id, hook.target_name) for hook in target_hooks] == [("alpha", "shared")]
-    assert plans_by_package_id["beta"].hooks == {}
-
-
-def test_target_refs_allow_single_canonical_action_when_real_target_and_ref_are_selected_together(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_target_ref_repo(
-        tmp_path,
-        beta_manifest=[
-            'depends = ["alpha"]',
-            "",
-            "[target_refs]",
-            'shared = "alpha.shared"',
-        ],
-    )
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    operation_plan = engine.plan_push_query("fixture:beta@default")
-    alpha_plan = next(plan for plan in operation_plan.package_plans if plan.package_id == "alpha")
-
-    assert [(target.package_id, target.target_name) for target in alpha_plan.target_plans] == [("alpha", "shared")]
-    assert alpha_plan.target_plans[0].contributor_package_ids == ("beta", "alpha")
-
-
-def test_target_refs_reject_invalid_reference_syntax(
-    tmp_path: Path,
-) -> None:
-    repo_root = write_target_ref_repo(
-        tmp_path,
-        beta_manifest=[
-            "[target_refs]",
-            'shared = "alpha"',
         ],
     )
 
     with pytest.raises(
         ValueError,
-        match=r"package manifest .+ target ref 'shared' must use <package>\.<target> syntax",
+        match=r"package manifest .+ has unknown top-level keys: target_refs",
     ):
         DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-
-def test_target_refs_reject_cycles_with_full_cycle_text(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_target_ref_repo(
-        tmp_path,
-        alpha_manifest=[
-            "[target_refs]",
-            'shared = "beta.shared"',
-        ],
-        beta_manifest=[
-            "[target_refs]",
-            'shared = "gamma.shared"',
-        ],
-        gamma_manifest=[
-            "[target_refs]",
-            'shared = "alpha.shared"',
-        ],
-        include_alpha_shared_target=False,
-    )
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    with pytest.raises(
-        ValueError,
-        match=r"target ref cycle detected in repo 'fixture': alpha\.shared -> beta\.shared -> gamma\.shared -> alpha\.shared",
-    ):
-        engine.plan_push_query("fixture:alpha@default")
 
 
 def test_package_sync_policy_is_inherited_through_extends(

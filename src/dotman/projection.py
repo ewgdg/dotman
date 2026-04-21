@@ -11,7 +11,7 @@ from dotman.config import expand_path
 from dotman.file_access import needs_sudo_for_read, read_bytes, sudo_prefix_command
 from dotman.ignore import list_directory_files
 from dotman.manifest import flatten_vars, merge_ignore_patterns, resolve_sync_policy, sync_policy_allows_operation
-from dotman.models import DirectoryPlanItem, PackageSpec, ResolvedPackageSelection, TargetPlan, TargetRefChain, TargetRefStep, TargetSpec
+from dotman.models import DirectoryPlanItem, PackageSpec, ResolvedPackageSelection, TargetPlan, TargetSpec
 from dotman.repository import Repository
 from dotman.templates import render_template_file, render_template_string
 
@@ -28,95 +28,57 @@ def plan_targets(
     inferred_os: str,
     declaration_package_ids: set[str],
 ) -> list[TargetPlan]:
-    packages_by_id = {package.id: package for package in packages}
-    canonical_target_entries: dict[
-        tuple[str, str],
-        dict[str, Any],
-    ] = {}
     rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]] = []
 
     for package in packages:
         if package.id not in declaration_package_ids:
             continue
-        declaration_names = [*(package.targets or {}), *(package.target_refs or {})]
-        for declaration_name in declaration_names:
-            resolution = repo.resolve_target_reference(package.id, declaration_name)
-            canonical_key = (resolution.canonical_package_id, resolution.canonical_target_name)
-            canonical_package = packages_by_id[resolution.canonical_package_id]
-            canonical_target = (canonical_package.targets or {}).get(resolution.canonical_target_name)
-            if canonical_target is None:
-                raise ValueError(
-                    f"unknown target '{resolution.canonical_package_id}:{resolution.canonical_target_name}' in repo '{repo.config.name}'"
-                )
-            if canonical_target.disabled:
+        for target in (package.targets or {}).values():
+            if target.disabled:
                 continue
-            sync_policy = resolve_sync_policy(package=canonical_package, target=canonical_target)
+            sync_policy = resolve_sync_policy(package=package, target=target)
             if not sync_policy_allows_operation(sync_policy, operation=operation):
                 continue
-
-            entry = canonical_target_entries.get(canonical_key)
-            if entry is None:
-                if canonical_target.source is None or canonical_target.path is None:
-                    raise ValueError(
-                        f"target '{canonical_package.id}:{canonical_target.name}' must define source and path"
-                    )
-                rendered_source = render_template_string(
-                    canonical_target.source,
-                    context,
-                    base_dir=canonical_target.declared_in,
-                    source_path=canonical_target.declared_in,
+            if target.source is None or target.path is None:
+                raise ValueError(
+                    f"target '{package.id}:{target.name}' must define source and path"
                 )
-                rendered_path = render_template_string(
-                    canonical_target.path,
-                    context,
-                    base_dir=canonical_target.declared_in,
-                    source_path=canonical_target.declared_in,
+            rendered_source = render_template_string(
+                target.source,
+                context,
+                base_dir=target.declared_in,
+                source_path=target.declared_in,
+            )
+            rendered_path = render_template_string(
+                target.path,
+                context,
+                base_dir=target.declared_in,
+                source_path=target.declared_in,
+            )
+            repo_path = (target.declared_in / rendered_source).resolve()
+            live_path = expand_path(rendered_path, dereference=False)
+            live_path_is_symlink = operation == "push" and live_path.is_symlink()
+            live_path_symlink_target = os.readlink(live_path) if live_path_is_symlink else None
+            push_ignore = merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ())
+            pull_ignore = merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ())
+            rendered_targets.append(
+                (
+                    package,
+                    target,
+                    repo_path,
+                    live_path,
+                    push_ignore,
+                    pull_ignore,
+                    live_path_is_symlink,
+                    live_path_symlink_target,
                 )
-                repo_path = (canonical_target.declared_in / rendered_source).resolve()
-                live_path = expand_path(rendered_path, dereference=False)
-                live_path_is_symlink = operation == "push" and live_path.is_symlink()
-                live_path_symlink_target = os.readlink(live_path) if live_path_is_symlink else None
-                push_ignore = merge_ignore_patterns(repo.ignore_defaults.push, canonical_target.push_ignore or ())
-                pull_ignore = merge_ignore_patterns(repo.ignore_defaults.pull, canonical_target.pull_ignore or ())
-                rendered_targets.append(
-                    (
-                        canonical_package,
-                        canonical_target,
-                        repo_path,
-                        live_path,
-                        push_ignore,
-                        pull_ignore,
-                        live_path_is_symlink,
-                        live_path_symlink_target,
-                    )
-                )
-                entry = {
-                    "contributor_package_ids": [],
-                    "ref_chains": [],
-                }
-                canonical_target_entries[canonical_key] = entry
-
-            contributor_package_ids: list[str] = entry["contributor_package_ids"]
-            for contributor_package_id in (package.id, canonical_package.id):
-                if contributor_package_id not in contributor_package_ids:
-                    contributor_package_ids.append(contributor_package_id)
-
-            if len(resolution.chain) > 1:
-                entry["ref_chains"].append(
-                    TargetRefChain(
-                        steps=tuple(
-                            TargetRefStep(package_id=step.package_id, target_name=step.target_name)
-                            for step in resolution.chain
-                        )
-                    )
-                )
+            )
 
     validate_target_collisions(rendered_targets)
     validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
 
     plans: list[TargetPlan] = []
     for package, target, repo_path, live_path, push_ignore, pull_ignore, live_path_is_symlink, live_path_symlink_target in rendered_targets:
-        target_entry = canonical_target_entries[(package.id, target.name)]
         target_kind = infer_target_kind(repo_path=repo_path, live_path=live_path)
         render_command = (
             render_template_string(target.render, context, base_dir=target.declared_in, source_path=target.declared_in)
@@ -169,8 +131,6 @@ def plan_targets(
                     chmod=target.chmod,
                     command_cwd=target.declared_in,
                     command_env=command_env,
-                    contributor_package_ids=tuple(target_entry["contributor_package_ids"]),
-                    ref_chains=tuple(target_entry["ref_chains"]),
                 )
             )
             continue
@@ -214,8 +174,6 @@ def plan_targets(
                     command_cwd=target.declared_in,
                     command_env=command_env,
                     directory_items=directory_items,
-                    contributor_package_ids=tuple(target_entry["contributor_package_ids"]),
-                    ref_chains=tuple(target_entry["ref_chains"]),
                 )
             )
             continue
@@ -317,8 +275,6 @@ def plan_targets(
                 desired_bytes=desired_bytes,
                 review_before_bytes=review_before_bytes,
                 review_after_bytes=review_after_bytes,
-                contributor_package_ids=tuple(target_entry["contributor_package_ids"]),
-                ref_chains=tuple(target_entry["ref_chains"]),
             )
         )
     return plans

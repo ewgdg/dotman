@@ -25,42 +25,6 @@ from tests.helpers import (
     write_untrack_conflict_repo,
 )
 
-
-def write_target_ref_info_repo(repo_root: Path) -> None:
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "alpha" / "files").mkdir(parents=True)
-    (repo_root / "packages" / "beta").mkdir(parents=True)
-
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "packages" / "alpha" / "files" / "shared.conf").write_text("shared\n", encoding="utf-8")
-    (repo_root / "packages" / "alpha" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "alpha"',
-                "",
-                "[targets.shared]",
-                'source = "files/shared.conf"',
-                'path = "~/.config/shared.conf"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "beta" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "beta"',
-                'depends = ["alpha"]',
-                "",
-                "[target_refs]",
-                'shared = "alpha.shared"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
 def test_info_tracked_cli_interactively_selects_ambiguous_package(
     tmp_path: Path,
     monkeypatch,
@@ -187,6 +151,7 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
             "target_name": "gitconfig",
         }
     ]
+    assert "target_refs" not in package
     target_names = {target["target_name"] for target in package["package_entries"][0]["targets"]}
     assert target_names == {"gitconfig"}
     assert package["package_entries"][0]["hooks"] == {}
@@ -615,99 +580,7 @@ def test_info_tracked_cli_emits_hooks_even_when_package_targets_are_noop(
     assert "    [pre_push]" in output
     assert "      [1] printf 'install %s\\n' git" in output
     assert "  :: owned targets" in output
-
-
-def test_info_tracked_cli_emits_target_ref_chain_in_json(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    write_target_ref_info_repo(repo_root)
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "fixture"',
-                'package_id = "beta"',
-                'profile = "default"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    exit_code = main(["--config", str(config_path), "--json", "info", "tracked", "beta"])
-
-    assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["package"]["owned_targets"] == []
-    assert payload["package"]["target_refs"] == [
-        {
-            "target_name": "shared",
-            "canonical": {"package_id": "alpha", "target_name": "shared"},
-            "chain": [
-                {"package_id": "beta", "target_name": "shared"},
-                {"package_id": "alpha", "target_name": "shared"},
-            ],
-        }
-    ]
-
-
-def test_info_tracked_cli_emits_target_ref_chain_in_text_output(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
-    repo_root = tmp_path / "repo"
-    write_target_ref_info_repo(repo_root)
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "fixture"',
-                'package_id = "beta"',
-                'profile = "default"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    exit_code = main(["--config", str(config_path), "info", "tracked", "beta"])
-
-    assert exit_code == 0
-    assert capsys.readouterr().out == "\n".join(
-        [
-            "fixture:beta",
-            "",
-            "  :: provenance",
-            "    explicit: fixture:beta@default",
-            "",
-            "  :: target refs",
-            "    shared -> alpha.shared",
-            "",
-        ]
-    )
+    assert "target refs" not in output
 
 def test_info_tracked_cli_requires_specific_multi_instance_package_identity_in_non_interactive_mode(
     tmp_path: Path,

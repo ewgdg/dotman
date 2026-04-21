@@ -8,7 +8,6 @@ from dotman.toml_utils import load_toml_file
 from dotman.manifest import (
     _copy_map,
     build_hook_spec,
-    build_target_ref_spec,
     build_target_spec,
     deep_merge,
     merge_package_specs,
@@ -26,9 +25,6 @@ from dotman.models import (
     ProfileSpec,
     RepoConfig,
     RepoIgnoreDefaults,
-    ResolvedTargetReference,
-    TargetRefStep,
-    target_ref_text,
 )
 
 
@@ -40,6 +36,21 @@ VALID_HOOK_NAMES = (
     "pre_pull",
     "post_pull",
 )
+
+PACKAGE_MANIFEST_TOP_LEVEL_KEYS = {
+    "binding_mode",
+    "append",
+    "depends",
+    "description",
+    "extends",
+    "hooks",
+    "id",
+    "remove",
+    "reserved_paths",
+    "sync_policy",
+    "targets",
+    "vars",
+}
 
 
 class Repository:
@@ -54,7 +65,6 @@ class Repository:
         self.profiles = self._load_profiles()
         self.local_vars = self._load_local_vars()
         self._resolved_packages: dict[str, PackageSpec] = {}
-        self._resolved_target_references: dict[tuple[str, str], ResolvedTargetReference] = {}
 
     def _load_repo_config_payload(self) -> dict[str, Any]:
         repo_config_path = self.root / "repo.toml"
@@ -126,8 +136,11 @@ class Repository:
                 raise ValueError(
                     f"package manifest {manifest_path} has unsupported binding_mode '{binding_mode}'"
                 )
+            unknown_top_level_keys = sorted(key for key in payload if key not in PACKAGE_MANIFEST_TOP_LEVEL_KEYS)
+            if unknown_top_level_keys:
+                unknown_text = ", ".join(unknown_top_level_keys)
+                raise ValueError(f"package manifest {manifest_path} has unknown top-level keys: {unknown_text}")
             targets_payload = payload.get("targets")
-            target_refs_payload = payload.get("target_refs")
             hooks_payload = payload.get("hooks")
             append_payload = payload.get("append")
             targets = (
@@ -142,26 +155,6 @@ class Repository:
                 if isinstance(targets_payload, dict)
                 else None
             )
-            if target_refs_payload is not None and not isinstance(target_refs_payload, dict):
-                raise ValueError(f"package manifest {manifest_path} [target_refs] must be a table")
-            target_refs = (
-                {
-                    target_name: build_target_ref_spec(
-                        target_name=target_name,
-                        target_ref_payload=target_ref_payload,
-                        manifest_path=manifest_path,
-                    )
-                    for target_name, target_ref_payload in target_refs_payload.items()
-                }
-                if isinstance(target_refs_payload, dict)
-                else None
-            )
-            overlapping_target_names = sorted(set(targets or {}).intersection(target_refs or {}))
-            if overlapping_target_names:
-                overlap_text = ", ".join(overlapping_target_names)
-                raise ValueError(
-                    f"package manifest {manifest_path} target_refs collide with real targets: {overlap_text}"
-                )
             hooks = None
             if isinstance(hooks_payload, dict):
                 unknown_hook_names = [hook_name for hook_name in hooks_payload if hook_name not in VALID_HOOK_NAMES]
@@ -189,7 +182,6 @@ class Repository:
                 reserved_paths=normalize_string_list(payload.get("reserved_paths")),
                 vars=_copy_map(payload.get("vars")) if isinstance(payload.get("vars"), dict) else None,
                 targets=targets,
-                target_refs=target_refs,
                 hooks=hooks,
                 remove=normalize_string_list(payload.get("remove")),
                 append=_copy_map(append_payload) if isinstance(append_payload, dict) else None,
@@ -275,76 +267,8 @@ class Repository:
         current = strip_package_extensions(loaded)
         merged = current if merged is None else merge_package_specs(merged, current)
         merged = patch_remove_and_append(merged, loaded.remove or (), loaded.append or {})
-        overlapping_target_names = sorted(set(merged.targets or {}).intersection(merged.target_refs or {}))
-        if overlapping_target_names:
-            overlap_text = ", ".join(overlapping_target_names)
-            raise ValueError(
-                f"resolved package '{package_id}' in repo '{self.config.name}' has colliding target and target_ref names: {overlap_text}"
-            )
         self._resolved_packages[package_id] = merged
         return merged
-
-    def expand_target_ref_package_ids(self, package_ids: list[str]) -> list[str]:
-        ordered = list(package_ids)
-        seen = set(ordered)
-        for package_id in package_ids:
-            package = self.resolve_package(package_id)
-            declaration_names = [*(package.targets or {}), *(package.target_refs or {})]
-            for target_name in declaration_names:
-                resolution = self.resolve_target_reference(package_id, target_name)
-                for step in resolution.chain:
-                    if step.package_id in seen:
-                        continue
-                    seen.add(step.package_id)
-                    ordered.append(step.package_id)
-        return ordered
-
-    def resolve_target_reference(self, package_id: str, target_name: str) -> ResolvedTargetReference:
-        cache_key = (package_id, target_name)
-        cached = self._resolved_target_references.get(cache_key)
-        if cached is not None:
-            return cached
-        chain = self._resolve_target_reference_chain(package_id, target_name, ())
-        resolved = ResolvedTargetReference(
-            local_package_id=package_id,
-            local_target_name=target_name,
-            canonical_package_id=chain[-1].package_id,
-            canonical_target_name=chain[-1].target_name,
-            chain=chain,
-        )
-        self._resolved_target_references[cache_key] = resolved
-        return resolved
-
-    def _resolve_target_reference_chain(
-        self,
-        package_id: str,
-        target_name: str,
-        stack: tuple[tuple[str, str], ...],
-    ) -> tuple[TargetRefStep, ...]:
-        current_ref = (package_id, target_name)
-        if current_ref in stack:
-            cycle = " -> ".join(
-                target_ref_text(package_id=current_package_id, target_name=current_target_name)
-                for current_package_id, current_target_name in (*stack, current_ref)
-            )
-            raise ValueError(f"target ref cycle detected in repo '{self.config.name}': {cycle}")
-        package = self.resolve_package(package_id)
-        current_step = TargetRefStep(package_id=package_id, target_name=target_name)
-        if target_name in (package.targets or {}):
-            return (current_step,)
-        target_ref = (package.target_refs or {}).get(target_name)
-        if target_ref is None:
-            raise ValueError(
-                f"unknown target '{target_ref_text(package_id=package_id, target_name=target_name)}' in repo '{self.config.name}'"
-            )
-        return (
-            current_step,
-            *self._resolve_target_reference_chain(
-                target_ref.package_id,
-                target_ref.target_name,
-                (*stack, current_ref),
-            ),
-        )
 
     def package_binding_mode(self, package_id: str) -> str:
         return self.resolve_package(package_id).binding_mode

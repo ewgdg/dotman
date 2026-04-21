@@ -90,9 +90,7 @@ def _resolved_package_selections_from_roots(
             source_selector=source_selector,
         )
         _merge_selection(selections, selection_indexes, root_selection)
-        related_package_ids = repo.expand_target_ref_package_ids(
-            engine._resolve_package_ids(repo, root_package_id, "package")
-        )
+        related_package_ids = engine._resolve_package_ids(repo, root_package_id, "package")
         for related_package_id in related_package_ids:
             if related_package_id == root_package_id:
                 continue
@@ -178,9 +176,7 @@ def build_package_plan(
     operation: str,
 ) -> PackagePlan:
     root_identity = selection.owner_identity or selection.identity
-    related_package_ids = repo.expand_target_ref_package_ids(
-        engine._resolve_package_ids(repo, root_identity.package_id, "package")
-    )
+    related_package_ids = engine._resolve_package_ids(repo, root_identity.package_id, "package")
     resolved_packages = [repo.resolve_package(package_id) for package_id in related_package_ids]
     profile_vars, lineage = repo.compose_profile(selection.requested_profile)
     package_vars: dict[str, Any] = {}
@@ -196,10 +192,7 @@ def build_package_plan(
         selection=selection,
         operation=operation,
         inferred_os=inferred_os,
-        # Keep local declarations package-scoped, but include root owner when this
-        # package is only reached through another package's target refs. That
-        # preserves contributor/ref provenance on canonical targets.
-        declaration_package_ids={selection.identity.package_id, root_identity.package_id},
+        declaration_package_ids={selection.identity.package_id},
     )
     hook_plans = engine._plan_hooks(
         repo,

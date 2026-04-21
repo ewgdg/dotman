@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from dotman.models import HookSpec, PackageSpec, TargetRefSpec, TargetSpec
+from dotman.models import HookSpec, PackageSpec, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 
 
@@ -278,52 +278,6 @@ def build_target_spec(
     )
 
 
-def parse_target_reference_text(
-    value: Any,
-    *,
-    manifest_path: Path,
-    target_name: str,
-) -> tuple[str, str]:
-    if not isinstance(value, str):
-        raise ValueError(
-            f"package manifest {manifest_path} target ref '{target_name}' must be a string"
-        )
-    package_id, separator, referenced_target_name = value.partition(".")
-    if not separator or not package_id or not referenced_target_name:
-        raise ValueError(
-            f"package manifest {manifest_path} target ref '{target_name}' must use <package>.<target> syntax"
-        )
-    try:
-        validate_package_id(package_id)
-        validate_target_name(referenced_target_name)
-    except ValueError as exc:
-        raise ValueError(f"package manifest {manifest_path} target ref '{target_name}': {exc}") from None
-    return package_id, referenced_target_name
-
-
-def build_target_ref_spec(
-    *,
-    target_name: str,
-    target_ref_payload: Any,
-    manifest_path: Path,
-) -> TargetRefSpec:
-    try:
-        validate_target_name(target_name)
-    except ValueError as exc:
-        raise ValueError(f"package manifest {manifest_path}: {exc}") from None
-    package_id, referenced_target_name = parse_target_reference_text(
-        target_ref_payload,
-        manifest_path=manifest_path,
-        target_name=target_name,
-    )
-    return TargetRefSpec(
-        name=target_name,
-        declared_in=manifest_path.parent,
-        package_id=package_id,
-        target_name=referenced_target_name,
-    )
-
-
 def build_hook_spec(
     *,
     hook_name: str,
@@ -430,9 +384,6 @@ def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec
     for name, target in (override.targets or {}).items():
         targets[name] = merge_target_specs(targets[name], target) if name in targets else target
 
-    target_refs = dict(base.target_refs or {})
-    target_refs.update(override.target_refs or {})
-
     hooks = dict(base.hooks or {})
     hooks.update(override.hooks or {})
 
@@ -447,7 +398,6 @@ def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec
         reserved_paths=override.reserved_paths if override.reserved_paths is not None else base.reserved_paths,
         vars=deep_merge(base.vars or {}, override.vars or {}),
         targets=targets,
-        target_refs=target_refs,
         hooks=hooks,
         remove=override.remove if override.remove is not None else base.remove,
         append=deep_merge(base.append or {}, override.append or {}),

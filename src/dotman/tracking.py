@@ -18,7 +18,6 @@ from dotman.models import (
     TrackedPackageEntryDetail,
     TrackedPackageDetail,
     TrackedPackageSummary,
-    TrackedTargetRefDetail,
     TrackedPackageEntryIssue,
     package_ref_text,
 )
@@ -196,13 +195,6 @@ def describe_trackable_package(engine: Any, *, repo: Repository, package_id: str
         for target_name, target in sorted((package.targets or {}).items())
         if not target.disabled
     ]
-    target_refs = [
-        TrackedTargetRefDetail(
-            target_name=target_name,
-            chain=repo.resolve_target_reference(package_id, target_name).chain,
-        )
-        for target_name in sorted(package.target_refs or {})
-    ]
     return TrackablePackageDetail(
         repo=repo.config.name,
         selector=package_id,
@@ -214,7 +206,6 @@ def describe_trackable_package(engine: Any, *, repo: Repository, package_id: str
             package_id=package_id,
         ),
         targets=targets,
-        target_refs=target_refs,
     )
 
 
@@ -267,14 +258,6 @@ def describe_tracked_package(engine: Any, package_text: str) -> TrackedPackageDe
         raise ValueError(f"package '{repo.config.name}:{package_ref}' is not currently tracked")
 
     resolved_package = repo.resolve_package(package_id)
-    target_refs = [
-        TrackedTargetRefDetail(
-            target_name=target_name,
-            chain=repo.resolve_target_reference(package_id, target_name).chain,
-        )
-        for target_name in sorted(resolved_package.target_refs or {})
-    ]
-
     return TrackedPackageDetail(
         repo=repo.config.name,
         package_id=package_id,
@@ -292,7 +275,6 @@ def describe_tracked_package(engine: Any, package_text: str) -> TrackedPackageDe
             package_id,
             bound_profile,
         ),
-        target_refs=target_refs,
         bound_profile=bound_profile,
     )
 

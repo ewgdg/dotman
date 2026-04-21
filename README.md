@@ -82,7 +82,6 @@ For a larger real-world example repo, see [ewgdg/dotfiles](https://github.com/ew
 - CLI behavior: [`docs/cli.md`](docs/cli.md)
 - User config: [`docs/config.md`](docs/config.md)
 - Repository layout: [`docs/repository.md`](docs/repository.md)
-- Target reuse with refs: [`docs/target-refs.md`](docs/target-refs.md)
 - Template targets: [`docs/templates.md`](docs/templates.md)
 
 ## Features

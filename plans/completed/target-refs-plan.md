@@ -1,5 +1,7 @@
 # Target refs plan
 
+Historical record only. Feature removed on 2026-04-20; keep this doc for context, not as active design.
+
 Date: 2026-04-19
 
 Updated: 2026-04-19
