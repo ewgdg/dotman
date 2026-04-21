@@ -47,18 +47,22 @@ def test_search_cli_emits_ranked_json_results(tmp_path: Path, capsys) -> None:
     assert payload == {
         "matches": [
             {
+                "binding_mode": "singleton",
                 "description": "Base Git configuration",
                 "kind": "package",
                 "match_reason": "exact_selector",
+                "member_count": None,
                 "qualified_selector": "fixture:git",
                 "rank": 1,
                 "repo": "fixture",
                 "selector": "git",
             },
             {
+                "binding_mode": None,
                 "description": "Git configuration collection",
                 "kind": "group",
                 "match_reason": "substring_description",
+                "member_count": 1,
                 "qualified_selector": "fixture:infra",
                 "rank": 2,
                 "repo": "fixture",
@@ -81,8 +85,8 @@ def test_search_cli_emits_readable_text_output(tmp_path: Path, monkeypatch, caps
     assert exit_code == 0
     assert capsys.readouterr().out == "\n".join(
         [
-            "fixture:git [package] (Base Git configuration)",
-            "fixture:infra [group] (Git configuration collection)",
+            "fixture:git [package] [singleton] (Base Git configuration)",
+            "fixture:infra [group] [1 members] (Git configuration collection)",
             "",
         ]
     )

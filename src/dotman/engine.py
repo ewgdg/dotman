@@ -237,6 +237,8 @@ class DotmanEngine:
                         selector=selector,
                         qualified_selector=qualified_selector,
                         description=description,
+                        binding_mode=trackable.binding_mode,
+                        member_count=trackable.member_count,
                         match_reason=match_reason,
                         rank=0,
                     ),

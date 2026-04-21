@@ -735,10 +735,12 @@ def emit_trackables(*, trackables: Sequence[Any], json_output: bool, use_color: 
             use_color=use_color,
         )
         kind_badge = cli_style.render_menu_badge(f"[{trackable.kind}]", use_color=use_color)
-        if trackable.kind == "package":
-            meta_badge = cli_style.render_menu_badge(f"[{trackable.binding_mode}]", use_color=use_color)
-        else:
-            meta_badge = cli_style.render_menu_badge(f"[{trackable.member_count} members]", use_color=use_color)
+        meta_badge = _render_trackable_meta_badge(
+            kind=trackable.kind,
+            binding_mode=trackable.binding_mode,
+            member_count=trackable.member_count,
+            use_color=use_color,
+        )
         description = cli_style.render_annotation_parentheses(trackable.description or "", use_color=use_color)
         print(f"{cli_style.join_menu_display_fields(selector_label, kind_badge, meta_badge)}{description}")
     return 0
@@ -841,7 +843,13 @@ def emit_search_matches(*, matches: Sequence[Any], query: str, json_output: bool
         return 0
 
     for match in matches:
-        badge = cli_style.render_menu_badge(f"[{match.kind}]", use_color=use_color)
+        kind_badge = cli_style.render_menu_badge(f"[{match.kind}]", use_color=use_color)
+        meta_badge = _render_trackable_meta_badge(
+            kind=match.kind,
+            binding_mode=match.binding_mode,
+            member_count=match.member_count,
+            use_color=use_color,
+        )
         description = cli_style.render_annotation_parentheses(match.description or "", use_color=use_color)
         package_label = cli_style.render_package_label(
             repo_name=match.repo,
@@ -850,8 +858,14 @@ def emit_search_matches(*, matches: Sequence[Any], query: str, json_output: bool
             include_repo_context=True,
             use_color=use_color,
         )
-        print(f"{package_label} {badge}{description}")
+        print(f"{cli_style.join_menu_display_fields(package_label, kind_badge, meta_badge)}{description}")
     return 0
+
+
+def _render_trackable_meta_badge(*, kind: str, binding_mode: str | None, member_count: int | None, use_color: bool) -> str:
+    if kind == "package":
+        return cli_style.render_menu_badge(f"[{binding_mode}]", use_color=use_color)
+    return cli_style.render_menu_badge(f"[{member_count} members]", use_color=use_color)
 
 
 def emit_variables(*, variables: Sequence[Any], json_output: bool, use_color: bool) -> int:

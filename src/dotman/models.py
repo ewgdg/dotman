@@ -433,6 +433,8 @@ class SearchMatch:
     description: str | None
     match_reason: str
     rank: int
+    binding_mode: str | None = None
+    member_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -441,6 +443,8 @@ class SearchMatch:
             "selector": self.selector,
             "qualified_selector": self.qualified_selector,
             "description": self.description,
+            "binding_mode": self.binding_mode,
+            "member_count": self.member_count,
             "match_reason": self.match_reason,
             "rank": self.rank,
         }
