@@ -32,6 +32,7 @@ class CliCommandHandlers:
     ensure_track_package_entry_implicit_overrides_confirmed: Callable[..., bool]
     find_recorded_package_entry_exact: Callable[..., Any]
     emit_tracked_package_entry: Callable[..., int]
+    emit_search_matches: Callable[..., int]
     resolve_add_package_text: Callable[..., tuple[str, str]]
     interactive_mode_enabled: Callable[..., bool]
     add_editor_available: Callable[[], bool]
@@ -88,6 +89,13 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
             return handlers.emit_doctor_summary(
                 engine=engine,
                 summary=doctor_engine(engine),
+                json_output=args.json_output,
+            )
+        if args.command == "search":
+            query = args.query.strip()
+            return handlers.emit_search_matches(
+                matches=engine.search_selectors(query),
+                query=query,
                 json_output=args.json_output,
             )
         if args.command == "track":

@@ -37,6 +37,7 @@ def test_dispatch_command_uses_parsed_full_path_default() -> None:
         ensure_track_package_entry_implicit_overrides_confirmed=lambda **kwargs: True,
         find_recorded_package_entry_exact=lambda **kwargs: None,
         emit_tracked_package_entry=lambda **kwargs: 0,
+        emit_search_matches=lambda **kwargs: 0,
         resolve_add_package_text=lambda **kwargs: ("repo", "package"),
         interactive_mode_enabled=lambda **kwargs: False,
         add_editor_available=lambda: False,

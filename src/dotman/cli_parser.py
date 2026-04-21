@@ -176,6 +176,17 @@ def build_parser() -> argparse.ArgumentParser:
     add_track_request_argument(track_parser)
     add_assume_yes_argument(track_parser)
 
+    search_parser = subparsers.add_parser(
+        "search",
+        help="Search packages and groups",
+        description="Search packages and groups across configured repos",
+    )
+    search_parser.add_argument(
+        "query",
+        metavar="<query>",
+        help="Search text for package or group selectors",
+    )
+
     add_parser = subparsers.add_parser(
         "add",
         help="Create or update package config from a live path",

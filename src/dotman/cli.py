@@ -2946,6 +2946,15 @@ def emit_doctor_summary(*, engine: DotmanEngine, summary: DoctorSummary, json_ou
     )
 
 
+def emit_search_matches(*, matches, query: str, json_output: bool) -> int:
+    return cli_emit.emit_search_matches(
+        matches=matches,
+        query=query,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
+
+
 def emit_variables(*, variables: Sequence, json_output: bool) -> int:
     return cli_emit.emit_variables(
         variables=variables,
@@ -3168,6 +3177,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         ensure_track_package_entry_implicit_overrides_confirmed=ensure_track_package_entry_implicit_overrides_confirmed,
         find_recorded_package_entry_exact=find_recorded_package_entry_exact,
         emit_tracked_package_entry=emit_tracked_package_entry,
+        emit_search_matches=emit_search_matches,
         resolve_add_package_text=resolve_add_package_text,
         interactive_mode_enabled=interactive_mode_enabled,
         add_editor_available=add_editor_available,

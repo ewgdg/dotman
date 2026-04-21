@@ -155,6 +155,7 @@ class GroupSpec:
     id: str
     members: tuple[str, ...]
     path: Path
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -420,6 +421,28 @@ class TrackablePackageDetail:
             "tracked_instances": [instance.to_dict() for instance in self.tracked_instances],
             "targets": [target.to_dict() for target in self.targets],
             "target_refs": [target_ref.to_dict() for target_ref in self.target_refs],
+        }
+
+
+@dataclass(frozen=True)
+class SearchMatch:
+    kind: SelectorKind
+    repo: str
+    selector: str
+    qualified_selector: str
+    description: str | None
+    match_reason: str
+    rank: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "repo": self.repo,
+            "selector": self.selector,
+            "qualified_selector": self.qualified_selector,
+            "description": self.description,
+            "match_reason": self.match_reason,
+            "rank": self.rank,
         }
 
 

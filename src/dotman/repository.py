@@ -208,6 +208,7 @@ class Repository:
                 id=group_id,
                 members=normalize_string_list(payload.get("members")) or (),
                 path=group_path,
+                description=payload.get("description"),
             )
         return groups
 

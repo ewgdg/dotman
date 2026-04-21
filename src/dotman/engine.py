@@ -15,6 +15,7 @@ from dotman.models import (
     SelectorKind,
     TrackableGroupDetail,
     TrackablePackageDetail,
+    SearchMatch,
     TrackedPackageEntry,
     TrackedPackageEntrySummary,
     TrackedPackageEntryDetail,
@@ -69,6 +70,27 @@ def parse_package_ref_text(package_text: str) -> tuple[str | None, str, str | No
         if not selector or not bound_profile:
             raise ValueError(f"invalid tracked package selector '{package_text}'")
     return repo_name, selector, bound_profile
+
+
+def _search_match_reason(
+    *,
+    query_lower: str,
+    selector_lower: str,
+    qualified_selector_lower: str,
+    slash_qualified_selector_lower: str,
+    description_lower: str | None,
+) -> tuple[str, int] | None:
+    if query_lower == qualified_selector_lower or query_lower == slash_qualified_selector_lower:
+        return "exact_repo_qualified_selector", 0
+    if query_lower == selector_lower:
+        return "exact_selector", 1
+    if selector_lower.startswith(query_lower):
+        return "prefix_selector", 2
+    if query_lower in selector_lower:
+        return "substring_selector", 3
+    if description_lower is not None and query_lower in description_lower:
+        return "substring_description", 4
+    return None
 
 
 class DotmanEngine:
@@ -176,6 +198,88 @@ class DotmanEngine:
             selector_kind=selector_kind,
             profile=resolved_profile,
         )
+
+    def search_selectors(self, query_text: str) -> list[SearchMatch]:
+        query = query_text.strip()
+        if not query:
+            raise ValueError("search query must not be empty")
+
+        query_lower = query.lower()
+        ranked_matches: list[tuple[tuple[int, int, int, int, str], SearchMatch]] = []
+
+        for repo in self.candidate_repos():
+            for package_id, package in repo.packages.items():
+                selector = package_id
+                selector_lower = selector.lower()
+                qualified_selector = f"{repo.config.name}:{selector}"
+                qualified_selector_lower = qualified_selector.lower()
+                slash_qualified_selector_lower = f"{repo.config.name}/{selector}".lower()
+                description = package.description
+                description_lower = description.lower() if isinstance(description, str) else None
+
+                match = _search_match_reason(
+                    query_lower=query_lower,
+                    selector_lower=selector_lower,
+                    qualified_selector_lower=qualified_selector_lower,
+                    slash_qualified_selector_lower=slash_qualified_selector_lower,
+                    description_lower=description_lower,
+                )
+                if match is None:
+                    continue
+
+                match_reason, tier = match
+                ranked_matches.append(
+                    (
+                        (tier, repo.config.order, 0, len(selector), qualified_selector_lower),
+                        SearchMatch(
+                            kind="package",
+                            repo=repo.config.name,
+                            selector=selector,
+                            qualified_selector=qualified_selector,
+                            description=description,
+                            match_reason=match_reason,
+                            rank=0,
+                        ),
+                    )
+                )
+
+            for group_id, group in repo.groups.items():
+                selector = group_id
+                selector_lower = selector.lower()
+                qualified_selector = f"{repo.config.name}:{selector}"
+                qualified_selector_lower = qualified_selector.lower()
+                slash_qualified_selector_lower = f"{repo.config.name}/{selector}".lower()
+                description = group.description
+                description_lower = description.lower() if isinstance(description, str) else None
+
+                match = _search_match_reason(
+                    query_lower=query_lower,
+                    selector_lower=selector_lower,
+                    qualified_selector_lower=qualified_selector_lower,
+                    slash_qualified_selector_lower=slash_qualified_selector_lower,
+                    description_lower=description_lower,
+                )
+                if match is None:
+                    continue
+
+                match_reason, tier = match
+                ranked_matches.append(
+                    (
+                        (tier, repo.config.order, 1, len(selector), qualified_selector_lower),
+                        SearchMatch(
+                            kind="group",
+                            repo=repo.config.name,
+                            selector=selector,
+                            qualified_selector=qualified_selector,
+                            description=description,
+                            match_reason=match_reason,
+                            rank=0,
+                        ),
+                    )
+                )
+
+        ranked_matches.sort(key=lambda item: item[0])
+        return [replace(match, rank=index + 1) for index, (_sort_key, match) in enumerate(ranked_matches)]
 
     def _resolved_package_identity(self, repo: Repository, package_id: str, requested_profile: str) -> ResolvedPackageIdentity:
         return ResolvedPackageIdentity(

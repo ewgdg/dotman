@@ -798,6 +798,26 @@ def emit_doctor_summary(*, engine: Any, summary: Any, json_output: bool, use_col
     return 0 if summary.ok else 2
 
 
+def emit_search_matches(*, matches: Sequence[Any], query: str, json_output: bool, use_color: bool) -> int:
+    payload = {
+        "operation": "search",
+        "query": query,
+        "matches": [match.to_dict() for match in matches],
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    if not matches:
+        print(f"no packages or groups matched '{query}'")
+        return 0
+
+    for match in matches:
+        description = match.description or ""
+        print(f"{match.kind:<7}  {match.qualified_selector}  {description}")
+    return 0
+
+
 def emit_variables(*, variables: Sequence[Any], json_output: bool, use_color: bool) -> int:
     payload = {
         "mode": "dry-run",

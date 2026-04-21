@@ -30,6 +30,13 @@ def test_track_help_uses_explicit_selector_profile_placeholder(capsys) -> None:
     assert "positional arguments:" in output
     assert "[<repo>:]<selector>[@<profile>]" in output
 
+
+def test_search_help_uses_explicit_query_placeholder(capsys) -> None:
+    output = capture_parser_help(capsys, "search")
+    assert "usage: dotman search [-h] <query>" in output
+    assert "Search packages and groups across configured repos" in output
+    assert "<query>" in output
+
 def test_push_help_lists_dry_run_and_full_path_flags(capsys) -> None:
     output = capture_parser_help(capsys, "push")
     assert "usage: dotman push [-h] [-d] [--full-path] [--yes] [--run-noop]" in output
@@ -64,6 +71,7 @@ def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     assert "<command>" in output
     assert "commands:" in output
     assert "Track packages in manager state" in output
+    assert "Search packages and groups" in output
     assert "Diagnose manager config and tracked package state" in output
     assert "Patch review content back into repo source" in output
     assert "Open a tracked package or target path" in output
