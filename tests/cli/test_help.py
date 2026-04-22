@@ -166,6 +166,7 @@ def test_capture_help_lists_patch_shortcut(capsys) -> None:
 def test_capture_patch_help_uses_explicit_option_placeholders(capsys) -> None:
     output = capture_parser_help(capsys, "capture", "patch")
     assert "usage: dotman capture patch [-h] --repo-path <repo-path>" in output
+    assert "--render <render-command>" in output
     assert "--review-repo-path <review-repo-path>" in output
     assert "--review-live-path <review-live-path>" in output
     assert "--profile <profile>" in output

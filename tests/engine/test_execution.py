@@ -1653,6 +1653,37 @@ def _write_patch_capture_execution_repo(repo_root: Path) -> None:
     )
 
 
+
+def _write_command_patch_capture_execution_repo(repo_root: Path) -> None:
+    package_root = repo_root / "packages" / "shell"
+    (package_root / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir(parents=True)
+
+    render_command = 'sed "s/@@greeting@@/$DOTMAN_VAR_greeting/g" "$DOTMAN_SOURCE"'
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (package_root / "files" / "profile").write_text("greeting = @@greeting@@\n", encoding="utf-8")
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                '[vars]',
+                'greeting = "hello"',
+                "",
+                '[targets.profile]',
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                f"render = '{render_command}'",
+                'capture = "patch"',
+                'pull_view_repo = "render"',
+                'pull_view_live = "raw"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_execute_session_uses_review_env_for_patch_capture_and_writes_patched_repo_bytes(
     tmp_path: Path,
     monkeypatch,
@@ -1691,6 +1722,31 @@ def test_execute_session_uses_review_env_for_patch_capture_and_writes_patched_re
 
     assert result.status == "ok"
     assert recorded["repo_path"] == str(repo_root / "packages" / "shell" / "files" / "profile")
+    assert live_path.read_text(encoding="utf-8") == "greeting = world\n"
+    assert (repo_root / "packages" / "shell" / "files" / "profile").read_text(encoding="utf-8") == "greeting = world\n"
+
+
+
+def test_execute_session_projects_patch_capture_through_command_renderers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_command_patch_capture_execution_repo(repo_root)
+    live_path = home / ".profile"
+    live_path.write_text("greeting = world\n", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(write_named_manager_config(tmp_path, {"fixture": repo_root}))
+    plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
+    session = build_execution_session([plan], operation="pull")
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
     assert live_path.read_text(encoding="utf-8") == "greeting = world\n"
     assert (repo_root / "packages" / "shell" / "files" / "profile").read_text(encoding="utf-8") == "greeting = world\n"
 

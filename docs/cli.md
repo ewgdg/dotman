@@ -209,7 +209,7 @@ This document captures the current command and selector direction for `dotman`.
 - Template-style forward-managed targets should typically override pull planning to compare:
   - repo side: `render`
   - live side: `raw`
-- For the narrow automatic reverse-capture workflow, use:
+- For the current built-in Jinja patch-capture workflow, use:
   - `render = "jinja"`
   - `capture = "patch"`
   - `pull_view_repo = "render"`
@@ -237,13 +237,13 @@ This document captures the current command and selector direction for `dotman`.
 ## Capture
 
 - `capture` is the helper namespace for built-in reverse-capture tools.
-- `capture patch` is the narrow automatic patch helper for rendered Jinja targets.
-- `capture patch` should accept `--repo-path`, `--review-repo-path`, `--review-live-path`, and the same projection-context flags as `render jinja` (`--profile`, `--os`, and repeated `--var`).
+- `capture patch` is the built-in automatic patch helper for patchable rendered/template file targets.
+- `capture patch` should accept `--repo-path`, `--render`, `--review-repo-path`, `--review-live-path`, and the same template-context flags currently used by `render jinja` (`--profile`, `--os`, and repeated `--var`).
 - `capture patch` should output the patched repo source to stdout.
-- `capture patch` rerenders the patched repo file and must match the reviewed live bytes exactly.
+- `capture patch` reprojects the patched repo file through the forward render path and must match the reviewed live bytes exactly.
 - If that verification fails, `capture patch` exits non-zero; `pull` stops the current package and skips later packages instead of applying an unverified patch.
 - The built-in target helper should reuse the same implementation as `dotman capture patch`.
-- Use `capture = "patch"` only for the narrow Jinja reverse-capture workflow; use `reconcile` when a human needs to inspect or edit source reconciliation manually.
+- Use `capture = "patch"` for automatic template-style reverse capture when dotman can patch source deterministically and verify the result; use `reconcile` when a human needs to inspect or edit source reconciliation manually.
 
 ## Rollback
 

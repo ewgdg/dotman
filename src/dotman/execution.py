@@ -1101,16 +1101,59 @@ def _pull_patch_capture_bytes(*, target_plan: TargetPlan, package_plan: PackageP
 
 
 def _build_patch_capture_projector(*, target_plan: TargetPlan, package_plan: PackagePlan):
-    context = build_template_context(
-        package_plan.variables,
-        profile=package_plan.requested_profile,
-        inferred_os=package_plan.inferred_os or sys.platform,
-    )
-    base_dir = target_plan.repo_path.parent
+    if target_plan.render_command is None:
+        raise ValueError(f'capture = "patch" requires render for {target_plan.package_id}:{target_plan.target_name}')
+
+    if target_plan.render_command == "jinja":
+        context = build_template_context(
+            package_plan.variables,
+            profile=package_plan.requested_profile,
+            inferred_os=package_plan.inferred_os or sys.platform,
+        )
+        base_dir = target_plan.repo_path.parent
+
+        def project(candidate_bytes: bytes) -> bytes:
+            candidate_text = candidate_bytes.decode("utf-8")
+            return render_template_string(candidate_text, context, base_dir=base_dir, source_path=target_plan.repo_path).encode("utf-8")
+
+        return project
 
     def project(candidate_bytes: bytes) -> bytes:
-        candidate_text = candidate_bytes.decode("utf-8")
-        return render_template_string(candidate_text, context, base_dir=base_dir, source_path=target_plan.repo_path).encode("utf-8")
+        command_env = {
+            **_build_target_env(target_plan),
+        }
+        # Keep temp source beside real source so command renderers that resolve
+        # sibling files relative to $DOTMAN_SOURCE still see same local layout.
+        with tempfile.NamedTemporaryFile(
+            prefix=f".dotman-patch-{target_plan.repo_path.stem}-",
+            suffix=target_plan.repo_path.suffix,
+            dir=target_plan.repo_path.parent,
+            delete=False,
+        ) as temp_source:
+            temp_source.write(candidate_bytes)
+            temp_source_path = Path(temp_source.name)
+        try:
+            temp_source_text = str(temp_source_path)
+            command_env.update(
+                {
+                    "DOTMAN_TARGET_REPO_PATH": temp_source_text,
+                    "DOTMAN_REPO_PATH": temp_source_text,
+                    "DOTMAN_SOURCE": temp_source_text,
+                }
+            )
+            exit_code, stdout, stderr = _run_command(
+                command=target_plan.render_command or "",
+                cwd=target_plan.command_cwd,
+                env=command_env,
+                stream_output=False,
+                interactive=False,
+                privileged=needs_sudo_for_read(target_plan.live_path),
+            )
+            if exit_code != 0:
+                raise ValueError(stderr.strip() or f"render command exited with status {exit_code}")
+            return stdout.encode("utf-8")
+        finally:
+            temp_source_path.unlink(missing_ok=True)
 
     return project
 

@@ -989,6 +989,90 @@ def test_capture_patch_rejects_raw_review_views(tmp_path: Path, monkeypatch: pyt
 
 
 
+def test_capture_patch_requires_render_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'capture = "patch"',
+                'pull_view_repo = "render"',
+                'pull_view_live = "raw"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text("greeting = hello\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (home / ".profile").write_text("greeting = hello\n", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    with pytest.raises(ValueError, match='capture = "patch" requires render'):
+        engine.plan_pull_query("fixture:shell@default")
+
+
+
+def test_capture_patch_accepts_command_renderers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    render_command = 'sed "s/@@greeting@@/$DOTMAN_VAR_greeting/g" "$DOTMAN_SOURCE"'
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                '[vars]',
+                'greeting = "hello"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                f"render = '{render_command}'",
+                'capture = "patch"',
+                'pull_view_repo = "render"',
+                'pull_view_live = "raw"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text("greeting = @@greeting@@\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (home / ".profile").write_text("greeting = world\n", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+    pull_plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
+
+    target = pull_plan.target_plans[0]
+    assert target.action == "update"
+    assert target.render_command == render_command
+    assert target.capture_command == "patch"
+    assert target.review_before_bytes == b"greeting = hello\n"
+    assert target.review_after_bytes == b"greeting = world\n"
+
+
+
 def test_target_preset_values_can_be_overridden(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

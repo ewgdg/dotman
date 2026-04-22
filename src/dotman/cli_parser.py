@@ -358,14 +358,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     capture_patch_parser = capture_subparsers.add_parser(
         "patch",
-        help="Patch a rendered Jinja source file from review content",
-        description="Patch a rendered Jinja source file from review content",
+        help="Patch a rendered/template source file from review content",
+        description="Patch a rendered/template source file from review content",
     )
     capture_patch_parser.add_argument(
         "--repo-path",
         required=True,
         metavar="<repo-path>",
         help="Path to the repo source file",
+    )
+    capture_patch_parser.add_argument(
+        "--render",
+        required=True,
+        metavar="<render-command>",
+        help="Forward render to verify against review live bytes, for example jinja or a stdout-producing command",
     )
     capture_patch_parser.add_argument(
         "--review-repo-path",

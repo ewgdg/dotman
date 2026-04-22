@@ -136,7 +136,7 @@ chmod = "600"
 - Use `push-only` for forward-managed targets, `pull-only` for reverse-only targets, and `both` for targets that can participate in both operations.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
 - Explicit target keys override preset defaults.
-- Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow, `jinja-patch` for the narrow Jinja reverse-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.
+- Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow, `jinja-patch` for the current built-in Jinja patch-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.
 - Targets may define `render` as a forward transform used during `push`.
 - `render` may be a built-in renderer such as `jinja`, or a non-interactive stdout-producing command string.
 - Built-in renderers are shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` means dotman runs the built-in Jinja renderer as if it had executed `dotman render jinja "$DOTMAN_SOURCE"` **with the current selector/profile context already injected through `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`**.
@@ -144,7 +144,7 @@ chmod = "600"
 - Targets may define `capture` as a non-interactive live-to-repo projection used during pull planning.
 - `capture` should be a non-interactive stdout producer.
 - The reserved value `capture = "patch"` selects the built-in patch helper instead of a shell command.
-- `capture = "patch"` is meant for the narrow Jinja reverse-capture workflow, not for arbitrary shell-based stdout capture.
+- `capture = "patch"` is reserved for automatic patch-first reverse capture of rendered/template file targets, not for arbitrary shell-based stdout capture.
 - Targets may define `reconcile` as the actual reverse-sync action used during `pull`.
 - `reconcile` may be interactive and should receive both repo and live paths.
 - Built-in reconcile helpers are also available; for example, `reconcile = "jinja"` uses dotman's Jinja-aware editor reconcile flow for static template dependency trees.
@@ -157,7 +157,7 @@ chmod = "600"
 - A template-style forward-managed target should typically set:
   - `pull_view_repo = "render"`
   - `pull_view_live = "raw"`
-- For the narrow automatic reverse-capture workflow, use:
+- For the current built-in Jinja patch-capture workflow, use:
   - `render = "jinja"`
   - `capture = "patch"`
   - `pull_view_repo = "render"`
@@ -302,7 +302,7 @@ run_noop = true
 - `capture` is the live-side planning projection used during `pull` when it is a capture command string.
 - The reserved value `capture = "patch"` selects the built-in reverse-capture helper and is not itself a planning projection.
 - If you use `capture = "patch"`, you must also set `pull_view_repo` and `pull_view_live` explicitly.
-- `capture = "patch"` rerenders the patched repo source and must match the reviewed live bytes exactly.
+- `capture = "patch"` reprojects the patched repo source through the forward render path and must match the reviewed live bytes exactly.
 - `reconcile` is the reverse action used during `pull`.
 - Directory targets should not support `render`, `capture`, or `reconcile` in v1.
 - During pull planning, dotman should compare:

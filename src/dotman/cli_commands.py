@@ -169,6 +169,7 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
     if args.command == "capture" and args.capture_command == "patch":
         return handlers.run_patch_capture(
             repo_path=args.repo_path,
+            render_command=args.render,
             review_repo_path=args.review_repo_path,
             review_live_path=args.review_live_path,
             profile=args.profile,

@@ -314,8 +314,8 @@ def validate_patch_capture_target(
         return
     if target_kind != "file":
         raise ValueError(f'capture = "patch" requires a file target for {package.id}:{target.name}')
-    if render_command != "jinja":
-        raise ValueError(f'capture = "patch" requires render = "jinja" for {package.id}:{target.name}')
+    if render_command is None:
+        raise ValueError(f'capture = "patch" requires render for {package.id}:{target.name}')
     if target.pull_view_repo is None or target.pull_view_live is None:
         raise ValueError(
             f'capture = "patch" requires pull_view_repo = "render" and pull_view_live = "raw" for '

@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Sequence, TypeVar
@@ -32,6 +33,7 @@ from dotman.models import (
     standalone_hook_package_summaries,
     standalone_hook_target_summaries,
 )
+from dotman.manifest import flatten_vars
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
 from dotman.templates import JinjaRenderError, build_template_context, render_template_file, render_template_string
@@ -2820,9 +2822,99 @@ def run_jinja_render(*, source_path: str, profile: str | None, inferred_os: str 
 
 
 
+def _build_patch_capture_cli_env(
+    *,
+    repo_path: Path,
+    variables: dict[str, object],
+    profile: str,
+    inferred_os: str,
+) -> dict[str, str]:
+    env = {
+        "DOTMAN_REPO_PATH": str(repo_path),
+        "DOTMAN_SOURCE": str(repo_path),
+        "DOTMAN_PROFILE": profile,
+        "DOTMAN_OS": inferred_os,
+    }
+    for flat_key, value in flatten_vars(variables).items():
+        env[f"DOTMAN_VAR_{flat_key}"] = value
+    return env
+
+
+
+def _build_cli_patch_capture_projector(
+    *,
+    repo_path: Path,
+    render_command: str,
+    variables: dict[str, object],
+    profile: str,
+    inferred_os: str,
+):
+    if render_command == "jinja":
+        context = build_template_context(
+            variables,
+            profile=profile,
+            inferred_os=inferred_os,
+        )
+
+        def project(candidate_bytes: bytes) -> bytes:
+            return render_template_string(
+                candidate_bytes.decode("utf-8"),
+                context,
+                base_dir=repo_path.parent,
+                source_path=repo_path,
+            ).encode("utf-8")
+
+        return project
+
+    base_env = _build_patch_capture_cli_env(
+        repo_path=repo_path,
+        variables=variables,
+        profile=profile,
+        inferred_os=inferred_os,
+    )
+
+    def project(candidate_bytes: bytes) -> bytes:
+        # Keep temp source beside real source so command renderers that resolve
+        # sibling files relative to $DOTMAN_SOURCE still see same local layout.
+        with tempfile.NamedTemporaryFile(
+            prefix=f".dotman-patch-{repo_path.stem}-",
+            suffix=repo_path.suffix,
+            dir=repo_path.parent,
+            delete=False,
+        ) as temp_source:
+            temp_source.write(candidate_bytes)
+            temp_source_path = Path(temp_source.name)
+        try:
+            temp_source_text = str(temp_source_path)
+            completed = subprocess.run(
+                render_command,
+                cwd=str(repo_path.parent),
+                env={
+                    **os.environ,
+                    **base_env,
+                    "DOTMAN_REPO_PATH": temp_source_text,
+                    "DOTMAN_SOURCE": temp_source_text,
+                },
+                shell=True,
+                executable="/bin/sh",
+                capture_output=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                stderr = completed.stderr.decode("utf-8", errors="replace")
+                raise ValueError(stderr.strip() or f"render command exited with status {completed.returncode}")
+            return completed.stdout
+        finally:
+            temp_source_path.unlink(missing_ok=True)
+
+    return project
+
+
+
 def run_patch_capture(
     *,
     repo_path: str,
+    render_command: str,
     review_repo_path: str | None,
     review_live_path: str | None,
     profile: str | None,
@@ -2832,21 +2924,19 @@ def run_patch_capture(
     resolved_repo_path = Path(repo_path).expanduser().resolve()
     variables = _template_vars_from_dotman_env(dict(os.environ))
     _apply_template_var_assignments(variables, var_assignments)
-    context = build_template_context(
-        variables,
-        profile=profile or os.environ.get("DOTMAN_PROFILE") or "default",
-        inferred_os=inferred_os or os.environ.get("DOTMAN_OS") or sys.platform,
-    )
+    resolved_profile = profile or os.environ.get("DOTMAN_PROFILE") or "default"
+    resolved_os = inferred_os or os.environ.get("DOTMAN_OS") or sys.platform
     captured = capture_patch(
         repo_path=resolved_repo_path,
         review_repo_path=review_repo_path,
         review_live_path=review_live_path,
-        project_repo_bytes=lambda candidate_bytes: render_template_string(
-            candidate_bytes.decode("utf-8"),
-            context,
-            base_dir=resolved_repo_path.parent,
-            source_path=resolved_repo_path,
-        ).encode("utf-8"),
+        project_repo_bytes=_build_cli_patch_capture_projector(
+            repo_path=resolved_repo_path,
+            render_command=render_command,
+            variables=variables,
+            profile=resolved_profile,
+            inferred_os=resolved_os,
+        ),
     )
     sys.stdout.buffer.write(captured)
     return 0
