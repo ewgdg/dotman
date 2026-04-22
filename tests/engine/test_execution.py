@@ -201,6 +201,78 @@ def test_build_execution_session_orders_repo_package_and_target_scopes() -> None
     assert [step.action for step in session.repos[0].post_steps] == ["post_push"]
 
 
+def test_build_execution_session_keeps_hooks_unprivileged_even_when_target_needs_sudo(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == Path("/etc/sddm.conf"))
+
+    plan = make_package_plan(
+        operation="push",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={
+            "guard_push": [HookPlan(package_id="app", hook_name="guard_push", command="echo package guard", cwd=Path("/repo/app"))],
+            "pre_push": [HookPlan(package_id="app", hook_name="pre_push", command="echo package pre", cwd=Path("/repo/app"))],
+            "post_push": [HookPlan(package_id="app", hook_name="post_push", command="echo package post", cwd=Path("/repo/app"))],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/etc/sddm.conf"),
+                action="create",
+                target_kind="file",
+                projection_kind="raw",
+                desired_bytes=b"repo\n",
+            )
+        ],
+    )
+    operation_plan = OperationPlan(
+        operation="push",
+        package_plans=(replace(plan, hooks={
+            **plan.hooks,
+            "guard_push": [
+                *plan.hooks["guard_push"],
+                HookPlan(package_id="app", target_name="config", scope_kind="target", hook_name="guard_push", command="echo target guard", cwd=Path("/repo/app")),
+            ],
+            "pre_push": [
+                *plan.hooks["pre_push"],
+                HookPlan(package_id="app", target_name="config", scope_kind="target", hook_name="pre_push", command="echo target pre", cwd=Path("/repo/app")),
+            ],
+            "post_push": [
+                *plan.hooks["post_push"],
+                HookPlan(package_id="app", target_name="config", scope_kind="target", hook_name="post_push", command="echo target post", cwd=Path("/repo/app")),
+            ],
+        }),),
+        repo_hooks={
+            "fixture": {
+                "guard_push": [HookPlan(repo_name="fixture", scope_kind="repo", hook_name="guard_push", command="echo repo guard", cwd=Path("/repo"))],
+                "pre_push": [HookPlan(repo_name="fixture", scope_kind="repo", hook_name="pre_push", command="echo repo pre", cwd=Path("/repo"))],
+                "post_push": [HookPlan(repo_name="fixture", scope_kind="repo", hook_name="post_push", command="echo repo post", cwd=Path("/repo"))],
+            }
+        },
+        repo_order=("fixture",),
+    )
+
+    session = build_execution_session(operation_plan, operation="push")
+
+    assert session.requires_privilege is True
+    assert all(not step.privileged for step in session.repos[0].pre_steps)
+    assert [step.privileged for step in session.repos[0].packages[0].steps] == [
+        False,
+        False,
+        False,
+        False,
+        True,
+        False,
+        False,
+    ]
+    assert all(not step.privileged for step in session.repos[0].post_steps)
+
+
 @pytest.mark.parametrize(("assume_yes", "expected_value"), [(False, "0"), (True, "1")])
 def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
     monkeypatch,
@@ -356,7 +428,9 @@ def test_execute_session_target_guard_skip_continues_next_target(monkeypatch, tm
     assert recorded == ["exit 100", "echo beta guard", "echo beta pre"]
 
 
-def test_build_execution_session_marks_hooks_privileged_when_package_needs_sudo() -> None:
+def test_build_execution_session_keeps_package_hooks_unprivileged_when_package_needs_sudo(monkeypatch) -> None:
+    monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == Path("/etc/sddm.conf"))
+
     plan = make_package_plan(
         operation="push",
         repo_name="fixture",
@@ -384,7 +458,8 @@ def test_build_execution_session_marks_hooks_privileged_when_package_needs_sudo(
 
     session = build_execution_session([plan], operation="push")
 
-    assert [step.privileged for step in session.packages[0].steps] == [True, True, True, True]
+    assert session.requires_privilege is True
+    assert [step.privileged for step in session.packages[0].steps] == [False, False, True, False]
 
 
 def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged(monkeypatch) -> None:
@@ -1236,7 +1311,7 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
 
 
 
-def test_execute_session_runs_privileged_hooks_through_sudo(
+def test_execute_session_keeps_hooks_unprivileged_when_target_step_needs_sudo(
     monkeypatch,
 ) -> None:
     plan = make_package_plan(
@@ -1263,6 +1338,7 @@ def test_execute_session_runs_privileged_hooks_through_sudo(
             )
         ],
     )
+    monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == Path("/etc/sddm.conf"))
     session = build_execution_session([plan], operation="push")
 
     recorded_events: list[tuple[str, bool]] = []
@@ -1277,15 +1353,19 @@ def test_execute_session_runs_privileged_hooks_through_sudo(
             or (0, "", "")
         ),
     )
-    monkeypatch.setattr("dotman.execution._execute_target_step", lambda step: recorded_events.append((step.action, False)))
+    monkeypatch.setattr(
+        "dotman.execution._execute_target_step",
+        lambda step: recorded_events.append((step.action, step.privileged)),
+    )
 
     result = execute_session(session, stream_output=False)
 
     assert result.status == "ok"
     assert ("sudo:write protected path: /etc/sddm.conf", True) in recorded_events
-    assert ("echo guard", True) in recorded_events
-    assert ("echo pre", True) in recorded_events
-    assert ("echo post", True) in recorded_events
+    assert ("create", True) in recorded_events
+    assert ("echo guard", False) in recorded_events
+    assert ("echo pre", False) in recorded_events
+    assert ("echo post", False) in recorded_events
 
 
 

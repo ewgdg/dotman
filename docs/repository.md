@@ -286,6 +286,8 @@ run_noop = true
 - Repo hook template expansion and env stay repo-scoped only. Dotman provides values such as `DOTMAN_REPO_NAME`, `DOTMAN_OPERATION`, `DOTMAN_REPO_ROOT`, and `DOTMAN_STATE_PATH`, but intentionally does not inject ambiguous single-package-entry values like `DOTMAN_PROFILE` or `DOTMAN_PACKAGE_ID` there.
 - Target hook env keeps the usual repo/package/profile vars and also includes `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, and `DOTMAN_TARGET_LIVE_PATH`.
 - Hook env also includes `DOTMAN_ASSUME_YES`, set to `1` when CLI `--yes` is active and `0` otherwise.
+- Hooks never auto-escalate through `sudo`, even when adjacent target work touches protected paths.
+- If a hook really must run as root, the hook command itself must opt in explicitly.
 - Repo-wide helper scripts live under `scripts/`.
 - Package-specific scripts live inside the package, for example `hooks/`.
 - Prefer explicit runner commands such as `sh hooks/push.sh`, `python3 hooks/render.py`, or `uv run hooks/render.py` instead of relying on executable bits.
@@ -311,6 +313,7 @@ run_noop = true
   - default live-side view: `capture` if available via a capture command, otherwise `raw`
 - `pull_view_repo` and `pull_view_live` must stay non-interactive and side-effect free.
 - `reconcile` is the explicit reverse workflow. A `reconcile` command may open an editor or otherwise guide manual source reconciliation.
+- Custom `reconcile` commands never auto-escalate through `sudo`; if they need root, the command must request it explicitly.
 - `reconcile_io` controls how the selected reconcile step is executed.
   - `pipe`: default behavior; dotman captures stdout/stderr like other command-backed steps.
   - `tty`: run attached to the current terminal and require an interactive tty.

@@ -255,11 +255,6 @@ def build_execution_session(
                 )
                 for target in package_targets
             }
-            package_requires_privilege = any(
-                step.privileged
-                for steps in target_steps_by_owner.values()
-                for step in steps
-            )
             package_steps: list[ExecutionStep] = []
             for hook_name in hook_names[:2]:
                 package_steps.extend(
@@ -271,7 +266,9 @@ def build_execution_session(
                         action=hook_name,
                         scope_kind="package",
                         hook_plan=hook_plan,
-                        privileged=package_requires_privilege,
+                        # Hooks are arbitrary user shell. Never auto-promote them to
+                        # root just because adjacent file operations need sudo.
+                        privileged=False,
                     )
                     for hook_plan in package_hooks.get(hook_name, [])
                 )
@@ -279,7 +276,6 @@ def build_execution_session(
             for target in package_targets:
                 target_id = (target.package_id, target.target_name)
                 target_steps = target_steps_by_owner[target_id]
-                target_requires_privilege = any(step.privileged for step in target_steps)
                 target_hooks = target_hooks_by_target.get(target_id, {})
                 for hook_name in hook_names[:2]:
                     package_steps.extend(
@@ -292,7 +288,7 @@ def build_execution_session(
                             scope_kind="target",
                             hook_plan=hook_plan,
                             target_plan=target,
-                            privileged=target_requires_privilege,
+                            privileged=False,
                         )
                         for hook_plan in target_hooks.get(hook_name, [])
                     )
@@ -308,7 +304,7 @@ def build_execution_session(
                             scope_kind="target",
                             hook_plan=hook_plan,
                             target_plan=target,
-                            privileged=target_requires_privilege,
+                            privileged=False,
                         )
                         for hook_plan in target_hooks.get(hook_names[2], [])
                     )
@@ -323,7 +319,7 @@ def build_execution_session(
                         action=hook_names[2],
                         scope_kind="package",
                         hook_plan=hook_plan,
-                        privileged=package_requires_privilege,
+                        privileged=False,
                     )
                     for hook_plan in package_hooks.get(hook_names[2], [])
                 )
@@ -340,7 +336,6 @@ def build_execution_session(
                 )
             )
 
-        repo_requires_privilege = any(step.privileged for package in package_units for step in package.steps)
         repo_pre_steps = tuple(
             ExecutionStep(
                 repo_name=repo_name,
@@ -350,7 +345,7 @@ def build_execution_session(
                 action=hook_name,
                 scope_kind="repo",
                 hook_plan=hook_plan,
-                privileged=repo_requires_privilege,
+                privileged=False,
             )
             for hook_name in hook_names[:2]
             for hook_plan in repo_hooks.get(repo_name, {}).get(hook_name, [])
@@ -364,7 +359,7 @@ def build_execution_session(
                 action=hook_names[2],
                 scope_kind="repo",
                 hook_plan=hook_plan,
-                privileged=repo_requires_privilege,
+                privileged=False,
             )
             for hook_plan in repo_hooks.get(repo_name, {}).get(hook_names[2], [])
         )
