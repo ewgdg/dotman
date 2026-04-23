@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
+from dotman.models import HookCommandSpec
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
@@ -321,7 +322,7 @@ def test_package_hook_table_form_parses_run_noop_metadata(
         tmp_path,
         package_manifest=[
             "[hooks.pre_push]",
-            'commands = ["echo pre"]',
+            'commands = ["echo pre", { run = "echo tty", io = "tty" }]',
             "run_noop = true",
         ],
     )
@@ -331,7 +332,10 @@ def test_package_hook_table_form_parses_run_noop_metadata(
     )
 
     hook = engine.get_repo("fixture").resolve_package("app").hooks["pre_push"]
-    assert hook.commands == ("echo pre",)
+    assert hook.commands == (
+        HookCommandSpec(run="echo pre"),
+        HookCommandSpec(run="echo tty", io="tty"),
+    )
     assert hook.run_noop is True
 
 
@@ -351,8 +355,77 @@ def test_package_hook_shorthand_defaults_run_noop_false(
     )
 
     hook = engine.get_repo("fixture").resolve_package("app").hooks["pre_push"]
-    assert hook.commands == ("echo pre",)
+    assert hook.commands == (HookCommandSpec(run="echo pre"),)
     assert hook.run_noop is False
+
+
+def test_package_hook_planning_preserves_per_command_io_and_json_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=[],
+        hook_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo prep", { run = "echo tty", io = "tty" }]',
+        ],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo prep", "echo tty"]
+    assert [hook.io for hook in push_plan.hooks["pre_push"]] == ["pipe", "tty"]
+    assert push_plan.to_dict()["hooks"]["pre_push"][1]["io"] == "tty"
+
+
+@pytest.mark.parametrize(
+    ("package_manifest", "error_match"),
+    [
+        (
+            [
+                "[hooks.pre_push]",
+                'commands = [{ run = "echo pre", nope = true }]',
+            ],
+            r"command object has unsupported keys: nope",
+        ),
+        (
+            [
+                "[hooks.pre_push]",
+                'commands = [{ run = "   " }]',
+            ],
+            r"command object 'run' must not be empty",
+        ),
+        (
+            [
+                "[hooks.pre_push]",
+                'commands = [{ run = "echo pre", io = "bad" }]',
+            ],
+            r"unsupported io 'bad'; expected one of: pipe, tty",
+        ),
+        (
+            [
+                "[hooks]",
+                'pre_push = ["echo pre", { run = "echo tty", io = "tty" }]',
+            ],
+            r"commands must contain only strings",
+        ),
+    ],
+)
+def test_package_hook_command_objects_fail_fast_on_invalid_shapes(
+    tmp_path: Path,
+    package_manifest: list[str],
+    error_match: str,
+) -> None:
+    repo_root = write_hook_metadata_repo(tmp_path, package_manifest=package_manifest)
+
+    with pytest.raises(ValueError, match=error_match):
+        DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
 
 def test_package_hook_table_form_allows_empty_commands_and_skips_execution(
@@ -432,7 +505,7 @@ def test_package_hook_override_replaces_metadata_when_merging_extends(
     )
 
     hook = engine.get_repo("fixture").resolve_package("child").hooks["pre_push"]
-    assert hook.commands == ("echo child",)
+    assert hook.commands == (HookCommandSpec(run="echo child"),)
     assert hook.run_noop is True
 
 
@@ -443,7 +516,7 @@ def test_repo_hook_table_form_parses_run_noop_metadata(
         tmp_path,
         repo_manifest=[
             "[hooks.pre_push]",
-            'commands = ["echo repo"]',
+            'commands = [{ run = "echo repo", io = "tty" }]',
             "run_noop = true",
         ],
     )
@@ -451,8 +524,11 @@ def test_repo_hook_table_form_parses_run_noop_metadata(
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
     hook = engine.get_repo("fixture").hooks["pre_push"]
-    assert hook.commands == ("echo repo",)
+    assert hook.commands == (HookCommandSpec(run="echo repo", io="tty"),)
     assert hook.run_noop is True
+
+    operation_plan = engine.plan_push_query("fixture:app@default")
+    assert operation_plan.repo_hooks["fixture"]["pre_push"][0].io == "tty"
 
 
 def test_target_hook_table_form_parses_run_noop_metadata(
@@ -462,7 +538,7 @@ def test_target_hook_table_form_parses_run_noop_metadata(
         tmp_path,
         package_manifest=[
             "[targets.config.hooks.pre_push]",
-            'commands = ["echo target"]',
+            'commands = [{ run = "echo target", io = "tty" }]',
             "run_noop = true",
         ],
     )
@@ -470,8 +546,11 @@ def test_target_hook_table_form_parses_run_noop_metadata(
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
     hook = engine.get_repo("fixture").resolve_package("app").targets["config"].hooks["pre_push"]
-    assert hook.commands == ("echo target",)
+    assert hook.commands == (HookCommandSpec(run="echo target", io="tty"),)
     assert hook.run_noop is True
+
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+    assert push_plan.hooks["pre_push"][0].io == "tty"
 
 
 def test_target_hook_override_replaces_metadata_when_merging_extends(
@@ -498,7 +577,7 @@ def test_target_hook_override_replaces_metadata_when_merging_extends(
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
     hook = engine.get_repo("fixture").resolve_package("child").targets["config"].hooks["pre_push"]
-    assert hook.commands == ("echo child target",)
+    assert hook.commands == (HookCommandSpec(run="echo child target"),)
     assert hook.run_noop is True
 
 

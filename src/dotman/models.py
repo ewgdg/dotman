@@ -76,10 +76,19 @@ class TargetSpec:
     disabled: bool = False
 
 
+HookCommandIO = Literal["pipe", "tty"]
+
+
+@dataclass(frozen=True)
+class HookCommandSpec:
+    run: str
+    io: HookCommandIO = "pipe"
+
+
 @dataclass(frozen=True)
 class HookSpec:
     name: str
-    commands: tuple[str, ...]
+    commands: tuple[HookCommandSpec, ...]
     declared_in: Path
     run_noop: bool = False
 
@@ -240,6 +249,7 @@ class HookPlan:
     package_id: str | None = None
     target_name: str | None = None
     scope_kind: str = "package"
+    io: HookCommandIO = "pipe"
     env: dict[str, str] | None = field(default=None, repr=False)
     run_noop: bool = False
 
@@ -252,6 +262,7 @@ class HookPlan:
             "hook_name": self.hook_name,
             "command": self.command,
             "cwd": str(self.cwd),
+            "io": self.io,
         }
 
 

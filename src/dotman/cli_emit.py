@@ -402,7 +402,7 @@ def emit_payload(
         for hook_name, hook_plans in repo_section.hooks.items():
             print(f"      {_render_payload_hook_label(hook_name, use_color=use_color)}")
             for index, hook_plan in enumerate(hook_plans, start=1):
-                for line in render_hook_command_lines(hook_plan.command, command_count=len(hook_plans), index=index):
+                for line in render_hook_command_lines(hook_plan.command, command_count=len(hook_plans), index=index, io=getattr(hook_plan, "io", "pipe")):
                     print(f"  {line}")
 
     for section in package_sections:
@@ -430,6 +430,7 @@ def emit_payload(
                         hook_plan.command,
                         command_count=len(hook_plans),
                         index=index,
+                        io=getattr(hook_plan, "io", "pipe"),
                     ):
                         print(f"  {line}")
         if section.target_hooks:
@@ -449,6 +450,7 @@ def emit_payload(
                             hook_plan.command,
                             command_count=len(hook_plans),
                             index=index,
+                            io=getattr(hook_plan, "io", "pipe"),
                         ):
                             print(f"    {line}")
     return 0
@@ -1101,13 +1103,14 @@ def emit_skipped_tracking(*, binding: Any, json_output: bool, use_color: bool) -
     return 0
 
 
-def render_hook_command_lines(command: str, *, command_count: int, index: int) -> list[str]:
+def render_hook_command_lines(command: str, *, command_count: int, index: int, io: str = "pipe") -> list[str]:
     command_lines = command.splitlines() or [""]
     # Number multi-command hooks so users can tell distinct commands apart without cluttering single-command hooks.
     first_prefix = f"      [{index}] " if command_count > 1 else "      "
     continuation_prefix = " " * len(first_prefix)
+    io_prefix = "[tty] " if io == "tty" else ""
     return [
-        f"{first_prefix}{command_lines[0]}",
+        f"{first_prefix}{io_prefix}{command_lines[0]}",
         *[f"{continuation_prefix}{line}" for line in command_lines[1:]],
     ]
 
@@ -1274,6 +1277,7 @@ def emit_tracked_package_detail(*, package_detail: Any, json_output: bool, use_c
                     hook_plan.command,
                     command_count=len(hook_plans),
                     index=index,
+                    io=getattr(hook_plan, "io", "pipe"),
                 ):
                     print(line)
 

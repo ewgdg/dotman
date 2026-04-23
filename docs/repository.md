@@ -223,6 +223,11 @@ sync_policy = "pull-only"
 - `run_noop` defaults to `false`.
 - Repo, package, and target hook shorthand still work and normalize to `run_noop = false`.
 - Empty hook command lists are allowed and mean the hook is effectively disabled at that package layer.
+- Table-form hook `commands = [...]` may mix plain strings and command objects.
+- Command objects use `{ run = "...", io = "pipe" | "tty" }`.
+- `run` is required for command objects and must not be empty after trimming.
+- `io` defaults to `pipe`.
+- Command objects are only supported inside table-form `commands = [...]`, not inside shorthand `[hooks] pre_push = [...]` arrays.
 
 Repo hooks live in `repo.toml` under top-level `[hooks]` and run once per repo per operation:
 
@@ -258,7 +263,11 @@ pre_push = "echo hi"
 post_pull = ["echo one", "echo two"]
 
 [hooks.pre_pull]
-commands = ["echo pull"]
+commands = [
+  "echo prep",
+  { run = "nvim files/config.txt", io = "tty" },
+  "echo done",
+]
 run_noop = true
 ```
 
@@ -287,7 +296,7 @@ run_noop = true
 - Target hook env keeps the usual repo/package/profile vars and also includes `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, and `DOTMAN_TARGET_LIVE_PATH`.
 - Hook env also includes `DOTMAN_ASSUME_YES`, set to `1` when CLI `--yes` is active and `0` otherwise.
 - Hooks never auto-escalate through `sudo`, even when adjacent target work touches protected paths.
-- If a hook really must run as root, the hook command itself must opt in explicitly.
+- If a hook really must run as root, the hook command itself must opt in explicitly, for example with `sudo ...` inside `run`.
 - Repo-wide helper scripts live under `scripts/`.
 - Package-specific scripts live inside the package, for example `hooks/`.
 - Prefer explicit runner commands such as `sh hooks/push.sh`, `python3 hooks/render.py`, or `uv run hooks/render.py` instead of relying on executable bits.
@@ -314,6 +323,10 @@ run_noop = true
 - `pull_view_repo` and `pull_view_live` must stay non-interactive and side-effect free.
 - `reconcile` is the explicit reverse workflow. A `reconcile` command may open an editor or otherwise guide manual source reconciliation.
 - Custom `reconcile` commands never auto-escalate through `sudo`; if they need root, the command must request it explicitly.
+- Hook command `io` controls how that hook command is executed.
+  - `pipe`: default behavior; dotman captures and prefixes stdout/stderr like other hook commands.
+  - `tty`: run attached to the current terminal and require an interactive tty.
+- Use hook command `io = "tty"` for full-screen editors, password prompts, or other terminal-native tools that would break if dotman piped and prefixed their output.
 - `reconcile_io` controls how the selected reconcile step is executed.
   - `pipe`: default behavior; dotman captures stdout/stderr like other command-backed steps.
   - `tty`: run attached to the current terminal and require an interactive tty.

@@ -441,15 +441,16 @@ def plan_hooks(
             hook_spec = package_hooks.get(hook_name)
             if hook_spec is None:
                 continue
-            for command in hook_spec.commands:
+            for command_spec in hook_spec.commands:
                 hooks[hook_name].append(
                     HookPlan(
                         hook_name=hook_name,
-                        command=render_template_string(command, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
+                        command=render_template_string(command_spec.run, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
                         cwd=hook_spec.declared_in,
                         repo_name=repo.config.name,
                         package_id=package.id,
                         scope_kind="package",
+                        io=command_spec.io,
                         env=dict(package_env),
                         run_noop=hook_spec.run_noop,
                     )
@@ -464,16 +465,17 @@ def plan_hooks(
                 if hook_spec is None:
                     continue
                 target_env = dict(target_plan.command_env or {})
-                for command in hook_spec.commands:
+                for command_spec in hook_spec.commands:
                     hooks[hook_name].append(
                         HookPlan(
                             hook_name=hook_name,
-                            command=render_template_string(command, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
+                            command=render_template_string(command_spec.run, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
                             cwd=hook_spec.declared_in,
                             repo_name=repo.config.name,
                             package_id=package.id,
                             target_name=target_name,
                             scope_kind="target",
+                            io=command_spec.io,
                             env=target_env,
                             run_noop=hook_spec.run_noop,
                         )
@@ -494,14 +496,15 @@ def plan_repo_hooks(
         hook_spec = (repo.hooks or {}).get(hook_name)
         if hook_spec is None:
             continue
-        for command in hook_spec.commands:
+        for command_spec in hook_spec.commands:
             hooks[hook_name].append(
                 HookPlan(
                     hook_name=hook_name,
-                    command=render_template_string(command, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
+                    command=render_template_string(command_spec.run, context, base_dir=hook_spec.declared_in, source_path=hook_spec.declared_in).strip(),
                     cwd=hook_spec.declared_in,
                     repo_name=repo.config.name,
                     scope_kind="repo",
+                    io=command_spec.io,
                     env=dict(env),
                     run_noop=hook_spec.run_noop,
                 )

@@ -812,12 +812,14 @@ def _build_target_steps(*, plan: PackagePlan, target_plan: TargetPlan, operation
 def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool) -> ExecutionStepResult:
     try:
         if step.kind == "hook":
+            if step.hook_plan.io == "tty":
+                _require_interactive_terminal_for_hook()
             exit_code, stdout, stderr = _run_command(
                 command=step.hook_plan.command,
                 cwd=step.hook_plan.cwd,
                 env=_build_hook_env(step, assume_yes=assume_yes),
                 stream_output=stream_output,
-                interactive=False,
+                interactive=step.hook_plan.io == "tty",
                 privileged=step.privileged,
             )
             if exit_code == 0:
@@ -1198,7 +1200,7 @@ def _run_command(
     if privileged and os.geteuid() != 0:
         request_sudo("run privileged command")
         command = sudo_prefix_command(command)
-    if interactive and stream_output:
+    if interactive:
         return _run_command_with_terminal(command=command, cwd=cwd, env=env, privileged=False)
 
     process = subprocess.Popen(
@@ -1237,9 +1239,9 @@ def _run_command(
 
 
 def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str, str], privileged: bool = False) -> tuple[int, str, str]:
-    # TTY reconcile commands are allowed to launch full-screen editors. Piping
-    # and prefixing their output corrupts terminal control sequences and leaves
-    # the shell looking broken after exit, so dotman must hand them the tty.
+    # TTY-backed commands may launch full-screen editors or other terminal-native
+    # tools. Piping and prefixing their output corrupts control sequences and can
+    # leave the shell looking broken after exit, so dotman must hand them tty.
     if privileged and os.geteuid() != 0:
         request_sudo("run privileged command")
         command = sudo_prefix_command(command)
@@ -1256,9 +1258,17 @@ def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str,
 
 
 def _require_interactive_terminal_for_reconcile() -> None:
+    _require_interactive_terminal(setting_name="reconcile_io")
+
+
+def _require_interactive_terminal_for_hook() -> None:
+    _require_interactive_terminal(setting_name="hook command io")
+
+
+def _require_interactive_terminal(*, setting_name: str) -> None:
     if sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty():
         return
-    raise ValueError("reconcile_io 'tty' requires an interactive terminal")
+    raise ValueError(f"{setting_name} 'tty' requires an interactive terminal")
 
 
 def _build_hook_env(step: ExecutionStep, *, assume_yes: bool) -> dict[str, str]:

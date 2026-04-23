@@ -5,11 +5,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from dotman.models import HookSpec, PackageSpec, TargetSpec
+from dotman.models import HookCommandSpec, HookSpec, PackageSpec, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 
 
-VALID_RECONCILE_IO_VALUES = ("pipe", "tty")
+VALID_COMMAND_IO_VALUES = ("pipe", "tty")
+VALID_HOOK_IO_VALUES = VALID_COMMAND_IO_VALUES
+VALID_RECONCILE_IO_VALUES = VALID_COMMAND_IO_VALUES
 VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both")
 
 
@@ -105,6 +107,76 @@ def normalize_string_list(value: Any) -> tuple[str, ...] | None:
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return tuple(value)
     raise ValueError(f"expected string or list[str], got {type(value).__name__}")
+
+
+def normalize_hook_command_specs(
+    value: Any,
+    *,
+    allow_command_objects: bool,
+    manifest_kind: str,
+    manifest_path: Path,
+    owner_label: str,
+    hook_name: str,
+) -> tuple[HookCommandSpec, ...]:
+    if isinstance(value, str):
+        return (HookCommandSpec(run=value),)
+    if not isinstance(value, list):
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' commands must be a string or list"
+        )
+
+    commands: list[HookCommandSpec] = []
+    for item in value:
+        if isinstance(item, str):
+            commands.append(HookCommandSpec(run=item))
+            continue
+        if allow_command_objects and isinstance(item, dict):
+            commands.append(
+                _build_hook_command_spec(
+                    command_payload=item,
+                    manifest_kind=manifest_kind,
+                    manifest_path=manifest_path,
+                    owner_label=owner_label,
+                    hook_name=hook_name,
+                )
+            )
+            continue
+        expected = "strings or command objects" if allow_command_objects else "strings"
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' commands must contain only {expected}"
+        )
+    return tuple(commands)
+
+
+def _build_hook_command_spec(
+    *,
+    command_payload: dict[str, Any],
+    manifest_kind: str,
+    manifest_path: Path,
+    owner_label: str,
+    hook_name: str,
+) -> HookCommandSpec:
+    unknown_keys = sorted(key for key in command_payload if key not in {"run", "io"})
+    if unknown_keys:
+        unknown_text = ", ".join(unknown_keys)
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' command object has unsupported keys: {unknown_text}"
+        )
+    if "run" not in command_payload:
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' command object must define 'run'"
+        )
+    run_value = command_payload.get("run")
+    if not isinstance(run_value, str):
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' command object 'run' must be a string"
+        )
+    if not run_value.strip():
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' command object 'run' must not be empty"
+        )
+    io_value = normalize_optional_string_enum(command_payload.get("io"), key="io", allowed=VALID_HOOK_IO_VALUES) or "pipe"
+    return HookCommandSpec(run=run_value, io=io_value)
 
 
 def normalize_optional_string_enum(value: Any, *, key: str, allowed: tuple[str, ...]) -> str | None:
@@ -306,11 +378,14 @@ def build_hook_spec(
                 f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' run_noop must be a boolean"
             )
         run_noop = run_noop_value
-    commands = normalize_string_list(commands_payload)
-    if commands is None:
-        raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' commands must be a string or list[str]"
-        )
+    commands = normalize_hook_command_specs(
+        commands_payload,
+        allow_command_objects=isinstance(hook_payload, dict),
+        manifest_kind=manifest_kind,
+        manifest_path=manifest_path,
+        owner_label=owner_label,
+        hook_name=hook_name,
+    )
     return HookSpec(
         name=hook_name,
         commands=commands,

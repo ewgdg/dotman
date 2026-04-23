@@ -428,6 +428,39 @@ def test_execute_session_target_guard_skip_continues_next_target(monkeypatch, tm
     assert recorded == ["exit 100", "echo beta guard", "echo beta pre"]
 
 
+def test_execute_session_marks_only_tty_hook_commands_interactive(monkeypatch) -> None:
+    recorded: list[tuple[str, bool]] = []
+
+    def fake_run_command(*, command, cwd, env, stream_output, interactive, privileged=False):
+        recorded.append((command, interactive))
+        return 0, "", ""
+
+    monkeypatch.setattr(execution, "_run_command", fake_run_command)
+    monkeypatch.setattr(execution, "_execute_target_step", lambda step: None)
+    monkeypatch.setattr(execution, "_require_interactive_terminal_for_hook", lambda: None)
+
+    plan = make_package_plan(
+        operation="push",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={
+            "pre_push": [
+                HookPlan(package_id="app", hook_name="pre_push", command="echo pipe", cwd=Path("/repo/app"), io="pipe"),
+                HookPlan(package_id="app", hook_name="pre_push", command="echo tty", cwd=Path("/repo/app"), io="tty"),
+            ],
+        },
+        target_plans=[],
+    )
+
+    result = execute_session(build_execution_session([plan], operation="push"), stream_output=False)
+
+    assert result.status == "ok"
+    assert recorded == [("echo pipe", False), ("echo tty", True)]
+
+
+
 def test_build_execution_session_keeps_package_hooks_unprivileged_when_package_needs_sudo(monkeypatch) -> None:
     monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == Path("/etc/sddm.conf"))
 
@@ -1139,6 +1172,70 @@ def test_execute_session_fails_tty_reconcile_without_terminal(
     assert result.status == "failed"
     assert result.packages[0].steps[0].status == "failed"
     assert result.packages[0].steps[0].error == "reconcile_io 'tty' requires an interactive terminal"
+
+
+def test_execute_session_fails_tty_hook_without_terminal(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr("sys.stderr.isatty", lambda: False)
+    monkeypatch.setattr(
+        "dotman.execution._run_command",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("tty hook should fail before spawning command")),
+    )
+
+    plan = make_package_plan(
+        operation="push",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={
+            "pre_push": [
+                HookPlan(package_id="app", hook_name="pre_push", command="echo tty", cwd=Path("/repo/app"), io="tty"),
+            ],
+        },
+        target_plans=[],
+    )
+    session = build_execution_session([plan], operation="push")
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "failed"
+    assert result.packages[0].steps[0].error == "hook command io 'tty' requires an interactive terminal"
+
+
+
+def test_run_command_interactive_uses_terminal_runner_without_pipes(monkeypatch) -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_run(command: str, **kwargs):
+        recorded["command"] = command
+        recorded["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0)
+
+    def fake_popen(*args, **kwargs):  # pragma: no cover - assertion is test.
+        raise AssertionError("interactive command should not use piped Popen execution")
+
+    monkeypatch.setattr("dotman.execution.subprocess.run", fake_run)
+    monkeypatch.setattr("dotman.execution.subprocess.Popen", fake_popen)
+
+    exit_code, stdout, stderr = execution._run_command(
+        command="printf 'tty\\n'",
+        cwd=None,
+        env={"X": "1"},
+        stream_output=False,
+        interactive=True,
+    )
+
+    assert (exit_code, stdout, stderr) == (0, "", "")
+    assert recorded["command"] == "printf 'tty\\n'"
+    assert recorded["kwargs"]["cwd"] is None
+    assert recorded["kwargs"]["shell"] is True
+    assert recorded["kwargs"]["executable"] == "/bin/sh"
+    assert recorded["kwargs"]["env"]["X"] == "1"
+
 
 
 def test_execute_session_restores_repo_path_access_for_pull_updates_run_via_sudo(
