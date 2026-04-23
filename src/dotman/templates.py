@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,10 +16,11 @@ class DotmanUndefined(Undefined):
         return ""
 
 
-@dataclass(frozen=True)
 class JinjaRenderError(ValueError):
-    path: Path | None
-    detail: str
+    def __init__(self, path: Path | None, detail: str) -> None:
+        self.path = path
+        self.detail = detail
+        super().__init__(detail)
 
     def __str__(self) -> str:
         return format_jinja_render_error(self)

@@ -1,18 +1,26 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import tomllib
 
 
-@dataclass(frozen=True)
 class TomlLoadError(ValueError):
-    context: str
-    path: Path | None
-    detail: str
-    package_repo: str | None = None
-    package_id: str | None = None
+    def __init__(
+        self,
+        *,
+        context: str,
+        path: Path | None,
+        detail: str,
+        package_repo: str | None = None,
+        package_id: str | None = None,
+    ) -> None:
+        self.context = context
+        self.path = path
+        self.detail = detail
+        self.package_repo = package_repo
+        self.package_id = package_id
+        super().__init__(detail)
 
     def __str__(self) -> str:
         return format_toml_load_error(self)

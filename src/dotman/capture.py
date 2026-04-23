@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import difflib
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -13,10 +12,11 @@ from dotman.templates import JinjaRenderError
 BUILTIN_PATCH_CAPTURE = "patch"
 
 
-@dataclass(frozen=True)
 class CaptureError(ValueError):
-    path: Path | None
-    detail: str
+    def __init__(self, path: Path | None, detail: str) -> None:
+        self.path = path
+        self.detail = detail
+        super().__init__(detail)
 
     def __str__(self) -> str:
         return format_capture_error(self)

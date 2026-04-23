@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 
 from dotman.models import ManagerConfig, RepoConfig, SelectionMenuConfig, SnapshotConfig
 from dotman.toml_utils import load_toml_file
 
 
-@dataclass(frozen=True)
 class ManagerConfigLoadError(ValueError):
-    path: Path
-    detail: str
-    hint: str | None = None
+    def __init__(self, *, path: Path, detail: str, hint: str | None = None) -> None:
+        self.path = path
+        self.detail = detail
+        self.hint = hint
+        super().__init__(detail)
 
     def __str__(self) -> str:
         return self.detail
