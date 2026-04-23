@@ -101,14 +101,17 @@ dotman track example:git@basic
 dotman untrack example:git@basic
 ```
 
-### Package manifest scaffolding with `add`
+### Package scaffolding and authoring
 
 Use `add` to propose or extend package target definitions from live paths.
+Use `edit` to open repo-side package or target sources in your editor.
 
 Example:
 
 ```sh
 dotman add ~/.gitconfig example:git
+dotman edit package example:git
+dotman edit target example:git.gitconfig
 ```
 
 ### Two-way sync
@@ -150,4 +153,3 @@ Support editor-backed reconciliation during pull flows.
 ### First-class system files support
 
 Manage not only user dotfiles, but also system files when run with appropriate permissions.
-
