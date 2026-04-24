@@ -33,6 +33,7 @@ MENU_ACTION_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
 EXECUTION_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "ok": ("1", "32"),
     "failed": ("1", "31"),
+    "interrupted": ("1", "31"),
     "skipped": ("1", "33"),
 }
 SNAPSHOT_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {

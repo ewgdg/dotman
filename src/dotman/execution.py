@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,10 @@ from dotman.repo_access import restore_repo_path_access_for_invoking_user
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_string
 from dotman.terminal import preserve_terminal_state
+
+
+INTERRUPTED_EXIT_CODE = 130
+_COMMAND_INTERRUPT_GRACE_SECONDS = 0.5
 
 
 @dataclass(frozen=True)
@@ -194,6 +199,8 @@ class ExecutionResult:
 
     @property
     def exit_code(self) -> int:
+        if self.status == "interrupted":
+            return INTERRUPTED_EXIT_CODE
         return 0 if self.status == "ok" else 1
 
     def to_dict(self) -> dict[str, object]:
@@ -446,20 +453,21 @@ def execute_session(
     _preflight_execution_session_sudo(session)
     repo_results: list[RepoExecutionResult] = []
     failed = False
+    interrupted = False
     for repo in session.repos:
         repo_step_results: list[ExecutionStepResult] = []
         repo_package_results: list[PackageExecutionResult] = []
         repo_status = "ok"
         repo_skip_reason: str | None = None
 
-        if failed:
+        if failed or interrupted:
             repo_status = "skipped"
-            repo_skip_reason = "failure"
-            repo_step_results.extend(_build_skipped_step_result(step, skip_reason="failure") for step in (*repo.pre_steps, *repo.post_steps))
+            repo_skip_reason = "interrupted" if interrupted else "failure"
+            repo_step_results.extend(_build_skipped_step_result(step, skip_reason=repo_skip_reason) for step in (*repo.pre_steps, *repo.post_steps))
             for package in repo.packages:
                 if on_package_start is not None:
                     on_package_start(package)
-                skipped_result = _build_skipped_package_result(package, skip_reason="failure")
+                skipped_result = _build_skipped_package_result(package, skip_reason=repo_skip_reason)
                 repo_package_results.append(skipped_result)
                 if on_package_finish is not None:
                     on_package_finish(skipped_result)
@@ -484,6 +492,11 @@ def execute_session(
             if result.status == "skipped":
                 repo_status = "skipped"
                 repo_skip_reason = result.skip_reason or "guard"
+                break
+            if result.status == "interrupted":
+                repo_status = "interrupted"
+                repo_skip_reason = "interrupted"
+                interrupted = True
                 break
             if result.status != "ok":
                 repo_status = "failed"
@@ -510,7 +523,11 @@ def execute_session(
                 on_package_finish=on_package_finish,
             )
             repo_package_results.append(package_result)
-            if package_result.status == "failed":
+            if package_result.status == "interrupted":
+                repo_status = "interrupted"
+                repo_skip_reason = "interrupted"
+                interrupted = True
+            elif package_result.status == "failed":
                 repo_status = "failed"
                 repo_skip_reason = "failure"
                 failed = True
@@ -527,9 +544,14 @@ def execute_session(
                 if on_step_finish is not None:
                     on_step_finish(repo, result, step_index, len(repo.post_steps))
                 if result.status != "ok":
-                    repo_status = "failed"
-                    repo_skip_reason = "failure"
-                    failed = True
+                    if result.status == "interrupted":
+                        repo_status = "interrupted"
+                        repo_skip_reason = "interrupted"
+                        interrupted = True
+                    else:
+                        repo_status = "failed"
+                        repo_skip_reason = "failure"
+                        failed = True
                     break
         else:
             repo_step_results.extend(_build_skipped_step_result(step, skip_reason=repo_skip_reason or "failure") for step in repo.post_steps)
@@ -545,7 +567,7 @@ def execute_session(
         )
     return ExecutionResult(
         session=session,
-        status="failed" if failed else "ok",
+        status="interrupted" if interrupted else "failed" if failed else "ok",
         repos=tuple(repo_results),
     )
 
@@ -594,6 +616,10 @@ def _execute_package_unit(
         if result.status == "skipped":
             package_skip_reason = result.skip_reason or "skipped"
             package_status = "skipped"
+            continue
+        if result.status == "interrupted":
+            package_skip_reason = "interrupted"
+            package_status = "interrupted"
             continue
         if result.status != "ok":
             package_skip_reason = "failure"
@@ -824,6 +850,14 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
             )
             if exit_code == 0:
                 return ExecutionStepResult(step=step, status="ok", exit_code=exit_code, stdout=stdout, stderr=stderr)
+            if _is_interrupt_exit_code(exit_code):
+                return ExecutionStepResult(
+                    step=step,
+                    status="interrupted",
+                    exit_code=INTERRUPTED_EXIT_CODE,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
             if exit_code == 100 and _is_guard_step(step):
                 return ExecutionStepResult(
                     step=step,
@@ -859,11 +893,11 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
             )
             return ExecutionStepResult(
                 step=step,
-                status="ok" if exit_code == 0 else "failed",
-                exit_code=exit_code,
+                status=_command_step_status(exit_code),
+                exit_code=INTERRUPTED_EXIT_CODE if _is_interrupt_exit_code(exit_code) else exit_code,
                 stdout=stdout,
                 stderr=stderr,
-                error=None if exit_code == 0 else f"command exited with status {exit_code}",
+                error=None if exit_code == 0 or _is_interrupt_exit_code(exit_code) else f"command exited with status {exit_code}",
             )
         if _should_fallback_to_reconcile_after_capture(step):
             return _execute_target_step_with_capture_fallback(
@@ -882,6 +916,14 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
 
 def _is_guard_step(step: ExecutionStep) -> bool:
     return step.kind == "hook" and step.action.startswith("guard_")
+
+
+def _command_step_status(exit_code: int) -> str:
+    if exit_code == 0:
+        return "ok"
+    if _is_interrupt_exit_code(exit_code):
+        return "interrupted"
+    return "failed"
 
 
 def _should_fallback_to_reconcile_after_capture(step: ExecutionStep) -> bool:
@@ -919,11 +961,11 @@ def _execute_target_step_with_capture_fallback(
         combined_stderr = fallback_note if not stderr else f"{fallback_note}\n{stderr}"
         return ExecutionStepResult(
             step=step,
-            status="ok" if exit_code == 0 else "failed",
-            exit_code=exit_code,
+            status=_command_step_status(exit_code),
+            exit_code=INTERRUPTED_EXIT_CODE if _is_interrupt_exit_code(exit_code) else exit_code,
             stdout=stdout,
             stderr=combined_stderr,
-            error=None if exit_code == 0 else f"command exited with status {exit_code}",
+            error=None if exit_code == 0 or _is_interrupt_exit_code(exit_code) else f"command exited with status {exit_code}",
         )
     _write_pull_repo_bytes(step, repo_bytes)
     return ExecutionStepResult(step=step, status="ok")
@@ -1015,6 +1057,7 @@ def _push_desired_bytes(target_plan: TargetPlan) -> bytes:
         interactive=False,
     )
     if exit_code != 0:
+        _raise_for_interrupt_exit_code(exit_code)
         raise ValueError(stderr.strip() or f"render command exited with status {exit_code}")
     return stdout.encode("utf-8")
 
@@ -1070,6 +1113,7 @@ def _pull_desired_bytes(target_plan: TargetPlan) -> bytes:
         privileged=needs_sudo_for_read(target_plan.live_path),
     )
     if exit_code != 0:
+        _raise_for_interrupt_exit_code(exit_code)
         raise ValueError(stderr.strip() or f"capture command exited with status {exit_code}")
     return stdout.encode("utf-8")
 
@@ -1147,6 +1191,7 @@ def _build_patch_capture_projector(*, target_plan: TargetPlan, package_plan: Pac
                 privileged=needs_sudo_for_read(target_plan.live_path),
             )
             if exit_code != 0:
+                _raise_for_interrupt_exit_code(exit_code)
                 raise ValueError(stderr.strip() or f"render command exited with status {exit_code}")
             return stdout.encode("utf-8")
         finally:
@@ -1203,17 +1248,6 @@ def _run_command(
     if interactive:
         return _run_command_with_terminal(command=command, cwd=cwd, env=env, privileged=False)
 
-    process = subprocess.Popen(
-        command,
-        cwd=str(cwd) if cwd is not None else None,
-        env={**os.environ, **env},
-        shell=True,
-        executable="/bin/sh",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
     stdout_buffer: list[str] = []
     stderr_buffer: list[str] = []
 
@@ -1228,14 +1262,38 @@ def _run_command(
         finally:
             stream.close()
 
-    stdout_thread = Thread(target=pump, args=(process.stdout, stdout_buffer, sys.stdout), daemon=True)
-    stderr_thread = Thread(target=pump, args=(process.stderr, stderr_buffer, sys.stderr), daemon=True)
-    stdout_thread.start()
-    stderr_thread.start()
-    return_code = process.wait()
-    stdout_thread.join()
-    stderr_thread.join()
-    return return_code, "".join(stdout_buffer), "".join(stderr_buffer)
+    with preserve_terminal_state():
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd) if cwd is not None else None,
+            env={**os.environ, **env},
+            shell=True,
+            executable="/bin/sh",
+            # Pipe mode owns stdout/stderr but must not read dotman's stdin;
+            # accidental reads can steal selection input or hang hidden prompts.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            # Parent handles Ctrl-C cleanup for pipe commands, so isolate the
+            # shell tree and signal the whole group on interruption.
+            start_new_session=True,
+        )
+        stdout_thread = Thread(target=pump, args=(process.stdout, stdout_buffer, sys.stdout), daemon=True)
+        stderr_thread = Thread(target=pump, args=(process.stderr, stderr_buffer, sys.stderr), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+        try:
+            return_code = process.wait()
+        except KeyboardInterrupt:
+            _interrupt_process_group(process)
+            _wait_for_process_exit(process)
+            raise
+        finally:
+            stdout_thread.join()
+            stderr_thread.join()
+    return _normalize_command_return_code(return_code), "".join(stdout_buffer), "".join(stderr_buffer)
 
 
 def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str, str], privileged: bool = False) -> tuple[int, str, str]:
@@ -1246,15 +1304,62 @@ def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str,
         request_sudo("run privileged command")
         command = sudo_prefix_command(command)
     with preserve_terminal_state():
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=str(cwd) if cwd is not None else None,
             env={**os.environ, **env},
             shell=True,
             executable="/bin/sh",
-            check=False,
         )
-    return completed.returncode, "", ""
+        previous_sigint_handler = signal.getsignal(signal.SIGINT)
+        # TTY commands own the foreground terminal. Ignore Ctrl-C in dotman
+        # while waiting so the child handles interruption and avoids duplicate
+        # parent notices.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            return_code = process.wait()
+        finally:
+            signal.signal(signal.SIGINT, previous_sigint_handler)
+    return _normalize_command_return_code(return_code), "", ""
+
+
+def _interrupt_process_group(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGINT)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            process.terminate()
+        except OSError:
+            pass
+
+
+def _wait_for_process_exit(process: subprocess.Popen) -> None:
+    try:
+        process.wait(timeout=_COMMAND_INTERRUPT_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                process.kill()
+            except OSError:
+                pass
+        process.wait()
+
+
+def _normalize_command_return_code(return_code: int) -> int:
+    if _is_interrupt_exit_code(return_code):
+        return INTERRUPTED_EXIT_CODE
+    return return_code
+
+
+def _is_interrupt_exit_code(exit_code: int) -> bool:
+    return exit_code == INTERRUPTED_EXIT_CODE or exit_code == -signal.SIGINT
+
+
+def _raise_for_interrupt_exit_code(exit_code: int) -> None:
+    if _is_interrupt_exit_code(exit_code):
+        raise KeyboardInterrupt
 
 
 def _require_interactive_terminal_for_reconcile() -> None:

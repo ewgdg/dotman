@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import signal
 import stat
 from dataclasses import replace
 from pathlib import Path
@@ -1025,15 +1027,17 @@ def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
 
     recorded: dict[str, object] = {}
 
-    def fake_run(command: str, **kwargs):
+    class FakeProcess:
+        pid = 12345
+
+        def wait(self):
+            return 0
+
+    def fake_popen(command: str, **kwargs):
         recorded["command"] = command
         recorded["kwargs"] = kwargs
-        return SimpleNamespace(returncode=0)
+        return FakeProcess()
 
-    def fake_popen(*args, **kwargs):  # pragma: no cover - the assertion is the test.
-        raise AssertionError("interactive reconcile should not use piped Popen execution")
-
-    monkeypatch.setattr("dotman.execution.subprocess.run", fake_run)
     monkeypatch.setattr("dotman.execution.subprocess.Popen", fake_popen)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
@@ -1049,7 +1053,9 @@ def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
     assert recorded["kwargs"]["cwd"] is None
     assert recorded["kwargs"]["shell"] is True
     assert recorded["kwargs"]["executable"] == "/bin/sh"
-    assert recorded["kwargs"]["check"] is False
+    assert "stdin" not in recorded["kwargs"]
+    assert "stdout" not in recorded["kwargs"]
+    assert "stderr" not in recorded["kwargs"]
     assert recorded["kwargs"]["env"]["DOTMAN_REPO_PATH"] == str(repo_path)
     assert recorded["kwargs"]["env"]["DOTMAN_LIVE_PATH"] == str(live_path)
 
@@ -1210,16 +1216,28 @@ def test_execute_session_fails_tty_hook_without_terminal(
 def test_run_command_interactive_uses_terminal_runner_without_pipes(monkeypatch) -> None:
     recorded: dict[str, object] = {}
 
-    def fake_run(command: str, **kwargs):
+    class FakeProcess:
+        pid = 12345
+
+        def wait(self):
+            return 0
+
+    def fake_popen(command: str, **kwargs):
         recorded["command"] = command
         recorded["kwargs"] = kwargs
-        return SimpleNamespace(returncode=0)
+        return FakeProcess()
 
-    def fake_popen(*args, **kwargs):  # pragma: no cover - assertion is test.
-        raise AssertionError("interactive command should not use piped Popen execution")
+    events: list[str] = []
 
-    monkeypatch.setattr("dotman.execution.subprocess.run", fake_run)
+    class FakePreserveTerminalState:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("exit")
+
     monkeypatch.setattr("dotman.execution.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("dotman.execution.preserve_terminal_state", lambda: FakePreserveTerminalState())
 
     exit_code, stdout, stderr = execution._run_command(
         command="printf 'tty\\n'",
@@ -1235,6 +1253,115 @@ def test_run_command_interactive_uses_terminal_runner_without_pipes(monkeypatch)
     assert recorded["kwargs"]["shell"] is True
     assert recorded["kwargs"]["executable"] == "/bin/sh"
     assert recorded["kwargs"]["env"]["X"] == "1"
+    assert "stdin" not in recorded["kwargs"]
+    assert "stdout" not in recorded["kwargs"]
+    assert "stderr" not in recorded["kwargs"]
+    assert events == ["enter", "exit"]
+
+
+def test_run_command_pipe_uses_devnull_stdin_and_preserves_terminal(monkeypatch) -> None:
+    recorded: dict[str, object] = {}
+    events: list[str] = []
+
+    class FakePreserveTerminalState:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("exit")
+
+    class FakeProcess:
+        pid = 12345
+        stdout = io.StringIO("out\n")
+        stderr = io.StringIO("err\n")
+
+        def wait(self):
+            return 0
+
+    def fake_popen(command: str, **kwargs):
+        recorded["command"] = command
+        recorded["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr("dotman.execution.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("dotman.execution.preserve_terminal_state", lambda: FakePreserveTerminalState())
+
+    exit_code, stdout, stderr = execution._run_command(
+        command="printf 'pipe\n'",
+        cwd=None,
+        env={},
+        stream_output=False,
+        interactive=False,
+    )
+
+    assert (exit_code, stdout, stderr) == (0, "out\n", "err\n")
+    kwargs = recorded["kwargs"]
+    assert kwargs["stdin"] is execution.subprocess.DEVNULL
+    assert kwargs["stdout"] is execution.subprocess.PIPE
+    assert kwargs["stderr"] is execution.subprocess.PIPE
+    assert kwargs["start_new_session"] is True
+    assert events == ["enter", "exit"]
+
+
+def test_run_command_pipe_interrupts_process_group_before_reraising(monkeypatch) -> None:
+    killed: list[tuple[int, int]] = []
+
+    class FakeProcess:
+        pid = 12345
+        stdout = io.StringIO("")
+        stderr = io.StringIO("")
+
+        def __init__(self):
+            self.wait_calls = 0
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise KeyboardInterrupt
+            return -signal.SIGINT
+
+    fake_process = FakeProcess()
+
+    monkeypatch.setattr("dotman.execution.subprocess.Popen", lambda *args, **kwargs: fake_process)
+    monkeypatch.setattr("dotman.execution.os.killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    with pytest.raises(KeyboardInterrupt):
+        execution._run_command(
+            command="sleep 30",
+            cwd=None,
+            env={},
+            stream_output=False,
+            interactive=False,
+        )
+
+    assert killed == [(12345, signal.SIGINT)]
+
+
+def test_execute_session_marks_command_exit_130_as_interrupted(monkeypatch) -> None:
+    monkeypatch.setattr("dotman.execution._run_command", lambda **kwargs: (130, "", ""))
+
+    plan = make_package_plan(
+        operation="push",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={
+            "pre_push": [
+                HookPlan(package_id="app", hook_name="pre_push", command="python hook.py", cwd=Path("/repo/app")),
+            ],
+        },
+        target_plans=[],
+    )
+
+    result = execute_session(build_execution_session([plan], operation="push"), stream_output=False)
+
+    assert result.status == "interrupted"
+    assert result.exit_code == 130
+    step_result = result.packages[0].steps[0]
+    assert step_result.status == "interrupted"
+    assert step_result.exit_code == 130
+    assert step_result.error is None
 
 
 

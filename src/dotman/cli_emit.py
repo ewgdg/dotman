@@ -527,6 +527,10 @@ def _print_execution_step_finish(_package: Any, step_result: Any, _index: int, _
     if step_result.status == "ok":
         print(f"      {cli_style.render_execution_status('ok', use_color=use_color)}")
         return
+    if step_result.status == "interrupted" and _step_uses_terminal_passthrough(step_result.step):
+        # TTY commands own user-facing interrupt UI. Avoid printing a second
+        # interruption line after child tools already wrote to the terminal.
+        return
     if step_result.error:
         print(f"      {step_result.error}")
     print(f"      {_render_execution_status_label(step_result.status, step_result.skip_reason, use_color=use_color)}")
@@ -541,6 +545,14 @@ def _render_execution_status_label(status: str, skip_reason: str | None, *, use_
     if status == "skipped" and skip_reason == "guard":
         return f"{cli_style.render_execution_status('skipped', use_color=use_color)}{cli_style.render_annotation_parentheses(skip_reason, use_color=use_color)}"
     return cli_style.render_execution_status(status, use_color=use_color)
+
+
+def _step_uses_terminal_passthrough(step: Any) -> bool:
+    hook_plan = getattr(step, "hook_plan", None)
+    if hook_plan is not None:
+        return getattr(hook_plan, "io", "pipe") == "tty"
+    target_plan = getattr(step, "target_plan", None)
+    return getattr(step, "kind", None) == "reconcile" and getattr(target_plan, "reconcile_io", "pipe") == "tty"
 
 
 def emit_execution_result(*, result: Any, json_output: bool) -> int:
