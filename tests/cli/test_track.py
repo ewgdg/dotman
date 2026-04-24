@@ -736,8 +736,8 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Select a conflicting package to track explicitly for fixture:alpha-stack@basic:" in output
-    assert "Confirm explicit override for fixture:alpha@basic:" in output
-    assert "implicit: fixture:beta@basic (beta)" in output
+    assert "Confirm explicit override for fixture:alpha@basic:" not in output
+    assert "implicit: fixture:beta@basic (beta)" not in output
     assert "tracked fixture:alpha@basic" in output
     assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -756,7 +756,7 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
         ]
     )
 
-def test_track_cli_lists_package_override_once_for_multi_target_package(
+def test_track_cli_skips_same_profile_package_override_prompt(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -799,6 +799,7 @@ def test_track_cli_lists_package_override_once_for_multi_target_package(
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert output.count("implicit: fixture:beta@basic (beta)") == 1
+    assert "Confirm explicit override for fixture:alpha@basic:" not in output
+    assert "implicit: fixture:beta@basic (beta)" not in output
     assert "~/.config/shared.conf" not in output
     assert "~/.config/extra.conf" not in output

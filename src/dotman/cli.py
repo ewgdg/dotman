@@ -824,14 +824,41 @@ def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
+def _render_override_candidate(candidate, *, role: str) -> str:
+    repo_name, selector, profile = parse_full_spec_selector_text(candidate.selection_label)
+    candidate_label = candidate.selection_label
+    if repo_name is not None and profile is not None:
+        candidate_label = render_full_spec_selector_label(
+            repo_name=repo_name,
+            selector=selector,
+            profile=profile,
+        )
+    return " ".join(
+        [
+            render_menu_badge(f"{role}:"),
+            candidate_label,
+            render_menu_badge(f"({candidate.package_id})"),
+        ]
+    )
+
+
+def _explicit_override_needs_confirmation(override) -> bool:
+    # Same-profile promotions only make an already resolved implicit package explicit.
+    # Different-profile promotions may switch rendered values and need confirmation.
+    return any(
+        contender.selection.requested_profile != override.winner.selection.requested_profile
+        for contender in override.overridden
+    )
+
+
 def confirm_track_package_entry_implicit_overrides(*, binding: FullSpecSelector, overrides: Sequence, assume_yes: bool = False) -> bool:
     binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
     print_selection_header(f"Confirm explicit override for {binding_label}:")
-    print("  this track request will replace implicitly tracked package owners:")
+    print("  " + render_menu_badge("this track request will replace implicitly tracked package owners:"))
     for override in overrides:
-        print(f"    new: {override.winner.selection_label} ({override.winner.package_id})")
+        print(f"    {_render_override_candidate(override.winner, role='new')}")
         for contender in override.overridden:
-            print(f"      implicit: {contender.selection_label} ({contender.package_id})")
+            print(f"      {_render_override_candidate(contender, role='implicit')}")
     if assume_yes:
         return True
     while True:
@@ -883,6 +910,7 @@ def ensure_track_package_entry_implicit_overrides_confirmed(
                 source_selector=binding.selector,
             )
         )
+    overrides = [override for override in overrides if _explicit_override_needs_confirmation(override)]
     if not overrides:
         return True
     if assume_yes:

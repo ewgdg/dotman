@@ -1008,13 +1008,73 @@ def test_ensure_track_package_entry_implicit_overrides_confirmed_skips_prompt_wh
                         requested_profile="current",
                     ),
                 ),
-                overridden=(SimpleNamespace(selection_label="fixture:stack@implicit", package_id="implicit"),),
+                overridden=(
+                    SimpleNamespace(
+                        selection_label="fixture:stack@implicit",
+                        package_id="implicit",
+                        selection=SimpleNamespace(requested_profile="implicit"),
+                    ),
+                ),
             )
         ]
     )
     monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
 
     assert cli.ensure_track_package_entry_implicit_overrides_confirmed(engine, binding=binding, json_output=False, assume_yes=True) is True
+
+
+def test_confirm_track_package_entry_implicit_overrides_uses_menu_colors(monkeypatch, capsys) -> None:
+    binding = FullSpecSelector(repo="fixture", selector="alpha", selector_kind="package", profile="work")
+    override = SimpleNamespace(
+        winner=SimpleNamespace(
+            selection_label="fixture:alpha@work",
+            package_id="alpha",
+            selection=SimpleNamespace(requested_profile="work"),
+        ),
+        overridden=(
+            SimpleNamespace(
+                selection_label="fixture:beta@basic",
+                package_id="beta",
+                selection=SimpleNamespace(requested_profile="basic"),
+            ),
+        ),
+    )
+    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+
+    assert cli.confirm_track_package_entry_implicit_overrides(binding=binding, overrides=[override], assume_yes=True) is True
+
+    output = capsys.readouterr().out
+    assert "\033[1;34m::\033[0m" in output
+    assert "\033[2mnew:\033[0m" in output
+    assert "\033[2mimplicit:\033[0m" in output
+    assert "\033[2;34mfixture\033[0m\033[2m:\033[0m\033[1malpha\033[0m\033[2m@work\033[0m" in output
+    assert "\033[2;34mfixture\033[0m\033[2m:\033[0m\033[1mbeta\033[0m\033[2m@basic\033[0m" in output
+
+
+def test_ensure_track_package_entry_implicit_overrides_confirmed_skips_same_profile_prompt(monkeypatch) -> None:
+    binding = FullSpecSelector(repo="fixture", selector="alpha", selector_kind="package", profile="basic")
+    override = SimpleNamespace(
+        winner=SimpleNamespace(
+            selection_label="fixture:alpha@basic",
+            package_id="alpha",
+            selection=SimpleNamespace(requested_profile="basic"),
+        ),
+        overridden=(
+            SimpleNamespace(
+                selection_label="fixture:beta@basic",
+                package_id="beta",
+                selection=SimpleNamespace(requested_profile="basic"),
+            ),
+        ),
+    )
+    engine = SimpleNamespace(
+        get_repo=lambda _repo_name: SimpleNamespace(),
+        _resolved_package_selection=lambda **kwargs: SimpleNamespace(**kwargs),
+        preview_package_selection_implicit_overrides=lambda _selection: [override],
+    )
+    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
+
+    assert cli.ensure_track_package_entry_implicit_overrides_confirmed(engine, binding=binding, json_output=False) is True
 
 
 def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
