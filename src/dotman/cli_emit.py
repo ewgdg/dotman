@@ -1614,7 +1614,10 @@ def _structured_error_fields(error: Any, *, use_color: bool) -> list[tuple[str, 
         fields.append(("path:", str(path)))
     detail = getattr(error, "detail", None)
     if detail is None:
-        detail = str(error) or error.__class__.__name__
+        if hasattr(error, "package_identity") and hasattr(error, "conflict_kind") and hasattr(error, "contenders"):
+            detail = cli_style.render_profile_conflict_detail(error, use_color=use_color)
+        else:
+            detail = str(error) or error.__class__.__name__
     fields.append(("detail:", str(detail)))
     hint = getattr(error, "hint", None)
     if hint is not None:

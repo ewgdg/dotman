@@ -15,6 +15,8 @@ sys.modules.setdefault("pathspec.gitignore", pathspec_gitignore)
 
 from dotman.capture import CaptureError
 from dotman.cli_emit import emit_error
+from dotman.models import ResolvedPackageIdentity
+from dotman.planning import TrackedPackageProfileConflictError
 from dotman.templates import JinjaRenderError
 
 
@@ -62,3 +64,23 @@ def test_emit_error_uses_error_type_name_for_jinja_errors(capsys) -> None:
     assert "detail:" in error_output
     assert "/tmp/template.txt" in error_output
     assert "missing value" in error_output
+
+
+def test_emit_error_styles_profile_conflict_selectors_and_package_identity(capsys) -> None:
+    error = TrackedPackageProfileConflictError(
+        package_identity=ResolvedPackageIdentity(repo="fixture", package_id="shared", bound_profile=None),
+        conflict_kind="ambiguous_implicit",
+        contenders=(
+            "fixture:shared@basic required by fixture:meta-a@basic",
+            "fixture:shared@work required by fixture:meta-b@work",
+        ),
+    )
+
+    emit_error(error, use_color=True)
+
+    error_output = capsys.readouterr().err
+    assert "ambiguous implicit profile contexts for \033[2;34mfixture\033[0m\033[2m:\033[0m\033[1mshared\033[0m:" in error_output
+    assert "\033[2;34mfixture\033[0m\033[2m:\033[0m\033[1mshared\033[0m\033[2m@basic\033[0m" in error_output
+    assert " required by " in error_output
+    assert "\033[2mrequired by\033[0m" not in error_output
+    assert "\033[2;34mfixture\033[0m\033[2m:\033[0m\033[1mmeta-b\033[0m\033[2m@work\033[0m" in error_output

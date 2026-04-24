@@ -6,16 +6,34 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.models import FullSpecSelector
+from dotman.models import FullSpecSelector, TrackedPackageEntry
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
     write_manager_config,
     write_multi_instance_repo,
     write_package_override_preview_repo,
+    write_profile_ambiguous_dependency_repo,
     write_single_repo_config,
     write_untrack_conflict_repo,
 )
+
+
+def write_tracked_packages_state(state_root: Path, *, repo_name: str, entries: list[tuple[str, str]]) -> None:
+    state_dir = state_root / "dotman" / "repos" / repo_name
+    state_dir.mkdir(parents=True, exist_ok=True)
+    lines = ["schema_version = 1", ""]
+    for package_id, profile in entries:
+        lines.extend(
+            [
+                "[[packages]]",
+                f'repo = "{repo_name}"',
+                f'package_id = "{package_id}"',
+                f'profile = "{profile}"',
+                "",
+            ]
+        )
+    (state_dir / "tracked-packages.toml").write_text("\n".join(lines), encoding="utf-8")
 
 
 def write_same_live_path_repo(repo_root: Path, *, same_source_bytes: bool = True) -> None:
@@ -290,7 +308,180 @@ def test_record_binding_rejects_multi_instance_same_live_path_profiles(
         _repo, selector = engine.resolve_full_spec_selector_text("fixture:profiled@work")
         engine.record_tracked_package_entry(selector)
 
-def test_remove_binding_dedupes_same_singleton_package_reached_through_multiple_roots(
+
+def test_track_rejects_singleton_implicit_dependency_profile_ambiguity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    write_profile_ambiguous_dependency_repo(repo_root)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    _repo, selector = engine.resolve_full_spec_selector_text("fixture:meta-a@basic")
+    engine.record_tracked_package_entry(selector)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"ambiguous implicit profile contexts for fixture:shared:\n"
+            r"  fixture:shared@basic required by fixture:meta-a@basic\n"
+            r"  fixture:shared@work required by fixture:meta-b@work"
+        ),
+    ):
+        _repo, selector = engine.resolve_full_spec_selector_text("fixture:meta-b@work")
+        engine.record_tracked_package_entry(selector)
+
+
+def test_plan_push_fails_for_invalid_singleton_implicit_dependency_profile_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    write_profile_ambiguous_dependency_repo(repo_root)
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="fixture",
+        entries=[("meta-a", "basic"), ("meta-b", "work")],
+    )
+    engine = DotmanEngine.from_config_path(config_path)
+
+    with pytest.raises(ValueError, match=r"ambiguous implicit profile contexts for fixture:shared"):
+        engine.plan_push()
+
+
+def test_plan_pull_fails_for_invalid_singleton_implicit_dependency_profile_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    write_profile_ambiguous_dependency_repo(repo_root)
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="fixture",
+        entries=[("meta-a", "basic"), ("meta-b", "work")],
+    )
+    engine = DotmanEngine.from_config_path(config_path)
+
+    with pytest.raises(ValueError, match=r"ambiguous implicit profile contexts for fixture:shared"):
+        engine.plan_pull()
+
+
+def test_same_profile_singleton_implicit_dependency_dedupes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    write_profile_ambiguous_dependency_repo(repo_root)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    for selector_text in ("fixture:meta-a@basic", "fixture:meta-b@basic"):
+        _repo, selector = engine.resolve_full_spec_selector_text(selector_text)
+        engine.record_tracked_package_entry(selector)
+
+    plan = engine.plan_push()
+
+    assert [(item.package_id, item.requested_profile) for item in plan.package_plans] == [
+        ("meta-a", "basic"),
+        ("shared", "basic"),
+        ("meta-b", "basic"),
+    ]
+
+
+def test_multi_instance_implicit_dependency_allows_different_profiles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    write_profile_ambiguous_dependency_repo(repo_root, shared_binding_mode="multi_instance")
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    for selector_text in ("fixture:meta-a@basic", "fixture:meta-b@work"):
+        _repo, selector = engine.resolve_full_spec_selector_text(selector_text)
+        engine.record_tracked_package_entry(selector)
+
+    plan = engine.plan_push()
+
+    assert [(item.package_id, item.bound_profile, item.requested_profile) for item in plan.package_plans] == [
+        ("meta-a", None, "basic"),
+        ("shared", "basic", "basic"),
+        ("meta-b", None, "work"),
+        ("shared", "work", "work"),
+    ]
+
+
+def test_explicit_singleton_dependency_profile_suppresses_conflicting_implicit_profile_before_planning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    write_profile_ambiguous_dependency_repo(repo_root)
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="fixture",
+        entries=[("shared", "work"), ("meta-a", "basic"), ("meta-b", "work")],
+    )
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = engine.plan_push()
+
+    shared_plans = [item for item in plan.package_plans if item.package_id == "shared"]
+
+    assert [(item.requested_profile, item.selection.explicit) for item in shared_plans] == [("work", True)]
+    assert shared_plans[0].target_plans[0].desired_text == "profile=work\n"
+
+
+def test_shared_resolver_rejects_conflicting_explicit_singleton_profiles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "fixture-repo"
+    write_profile_ambiguous_dependency_repo(repo_root)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    with pytest.raises(ValueError, match=r"conflicting explicit profile contexts for fixture:shared"):
+        engine._planning_helpers().validate_tracked_package_ownership(
+            engine,
+            entries_by_repo={
+                "fixture": [
+                    TrackedPackageEntry(repo="fixture", package_id="shared", profile="basic"),
+                    TrackedPackageEntry(repo="fixture", package_id="shared", profile="work"),
+                ],
+            },
+        )
+
+
+def test_remove_binding_rejects_resulting_singleton_dependency_profile_ambiguity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -328,22 +519,7 @@ def test_remove_binding_dedupes_same_singleton_package_reached_through_multiple_
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    removed = engine.remove_tracked_package_entry("fixture:shared@direct")
+    with pytest.raises(ValueError, match=r"ambiguous implicit profile contexts for fixture:shared"):
+        engine.remove_tracked_package_entry("fixture:shared@direct")
 
-    assert removed.selector == "shared"
-    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
-        [
-            "schema_version = 1",
-            "",
-            "[[packages]]",
-            'repo = "fixture"',
-            'package_id = "stack-a"',
-            'profile = "work"',
-            "",
-            "[[packages]]",
-            'repo = "fixture"',
-            'package_id = "stack-b"',
-            'profile = "personal"',
-            "",
-        ]
-    )
+    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == original_state

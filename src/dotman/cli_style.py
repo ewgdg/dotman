@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 from dotman.engine import parse_full_spec_selector_text
-from dotman.models import FullSpecSelector, package_ref_text, repo_qualified_target_text, target_ref_text
+from dotman.models import FullSpecSelector, ResolvedPackageIdentity, package_ref_text, repo_qualified_target_text, target_ref_text
 
 
 ANSI_RESET = "\033[0m"
@@ -194,6 +194,62 @@ def render_full_spec_selector_reference(package_entry: FullSpecSelector, *, use_
         selector=package_entry.selector,
         profile=package_entry.profile,
         use_color=use_color,
+    )
+
+
+def render_package_identity_label(identity: ResolvedPackageIdentity, *, use_color: bool) -> str:
+    return render_package_label(
+        repo_name=identity.repo,
+        package_id=identity.package_id,
+        bound_profile=identity.bound_profile,
+        use_color=use_color,
+    )
+
+
+def render_full_spec_selector_label_text(selection_label: str, *, use_color: bool) -> str:
+    repo_name, selector, profile = parse_full_spec_selector_text(selection_label)
+    if repo_name is None or profile is None:
+        return selection_label
+    return render_full_spec_selector_label(
+        repo_name=repo_name,
+        selector=selector,
+        profile=profile,
+        use_color=use_color,
+    )
+
+
+def render_profile_conflict_contender(contender: str, *, use_color: bool) -> str:
+    selection_label, separator, owner_label = contender.partition(" required by ")
+    rendered_selection = render_full_spec_selector_label_text(selection_label, use_color=use_color)
+    if not separator:
+        return rendered_selection
+    return (
+        f"{rendered_selection} "
+        "required by "
+        f"{render_full_spec_selector_label_text(owner_label, use_color=use_color)}"
+    )
+
+
+def render_profile_conflict_detail(error: object, *, use_color: bool) -> str:
+    package_identity = getattr(error, "package_identity", None)
+    if package_identity is None:
+        return str(error)
+
+    conflict_kind = getattr(error, "conflict_kind", "")
+    if conflict_kind == "ambiguous_implicit":
+        header = "ambiguous implicit profile contexts for"
+    elif conflict_kind == "conflicting_explicit":
+        header = "conflicting explicit profile contexts for"
+    else:
+        header = "conflicting profile contexts for"
+
+    package_label = render_package_identity_label(package_identity, use_color=use_color)
+    contenders = tuple(getattr(error, "contenders", ()))
+    return "\n".join(
+        [
+            f"{header} {package_label}:",
+            *(f"  {render_profile_conflict_contender(contender, use_color=use_color)}" for contender in contenders),
+        ]
     )
 
 

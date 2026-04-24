@@ -23,6 +23,8 @@ This document captures the current repository structure and configuration schema
 - Packages may declare `depends` for hard requirements.
 - `depends` entries may reference either package IDs or group selectors.
 - Group dependencies expand to their member packages during dependency resolution.
+- Dependency profile context is inherited from the owner selection. A singleton dependency may not be pulled into tracked state under multiple implicit profile contexts.
+- If two tracked roots would imply `repo:shared@basic` and `repo:shared@work` for singleton `repo:shared`, dotman fails before target planning. Resolve this by using one profile, making the dependency `multi_instance`, explicitly tracking the intended singleton dependency profile, or moving overlapping config into a shared package design.
 - Dependency resolution de-duplicates revisits and truncates cycles, including mixed package/group cycles, so traversal stays finite.
 - Packages that exist only for hard dependency aggregation should use a `-meta` suffix by convention.
 - A package's target live paths are implicitly reserved.
@@ -84,7 +86,7 @@ This document captures the current repository structure and configuration schema
 - Tracking a `multi_instance` package always produces a package instance bound to one selected profile.
 - A `multi_instance` package instance is identified by package ID plus bound profile.
 - Effective/composed profile data may be shown for resolution context, but it is not part of package instance identity.
-- A dependency on a `multi_instance` package should inherit the current bound profile unless the dependency entry explicitly requests a different bound profile.
+- A dependency on a `multi_instance` package inherits the current bound profile and becomes a distinct tracked identity for each inherited profile.
 - `multi_instance` allows multiple instances from the same package definition to coexist as identities.
 - Coexisting identities do not bypass normal target ownership or reserved-path conflict checks.
 

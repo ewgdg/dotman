@@ -432,7 +432,7 @@ def test_untrack_cli_reports_dependency_owner_for_untracked_package_selector(
     assert exit_code == 2
     assert "cannot untrack 'example:nvim': required by tracked package entries: example:core-cli-meta@basic" in capsys.readouterr().err
 
-def test_untrack_cli_allows_removal_that_leaves_same_singleton_package_via_multiple_roots(
+def test_untrack_cli_rejects_removal_that_exposes_singleton_dependency_profile_ambiguity(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -447,49 +447,14 @@ def test_untrack_cli_allows_removal_that_leaves_same_singleton_package_via_multi
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "fixture"',
-                'package_id = "shared"',
-                'profile = "direct"',
-                "",
-                "[[packages]]",
-                'repo = "fixture"',
-                'package_id = "stack-a"',
-                'profile = "work"',
-                "",
-                "[[packages]]",
-                'repo = "fixture"',
-                'package_id = "stack-b"',
-                'profile = "personal"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path),
-            "untrack",
-            "fixture:shared@direct",
-        ]
-    )
-
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "untracked fixture:shared@direct" in output
-    assert "fixture:shared remains tracked via:" in output
-    assert "implicit: fixture:stack-a@work" in output
-    assert "implicit: fixture:stack-b@personal" in output
-    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
+    original_state = "\n".join(
         [
             "schema_version = 1",
+            "",
+            "[[packages]]",
+            'repo = "fixture"',
+            'package_id = "shared"',
+            'profile = "direct"',
             "",
             "[[packages]]",
             'repo = "fixture"',
@@ -503,6 +468,20 @@ def test_untrack_cli_allows_removal_that_leaves_same_singleton_package_via_multi
             "",
         ]
     )
+    (state_dir / "tracked-packages.toml").write_text(original_state, encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "untrack",
+            "fixture:shared@direct",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "ambiguous implicit profile contexts for fixture:shared" in capsys.readouterr().err
+    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == original_state
 
 def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(
     tmp_path: Path,

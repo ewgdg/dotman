@@ -325,6 +325,47 @@ def write_untrack_conflict_repo(repo_root: Path) -> None:
     )
 
 
+def write_profile_ambiguous_dependency_repo(repo_root: Path, *, shared_binding_mode: str = "singleton") -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "shared" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "meta-a").mkdir(parents=True)
+    (repo_root / "packages" / "meta-b").mkdir(parents=True)
+
+    for profile_name in ("basic", "work"):
+        (repo_root / "profiles" / f"{profile_name}.toml").write_text("", encoding="utf-8")
+
+    (repo_root / "packages" / "shared" / "files" / "shared.conf").write_text(
+        "profile={{ profile }}\n",
+        encoding="utf-8",
+    )
+    shared_lines = ['id = "shared"']
+    if shared_binding_mode != "singleton":
+        shared_lines.append(f'binding_mode = "{shared_binding_mode}"')
+    shared_lines.extend(
+        [
+            "",
+            "[targets.shared]",
+            'source = "files/shared.conf"',
+            'path = "~/.config/shared/{{ profile }}.conf"',
+            'render = "jinja"',
+            "",
+        ]
+    )
+    (repo_root / "packages" / "shared" / "package.toml").write_text("\n".join(shared_lines), encoding="utf-8")
+
+    for package_id in ("meta-a", "meta-b"):
+        (repo_root / "packages" / package_id / "package.toml").write_text(
+            "\n".join(
+                [
+                    f'id = "{package_id}"',
+                    'depends = ["shared"]',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+
 def write_multi_instance_repo(repo_root: Path) -> None:
     (repo_root / "profiles").mkdir(parents=True)
     (repo_root / "packages" / "profiled" / "files").mkdir(parents=True)

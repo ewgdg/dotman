@@ -116,6 +116,8 @@ This document captures the current command and selector direction for `dotman`.
 - Tracking a `multi_instance` package with a different bound profile should add a distinct explicit package entry instead of replacing the existing one.
 - If `track` would make a new explicit package entry override existing implicit targets, interactive mode should ask for confirmation before writing state.
 - In non-interactive mode, `track` should fail instead of silently overriding implicit tracked targets.
+- `track` should validate the future expanded tracked graph before writing. A singleton dependency cannot be implicitly required by different tracked roots under different profiles unless one explicit singleton dependency profile owns that package identity.
+- To fix an implicit dependency profile ambiguity, use the same profile for the roots, make the dependency `multi_instance`, explicitly track the desired singleton dependency profile, or move the overlapping target/config into the shared dependency package.
 - `track` is state-only in v1. It should not run repo-to-live work by itself.
 - Tracked target ownership is metadata-first: one live path may have one winning package instance. Same-precedence package instances that declare the same live path conflict even if their current rendered bytes would match.
 - If multiple packages need the same live path, move that target into a shared dependency package instead of duplicating the target declaration.
@@ -137,6 +139,7 @@ This document captures the current command and selector direction for `dotman`.
 - `push <package>` should also work when that package is currently included through another tracked explicit package entry; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
 - `push` with no selector should replay the current explicit package entries from persisted state without changing that tracked package set.
+- `push` should fail before target planning if expanded tracked state contains ambiguous implicit singleton dependency profile contexts. Explicit singleton dependency entries suppress other implicit profile contexts for that package identity.
 - If group membership or package `depends` change in the repo, `push` should pick up newly introduced managed packages and files.
 - `push` should only touch files within the current managed selection.
 - In interactive mode, `push` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.
@@ -185,6 +188,7 @@ This document captures the current command and selector direction for `dotman`.
 - `pull <package>` should also work when that package is currently included through another tracked explicit package entry; dotman should reuse the owning tracked profile in that case.
 - If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
 - `pull` with no selector should replay the current explicit package entries from persisted state.
+- `pull` should use the same expanded tracked-state validation as `push`, including singleton dependency profile ambiguity detection before target planning.
 - If the requested selector is not currently tracked, `pull` should fail instead of implicitly creating state. The user should use `track` first.
 - `pull` should first build a reverse-sync plan before changing any sources.
 - In interactive mode, `pull` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.

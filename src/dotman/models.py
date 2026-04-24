@@ -194,6 +194,7 @@ class ResolvedPackageSelection:
     source_kind: PackageSelectionSourceKind
     source_selector: str | None = None
     owner_identity: ResolvedPackageIdentity | None = None
+    owner_selection_label: str | None = None
 
     @property
     def repo_name(self) -> str:
@@ -220,6 +221,7 @@ class ResolvedPackageSelection:
             "source_kind": self.source_kind,
             "source_selector": self.source_selector,
             "owner_identity": None if self.owner_identity is None else self.owner_identity.to_dict(),
+            "owner_selection_label": self.owner_selection_label,
             "selection_label": self.selection_label,
         }
 

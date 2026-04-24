@@ -268,6 +268,7 @@ class DotmanEngine:
         source_kind: str,
         source_selector: str | None = None,
         owner_identity: ResolvedPackageIdentity | None = None,
+        owner_selection_label: str | None = None,
     ) -> ResolvedPackageSelection:
         return ResolvedPackageSelection(
             identity=self._resolved_package_identity(repo, package_id, requested_profile),
@@ -276,6 +277,7 @@ class DotmanEngine:
             source_kind=source_kind,
             source_selector=source_selector,
             owner_identity=owner_identity,
+            owner_selection_label=owner_selection_label,
         )
 
     def _tracked_entry_from_package_entry(self, package_entry: FullSpecSelector) -> TrackedPackageEntry:
