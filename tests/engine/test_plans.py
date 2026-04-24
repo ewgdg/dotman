@@ -1245,7 +1245,7 @@ def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
                 'render = "jinja"',
                 'pull_view_repo = "render"',
                 'pull_view_live = "raw"',
-                'reconcile = { run = "jinja", io = "tty" }',
+                'reconcile = "jinja"',
                 "",
             ]
         ),

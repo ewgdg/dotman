@@ -189,6 +189,8 @@ def _build_reconcile_command_spec(
     if reconcile_payload is None:
         return None
     if isinstance(reconcile_payload, str):
+        if reconcile_payload == "jinja":
+            return HookCommandSpec(run=reconcile_payload, io="tty")
         return HookCommandSpec(run=reconcile_payload)
     if not isinstance(reconcile_payload, dict):
         raise ValueError(

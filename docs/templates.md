@@ -38,6 +38,8 @@ For the common Jinja editor workflow, you can use the built-in shortcut:
 
 `reconcile = { run = "jinja", io = "tty" }` recursively discovers static Jinja template dependencies such as `{% include %}`, `{% extends %}`, `{% import %}`, and `{% from ... import ... %}`, then runs the built-in editor reconcile flow with those files added as extra editable sources.
 
+The string shorthand `reconcile = "jinja"` is also accepted and normalizes to the same tty-backed builtin workflow.
+
 If you want the whole common bundle as defaults, you can also use:
 
 - `preset = "jinja-editor"`
