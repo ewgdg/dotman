@@ -6,6 +6,7 @@
 
 ## UI design
 
+- Do not forget to update style whenever add or modify a user-facing command/UI
 - Stay consistent with the existing design.
 - Use `repo:package.target` as the main user-facing target identifier form.
 - Use `repo:package<instance>.target` for package-instance targets.
