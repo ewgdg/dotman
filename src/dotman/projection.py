@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,45 @@ from dotman.repository import Repository
 from dotman.templates import render_template_file, render_template_string
 
 
+@dataclass(frozen=True)
+class TargetMetadata:
+    repo_name: str
+    package_id: str
+    bound_profile: str | None
+    requested_profile: str
+    target_name: str
+    repo_path: Path
+    live_path: Path
+    render_command: str | None
+    capture_command: str | None
+    reconcile: HookCommandSpec | None
+    pull_view_repo: str
+    pull_view_live: str
+    push_ignore: tuple[str, ...]
+    pull_ignore: tuple[str, ...]
+    chmod: str | None
+    command_cwd: Path
+    command_env: dict[str, str]
+    package: PackageSpec
+    target: TargetSpec
+    live_path_is_symlink: bool = False
+    live_path_symlink_target: str | None = None
 
-def plan_targets(
+
+def _metadata_collision_tuple(metadata: TargetMetadata):
+    return (
+        metadata.package,
+        metadata.target,
+        metadata.repo_path,
+        metadata.live_path,
+        metadata.push_ignore,
+        metadata.pull_ignore,
+        metadata.live_path_is_symlink,
+        metadata.live_path_symlink_target,
+    )
+
+
+def build_target_metadata(
     engine: Any,
     *,
     repo: Repository,
@@ -27,8 +65,10 @@ def plan_targets(
     operation: str,
     inferred_os: str,
     declaration_package_ids: set[str],
-) -> list[TargetPlan]:
-    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]] = []
+    inspect_live_symlinks: bool = True,
+    validate_declaration_conflicts: bool = True,
+) -> list[TargetMetadata]:
+    metadata_targets: list[TargetMetadata] = []
 
     for package in packages:
         if package.id not in declaration_package_ids:
@@ -57,59 +97,105 @@ def plan_targets(
             )
             repo_path = (target.declared_in / rendered_source).resolve()
             live_path = expand_path(rendered_path, dereference=False)
-            live_path_is_symlink = operation == "push" and live_path.is_symlink()
+            live_path_is_symlink = inspect_live_symlinks and operation == "push" and live_path.is_symlink()
             live_path_symlink_target = os.readlink(live_path) if live_path_is_symlink else None
+            render_command = (
+                render_template_string(target.render, context, base_dir=target.declared_in, source_path=target.declared_in)
+                if target.render is not None
+                else None
+            )
+            capture_command = (
+                render_template_string(target.capture, context, base_dir=target.declared_in, source_path=target.declared_in)
+                if target.capture is not None
+                else None
+            )
+            reconcile = (
+                HookCommandSpec(
+                    run=render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in),
+                    io=target.reconcile.io,
+                    privileged=target.reconcile.privileged,
+                )
+                if target.reconcile is not None
+                else None
+            )
             push_ignore = merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ())
             pull_ignore = merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ())
-            rendered_targets.append(
-                (
-                    package,
-                    target,
-                    repo_path,
-                    live_path,
-                    push_ignore,
-                    pull_ignore,
-                    live_path_is_symlink,
-                    live_path_symlink_target,
+            metadata_targets.append(
+                TargetMetadata(
+                    repo_name=repo.config.name,
+                    package_id=package.id,
+                    bound_profile=selection.bound_profile,
+                    requested_profile=selection.requested_profile,
+                    target_name=target.name,
+                    repo_path=repo_path,
+                    live_path=live_path,
+                    render_command=render_command,
+                    capture_command=capture_command,
+                    reconcile=reconcile,
+                    pull_view_repo=target.pull_view_repo or "raw",
+                    pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
+                    push_ignore=push_ignore,
+                    pull_ignore=pull_ignore,
+                    chmod=target.chmod,
+                    command_cwd=target.declared_in,
+                    command_env=build_target_command_env(
+                        repo=repo,
+                        package=package,
+                        target=target,
+                        repo_path=repo_path,
+                        live_path=live_path,
+                        selection=selection,
+                        operation=operation,
+                        inferred_os=inferred_os,
+                        context=context,
+                    ),
+                    package=package,
+                    target=target,
+                    live_path_is_symlink=live_path_is_symlink,
+                    live_path_symlink_target=live_path_symlink_target,
                 )
             )
 
-    validate_target_collisions(rendered_targets)
-    validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
+    if validate_declaration_conflicts:
+        rendered_targets = [_metadata_collision_tuple(metadata) for metadata in metadata_targets]
+        validate_target_collisions(rendered_targets)
+        validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
+    return metadata_targets
+
+
+
+def plan_targets(
+    engine: Any,
+    *,
+    repo: Repository,
+    packages: list[PackageSpec],
+    context: dict[str, Any],
+    selection: ResolvedPackageSelection,
+    operation: str,
+    inferred_os: str,
+    declaration_package_ids: set[str],
+) -> list[TargetPlan]:
+    metadata_targets = build_target_metadata(
+        engine,
+        repo=repo,
+        packages=packages,
+        context=context,
+        selection=selection,
+        operation=operation,
+        inferred_os=inferred_os,
+        declaration_package_ids=declaration_package_ids,
+    )
 
     plans: list[TargetPlan] = []
-    for package, target, repo_path, live_path, push_ignore, pull_ignore, live_path_is_symlink, live_path_symlink_target in rendered_targets:
+    for metadata in metadata_targets:
+        package = metadata.package
+        target = metadata.target
+        repo_path = metadata.repo_path
+        live_path = metadata.live_path
         target_kind = infer_target_kind(repo_path=repo_path, live_path=live_path)
-        render_command = (
-            render_template_string(target.render, context, base_dir=target.declared_in, source_path=target.declared_in)
-            if target.render is not None
-            else None
-        )
-        capture_command = (
-            render_template_string(target.capture, context, base_dir=target.declared_in, source_path=target.declared_in)
-            if target.capture is not None
-            else None
-        )
-        reconcile = (
-            HookCommandSpec(
-                run=render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in),
-                io=target.reconcile.io,
-                privileged=target.reconcile.privileged,
-            )
-            if target.reconcile is not None
-            else None
-        )
-        command_env = build_target_command_env(
-            repo=repo,
-            package=package,
-            target=target,
-            repo_path=repo_path,
-            live_path=live_path,
-            selection=selection,
-            operation=operation,
-            inferred_os=inferred_os,
-            context=context,
-        )
+        render_command = metadata.render_command
+        capture_command = metadata.capture_command
+        reconcile = metadata.reconcile
         if target_kind == "unknown":
             plans.append(
                 TargetPlan(
@@ -123,17 +209,17 @@ def plan_targets(
                     render_command=render_command,
                     capture_command=capture_command,
                     reconcile=reconcile,
-                    live_path_is_symlink=live_path_is_symlink,
-                    live_path_symlink_target=live_path_symlink_target,
+                    live_path_is_symlink=metadata.live_path_is_symlink,
+                    live_path_symlink_target=metadata.live_path_symlink_target,
                     file_symlink_mode=engine.config.file_symlink_mode,
                     dir_symlink_mode=engine.config.dir_symlink_mode,
-                    pull_view_repo=target.pull_view_repo or "raw",
-                    pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
-                    push_ignore=push_ignore,
-                    pull_ignore=pull_ignore,
-                    chmod=target.chmod,
-                    command_cwd=target.declared_in,
-                    command_env=command_env,
+                    pull_view_repo=metadata.pull_view_repo,
+                    pull_view_live=metadata.pull_view_live,
+                    push_ignore=metadata.push_ignore,
+                    pull_ignore=metadata.pull_ignore,
+                    chmod=metadata.chmod,
+                    command_cwd=metadata.command_cwd,
+                    command_env=metadata.command_env,
                 )
             )
             continue
@@ -148,8 +234,8 @@ def plan_targets(
             action, directory_items = plan_directory_action(
                 repo_path,
                 live_path,
-                push_ignore,
-                pull_ignore,
+                metadata.push_ignore,
+                metadata.pull_ignore,
                 operation=operation,
             )
             plans.append(
@@ -164,17 +250,17 @@ def plan_targets(
                     render_command=render_command,
                     capture_command=capture_command,
                     reconcile=reconcile,
-                    live_path_is_symlink=live_path_is_symlink,
-                    live_path_symlink_target=live_path_symlink_target,
+                    live_path_is_symlink=metadata.live_path_is_symlink,
+                    live_path_symlink_target=metadata.live_path_symlink_target,
                     file_symlink_mode=engine.config.file_symlink_mode,
                     dir_symlink_mode=engine.config.dir_symlink_mode,
-                    pull_view_repo=target.pull_view_repo or "raw",
-                    pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
-                    push_ignore=push_ignore,
-                    pull_ignore=pull_ignore,
-                    chmod=target.chmod,
-                    command_cwd=target.declared_in,
-                    command_env=command_env,
+                    pull_view_repo=metadata.pull_view_repo,
+                    pull_view_live=metadata.pull_view_live,
+                    push_ignore=metadata.push_ignore,
+                    pull_ignore=metadata.pull_ignore,
+                    chmod=metadata.chmod,
+                    command_cwd=metadata.command_cwd,
+                    command_env=metadata.command_env,
                     directory_items=directory_items,
                 )
             )
@@ -206,8 +292,8 @@ def plan_targets(
                 projection_kind = "command"
             else:
                 raise
-        pull_view_repo = target.pull_view_repo or "raw"
-        pull_view_live = target.pull_view_live or default_pull_view_live(capture_command)
+        pull_view_repo = metadata.pull_view_repo
+        pull_view_live = metadata.pull_view_live
         action = plan_file_action(
             engine,
             repo=repo,
@@ -262,17 +348,17 @@ def plan_targets(
                 capture_command=capture_command,
                 reconcile=reconcile,
                 projection_error=projection_error,
-                live_path_is_symlink=live_path_is_symlink,
-                live_path_symlink_target=live_path_symlink_target,
+                live_path_is_symlink=metadata.live_path_is_symlink,
+                live_path_symlink_target=metadata.live_path_symlink_target,
                 file_symlink_mode=engine.config.file_symlink_mode,
                 dir_symlink_mode=engine.config.dir_symlink_mode,
                 pull_view_repo=pull_view_repo,
                 pull_view_live=pull_view_live,
-                push_ignore=push_ignore,
-                pull_ignore=pull_ignore,
-                chmod=target.chmod,
-                command_cwd=target.declared_in,
-                command_env=command_env,
+                push_ignore=metadata.push_ignore,
+                pull_ignore=metadata.pull_ignore,
+                chmod=metadata.chmod,
+                command_cwd=metadata.command_cwd,
+                command_env=metadata.command_env,
                 desired_bytes=desired_bytes,
                 review_before_bytes=review_before_bytes,
                 review_after_bytes=review_after_bytes,

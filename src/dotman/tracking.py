@@ -434,8 +434,10 @@ def effective_tracked_package_entries_for_repo(engine: Any, repo: Repository, ra
 
 
 def validate_tracked_package_entries(engine: Any, bindings_by_repo: dict[str, list[FullSpecSelector]]) -> None:
-    # Tracked-state validity is defined by the resolved push winner set for live targets.
-    engine._build_tracked_plans(operation="push", bindings_by_repo=bindings_by_repo)
+    engine._planning_helpers().validate_tracked_package_ownership(
+        engine,
+        entries_by_repo=engine._tracked_entries_by_repo_from_bindings(bindings_by_repo),
+    )
 
 
 

@@ -7,7 +7,7 @@ from typing import Any
 from dotman.config import expand_path
 from dotman.ignore import IgnoreMatcher
 from dotman.manifest import merge_ignore_patterns
-from dotman.models import PackageSpec, ResolvedPackageSelection, TargetPlan, TargetSpec
+from dotman.models import PackageSpec, ResolvedPackageSelection, TargetPlan, TargetSpec, TrackedTargetSummary
 from dotman.templates import render_template_string
 
 
@@ -42,7 +42,8 @@ class TrackedTargetCandidate:
     package_id: str
     target_name: str
     target_label: str
-    signature: tuple[Any, ...]
+    signature: tuple[Any, ...] = ()
+    target_summary: TrackedTargetSummary | None = None
 
 
 @dataclass(frozen=True)
@@ -90,10 +91,26 @@ def resolve_tracked_target_winners(
 ) -> set[tuple[int, int]]:
     winner_indexes: set[tuple[int, int]] = set()
     for live_path, candidates in candidates_by_live_path.items():
-        highest_precedence = max(candidate.precedence for candidate in candidates)
-        contenders = [candidate for candidate in candidates if candidate.precedence == highest_precedence]
+        candidates_by_instance: dict[tuple[str, str, str | None], TrackedTargetCandidate] = {}
+        for candidate in candidates:
+            instance_key = (
+                candidate.selection.identity.repo,
+                candidate.selection.identity.package_id,
+                candidate.selection.identity.bound_profile,
+            )
+            existing = candidates_by_instance.get(instance_key)
+            if existing is None or (candidate.precedence, -candidate.plan_index, -candidate.target_index) > (
+                existing.precedence,
+                -existing.plan_index,
+                -existing.target_index,
+            ):
+                candidates_by_instance[instance_key] = candidate
+
+        deduped_candidates = list(candidates_by_instance.values())
+        highest_precedence = max(candidate.precedence for candidate in deduped_candidates)
+        contenders = [candidate for candidate in deduped_candidates if candidate.precedence == highest_precedence]
         first = contenders[0]
-        if any(candidate.signature != first.signature for candidate in contenders[1:]):
+        if len(contenders) > 1:
             raise TrackedTargetConflictError(
                 live_path=live_path,
                 precedence=first.precedence_name,

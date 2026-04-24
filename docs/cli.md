@@ -117,6 +117,8 @@ This document captures the current command and selector direction for `dotman`.
 - If `track` would make a new explicit package entry override existing implicit targets, interactive mode should ask for confirmation before writing state.
 - In non-interactive mode, `track` should fail instead of silently overriding implicit tracked targets.
 - `track` is state-only in v1. It should not run repo-to-live work by itself.
+- Tracked target ownership is metadata-first: one live path may have one winning package instance. Same-precedence package instances that declare the same live path conflict even if their current rendered bytes would match.
+- If multiple packages need the same live path, move that target into a shared dependency package instead of duplicating the target declaration.
 - Examples:
   - `dotman track main:git@default`
   - `dotman track git`
@@ -352,7 +354,7 @@ This document captures the current command and selector direction for `dotman`.
 
 - `untrack <selector[@profile]>` should remove one persisted explicit package entry from state.
 - `untrack` should be state-only in v1.
-- `untrack` should not delete live files, run hooks, or infer target ownership.
+- `untrack` should not delete live files, run hooks, or build push/pull execution plans; ownership validation should use rendered target metadata only.
 - `untrack` should match persisted explicit package entries, not current repo manifests, so stale entries can still be removed after repo changes.
 - `untrack` should accept either `selector` or `selector@profile`.
 - If the profile is omitted, dotman should untrack the unique exact explicit package entry that matches the selector.
@@ -364,7 +366,8 @@ This document captures the current command and selector direction for `dotman`.
 - Exact invalid or orphan explicit package entries should still be removable by matching the persisted state record.
 - If the selector only names a package that is present through another explicit package entry, dotman should explain which tracked package entries currently include it instead of just saying "not tracked".
 - `untrack` should validate the resulting tracked package set before writing state.
-- If removing one explicit package entry would expose a tracked-target conflict among the remaining entries, `untrack` should fail and keep state unchanged.
+- If removing one explicit package entry would expose a tracked-target conflict among different remaining package instances, `untrack` should fail and keep state unchanged.
+- Singleton package targets reached through multiple tracked roots are the same package instance and should dedupe rather than conflict.
 - Repo qualification may still be omitted when the tracked package entry is unique across configured repos.
 - Examples:
   - `dotman untrack main:git@default`
