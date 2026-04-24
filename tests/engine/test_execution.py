@@ -497,6 +497,33 @@ def test_build_execution_session_keeps_package_hooks_unprivileged_when_package_n
     assert [step.privileged for step in session.packages[0].steps] == [False, False, True, False]
 
 
+def test_build_execution_session_marks_privileged_hook_commands() -> None:
+    plan = make_package_plan(
+        operation="push",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={
+            "pre_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="pre_push",
+                    command="systemctl restart sddm",
+                    cwd=Path("/repo/app"),
+                    privileged=True,
+                )
+            ],
+        },
+        target_plans=[],
+    )
+
+    session = build_execution_session([plan], operation="push", run_noop=True)
+
+    assert session.requires_privilege is True
+    assert [step.privileged for step in session.packages[0].steps] == [True]
+
+
 def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged(monkeypatch) -> None:
     monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: True)
 
@@ -528,6 +555,68 @@ def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged
 
     assert session.requires_privilege is False
     assert [step.privileged for step in session.packages[0].steps] == [False, False, False]
+
+
+def test_build_execution_session_marks_explicit_privileged_reconcile(monkeypatch) -> None:
+    monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: False)
+
+    plan = make_package_plan(
+        operation="pull",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/etc/sddm.conf"),
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+                reconcile=HookCommandSpec(run="sh hooks/reconcile.sh", privileged=True),
+            )
+        ],
+    )
+
+    session = build_execution_session([plan], operation="pull")
+
+    assert session.requires_privilege is True
+    assert [step.privileged for step in session.packages[0].steps] == [True]
+
+
+def test_build_execution_session_marks_privileged_reconcile_fallback(monkeypatch) -> None:
+    monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: False)
+
+    plan = make_package_plan(
+        operation="pull",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=Path("/repo/app.conf"),
+                live_path=Path("/etc/sddm.conf"),
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+                capture_command="capture-command",
+                reconcile=HookCommandSpec(run="sh hooks/reconcile.sh", privileged=True),
+            )
+        ],
+    )
+
+    session = build_execution_session([plan], operation="pull")
+
+    assert session.requires_privilege is True
+    assert [step.privileged for step in session.packages[0].steps] == [True]
+    assert execution._execution_session_sudo_reason(session) == "execute privileged reconcile for fixture:app.config"
 
 
 
@@ -1861,6 +1950,62 @@ def test_execute_session_runs_custom_reconcile_without_auto_sudo(
     assert result.status == "ok"
     assert recorded["command"] == "printf 'batch reconcile\\n'"
     assert recorded["privileged"] is False
+
+
+def test_execute_session_uses_explicit_privileged_reconcile_reason_and_runner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+    live_path.write_text("live\n", encoding="utf-8")
+
+    plan = make_package_plan(
+        operation="pull",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path,
+                live_path=live_path,
+                action="update",
+                target_kind="file",
+                projection_kind="raw",
+                reconcile=HookCommandSpec(run="printf 'batch reconcile\n'", privileged=True),
+                command_env={
+                    "DOTMAN_REPO_PATH": str(repo_path),
+                    "DOTMAN_LIVE_PATH": str(live_path),
+                },
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="pull")
+
+    recorded: dict[str, object] = {"sudo_reasons": []}
+
+    monkeypatch.setattr(
+        "dotman.execution.request_sudo",
+        lambda reason=None: recorded["sudo_reasons"].append(reason),
+    )
+    monkeypatch.setattr(
+        "dotman.execution._run_command",
+        lambda *, command, cwd, env, stream_output, interactive, privileged=False: (
+            recorded.update({"command": command, "privileged": privileged}) or (0, "batch reconcile\n", "")
+        ),
+    )
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert recorded["sudo_reasons"] == ["execute privileged reconcile for fixture:app.config"]
+    assert recorded["command"] == "printf 'batch reconcile\n'"
+    assert recorded["privileged"] is True
 
 
 

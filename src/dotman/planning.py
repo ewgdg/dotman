@@ -451,6 +451,7 @@ def plan_hooks(
                         package_id=package.id,
                         scope_kind="package",
                         io=command_spec.io,
+                        privileged=command_spec.privileged,
                         env=dict(package_env),
                         run_noop=hook_spec.run_noop,
                     )
@@ -476,6 +477,7 @@ def plan_hooks(
                             target_name=target_name,
                             scope_kind="target",
                             io=command_spec.io,
+                            privileged=command_spec.privileged,
                             env=target_env,
                             run_noop=hook_spec.run_noop,
                         )
@@ -505,6 +507,7 @@ def plan_repo_hooks(
                     repo_name=repo.config.name,
                     scope_kind="repo",
                     io=command_spec.io,
+                    privileged=command_spec.privileged,
                     env=dict(env),
                     run_noop=hook_spec.run_noop,
                 )

@@ -117,6 +117,12 @@ def _build_repo_units_from_packages(packages: tuple[PackageExecutionUnit, ...] |
     return tuple(repo_units)
 
 
+def _hook_plan_needs_sudo(hook_plan: HookPlan) -> bool:
+    # Hooks remain unprivileged by default even near protected target work.
+    # Root execution is allowed only through explicit command metadata.
+    return hook_plan.privileged
+
+
 @dataclass(frozen=True)
 class ExecutionStepResult:
     step: ExecutionStep
@@ -273,9 +279,7 @@ def build_execution_session(
                         action=hook_name,
                         scope_kind="package",
                         hook_plan=hook_plan,
-                        # Hooks are arbitrary user shell. Never auto-promote them to
-                        # root just because adjacent file operations need sudo.
-                        privileged=False,
+                        privileged=_hook_plan_needs_sudo(hook_plan),
                     )
                     for hook_plan in package_hooks.get(hook_name, [])
                 )
@@ -295,7 +299,7 @@ def build_execution_session(
                             scope_kind="target",
                             hook_plan=hook_plan,
                             target_plan=target,
-                            privileged=False,
+                            privileged=_hook_plan_needs_sudo(hook_plan),
                         )
                         for hook_plan in target_hooks.get(hook_name, [])
                     )
@@ -311,7 +315,7 @@ def build_execution_session(
                             scope_kind="target",
                             hook_plan=hook_plan,
                             target_plan=target,
-                            privileged=False,
+                            privileged=_hook_plan_needs_sudo(hook_plan),
                         )
                         for hook_plan in target_hooks.get(hook_names[2], [])
                     )
@@ -326,7 +330,7 @@ def build_execution_session(
                         action=hook_names[2],
                         scope_kind="package",
                         hook_plan=hook_plan,
-                        privileged=False,
+                        privileged=_hook_plan_needs_sudo(hook_plan),
                     )
                     for hook_plan in package_hooks.get(hook_names[2], [])
                 )
@@ -352,7 +356,7 @@ def build_execution_session(
                 action=hook_name,
                 scope_kind="repo",
                 hook_plan=hook_plan,
-                privileged=False,
+                privileged=_hook_plan_needs_sudo(hook_plan),
             )
             for hook_name in hook_names[:2]
             for hook_plan in repo_hooks.get(repo_name, {}).get(hook_name, [])
@@ -366,7 +370,7 @@ def build_execution_session(
                 action=hook_names[2],
                 scope_kind="repo",
                 hook_plan=hook_plan,
-                privileged=False,
+                privileged=_hook_plan_needs_sudo(hook_plan),
             )
             for hook_plan in repo_hooks.get(repo_name, {}).get(hook_names[2], [])
         )
@@ -655,9 +659,12 @@ def _build_skipped_package_result(
 
 def _reconcile_step_needs_sudo(target_plan: TargetPlan) -> bool:
     # Custom reconcile commands are arbitrary user shell. Dotman should not
-    # silently run them as root; users can opt in by writing sudo into the
-    # reconcile command itself.
-    return target_plan.reconcile is not None and target_plan.reconcile.run == BUILTIN_JINJA_RECONCILE and needs_sudo_for_read(target_plan.live_path)
+    # silently run them as root; users must opt in through command metadata.
+    if target_plan.reconcile is None:
+        return False
+    if target_plan.reconcile.privileged:
+        return True
+    return target_plan.reconcile.run == BUILTIN_JINJA_RECONCILE and needs_sudo_for_read(target_plan.live_path)
 
 
 
@@ -674,11 +681,20 @@ def _target_step_needs_sudo(
 
     if action in {"create_repo", "update_repo"}:
         source_path = directory_item.live_path if directory_item is not None else target_plan.live_path
-        return needs_sudo_for_read(source_path)
+        return needs_sudo_for_read(source_path) or _reconcile_fallback_needs_sudo(
+            target_plan,
+            directory_item=directory_item,
+        )
     if action == "delete_repo":
         repo_path = directory_item.repo_path if directory_item is not None else target_plan.repo_path
         return needs_sudo_for_write(repo_path)
     return False
+
+
+def _reconcile_fallback_needs_sudo(target_plan: TargetPlan, *, directory_item: DirectoryPlanItem | None = None) -> bool:
+    if directory_item is not None or target_plan.capture_command is None or target_plan.reconcile is None:
+        return False
+    return target_plan.reconcile.privileged
 
 
 def _preflight_execution_session_sudo(session: ExecutionSession) -> None:
@@ -703,6 +719,13 @@ def _execution_session_sudo_reason(session: ExecutionSession) -> str:
 def _sudo_reason_for_step(step: ExecutionStep) -> str:
     live_path = _step_live_path(step)
     repo_path = _step_repo_path(step)
+    if (
+        step.action in {"reconcile", "create_repo", "update_repo"}
+        and step.target_plan is not None
+        and step.target_plan.reconcile is not None
+        and step.target_plan.reconcile.privileged
+    ):
+        return f"execute privileged reconcile for {_step_target_label(step)}"
     if step.action in {"create", "update", "delete"} and live_path is not None:
         return f"write protected path: {live_path}"
     if step.action == "chmod" and live_path is not None:
@@ -714,12 +737,34 @@ def _sudo_reason_for_step(step: ExecutionStep) -> str:
     if step.kind == "hook":
         if step.package_id is None:
             return f"execute privileged repo hook for {step.repo_name}"
-        return f"execute privileged hook for {step.package_id}"
+        return f"execute privileged hook for {_step_hook_label(step)}"
     if live_path is not None:
         return f"access protected path: {live_path}"
     if repo_path is not None:
         return f"access protected path: {repo_path}"
     return "planned execution includes privileged operations"
+
+
+def _step_target_label(step: ExecutionStep) -> str:
+    if step.target_plan is None:
+        return step.package_id or step.repo_name
+    return repo_qualified_target_text(
+        repo_name=step.repo_name,
+        package_id=step.target_plan.package_id,
+        target_name=step.target_plan.target_name,
+    )
+
+
+def _step_hook_label(step: ExecutionStep) -> str:
+    if step.hook_plan is not None and step.hook_plan.target_name is not None and step.hook_plan.package_id is not None:
+        return repo_qualified_target_text(
+            repo_name=step.repo_name,
+            package_id=step.hook_plan.package_id,
+            target_name=step.hook_plan.target_name,
+        )
+    if step.package_id is not None:
+        return f"{step.repo_name}:{step.package_id}"
+    return step.repo_name
 
 
 

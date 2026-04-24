@@ -384,6 +384,31 @@ def test_package_hook_planning_preserves_per_command_io_and_json_payload(
     assert push_plan.to_dict()["hooks"]["pre_push"][1]["io"] == "tty"
 
 
+def test_package_hook_planning_preserves_per_command_privileged_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=[],
+        hook_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo prep", { run = "systemctl restart sddm", privileged = true }]',
+        ],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo prep", "systemctl restart sddm"]
+    assert [hook.privileged for hook in push_plan.hooks["pre_push"]] == [False, True]
+    assert push_plan.to_dict()["hooks"]["pre_push"][1]["privileged"] is True
+
+
 @pytest.mark.parametrize(
     ("package_manifest", "error_match"),
     [
@@ -407,6 +432,13 @@ def test_package_hook_planning_preserves_per_command_io_and_json_payload(
                 'commands = [{ run = "echo pre", io = "bad" }]',
             ],
             r"unsupported io 'bad'; expected one of: pipe, tty",
+        ),
+        (
+            [
+                "[hooks.pre_push]",
+                'commands = [{ run = "echo pre", privileged = "yes" }]',
+            ],
+            r"command object 'privileged' must be a boolean",
         ),
         (
             [

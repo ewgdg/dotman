@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
+from dotman.file_access import request_sudo, sudo_prefix_command
 from dotman.models import HookCommandSpec, PackagePlan
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
@@ -175,9 +176,13 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
                     review_repo_path=review_env.get("DOTMAN_REVIEW_REPO_PATH"),
                     review_live_path=review_env.get("DOTMAN_REVIEW_LIVE_PATH"),
                 )
+            command = review_item.reconcile.run
+            if review_item.reconcile.privileged and os.geteuid() != 0:
+                request_sudo("run privileged reconcile command")
+                command = sudo_prefix_command(command)
             with preserve_terminal_state():
                 completed = subprocess.run(
-                    review_item.reconcile.run,
+                    command,
                     check=False,
                     shell=True,
                     cwd=review_item.command_cwd,

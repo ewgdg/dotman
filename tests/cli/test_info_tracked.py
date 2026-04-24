@@ -457,7 +457,7 @@ def test_info_tracked_cli_shows_effective_values_for_target_preset(
     assert target["render_command"] == "jinja"
     assert target["pull_view_repo"] == "render"
     assert target["pull_view_live"] == "raw"
-    assert target["reconcile"] == {"run": "jinja", "io": "tty"}
+    assert target["reconcile"] == {"run": "jinja", "io": "tty", "privileged": False}
 
 
 def test_info_tracked_cli_shows_capture_and_editor_values_for_target_preset(
@@ -525,7 +525,7 @@ def test_info_tracked_cli_shows_capture_and_editor_values_for_target_preset(
     assert target["capture_command"] == "patch"
     assert target["pull_view_repo"] == "render"
     assert target["pull_view_live"] == "raw"
-    assert target["reconcile"] == {"run": "jinja", "io": "tty"}
+    assert target["reconcile"] == {"run": "jinja", "io": "tty", "privileged": False}
 
 
 

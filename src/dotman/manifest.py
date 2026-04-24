@@ -172,7 +172,7 @@ def _build_command_spec(
     owner_label: str,
     command_label: str,
 ) -> HookCommandSpec:
-    unknown_keys = sorted(key for key in command_payload if key not in {"run", "io"})
+    unknown_keys = sorted(key for key in command_payload if key not in {"run", "io", "privileged"})
     if unknown_keys:
         unknown_text = ", ".join(unknown_keys)
         raise ValueError(
@@ -192,7 +192,12 @@ def _build_command_spec(
             f"{manifest_kind} {manifest_path} {owner_label} {command_label} 'run' must not be empty"
         )
     io_value = normalize_optional_string_enum(command_payload.get("io"), key="io", allowed=VALID_HOOK_IO_VALUES) or "pipe"
-    return HookCommandSpec(run=run_value, io=io_value)
+    privileged_value = command_payload.get("privileged", False)
+    if not isinstance(privileged_value, bool):
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} {command_label} 'privileged' must be a boolean"
+        )
+    return HookCommandSpec(run=run_value, io=io_value, privileged=privileged_value)
 
 
 def _build_reconcile_spec(
