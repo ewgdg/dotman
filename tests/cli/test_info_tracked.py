@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.engine import DotmanEngine
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
@@ -157,6 +158,50 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
     pre_push = package["package_entries"][1]["hooks"]["pre_push"]
     assert pre_push[0]["package_id"] == "git"
     assert "git" in pre_push[0]["command"]
+
+
+def test_info_tracked_cli_does_not_build_push_plan(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "tracked-packages.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                "",
+                "[[packages]]",
+                'repo = "example"',
+                'package_id = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    plan_push_calls = 0
+    original_plan_push = DotmanEngine.plan_push
+
+    def counting_plan_push(self: DotmanEngine):
+        nonlocal plan_push_calls
+        plan_push_calls += 1
+        return original_plan_push(self)
+
+    monkeypatch.setattr(DotmanEngine, "plan_push", counting_plan_push)
+
+    exit_code = main(["--config", str(config_path), "--json", "info", "tracked", "git"])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["operation"] == "info-tracked"
+    assert plan_push_calls == 0
 
 def test_info_tracked_cli_emits_readable_text_output(
     tmp_path: Path,

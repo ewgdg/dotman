@@ -34,6 +34,23 @@ class TrackedTargetMatch:
     bound_profile: str | None = None
 
 
+@dataclass(frozen=True)
+class _TrackedTargetOwnershipCandidate:
+    repo: Repository
+    package_id: str
+    bound_profile: str | None
+    binding: FullSpecSelector
+    explicit: bool
+    target: TrackedTargetSummary
+    order: int
+
+
+@dataclass(frozen=True)
+class _TrackedPackageOwnershipDetail:
+    effective_binding_keys: set[tuple[str, str, str]]
+    owned_targets: list[TrackedOwnedTargetDetail]
+
+
 def resolve_tracked_package(
     engine: Any,
     package_text: str,
@@ -178,14 +195,7 @@ def describe_tracked_package_entry(
     *,
     executable: bool,
 ) -> TrackedPackageEntryDetail:
-    resolved_packages = [repo.resolve_package(candidate_id) for candidate_id in package_ids]
-    profile_vars, lineage = repo.compose_profile(binding.profile)
-    package_vars: dict[str, Any] = {}
-    for package in resolved_packages:
-        package_vars = deep_merge(package_vars, package.vars or {})
-    variables = deep_merge(deep_merge(package_vars, profile_vars), repo.local_vars)
-    inferred_os = infer_profile_os(binding.profile, lineage, variables)
-    context = build_template_context(variables, profile=binding.profile, inferred_os=inferred_os)
+    context = _tracked_package_entry_template_context(repo, binding, package_ids)
     package = repo.resolve_package(package_id)
     selection = engine._resolved_package_selection(
         repo=repo,
@@ -199,17 +209,17 @@ def describe_tracked_package_entry(
         engine._plan_hooks(
             repo,
             [package],
-            context,
+            context.context,
             selection=selection,
             operation="push",
-            inferred_os=inferred_os,
-            variables=variables,
+            inferred_os=context.inferred_os,
+            variables=context.variables,
             target_plans=[],
         )
         if executable
         else {}
     )
-    targets = summarize_targets(repo, package, context)
+    targets = summarize_targets(repo, package, context.context)
     tracked_reason = "explicit" if selection.explicit else "implicit"
 
     return TrackedPackageEntryDetail(
@@ -222,6 +232,33 @@ def describe_tracked_package_entry(
         tracked_reason=tracked_reason,
         targets=targets,
         hooks=hooks,
+    )
+
+
+@dataclass(frozen=True)
+class _TrackedPackageEntryTemplateContext:
+    context: dict[str, Any]
+    variables: dict[str, Any]
+    inferred_os: str
+
+
+def _tracked_package_entry_template_context(
+    repo: Repository,
+    binding: FullSpecSelector,
+    package_ids: list[str],
+) -> _TrackedPackageEntryTemplateContext:
+    resolved_packages = [repo.resolve_package(candidate_id) for candidate_id in package_ids]
+    profile_vars, lineage = repo.compose_profile(binding.profile)
+    package_vars: dict[str, Any] = {}
+    for package in resolved_packages:
+        package_vars = deep_merge(package_vars, package.vars or {})
+    variables = deep_merge(deep_merge(package_vars, profile_vars), repo.local_vars)
+    inferred_os = infer_profile_os(binding.profile, lineage, variables)
+    context = build_template_context(variables, profile=binding.profile, inferred_os=inferred_os)
+    return _TrackedPackageEntryTemplateContext(
+        context=context,
+        variables=variables,
+        inferred_os=inferred_os,
     )
 
 
@@ -295,6 +332,80 @@ def tracked_target_summary_from_plan(target: TargetPlan) -> TrackedTargetSummary
         pull_ignore=target.pull_ignore,
         chmod=target.chmod,
     )
+
+
+def describe_tracked_package_target_ownership(
+    engine: Any,
+    repo_name: str,
+    package_id: str,
+    bound_profile: str | None,
+) -> _TrackedPackageOwnershipDetail:
+    candidates_by_live_path: dict[Path, list[_TrackedTargetOwnershipCandidate]] = {}
+    order = 0
+
+    for repo, binding, selector_kind, package_ids in engine._iter_tracked_package_entries():
+        if repo.config.name != repo_name or package_id not in package_ids:
+            continue
+        candidate_bound_profile = engine._bound_profile_for_package(repo, package_id, binding.profile)
+        if candidate_bound_profile != bound_profile:
+            continue
+        context = _tracked_package_entry_template_context(repo, binding, package_ids)
+        explicitly_selected_package_ids = engine._selected_package_ids(repo, binding.selector, selector_kind)
+        explicit = package_id in explicitly_selected_package_ids
+        for target in summarize_targets(repo, repo.resolve_package(package_id), context.context):
+            candidates_by_live_path.setdefault(target.live_path, []).append(
+                _TrackedTargetOwnershipCandidate(
+                    repo=repo,
+                    package_id=package_id,
+                    bound_profile=candidate_bound_profile,
+                    binding=binding,
+                    explicit=explicit,
+                    target=target,
+                    order=order,
+                )
+            )
+            order += 1
+
+    effective_binding_keys: set[tuple[str, str, str]] = set()
+    owned_targets: list[TrackedOwnedTargetDetail] = []
+    for candidates in candidates_by_live_path.values():
+        winner = _select_metadata_ownership_winner(candidates)
+        # Dependency-owned targets use the package id as owner key, matching push planning's
+        # dependency selection shape without needing live-file action planning.
+        owner_selector = winner.binding.selector if winner.explicit else winner.package_id
+        effective_binding_keys.add((winner.repo.config.name, owner_selector, winner.binding.profile))
+        owned_targets.append(
+            TrackedOwnedTargetDetail(
+                package_entry=TrackedPackageEntrySummary(
+                    repo=winner.repo.config.name,
+                    selector=owner_selector,
+                    profile=winner.binding.profile,
+                    selector_kind="package",
+                ),
+                target=winner.target,
+            )
+        )
+
+    return _TrackedPackageOwnershipDetail(
+        effective_binding_keys=effective_binding_keys,
+        owned_targets=sorted(
+            owned_targets,
+            key=lambda item: (
+                item.target.target_name,
+                item.package_entry.profile,
+                item.package_entry.selector,
+                item.package_entry.repo,
+            ),
+        ),
+    )
+
+
+def _select_metadata_ownership_winner(
+    candidates: list[_TrackedTargetOwnershipCandidate],
+) -> _TrackedTargetOwnershipCandidate:
+    highest_precedence = max(1 if candidate.explicit else 0 for candidate in candidates)
+    contenders = [candidate for candidate in candidates if (1 if candidate.explicit else 0) == highest_precedence]
+    return min(contenders, key=lambda candidate: candidate.order)
 
 
 

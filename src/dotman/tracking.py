@@ -228,7 +228,8 @@ def describe_trackable_group(engine: Any, *, repo: Repository, group_id: str) ->
 
 def describe_tracked_package(engine: Any, package_text: str) -> TrackedPackageDetail:
     repo, package_id, bound_profile = engine._resolve_tracked_package(package_text)
-    effective_binding_keys = engine._effective_tracked_package_entry_keys(
+    ownership = engine._tracked_package_helpers().describe_tracked_package_target_ownership(
+        engine,
         repo.config.name,
         package_id,
         bound_profile,
@@ -248,7 +249,7 @@ def describe_tracked_package(engine: Any, package_text: str) -> TrackedPackageDe
                 selector_kind,
                 package_id,
                 package_ids,
-                executable=(binding.repo, binding.selector, binding.profile) in effective_binding_keys,
+                executable=(binding.repo, binding.selector, binding.profile) in ownership.effective_binding_keys,
             )
         )
 
@@ -256,7 +257,6 @@ def describe_tracked_package(engine: Any, package_text: str) -> TrackedPackageDe
         package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
         raise ValueError(f"package '{repo.config.name}:{package_ref}' is not currently tracked")
 
-    resolved_package = repo.resolve_package(package_id)
     return TrackedPackageDetail(
         repo=repo.config.name,
         package_id=package_id,
@@ -269,11 +269,7 @@ def describe_tracked_package(engine: Any, package_text: str) -> TrackedPackageDe
                 item.package_entry.repo,
             ),
         ),
-        owned_targets=engine._describe_owned_package_targets(
-            repo.config.name,
-            package_id,
-            bound_profile,
-        ),
+        owned_targets=ownership.owned_targets,
         bound_profile=bound_profile,
     )
 
