@@ -646,6 +646,50 @@ def remove_persisted_tracked_package_entry(
     return record.package_entry
 
 
+def remove_tracked_package_entries(
+    engine: Any,
+    bindings: list[FullSpecSelector],
+    *,
+    operation: str = "untrack",
+    operation_label: str | None = None,
+    tracked_target_conflict_error: type[Exception],
+) -> list[FullSpecSelector]:
+    unique_bindings = list(dict.fromkeys(bindings))
+    raw_tracked_package_entries_by_repo = engine._raw_tracked_package_entries_by_repo()
+    remaining_by_repo: dict[str, list[FullSpecSelector]] = {}
+    removed: list[FullSpecSelector] = []
+
+    for binding in unique_bindings:
+        repo = engine.get_repo(binding.repo)
+        if repo.config.name not in remaining_by_repo:
+            remaining_by_repo[repo.config.name] = engine.read_effective_tracked_package_entries(repo)
+        remaining = remaining_by_repo[repo.config.name]
+        updated_remaining = engine._remove_tracked_package_entry_record(remaining, binding)
+        if updated_remaining == remaining:
+            continue
+        remaining_by_repo[repo.config.name] = updated_remaining
+        raw_tracked_package_entries_by_repo[repo.config.name] = updated_remaining
+        removed.append(binding)
+
+    if not removed:
+        return []
+
+    if not engine.list_invalid_explicit_package_entries(bindings_by_repo=raw_tracked_package_entries_by_repo):
+        try:
+            engine._validate_tracked_package_entries(engine._effective_tracked_package_entries_by_repo(raw_tracked_package_entries_by_repo))
+        except tracked_target_conflict_error as exc:
+            label = operation_label or ", ".join(f"{binding.repo}:{binding.selector}@{binding.profile}" for binding in removed)
+            raise ValueError(
+                f"cannot {operation} '{label}': removing these bindings would expose {exc}"
+            ) from None
+
+    for repo_name, remaining in remaining_by_repo.items():
+        repo = engine.get_repo(repo_name)
+        write_tracked_package_entries_file(repo.config.state_path, remaining)
+
+    return removed
+
+
 
 def remove_tracked_package_entry_record(bindings: list[FullSpecSelector], target: FullSpecSelector) -> list[FullSpecSelector]:
     removed = False

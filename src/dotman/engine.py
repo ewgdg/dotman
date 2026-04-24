@@ -551,6 +551,21 @@ class DotmanEngine:
             tracked_target_conflict_error=TrackedTargetConflictError,
         )
 
+    def remove_tracked_package_entries(
+        self,
+        bindings: list[FullSpecSelector],
+        *,
+        operation: str = "untrack",
+        operation_label: str | None = None,
+    ) -> list[FullSpecSelector]:
+        return self._tracking_helpers().remove_tracked_package_entries(
+            self,
+            bindings,
+            operation=operation,
+            operation_label=operation_label,
+            tracked_target_conflict_error=TrackedTargetConflictError,
+        )
+
     def _remove_tracked_package_entry_record(self, bindings: list[FullSpecSelector], target: FullSpecSelector) -> list[FullSpecSelector]:
         return self._tracking_helpers().remove_tracked_package_entry_record(bindings, target)
 

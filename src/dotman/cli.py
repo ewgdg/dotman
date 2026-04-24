@@ -94,6 +94,22 @@ class PendingSelectionItem:
 
 
 @dataclass(frozen=True)
+class UntrackGroupResolution:
+    repo: str
+    selector: str
+    selector_kind: str
+    profile: str | None
+    removal_bindings: tuple[FullSpecSelector, ...]
+
+    @property
+    def label(self) -> str:
+        base_label = f"{self.repo}:{self.selector}"
+        if self.profile is None:
+            return base_label
+        return f"{base_label}@{self.profile}"
+
+
+@dataclass(frozen=True)
 class _EditQueryCandidate:
     kind: str
     repo_name: str
@@ -1582,6 +1598,143 @@ def resolve_tracked_package_entry_text(
                 f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
             ) from None
         raise exc
+
+
+def resolve_untrack_group_text(
+    engine: DotmanEngine,
+    binding_text: str,
+    *,
+    json_output: bool,
+) -> UntrackGroupResolution | None:
+    explicit_repo, selector, selector_profile = parse_full_spec_selector_text(binding_text)
+    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
+    lookup_repo, lookup_selector = parse_slash_qualified_query(
+        repo_names=repo_names,
+        explicit_repo=explicit_repo,
+        selector=selector,
+    )
+    exact_matches, partial_matches = engine.find_selector_matches(lookup_selector, lookup_repo)
+    exact_group_matches = [match for match in exact_matches if match[2] == "group"]
+    partial_group_matches = [match for match in partial_matches if match[2] == "group"]
+    interactive = interactive_mode_enabled(json_output=json_output)
+    # Non-interactive fallback is exact-only so group lookup does not mask existing untrack errors.
+    if not exact_group_matches and (not interactive or not partial_group_matches):
+        return None
+
+    repo, resolved_selector, selector_kind = resolve_candidate_match(
+        exact_matches=exact_group_matches,
+        partial_matches=partial_group_matches,
+        query_text=selector,
+        interactive=interactive,
+        exact_header_text=f"Select a group for '{selector}':",
+        partial_header_text=f"Select a group for '{selector}':",
+        option_resolver=lambda match: ResolverOption(
+            display_label=render_selector_match_label(
+                repo_name=match[0].config.name,
+                selector=match[1],
+                selector_kind=match[2],
+            ),
+            display_fields=build_selector_match_display_fields(
+                repo_name=match[0].config.name,
+                selector=match[1],
+                selector_kind=match[2],
+            ),
+            match_fields=build_selector_match_fields(
+                repo_name=match[0].config.name,
+                selector=match[1],
+            ),
+            field_kinds=build_selector_field_kinds(),
+        ),
+        exact_error_text=f"group '{selector}' is defined in multiple repos: "
+        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_group_matches),
+        partial_error_text=f"group '{selector}' is ambiguous: "
+        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_group_matches),
+        not_found_text=f"group '{selector}' did not match any tracked group",
+    )
+    group_package_ids = set(repo.expand_group(resolved_selector))
+    tracked_group_bindings = tuple(
+        binding
+        for binding in engine.read_effective_tracked_package_entries(repo)
+        if binding.repo == repo.config.name and binding.selector in group_package_ids
+    )
+    tracked_profiles = sorted({binding.profile for binding in tracked_group_bindings})
+    resolved_profile = selector_profile
+    if selector_profile:
+        available_profiles = engine.list_profiles(repo.config.name)
+        if not available_profiles:
+            raise ValueError(f"repo '{repo.config.name}' does not define any profiles")
+        partial_profile_matches = [
+            profile_name for profile_name in available_profiles if selector_profile in profile_name
+        ]
+        resolved_profile = resolve_candidate_match(
+            exact_matches=[profile_name for profile_name in available_profiles if profile_name == selector_profile],
+            partial_matches=partial_profile_matches,
+            query_text=selector_profile,
+            interactive=interactive,
+            exact_header_text=f"Select a profile for {repo.config.name}:{resolved_selector}:",
+            partial_header_text=f"Select a profile match for '{selector_profile}' in {repo.config.name}:{resolved_selector}:",
+            option_resolver=lambda profile_name: ResolverOption(
+                display_label=profile_name,
+                match_fields=build_profile_match_fields(profile=profile_name),
+                field_kinds=build_profile_field_kinds(),
+            ),
+            exact_error_text=f"profile '{selector_profile}' is defined multiple times in repo '{repo.config.name}'",
+            partial_error_text=f"profile '{selector_profile}' is ambiguous in repo '{repo.config.name}': "
+            + ", ".join(partial_profile_matches),
+            not_found_text=f"profile '{selector_profile}' did not match any profile in repo '{repo.config.name}'",
+        )
+    elif tracked_group_bindings:
+        profiles_by_package: dict[str, set[str]] = {}
+        for binding in tracked_group_bindings:
+            profiles_by_package.setdefault(binding.selector, set()).add(binding.profile)
+        ambiguous_packages = {
+            package_id: sorted(package_profiles)
+            for package_id, package_profiles in profiles_by_package.items()
+            if len(package_profiles) > 1
+        }
+        if len(tracked_profiles) == 1:
+            resolved_profile = tracked_profiles[0]
+        elif not ambiguous_packages:
+            resolved_profile = None
+        elif interactive:
+            selected_index = select_menu_option(
+                header_text=f"Select a tracked profile for {repo.config.name}:{resolved_selector}:",
+                option_labels=tracked_profiles,
+            )
+            resolved_profile = tracked_profiles[selected_index]
+        else:
+            ambiguous_package_text = ", ".join(
+                ", ".join(
+                    package_ref_text(package_id=package_id, bound_profile=profile)
+                    for profile in package_profiles
+                )
+                for package_id, package_profiles in sorted(ambiguous_packages.items())
+            )
+            raise ValueError(
+                f"tracked group '{repo.config.name}:{resolved_selector}' is ambiguous across package instances: "
+                + ambiguous_package_text
+            )
+    elif interactive:
+        raise ValueError(f"tracked group '{repo.config.name}:{resolved_selector}' has no tracked package entries")
+    else:
+        raise ValueError(f"tracked group '{repo.config.name}:{resolved_selector}' has no tracked package entries")
+
+    removal_bindings = tuple(
+        binding
+        for binding in tracked_group_bindings
+        if resolved_profile is None or binding.profile == resolved_profile
+    )
+    if not removal_bindings:
+        raise ValueError(
+            f"tracked group '{repo.config.name}:{resolved_selector}@{resolved_profile}' has no tracked package entries"
+        )
+    return UntrackGroupResolution(
+        repo=repo.config.name,
+        selector=resolved_selector,
+        selector_kind=selector_kind,
+        profile=resolved_profile,
+        removal_bindings=removal_bindings,
+    )
 
 
 def resolve_tracked_package_text(
@@ -3111,6 +3264,16 @@ def emit_untracked_package_entry(*, binding, still_tracked_package, json_output:
     )
 
 
+def emit_untracked_package_entries(*, request_binding, bindings, still_tracked_packages, json_output: bool) -> int:
+    return cli_emit.emit_untracked_package_entries(
+        request_binding=request_binding,
+        bindings=bindings,
+        still_tracked_packages=still_tracked_packages,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
+
+
 
 def emit_tracked_package_entry(*, binding, json_output: bool) -> int:
     return cli_emit.emit_tracked_package_entry(
@@ -3342,6 +3505,8 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_tracked_package_detail=emit_tracked_package_detail,
         resolve_trackable_selector_text=resolve_trackable_selector_text,
         emit_trackable_detail=emit_trackable_detail,
+        resolve_untrack_group_text=resolve_untrack_group_text,
+        emit_untracked_package_entries=emit_untracked_package_entries,
         resolve_variable_text=resolve_variable_text,
         emit_variables=emit_variables,
         emit_variable_detail=emit_variable_detail,

@@ -1003,6 +1003,82 @@ def emit_untracked_package_entry(*, binding: Any, still_tracked_package: Any, js
     return 0
 
 
+def emit_untracked_package_entries(
+    *,
+    request_binding: Any,
+    bindings: Sequence[Any],
+    still_tracked_packages: Sequence[Any],
+    json_output: bool,
+    use_color: bool,
+) -> int:
+    request_label = request_binding.label if hasattr(request_binding, "label") else cli_style.full_spec_selector_label_text(
+        repo_name=request_binding.repo,
+        selector=request_binding.selector,
+        profile=request_binding.profile,
+    )
+    payload = {
+        "mode": "state-only",
+        "operation": "untrack",
+        "request": {
+            "repo": request_binding.repo,
+            "selector": request_binding.selector,
+            "selector_kind": request_binding.selector_kind,
+            "profile": request_binding.profile,
+        },
+        "package_entries": [
+            {
+                "repo": binding.repo,
+                "package_id": binding.selector,
+                "profile": binding.profile,
+            }
+            for binding in bindings
+        ],
+    }
+    remaining_packages = [package for package in still_tracked_packages if package is not None]
+    if remaining_packages:
+        payload["still_tracked_packages"] = [
+            {
+                "repo": package.repo,
+                "package_id": package.package_id,
+                "package_entries": [
+                    {
+                        **binding_detail.package_entry.to_dict(),
+                        "tracked_reason": binding_detail.tracked_reason,
+                    }
+                    for binding_detail in package.package_entries
+                ],
+            }
+            for package in remaining_packages
+        ]
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    entry_word = "entry" if len(bindings) == 1 else "entries"
+    print(
+        f"untracked {len(bindings)} package {entry_word} from "
+        + request_label
+    )
+    for binding in bindings:
+        print("  " + cli_style.render_full_spec_selector_reference(binding, use_color=use_color))
+    for package in remaining_packages:
+        print(
+            f"{cli_style.render_package_label(repo_name=package.repo, package_id=package.package_id, bound_profile=package.bound_profile, use_color=use_color)} "
+            "remains tracked via:"
+        )
+        for binding_detail in package.package_entries:
+            print(
+                f"  {cli_style.render_tracked_reason(binding_detail.tracked_reason, use_color=use_color)}: "
+                + cli_style.render_full_spec_selector_label(
+                    repo_name=binding_detail.package_entry.repo,
+                    selector=binding_detail.package_entry.selector,
+                    profile=binding_detail.package_entry.profile,
+                    use_color=use_color,
+                )
+            )
+    return 0
+
+
 def emit_tracked_package_entry(*, binding: Any, json_output: bool, use_color: bool) -> int:
     payload = {
         "mode": "state-only",

@@ -73,6 +73,8 @@ class CliCommandHandlers:
     emit_doctor_summary: Callable[..., int] = field(default=lambda **kwargs: 0)
     resolve_trackable_selector_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
     emit_trackable_detail: Callable[..., int] = field(default=lambda **kwargs: 0)
+    resolve_untrack_group_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
+    emit_untracked_package_entries: Callable[..., int] = field(default=lambda **kwargs: 0)
 
 
 EngineFactory = Callable[[str | None], Any]
@@ -474,13 +476,36 @@ def _handle_rollback(*, args: Any, engine: Any, handlers: CliCommandHandlers, fu
 
 
 def _handle_untrack(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
-    _repo, binding = handlers.resolve_tracked_package_entry_text(
-        engine,
-        args.binding,
-        operation="untrack",
-        allow_package_owners=False,
-        json_output=args.json_output,
-    )
+    try:
+        _repo, binding = handlers.resolve_tracked_package_entry_text(
+            engine,
+            args.binding,
+            operation="untrack",
+            allow_package_owners=False,
+            json_output=args.json_output,
+        )
+    except ValueError as exc:
+        group_resolution = handlers.resolve_untrack_group_text(
+            engine,
+            args.binding,
+            json_output=args.json_output,
+        )
+        if group_resolution is None:
+            raise exc
+        removed_bindings = engine.remove_tracked_package_entries(
+            list(group_resolution.removal_bindings),
+            operation="untrack",
+            operation_label=group_resolution.label,
+        )
+        return handlers.emit_untracked_package_entries(
+            request_binding=group_resolution,
+            bindings=removed_bindings,
+            still_tracked_packages=[
+                handlers.find_remaining_tracked_package_after_untrack(engine, removed_binding)
+                for removed_binding in removed_bindings
+            ],
+            json_output=args.json_output,
+        )
     removed_binding = engine.remove_tracked_package_entry(
         f"{binding.repo}:{binding.selector}@{binding.profile}",
         operation="untrack",

@@ -144,6 +144,232 @@ def test_untrack_cli_allows_selector_only_when_unique(
         "profile": "basic",
     }
 
+
+def test_untrack_cli_removes_tracked_entries_from_group_selector(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "tracked-packages.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                "",
+                "[[packages]]",
+                'repo = "example"',
+                'package_id = "git"',
+                'profile = "basic"',
+                "",
+                "[[packages]]",
+                'repo = "example"',
+                'package_id = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "untrack",
+            "example:os/arch",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "untracked 1 package entry from example:os/arch@basic" in output
+    assert "example:core-cli-meta@basic" in output
+    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "schema_version = 1",
+            "",
+            "[[packages]]",
+            'repo = "example"',
+            'package_id = "git"',
+            'profile = "basic"',
+            "",
+        ]
+    )
+
+
+def test_untrack_cli_emits_group_untrack_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "tracked-packages.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                "",
+                "[[packages]]",
+                'repo = "example"',
+                'package_id = "core-cli-meta"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "untrack",
+            "example:os/arch@basic",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "untrack"
+    assert payload["request"] == {
+        "repo": "example",
+        "selector": "os/arch",
+        "selector_kind": "group",
+        "profile": "basic",
+    }
+    assert payload["package_entries"] == [
+        {
+            "repo": "example",
+            "package_id": "core-cli-meta",
+            "profile": "basic",
+        }
+    ]
+
+
+def test_untrack_cli_removes_group_singletons_across_profiles_without_prompt(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "singleton-group-repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "profiles" / "work.toml").write_text("", encoding="utf-8")
+    for package_id in ("alpha", "beta"):
+        (repo_root / "packages" / package_id).mkdir(parents=True)
+        (repo_root / "packages" / package_id / "package.toml").write_text(f'id = "{package_id}"\n', encoding="utf-8")
+    (repo_root / "groups").mkdir()
+    (repo_root / "groups" / "bundle.toml").write_text('members = ["alpha", "beta"]\n', encoding="utf-8")
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "tracked-packages.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                "",
+                "[[packages]]",
+                'repo = "fixture"',
+                'package_id = "alpha"',
+                'profile = "basic"',
+                "",
+                "[[packages]]",
+                'repo = "fixture"',
+                'package_id = "beta"',
+                'profile = "work"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "untrack",
+            "fixture:bundle",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "untracked 2 package entries from fixture:bundle" in output
+    assert "fixture:alpha@basic" in output
+    assert "fixture:beta@work" in output
+    assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
+        [
+            "schema_version = 1",
+            "",
+        ]
+    )
+
+
+def test_untrack_cli_requires_group_profile_when_tracked_members_span_profiles(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "multi-instance-repo"
+    write_multi_instance_repo(repo_root)
+    (repo_root / "groups").mkdir()
+    (repo_root / "groups" / "bundle.toml").write_text('members = ["profiled"]\n', encoding="utf-8")
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "tracked-packages.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                "",
+                "[[packages]]",
+                'repo = "fixture"',
+                'package_id = "profiled"',
+                'profile = "basic"',
+                "",
+                "[[packages]]",
+                'repo = "fixture"',
+                'package_id = "profiled"',
+                'profile = "work"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "untrack",
+            "fixture:bundle",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "tracked group 'fixture:bundle' is ambiguous across package instances: profiled<basic>, profiled<work>" in capsys.readouterr().err
+
+
 def test_untrack_cli_errors_for_untracked_binding(
     tmp_path: Path,
     monkeypatch,
