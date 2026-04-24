@@ -708,7 +708,7 @@ def test_pull_cli_executes_direct_repo_update_and_emits_json_results(
 
 
 
-def test_pull_cli_uses_reconcile_command_for_selected_target_execution(
+def test_pull_cli_uses_reconcile_for_selected_target_execution(
     tmp_path: Path,
     monkeypatch,
     capsys,

@@ -251,12 +251,14 @@ def summarize_targets(
             if target.capture is not None
             else None
         )
-        reconcile_command = (
-            render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in)
+        reconcile = (
+            HookCommandSpec(
+                run=render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in),
+                io=target.reconcile.io,
+            )
             if target.reconcile is not None
             else None
         )
-        reconcile_io = target.reconcile.io if target.reconcile is not None else None
         target_summaries.append(
             TrackedTargetSummary(
                 target_name=target.name,
@@ -265,7 +267,7 @@ def summarize_targets(
                 target_kind=infer_target_kind(repo_path=repo_path, live_path=live_path),
                 render_command=render_command,
                 capture_command=capture_command,
-                reconcile=None if reconcile_command is None else HookCommandSpec(run=reconcile_command, io=reconcile_io or "pipe"),
+                reconcile=reconcile,
                 pull_view_repo=target.pull_view_repo or "raw",
                 pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
                 push_ignore=merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ()),
@@ -285,7 +287,7 @@ def tracked_target_summary_from_plan(target: TargetPlan) -> TrackedTargetSummary
         target_kind=target.target_kind,
         render_command=target.render_command,
         capture_command=target.capture_command,
-        reconcile=None if target.reconcile_command is None else HookCommandSpec(run=target.reconcile_command, io=target.reconcile_io or "pipe"),
+        reconcile=target.reconcile,
         pull_view_repo=target.pull_view_repo,
         pull_view_live=target.pull_view_live,
         push_ignore=target.push_ignore,

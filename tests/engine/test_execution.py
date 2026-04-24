@@ -13,7 +13,7 @@ import dotman.execution as execution
 from dotman import file_access
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
-from dotman.models import HookPlan, OperationPlan, TargetPlan
+from dotman.models import HookCommandSpec, HookPlan, OperationPlan, TargetPlan
 from tests.helpers import make_package_plan, single_package_plan, write_named_manager_config
 
 
@@ -519,7 +519,7 @@ def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile_command="sh hooks/reconcile.sh",
+                reconcile=HookCommandSpec(run="sh hooks/reconcile.sh"),
             )
         ],
     )
@@ -549,7 +549,7 @@ def test_build_execution_session_prefers_capture_step_when_capture_and_reconcile
                 target_kind="file",
                 projection_kind="raw",
                 capture_command="printf 'captured\\n'",
-                reconcile_command="printf 'reconcile\\n'",
+                reconcile=HookCommandSpec(run="printf 'reconcile\\n'"),
             )
         ],
     )
@@ -1014,8 +1014,10 @@ def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile_command="dotman reconcile editor --repo-path \"$DOTMAN_REPO_PATH\" --live-path \"$DOTMAN_LIVE_PATH\"",
-                reconcile_io="tty",
+                reconcile=HookCommandSpec(
+                    run="dotman reconcile editor --repo-path \"$DOTMAN_REPO_PATH\" --live-path \"$DOTMAN_LIVE_PATH\"",
+                    io="tty",
+                ),
                 command_env={
                     "DOTMAN_REPO_PATH": str(repo_path),
                     "DOTMAN_LIVE_PATH": str(live_path),
@@ -1085,8 +1087,7 @@ def test_execute_session_runs_builtin_jinja_reconcile_helper(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile_command="jinja",
-                reconcile_io="tty",
+                reconcile=HookCommandSpec(run="jinja", io="tty"),
                 review_before_bytes=b"repo planning view\n",
                 review_after_bytes=b"live planning view\n",
             )
@@ -1158,8 +1159,10 @@ def test_execute_session_fails_tty_reconcile_without_terminal(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile_command="dotman reconcile editor --repo-path \"$DOTMAN_REPO_PATH\" --live-path \"$DOTMAN_LIVE_PATH\"",
-                reconcile_io="tty",
+                reconcile=HookCommandSpec(
+                    run="dotman reconcile editor --repo-path \"$DOTMAN_REPO_PATH\" --live-path \"$DOTMAN_LIVE_PATH\"",
+                    io="tty",
+                ),
                 command_env={
                     "DOTMAN_REPO_PATH": str(repo_path),
                     "DOTMAN_LIVE_PATH": str(live_path),
@@ -1746,7 +1749,7 @@ def test_execute_session_keeps_batch_reconcile_on_piped_command_path(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile_command="printf 'batch reconcile\\n'",
+                reconcile=HookCommandSpec(run="printf 'batch reconcile\\n'"),
                 command_env={
                     "DOTMAN_REPO_PATH": str(repo_path),
                     "DOTMAN_LIVE_PATH": str(live_path),
@@ -1819,7 +1822,7 @@ def test_execute_session_runs_custom_reconcile_without_auto_sudo(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile_command="printf 'batch reconcile\\n'",
+                reconcile=HookCommandSpec(run="printf 'batch reconcile\\n'"),
                 command_env={
                     "DOTMAN_REPO_PATH": str(repo_path),
                     "DOTMAN_LIVE_PATH": str(live_path),
@@ -1887,8 +1890,7 @@ def test_execute_session_falls_back_to_reconcile_when_capture_fails(
                 target_kind="file",
                 projection_kind="raw",
                 capture_command="capture-command",
-                reconcile_command="reconcile-command",
-                reconcile_io="pipe",
+                reconcile=HookCommandSpec(run="reconcile-command", io="pipe"),
                 review_before_bytes=b"repo planning view\n",
                 review_after_bytes=b"capture live planning view\n",
                 command_env={

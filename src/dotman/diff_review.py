@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
-from dotman.models import PackagePlan
+from dotman.models import HookCommandSpec, PackagePlan
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.terminal import preserve_terminal_state
@@ -34,7 +34,7 @@ class ReviewItem:
     destination_path: str
     before_bytes: bytes | None = field(default=None, repr=False)
     after_bytes: bytes | None = field(default=None, repr=False)
-    reconcile_command: str | None = None
+    reconcile: HookCommandSpec | None = None
     command_cwd: Path | None = None
     command_env: dict[str, str] | None = field(default=None, repr=False)
     diff_unavailable_reason: str | None = None
@@ -93,7 +93,7 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                     destination_path=destination_path,
                     before_bytes=target.review_before_bytes,
                     after_bytes=target.review_after_bytes,
-                    reconcile_command=target.reconcile_command,
+                    reconcile=target.reconcile,
                     command_cwd=target.command_cwd,
                     command_env=target.command_env,
                     diff_unavailable_reason=diff_unavailable_reason,
@@ -103,7 +103,7 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
 
 
 def edit_status(review_item: ReviewItem) -> str:
-    if review_item.operation == "pull" and review_item.reconcile_command is not None:
+    if review_item.operation == "pull" and review_item.reconcile is not None:
         return "reconcile"
     if review_item.repo_path.exists() and review_item.live_path.exists():
         return "editor"
@@ -156,7 +156,7 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
 
 
 def run_review_item_edit(review_item: ReviewItem) -> int:
-    if review_item.operation == "pull" and review_item.reconcile_command is not None:
+    if review_item.operation == "pull" and review_item.reconcile is not None:
         with tempfile.TemporaryDirectory(prefix="dotman-reconcile-review-") as temp_dir:
             review_env = dict(review_item.command_env or {})
             review_paths = _materialize_review_edit_paths(review_item=review_item, root=Path(temp_dir))
@@ -168,7 +168,7 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
                         "DOTMAN_REVIEW_LIVE_PATH": str(review_live_path),
                     }
                 )
-            if review_item.reconcile_command == BUILTIN_JINJA_RECONCILE:
+            if review_item.reconcile.run == BUILTIN_JINJA_RECONCILE:
                 return run_jinja_reconcile(
                     repo_path=str(review_item.repo_path),
                     live_path=str(review_item.live_path),
@@ -177,7 +177,7 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
                 )
             with preserve_terminal_state():
                 completed = subprocess.run(
-                    review_item.reconcile_command,
+                    review_item.reconcile.run,
                     check=False,
                     shell=True,
                     cwd=review_item.command_cwd,

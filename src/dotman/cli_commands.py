@@ -176,7 +176,7 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
             inferred_os=args.template_os,
             var_assignments=args.var,
         )
-    if args.command == "reconcile" and args.reconcile_command == "editor":
+    if args.command == "reconcile" and args.reconcile_helper == "editor":
         return handlers.run_basic_reconcile(
             repo_path=args.repo_path,
             live_path=args.live_path,
@@ -186,7 +186,7 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
             editor=args.editor,
             assume_yes=getattr(args, "assume_yes", False),
         )
-    if args.command == "reconcile" and args.reconcile_command == "jinja":
+    if args.command == "reconcile" and args.reconcile_helper == "jinja":
         return handlers.run_jinja_reconcile(
             repo_path=args.repo_path,
             live_path=args.live_path,

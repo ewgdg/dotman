@@ -11,7 +11,7 @@ from dotman.config import expand_path
 from dotman.file_access import needs_sudo_for_read, read_bytes, sudo_prefix_command
 from dotman.ignore import list_directory_files
 from dotman.manifest import flatten_vars, merge_ignore_patterns, resolve_sync_policy, sync_policy_allows_operation
-from dotman.models import DirectoryPlanItem, PackageSpec, ResolvedPackageSelection, TargetPlan, TargetSpec
+from dotman.models import DirectoryPlanItem, HookCommandSpec, PackageSpec, ResolvedPackageSelection, TargetPlan, TargetSpec
 from dotman.repository import Repository
 from dotman.templates import render_template_file, render_template_string
 
@@ -90,12 +90,14 @@ def plan_targets(
             if target.capture is not None
             else None
         )
-        reconcile_command = (
-            render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in)
+        reconcile = (
+            HookCommandSpec(
+                run=render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in),
+                io=target.reconcile.io,
+            )
             if target.reconcile is not None
             else None
         )
-        reconcile_io = target.reconcile.io if target.reconcile is not None else None
         command_env = build_target_command_env(
             repo=repo,
             package=package,
@@ -119,8 +121,7 @@ def plan_targets(
                     projection_kind="unknown",
                     render_command=render_command,
                     capture_command=capture_command,
-                    reconcile_command=reconcile_command,
-                    reconcile_io=reconcile_io,
+                    reconcile=reconcile,
                     live_path_is_symlink=live_path_is_symlink,
                     live_path_symlink_target=live_path_symlink_target,
                     file_symlink_mode=engine.config.file_symlink_mode,
@@ -161,8 +162,7 @@ def plan_targets(
                     projection_kind="directory",
                     render_command=render_command,
                     capture_command=capture_command,
-                    reconcile_command=reconcile_command,
-                    reconcile_io=reconcile_io,
+                    reconcile=reconcile,
                     live_path_is_symlink=live_path_is_symlink,
                     live_path_symlink_target=live_path_symlink_target,
                     file_symlink_mode=engine.config.file_symlink_mode,
@@ -259,8 +259,7 @@ def plan_targets(
                 desired_text=desired_text,
                 render_command=render_command,
                 capture_command=capture_command,
-                reconcile_command=reconcile_command,
-                reconcile_io=reconcile_io,
+                reconcile=reconcile,
                 projection_error=projection_error,
                 live_path_is_symlink=live_path_is_symlink,
                 live_path_symlink_target=live_path_symlink_target,

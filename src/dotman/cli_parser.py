@@ -391,7 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Re-run a reconcile helper subcommand",
     )
     reconcile_subparsers = reconcile_parser.add_subparsers(
-        dest="reconcile_command",
+        dest="reconcile_helper",
         required=True,
         title="reconcile commands",
         metavar="<reconcile-command>",

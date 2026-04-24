@@ -828,7 +828,6 @@ def test_pull_plan_uses_declared_repo_and_live_views_for_rendered_targets(
     assert target.pull_view_repo == "render"
     assert target.pull_view_live == "raw"
     assert target.action == "noop"
-    assert target.reconcile_command == "sh hooks/reconcile.sh"
     assert target.reconcile == HookCommandSpec(run="sh hooks/reconcile.sh", io="tty")
 
 def test_target_preset_jinja_editor_expands_default_workflow(
@@ -879,7 +878,6 @@ def test_target_preset_jinja_editor_expands_default_workflow(
     assert push_target.render_command == "jinja"
     assert pull_target.pull_view_repo == "render"
     assert pull_target.pull_view_live == "raw"
-    assert pull_target.reconcile_command == "jinja"
     assert pull_target.reconcile == HookCommandSpec(run="jinja", io="tty")
 
 
@@ -982,12 +980,10 @@ def test_target_preset_jinja_patch_editor_expands_default_workflow(
     pull_target = pull_plan.target_plans[0]
     assert push_target.render_command == "jinja"
     assert push_target.capture_command == "patch"
-    assert push_target.reconcile_command == "jinja"
     assert push_target.reconcile == HookCommandSpec(run="jinja", io="tty")
     assert pull_target.pull_view_repo == "render"
     assert pull_target.pull_view_live == "raw"
     assert pull_target.capture_command == "patch"
-    assert pull_target.reconcile_command == "jinja"
     assert pull_target.reconcile == HookCommandSpec(run="jinja", io="tty")
 
 
@@ -1192,7 +1188,6 @@ def test_target_preset_values_can_be_overridden(
     assert target.render_command == "jinja"
     assert target.pull_view_repo == "raw"
     assert target.pull_view_live == "raw"
-    assert target.reconcile_command == "jinja"
     assert target.reconcile == HookCommandSpec(run="jinja", io="pipe")
 
 
@@ -1280,7 +1275,6 @@ def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
     plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
 
     target = plan.target_plans[0]
-    assert target.reconcile_command == "jinja"
     assert target.reconcile == HookCommandSpec(run="jinja", io="tty")
 
 

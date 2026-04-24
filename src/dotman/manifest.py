@@ -155,36 +155,52 @@ def _build_hook_command_spec(
     owner_label: str,
     hook_name: str,
 ) -> HookCommandSpec:
+    return _build_command_spec(
+        command_payload=command_payload,
+        manifest_kind=manifest_kind,
+        manifest_path=manifest_path,
+        owner_label=owner_label,
+        command_label=f"hook '{hook_name}' command object",
+    )
+
+
+def _build_command_spec(
+    *,
+    command_payload: dict[str, Any],
+    manifest_kind: str,
+    manifest_path: Path,
+    owner_label: str,
+    command_label: str,
+) -> HookCommandSpec:
     unknown_keys = sorted(key for key in command_payload if key not in {"run", "io"})
     if unknown_keys:
         unknown_text = ", ".join(unknown_keys)
         raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' command object has unsupported keys: {unknown_text}"
+            f"{manifest_kind} {manifest_path} {owner_label} {command_label} has unsupported keys: {unknown_text}"
         )
     if "run" not in command_payload:
         raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' command object must define 'run'"
+            f"{manifest_kind} {manifest_path} {owner_label} {command_label} must define 'run'"
         )
     run_value = command_payload.get("run")
     if not isinstance(run_value, str):
         raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' command object 'run' must be a string"
+            f"{manifest_kind} {manifest_path} {owner_label} {command_label} 'run' must be a string"
         )
     if not run_value.strip():
         raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' command object 'run' must not be empty"
+            f"{manifest_kind} {manifest_path} {owner_label} {command_label} 'run' must not be empty"
         )
     io_value = normalize_optional_string_enum(command_payload.get("io"), key="io", allowed=VALID_HOOK_IO_VALUES) or "pipe"
     return HookCommandSpec(run=run_value, io=io_value)
 
 
-def _build_reconcile_command_spec(
+def _build_reconcile_spec(
     *,
     reconcile_payload: Any,
     manifest_kind: str,
     manifest_path: Path,
     owner_label: str,
-    target_name: str,
 ) -> HookCommandSpec | None:
     if reconcile_payload is None:
         return None
@@ -194,29 +210,15 @@ def _build_reconcile_command_spec(
         return HookCommandSpec(run=reconcile_payload)
     if not isinstance(reconcile_payload, dict):
         raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile must be a string or table"
+            f"{manifest_kind} {manifest_path} {owner_label} reconcile must be a string or table"
         )
-    unknown_keys = sorted(key for key in reconcile_payload if key not in {"run", "io"})
-    if unknown_keys:
-        unknown_text = ", ".join(unknown_keys)
-        raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile object has unsupported keys: {unknown_text}"
-        )
-    if "run" not in reconcile_payload:
-        raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile object must define 'run'"
-        )
-    run_value = reconcile_payload.get("run")
-    if not isinstance(run_value, str):
-        raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile object 'run' must be a string"
-        )
-    if not run_value.strip():
-        raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile object 'run' must not be empty"
-        )
-    io_value = normalize_optional_string_enum(reconcile_payload.get("io"), key="io", allowed=VALID_HOOK_IO_VALUES) or "pipe"
-    return HookCommandSpec(run=run_value, io=io_value)
+    return _build_command_spec(
+        command_payload=reconcile_payload,
+        manifest_kind=manifest_kind,
+        manifest_path=manifest_path,
+        owner_label=owner_label,
+        command_label="reconcile object",
+    )
 
 
 def normalize_optional_string_enum(value: Any, *, key: str, allowed: tuple[str, ...]) -> str | None:
@@ -351,12 +353,11 @@ def build_target_spec(
         chmod=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="chmod"),
         render=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="render"),
         capture=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="capture"),
-        reconcile=_build_reconcile_command_spec(
+        reconcile=_build_reconcile_spec(
             reconcile_payload=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile"),
             manifest_kind="package manifest",
             manifest_path=manifest_path,
             owner_label=f"target '{target_name}'",
-            target_name=target_name,
         ),
         pull_view_repo=read_target_schema_alias(
             target_payload=target_payload,

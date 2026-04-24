@@ -576,8 +576,7 @@ class TargetPlan:
     desired_text: str | None = None
     render_command: str | None = None
     capture_command: str | None = None
-    reconcile_command: str | None = None
-    reconcile_io: str | None = None
+    reconcile: HookCommandSpec | None = None
     projection_error: str | None = None
     live_path_is_symlink: bool = field(default=False, repr=False)
     live_path_symlink_target: str | None = field(default=None, repr=False)
@@ -607,7 +606,7 @@ class TargetPlan:
             "projection_kind": self.projection_kind,
             "render_command": self.render_command,
             "capture_command": self.capture_command,
-            "reconcile": None if self.reconcile_command is None else {"run": self.reconcile_command, "io": self.reconcile_io or "pipe"},
+            "reconcile": None if self.reconcile is None else self.reconcile.to_dict(),
             "projection_error": self.projection_error,
             "pull_view_repo": self.pull_view_repo,
             "pull_view_live": self.pull_view_live,

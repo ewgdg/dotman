@@ -66,7 +66,7 @@ def tracked_target_signature(target: TargetPlan) -> tuple[Any, ...]:
             ),
             target.render_command,
             target.capture_command,
-            target.reconcile_command,
+            target.reconcile,
             target.push_ignore,
             target.pull_ignore,
         )
@@ -77,7 +77,7 @@ def tracked_target_signature(target: TargetPlan) -> tuple[Any, ...]:
         target.projection_error,
         target.render_command,
         target.capture_command,
-        target.reconcile_command,
+        target.reconcile,
         target.push_ignore,
         target.pull_ignore,
         None if target.desired_bytes is not None else str(target.repo_path),

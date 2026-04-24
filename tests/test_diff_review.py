@@ -15,7 +15,7 @@ from dotman.diff_review import (
     run_review_item_diff,
     run_review_item_edit,
 )
-from dotman.models import TargetPlan
+from dotman.models import HookCommandSpec, TargetPlan
 from tests.helpers import make_package_plan
 
 
@@ -250,7 +250,7 @@ def test_select_review_pager_command_replaces_explicit_git_pager_cat_with_less(m
     assert _select_review_pager_command() == DEFAULT_REVIEW_PAGER
 
 
-def test_run_review_item_edit_prefers_pull_reconcile_command(monkeypatch, tmp_path: Path) -> None:
+def test_run_review_item_edit_prefers_pull_reconcile(monkeypatch, tmp_path: Path) -> None:
     review_item = ReviewItem(
         selection_label="example:nvim@basic",
         package_id="nvim",
@@ -263,7 +263,7 @@ def test_run_review_item_edit_prefers_pull_reconcile_command(monkeypatch, tmp_pa
         destination_path="/repo-file",
         before_bytes=b"repo planning view\n",
         after_bytes=b"live planning view\n",
-        reconcile_command="sh hooks/reconcile.sh",
+        reconcile=HookCommandSpec(run="sh hooks/reconcile.sh"),
         command_cwd=tmp_path,
         command_env={
             "DOTMAN_REPO_PATH": str(tmp_path / "repo-file"),
@@ -320,7 +320,7 @@ def test_run_review_item_edit_runs_builtin_jinja_reconcile(monkeypatch, tmp_path
         destination_path="/repo-file",
         before_bytes=b"repo planning view\n",
         after_bytes=b"capture live planning view\n",
-        reconcile_command="jinja",
+        reconcile=HookCommandSpec(run="jinja", io="tty"),
         command_env={
             "DOTMAN_REPO_PATH": str(repo_path),
             "DOTMAN_LIVE_PATH": str(live_path),
@@ -427,7 +427,7 @@ def test_edit_status_keeps_reconcile_pull_only(tmp_path: Path) -> None:
         live_path=live_path,
         source_path=str(repo_path),
         destination_path=str(live_path),
-        reconcile_command="sh hooks/reconcile.sh",
+        reconcile=HookCommandSpec(run="sh hooks/reconcile.sh"),
     )
     pull_item = ReviewItem(
         selection_label="example:nvim@basic",
@@ -439,7 +439,7 @@ def test_edit_status_keeps_reconcile_pull_only(tmp_path: Path) -> None:
         live_path=live_path,
         source_path=str(live_path),
         destination_path=str(repo_path),
-        reconcile_command="sh hooks/reconcile.sh",
+        reconcile=HookCommandSpec(run="sh hooks/reconcile.sh"),
     )
 
     assert edit_status(push_item) == "editor"

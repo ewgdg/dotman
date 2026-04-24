@@ -552,7 +552,8 @@ def _step_uses_terminal_passthrough(step: Any) -> bool:
     if hook_plan is not None:
         return getattr(hook_plan, "io", "pipe") == "tty"
     target_plan = getattr(step, "target_plan", None)
-    return getattr(step, "kind", None) == "reconcile" and getattr(target_plan, "reconcile_io", "pipe") == "tty"
+    reconcile = getattr(target_plan, "reconcile", None)
+    return getattr(step, "kind", None) == "reconcile" and getattr(reconcile, "io", "pipe") == "tty"
 
 
 def emit_execution_result(*, result: Any, json_output: bool) -> int:

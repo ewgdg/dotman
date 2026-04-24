@@ -55,7 +55,7 @@ class ExecutionStep:
         if self.hook_plan is not None:
             return self.hook_plan.command
         if self.action == "reconcile" and self.target_plan is not None:
-            return self.target_plan.reconcile_command
+            return None if self.target_plan.reconcile is None else self.target_plan.reconcile.run
         return None
 
 
@@ -657,7 +657,7 @@ def _reconcile_step_needs_sudo(target_plan: TargetPlan) -> bool:
     # Custom reconcile commands are arbitrary user shell. Dotman should not
     # silently run them as root; users can opt in by writing sudo into the
     # reconcile command itself.
-    return target_plan.reconcile_command == BUILTIN_JINJA_RECONCILE and needs_sudo_for_read(target_plan.live_path)
+    return target_plan.reconcile is not None and target_plan.reconcile.run == BUILTIN_JINJA_RECONCILE and needs_sudo_for_read(target_plan.live_path)
 
 
 
@@ -782,7 +782,7 @@ def _build_target_steps(*, plan: PackagePlan, target_plan: TargetPlan, operation
             )
         return steps
 
-    if target_plan.reconcile_command is not None and target_plan.capture_command is None and target_plan.action == "update":
+    if target_plan.reconcile is not None and target_plan.capture_command is None and target_plan.action == "update":
         steps.append(
             ExecutionStep(
                 repo_name=plan.repo_name,
@@ -934,7 +934,7 @@ def _should_fallback_to_reconcile_after_capture(step: ExecutionStep) -> bool:
         and step.directory_item is None
         and target_plan is not None
         and target_plan.capture_command is not None
-        and target_plan.reconcile_command is not None
+        and target_plan.reconcile is not None
     )
 
 
@@ -1070,10 +1070,12 @@ def _run_reconcile_target_plan(
     privileged: bool,
 ) -> tuple[int, str, str]:
     with _materialize_reconcile_review_env(target_plan) as review_env:
+        if target_plan.reconcile is None:
+            raise ValueError("missing reconcile command")
         command_env = {**_build_target_env(target_plan), **review_env}
-        if target_plan.reconcile_io == "tty":
+        if target_plan.reconcile.io == "tty":
             _require_interactive_terminal_for_reconcile()
-        if target_plan.reconcile_command == BUILTIN_JINJA_RECONCILE:
+        if target_plan.reconcile.run == BUILTIN_JINJA_RECONCILE:
             # Keep built-in reconcile values declarative in plans/info
             # while still reusing the same helper as the CLI subcommand.
             exit_code = run_jinja_reconcile(
@@ -1084,15 +1086,15 @@ def _run_reconcile_target_plan(
                 assume_yes=assume_yes,
             )
             return exit_code, "", ""
-        if target_plan.reconcile_io == "tty":
+        if target_plan.reconcile.io == "tty":
             return _run_command_with_terminal(
-                command=target_plan.reconcile_command or "",
+                command=target_plan.reconcile.run,
                 cwd=target_plan.command_cwd,
                 env=command_env,
                 privileged=privileged,
             )
         return _run_command(
-            command=target_plan.reconcile_command or "",
+            command=target_plan.reconcile.run,
             cwd=target_plan.command_cwd,
             env=command_env,
             stream_output=stream_output,
