@@ -322,20 +322,43 @@ def preview_package_selection_implicit_overrides(
     engine: Any,
     selection: ResolvedPackageSelection,
 ) -> list[TrackedTargetOverride]:
-    entry = TrackedPackageEntry(
-        repo=selection.identity.repo,
-        package_id=selection.identity.package_id,
-        profile=selection.requested_profile,
-    )
+    return preview_package_selections_implicit_overrides(engine, [selection])
+
+
+def preview_package_selections_implicit_overrides(
+    engine: Any,
+    selections: list[ResolvedPackageSelection],
+) -> list[TrackedTargetOverride]:
+    explicit_selections = [selection for selection in selections if selection.explicit]
+    if not explicit_selections:
+        return []
+
     raw_bindings_by_repo = engine._raw_tracked_package_entries_by_repo()
-    repo = engine.get_repo(entry.repo)
-    raw_bindings_by_repo[repo.config.name] = engine._normalize_tracked_package_entry_set(
-        engine._effective_tracked_package_entries_for_repo(
-            repo,
-            raw_bindings_by_repo.get(repo.config.name, []),
-        ),
-        [FullSpecSelector(repo=entry.repo, selector=entry.package_id, selector_kind="package", profile=entry.profile)],
-    )
+    additions_by_repo: dict[str, list[FullSpecSelector]] = defaultdict(list)
+    requested_selection_keys = {
+        resolved_package_selection_key(selection)
+        for selection in explicit_selections
+    }
+    for selection in explicit_selections:
+        additions_by_repo[selection.identity.repo].append(
+            FullSpecSelector(
+                repo=selection.identity.repo,
+                selector=selection.identity.package_id,
+                selector_kind="package",
+                profile=selection.requested_profile,
+            )
+        )
+
+    for repo_name, additions in additions_by_repo.items():
+        repo = engine.get_repo(repo_name)
+        raw_bindings_by_repo[repo.config.name] = engine._normalize_tracked_package_entry_set(
+            engine._effective_tracked_package_entries_for_repo(
+                repo,
+                raw_bindings_by_repo.get(repo.config.name, []),
+            ),
+            additions,
+        )
+
     _plans, candidates_by_live_path = engine._collect_tracked_candidates(
         operation="push",
         bindings_by_repo=engine._effective_tracked_package_entries_by_repo(raw_bindings_by_repo),
@@ -353,7 +376,8 @@ def preview_package_selection_implicit_overrides(
             (
                 candidate
                 for candidate in winning_candidates
-                if candidate.selection.identity == selection.identity and candidate.selection.explicit
+                if resolved_package_selection_key(candidate.selection) in requested_selection_keys
+                and candidate.selection.explicit
             ),
             None,
         )

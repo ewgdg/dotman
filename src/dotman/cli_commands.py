@@ -251,7 +251,7 @@ def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> in
             if existing_binding is not None:
                 return handlers.emit_kept_package_entry(binding=existing_binding, json_output=args.json_output)
             return handlers.emit_skipped_tracking(binding=binding, json_output=args.json_output)
-        engine.record_tracked_package_entry(binding)
+        engine.record_tracked_package_entry(binding, validate=False)
         return handlers.emit_tracked_package_entry(binding=binding, json_output=args.json_output)
 
 

@@ -500,8 +500,8 @@ class DotmanEngine:
     def _validate_tracked_package_entries(self, bindings_by_repo: dict[str, list[FullSpecSelector]]) -> None:
         self._tracking_helpers().validate_tracked_package_entries(self, bindings_by_repo)
 
-    def record_tracked_package_entry(self, binding: FullSpecSelector) -> None:
-        self._tracking_helpers().record_tracked_package_entry(self, binding)
+    def record_tracked_package_entry(self, binding: FullSpecSelector, *, validate: bool = True) -> None:
+        self._tracking_helpers().record_tracked_package_entry(self, binding, validate=validate)
 
     def validate_tracked_package_entry(self, binding: FullSpecSelector) -> None:
         self._tracking_helpers().validate_tracked_package_entry(self, binding)
@@ -779,6 +779,9 @@ class DotmanEngine:
 
     def preview_package_selection_implicit_overrides(self, selection: ResolvedPackageSelection) -> list[TrackedTargetOverride]:
         return self._planning_helpers().preview_package_selection_implicit_overrides(self, selection)
+
+    def preview_package_selections_implicit_overrides(self, selections: list[ResolvedPackageSelection]) -> list[TrackedTargetOverride]:
+        return self._planning_helpers().preview_package_selections_implicit_overrides(self, selections)
 
     def _tracked_target_signature(self, target: Any) -> tuple[Any, ...]:
         return self._planning_helpers().tracked_target_signature(target)

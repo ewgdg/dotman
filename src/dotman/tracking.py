@@ -443,7 +443,7 @@ def validate_tracked_package_entries(engine: Any, bindings_by_repo: dict[str, li
 
 
 
-def record_tracked_package_entry(engine: Any, binding: FullSpecSelector) -> None:
+def record_tracked_package_entry(engine: Any, binding: FullSpecSelector, *, validate: bool = True) -> None:
     repo = engine.get_repo(binding.repo)
     raw_tracked_package_entries_by_repo = engine._raw_tracked_package_entries_by_repo()
     normalized = engine._normalize_tracked_package_entry_set(
@@ -451,7 +451,7 @@ def record_tracked_package_entry(engine: Any, binding: FullSpecSelector) -> None
         engine._expand_tracked_package_entry(repo, binding),
     )
     raw_tracked_package_entries_by_repo[repo.config.name] = normalized
-    if not engine.list_invalid_explicit_package_entries(bindings_by_repo=raw_tracked_package_entries_by_repo):
+    if validate and not engine.list_invalid_explicit_package_entries(bindings_by_repo=raw_tracked_package_entries_by_repo):
         engine._validate_tracked_package_entries(engine._effective_tracked_package_entries_by_repo(raw_tracked_package_entries_by_repo))
     engine.write_tracked_package_entries(repo, normalized)
 

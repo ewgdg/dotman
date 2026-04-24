@@ -249,6 +249,57 @@ def test_preview_package_selection_implicit_overrides_returns_unique_packages(
     assert [contender.selection_label for contender in override.overridden] == ["fixture:beta@basic"]
     assert [contender.package_id for contender in override.overridden] == ["beta"]
 
+
+def test_preview_multiple_explicit_selections_collects_tracked_candidates_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "override-preview-repo"
+    write_package_override_preview_repo(repo_root)
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    engine = DotmanEngine.from_config_path(config_path)
+    engine.record_tracked_package_entry(FullSpecSelector(repo="fixture", selector="beta-meta", selector_kind="package", profile="basic"))
+
+    original_collect_tracked_candidates = engine._collect_tracked_candidates
+    collect_call_count = 0
+
+    def collect_tracked_candidates_once(*args, **kwargs):
+        nonlocal collect_call_count
+        collect_call_count += 1
+        return original_collect_tracked_candidates(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_collect_tracked_candidates", collect_tracked_candidates_once)
+    repo = engine.get_repo("fixture")
+    selections = [
+        engine._resolved_package_selection(
+            repo=repo,
+            package_id="alpha",
+            requested_profile="basic",
+            explicit=True,
+            source_kind="selector_query",
+            source_selector="alpha",
+        ),
+        engine._resolved_package_selection(
+            repo=repo,
+            package_id="alpha-meta",
+            requested_profile="basic",
+            explicit=True,
+            source_kind="selector_query",
+            source_selector="alpha-meta",
+        ),
+    ]
+
+    overrides = engine.preview_package_selections_implicit_overrides(selections)
+
+    assert collect_call_count == 1
+    assert len(overrides) == 1
+    assert overrides[0].winner.selection_label == "fixture:alpha@basic"
+    assert [contender.selection_label for contender in overrides[0].overridden] == ["fixture:beta@basic"]
+
 def test_record_binding_writes_resolved_binding_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

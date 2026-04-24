@@ -998,7 +998,7 @@ def test_ensure_track_package_entry_implicit_overrides_confirmed_skips_prompt_wh
             ]
         ),
         _resolved_package_selection=lambda **kwargs: SimpleNamespace(**kwargs),
-        preview_package_selection_implicit_overrides=lambda _selection: [
+        preview_package_selections_implicit_overrides=lambda _selections: [
             SimpleNamespace(
                 winner=SimpleNamespace(
                     selection_label="fixture:stack@current",

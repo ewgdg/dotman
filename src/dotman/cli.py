@@ -851,22 +851,26 @@ def ensure_track_package_entry_implicit_overrides_confirmed(
     assume_yes: bool = False,
 ) -> bool:
     if binding.selector_kind == "group":
+        selections = [
+            selection
+            for selection in engine._planning_helpers().resolve_full_spec_selector(engine, binding, operation="push")
+            if selection.explicit
+        ]
         overrides = []
         seen_override_keys: set[tuple[str, str, str | None, str]] = set()
-        for selection in engine._planning_helpers().resolve_full_spec_selector(engine, binding, operation="push"):
-            if not selection.explicit:
+        # Build one candidate plan for the whole group. Per-package previews were O(group_size * tracked_plan_cost)
+        # and made large host groups feel hung after profile selection.
+        for override in engine.preview_package_selections_implicit_overrides(selections):
+            key = (
+                override.winner.selection.identity.repo,
+                override.winner.package_id,
+                override.winner.selection.identity.bound_profile,
+                override.winner.selection.requested_profile,
+            )
+            if key in seen_override_keys:
                 continue
-            for override in engine.preview_package_selection_implicit_overrides(selection):
-                key = (
-                    override.winner.selection.identity.repo,
-                    override.winner.package_id,
-                    override.winner.selection.identity.bound_profile,
-                    override.winner.selection.requested_profile,
-                )
-                if key in seen_override_keys:
-                    continue
-                seen_override_keys.add(key)
-                overrides.append(override)
+            seen_override_keys.add(key)
+            overrides.append(override)
     else:
         repo = engine.get_repo(binding.repo)
         overrides = engine.preview_package_selection_implicit_overrides(
