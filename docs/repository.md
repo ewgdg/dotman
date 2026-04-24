@@ -147,7 +147,7 @@ chmod = "600"
 - `capture = "patch"` is reserved for automatic patch-first reverse capture of rendered/template file targets, not for arbitrary shell-based stdout capture.
 - Targets may define `reconcile` as the actual reverse-sync action used during `pull`.
 - `reconcile` may be interactive and should receive both repo and live paths.
-- Built-in reconcile helpers are also available; for example, `reconcile = "jinja"` uses dotman's Jinja-aware editor reconcile flow for static template dependency trees.
+- Built-in reconcile helpers are also available; for example, `reconcile = { run = "jinja", io = "tty" }` uses dotman's Jinja-aware editor reconcile flow for static template dependency trees.
 - Targets may define `pull_view_repo` to control how repo-side content is projected during pull planning.
 - Targets may define `pull_view_live` to control how live-side content is projected during pull planning.
 - `pull_view_repo` and `pull_view_live` may use built-in values such as `raw`, `render`, and `capture`, or an explicit script/command string when needed.
@@ -327,10 +327,10 @@ run_noop = true
   - `pipe`: default behavior; dotman captures and prefixes stdout/stderr like other hook commands.
   - `tty`: run attached to the current terminal and require an interactive tty.
 - Use hook command `io = "tty"` for full-screen editors, password prompts, or other terminal-native tools that would break if dotman piped and prefixed their output.
-- `reconcile_io` controls how the selected reconcile step is executed.
+- `reconcile.run` is the selected reconcile command and `reconcile.io` controls how it is executed.
   - `pipe`: default behavior; dotman captures stdout/stderr like other command-backed steps.
   - `tty`: run attached to the current terminal and require an interactive tty.
-- Use `reconcile_io = "tty"` for full-screen editors or other terminal-native tools that would break if dotman piped and prefixed their output.
+- Use `reconcile = { run = "...", io = "tty" }` for full-screen editors or other terminal-native tools that would break if dotman piped and prefixed their output.
 - Dotman may provide helper commands for package-authored `reconcile` workflows; for example, `dotman reconcile editor` can accept repeated `--additional-source` args for multi-source reconcile workflows.
 - For `dotman reconcile editor`, `--repo-path` is the primary repo-side target source and repeated `--additional-source` args are for extra repo files that should be opened alongside it during reconciliation.
 - `dotman reconcile editor` may receive separate review paths, so the review content can use planning projections while the editor buffers point at temporary transactional copies of the repo-side source files.

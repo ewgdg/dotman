@@ -829,7 +829,7 @@ def test_pull_plan_uses_declared_repo_and_live_views_for_rendered_targets(
     assert target.pull_view_live == "raw"
     assert target.action == "noop"
     assert target.reconcile_command == "sh hooks/reconcile.sh"
-    assert target.reconcile_io == "tty"
+    assert target.reconcile == HookCommandSpec(run="sh hooks/reconcile.sh", io="tty")
 
 def test_target_preset_jinja_editor_expands_default_workflow(
     tmp_path: Path,
@@ -880,7 +880,7 @@ def test_target_preset_jinja_editor_expands_default_workflow(
     assert pull_target.pull_view_repo == "render"
     assert pull_target.pull_view_live == "raw"
     assert pull_target.reconcile_command == "jinja"
-    assert pull_target.reconcile_io == "tty"
+    assert pull_target.reconcile == HookCommandSpec(run="jinja", io="tty")
 
 
 def test_target_preset_jinja_patch_expands_default_workflow(
@@ -983,12 +983,12 @@ def test_target_preset_jinja_patch_editor_expands_default_workflow(
     assert push_target.render_command == "jinja"
     assert push_target.capture_command == "patch"
     assert push_target.reconcile_command == "jinja"
-    assert push_target.reconcile_io == "tty"
+    assert push_target.reconcile == HookCommandSpec(run="jinja", io="tty")
     assert pull_target.pull_view_repo == "render"
     assert pull_target.pull_view_live == "raw"
     assert pull_target.capture_command == "patch"
     assert pull_target.reconcile_command == "jinja"
-    assert pull_target.reconcile_io == "tty"
+    assert pull_target.reconcile == HookCommandSpec(run="jinja", io="tty")
 
 
 def test_capture_patch_rejects_directory_targets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1173,7 +1173,7 @@ def test_target_preset_values_can_be_overridden(
                 'path = "~/.profile"',
                 'preset = "jinja-editor"',
                 'import_view_repo = "raw"',
-                'reconcile_io = "pipe"',
+                'reconcile = { run = "jinja", io = "pipe" }',
                 "",
             ]
         ),
@@ -1193,8 +1193,7 @@ def test_target_preset_values_can_be_overridden(
     assert target.pull_view_repo == "raw"
     assert target.pull_view_live == "raw"
     assert target.reconcile_command == "jinja"
-    assert target.reconcile_io == "pipe"
-
+    assert target.reconcile == HookCommandSpec(run="jinja", io="pipe")
 
 
 def test_unknown_target_preset_fails_engine_load(tmp_path: Path) -> None:
@@ -1246,8 +1245,7 @@ def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
                 'render = "jinja"',
                 'pull_view_repo = "render"',
                 'pull_view_live = "raw"',
-                'reconcile = "jinja"',
-                'reconcile_io = "tty"',
+                'reconcile = { run = "jinja", io = "tty" }',
                 "",
             ]
         ),
@@ -1283,7 +1281,7 @@ def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
 
     target = plan.target_plans[0]
     assert target.reconcile_command == "jinja"
-    assert target.reconcile_io == "tty"
+    assert target.reconcile == HookCommandSpec(run="jinja", io="tty")
 
 
 

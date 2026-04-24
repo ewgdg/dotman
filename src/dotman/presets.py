@@ -10,8 +10,7 @@ BUILTIN_TARGET_PRESETS: dict[str, dict[str, Any]] = {
         "render": "jinja",
         "pull_view_repo": "render",
         "pull_view_live": "raw",
-        "reconcile": "jinja",
-        "reconcile_io": "tty",
+        "reconcile": {"run": "jinja", "io": "tty"},
     },
     "jinja-patch": {
         "render": "jinja",
@@ -24,8 +23,7 @@ BUILTIN_TARGET_PRESETS: dict[str, dict[str, Any]] = {
         "capture": BUILTIN_PATCH_CAPTURE,
         "pull_view_repo": "render",
         "pull_view_live": "raw",
-        "reconcile": "jinja",
-        "reconcile_io": "tty",
+        "reconcile": {"run": "jinja", "io": "tty"},
     },
 }
 

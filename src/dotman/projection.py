@@ -91,10 +91,11 @@ def plan_targets(
             else None
         )
         reconcile_command = (
-            render_template_string(target.reconcile, context, base_dir=target.declared_in, source_path=target.declared_in)
+            render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in)
             if target.reconcile is not None
             else None
         )
+        reconcile_io = target.reconcile.io if target.reconcile is not None else None
         command_env = build_target_command_env(
             repo=repo,
             package=package,
@@ -119,7 +120,7 @@ def plan_targets(
                     render_command=render_command,
                     capture_command=capture_command,
                     reconcile_command=reconcile_command,
-                    reconcile_io=target.reconcile_io,
+                    reconcile_io=reconcile_io,
                     live_path_is_symlink=live_path_is_symlink,
                     live_path_symlink_target=live_path_symlink_target,
                     file_symlink_mode=engine.config.file_symlink_mode,
@@ -161,7 +162,7 @@ def plan_targets(
                     render_command=render_command,
                     capture_command=capture_command,
                     reconcile_command=reconcile_command,
-                    reconcile_io=target.reconcile_io,
+                    reconcile_io=reconcile_io,
                     live_path_is_symlink=live_path_is_symlink,
                     live_path_symlink_target=live_path_symlink_target,
                     file_symlink_mode=engine.config.file_symlink_mode,
@@ -259,7 +260,7 @@ def plan_targets(
                 render_command=render_command,
                 capture_command=capture_command,
                 reconcile_command=reconcile_command,
-                reconcile_io=target.reconcile_io,
+                reconcile_io=reconcile_io,
                 projection_error=projection_error,
                 live_path_is_symlink=live_path_is_symlink,
                 live_path_symlink_target=live_path_symlink_target,

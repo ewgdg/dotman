@@ -142,8 +142,7 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
             "pull_view_live": "raw",
             "pull_view_repo": "raw",
             "push_ignore": [],
-            "reconcile_command": None,
-            "reconcile_io": None,
+            "reconcile": None,
             "render_command": "jinja",
             "repo": "example",
             "repo_path": str(EXAMPLE_REPO / "packages" / "git" / "files" / "gitconfig"),
@@ -458,8 +457,7 @@ def test_info_tracked_cli_shows_effective_values_for_target_preset(
     assert target["render_command"] == "jinja"
     assert target["pull_view_repo"] == "render"
     assert target["pull_view_live"] == "raw"
-    assert target["reconcile_command"] == "jinja"
-    assert target["reconcile_io"] == "tty"
+    assert target["reconcile"] == {"run": "jinja", "io": "tty"}
 
 
 def test_info_tracked_cli_shows_capture_and_editor_values_for_target_preset(
@@ -527,8 +525,7 @@ def test_info_tracked_cli_shows_capture_and_editor_values_for_target_preset(
     assert target["capture_command"] == "patch"
     assert target["pull_view_repo"] == "render"
     assert target["pull_view_live"] == "raw"
-    assert target["reconcile_command"] == "jinja"
-    assert target["reconcile_io"] == "tty"
+    assert target["reconcile"] == {"run": "jinja", "io": "tty"}
 
 
 

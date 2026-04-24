@@ -11,8 +11,7 @@ path = "~/.config/nvim/init.lua"
 render = "sh hooks/render.sh"
 pull_view_repo = "render"
 pull_view_live = "raw"
-reconcile = "sh hooks/reconcile.sh"
-reconcile_io = "tty"
+reconcile = { run = "sh hooks/reconcile.sh", io = "tty" }
 
 [hooks]
 guard_pull = '''

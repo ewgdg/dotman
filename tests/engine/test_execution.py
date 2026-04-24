@@ -1177,7 +1177,7 @@ def test_execute_session_fails_tty_reconcile_without_terminal(
 
     assert result.status == "failed"
     assert result.packages[0].steps[0].status == "failed"
-    assert result.packages[0].steps[0].error == "reconcile_io 'tty' requires an interactive terminal"
+    assert result.packages[0].steps[0].error == "reconcile io 'tty' requires an interactive terminal"
 
 
 def test_execute_session_fails_tty_hook_without_terminal(

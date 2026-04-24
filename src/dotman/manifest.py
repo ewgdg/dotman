@@ -11,7 +11,6 @@ from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 
 VALID_COMMAND_IO_VALUES = ("pipe", "tty")
 VALID_HOOK_IO_VALUES = VALID_COMMAND_IO_VALUES
-VALID_RECONCILE_IO_VALUES = VALID_COMMAND_IO_VALUES
 VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both")
 
 
@@ -179,6 +178,45 @@ def _build_hook_command_spec(
     return HookCommandSpec(run=run_value, io=io_value)
 
 
+def _build_reconcile_command_spec(
+    *,
+    reconcile_payload: Any,
+    manifest_kind: str,
+    manifest_path: Path,
+    owner_label: str,
+    target_name: str,
+) -> HookCommandSpec | None:
+    if reconcile_payload is None:
+        return None
+    if isinstance(reconcile_payload, str):
+        return HookCommandSpec(run=reconcile_payload)
+    if not isinstance(reconcile_payload, dict):
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile must be a string or table"
+        )
+    unknown_keys = sorted(key for key in reconcile_payload if key not in {"run", "io"})
+    if unknown_keys:
+        unknown_text = ", ".join(unknown_keys)
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile object has unsupported keys: {unknown_text}"
+        )
+    if "run" not in reconcile_payload:
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile object must define 'run'"
+        )
+    run_value = reconcile_payload.get("run")
+    if not isinstance(run_value, str):
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile object 'run' must be a string"
+        )
+    if not run_value.strip():
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} target '{target_name}' reconcile object 'run' must not be empty"
+        )
+    io_value = normalize_optional_string_enum(reconcile_payload.get("io"), key="io", allowed=VALID_HOOK_IO_VALUES) or "pipe"
+    return HookCommandSpec(run=run_value, io=io_value)
+
+
 def normalize_optional_string_enum(value: Any, *, key: str, allowed: tuple[str, ...]) -> str | None:
     if value is None:
         return None
@@ -311,11 +349,12 @@ def build_target_spec(
         chmod=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="chmod"),
         render=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="render"),
         capture=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="capture"),
-        reconcile=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile"),
-        reconcile_io=normalize_optional_string_enum(
-            get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile_io"),
-            key="reconcile_io",
-            allowed=VALID_RECONCILE_IO_VALUES,
+        reconcile=_build_reconcile_command_spec(
+            reconcile_payload=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile"),
+            manifest_kind="package manifest",
+            manifest_path=manifest_path,
+            owner_label=f"target '{target_name}'",
+            target_name=target_name,
         ),
         pull_view_repo=read_target_schema_alias(
             target_payload=target_payload,
@@ -444,7 +483,6 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         render=override.render if override.render is not None else base.render,
         capture=override.capture if override.capture is not None else base.capture,
         reconcile=override.reconcile if override.reconcile is not None else base.reconcile,
-        reconcile_io=override.reconcile_io if override.reconcile_io is not None else base.reconcile_io,
         pull_view_repo=override.pull_view_repo if override.pull_view_repo is not None else base.pull_view_repo,
         pull_view_live=override.pull_view_live if override.pull_view_live is not None else base.pull_view_live,
         push_ignore=override.push_ignore if override.push_ignore is not None else base.push_ignore,

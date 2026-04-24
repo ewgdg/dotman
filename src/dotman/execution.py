@@ -1363,7 +1363,7 @@ def _raise_for_interrupt_exit_code(exit_code: int) -> None:
 
 
 def _require_interactive_terminal_for_reconcile() -> None:
-    _require_interactive_terminal(setting_name="reconcile_io")
+    _require_interactive_terminal(setting_name="reconcile io")
 
 
 def _require_interactive_terminal_for_hook() -> None:

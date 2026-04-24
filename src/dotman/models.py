@@ -66,8 +66,7 @@ class TargetSpec:
     chmod: str | None = None
     render: str | None = None
     capture: str | None = None
-    reconcile: str | None = None
-    reconcile_io: str | None = None
+    reconcile: "HookCommandSpec | None" = None
     pull_view_repo: str | None = None
     pull_view_live: str | None = None
     push_ignore: tuple[str, ...] | None = None
@@ -83,6 +82,12 @@ HookCommandIO = Literal["pipe", "tty"]
 class HookCommandSpec:
     run: str
     io: HookCommandIO = "pipe"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run": self.run,
+            "io": self.io,
+        }
 
 
 @dataclass(frozen=True)
@@ -274,8 +279,7 @@ class TrackedTargetSummary:
     target_kind: str
     render_command: str | None = None
     capture_command: str | None = None
-    reconcile_command: str | None = None
-    reconcile_io: str | None = None
+    reconcile: HookCommandSpec | None = None
     pull_view_repo: str = "raw"
     pull_view_live: str = "raw"
     push_ignore: tuple[str, ...] = ()
@@ -290,8 +294,7 @@ class TrackedTargetSummary:
             "target_kind": self.target_kind,
             "render_command": self.render_command,
             "capture_command": self.capture_command,
-            "reconcile_command": self.reconcile_command,
-            "reconcile_io": self.reconcile_io,
+            "reconcile": None if self.reconcile is None else self.reconcile.to_dict(),
             "pull_view_repo": self.pull_view_repo,
             "pull_view_live": self.pull_view_live,
             "push_ignore": list(self.push_ignore),
@@ -332,8 +335,7 @@ class TrackableTargetDetail:
     path: str | None
     render_command: str | None = None
     capture_command: str | None = None
-    reconcile_command: str | None = None
-    reconcile_io: str | None = None
+    reconcile: HookCommandSpec | None = None
     pull_view_repo: str | None = None
     pull_view_live: str | None = None
     push_ignore: tuple[str, ...] = ()
@@ -347,8 +349,7 @@ class TrackableTargetDetail:
             "path": self.path,
             "render_command": self.render_command,
             "capture_command": self.capture_command,
-            "reconcile_command": self.reconcile_command,
-            "reconcile_io": self.reconcile_io,
+            "reconcile": None if self.reconcile is None else self.reconcile.to_dict(),
             "pull_view_repo": self.pull_view_repo,
             "pull_view_live": self.pull_view_live,
             "push_ignore": list(self.push_ignore),
@@ -606,8 +607,7 @@ class TargetPlan:
             "projection_kind": self.projection_kind,
             "render_command": self.render_command,
             "capture_command": self.capture_command,
-            "reconcile_command": self.reconcile_command,
-            "reconcile_io": self.reconcile_io,
+            "reconcile": None if self.reconcile_command is None else {"run": self.reconcile_command, "io": self.reconcile_io or "pipe"},
             "projection_error": self.projection_error,
             "pull_view_repo": self.pull_view_repo,
             "pull_view_live": self.pull_view_live,

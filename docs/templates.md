@@ -34,9 +34,9 @@ For pull, you usually also want:
 
 For the common Jinja editor workflow, you can use the built-in shortcut:
 
-- `reconcile = "jinja"`
+- `reconcile = { run = "jinja", io = "tty" }`
 
-`reconcile = "jinja"` recursively discovers static Jinja template dependencies such as `{% include %}`, `{% extends %}`, `{% import %}`, and `{% from ... import ... %}`, then runs the built-in editor reconcile flow with those files added as extra editable sources.
+`reconcile = { run = "jinja", io = "tty" }` recursively discovers static Jinja template dependencies such as `{% include %}`, `{% extends %}`, `{% import %}`, and `{% from ... import ... %}`, then runs the built-in editor reconcile flow with those files added as extra editable sources.
 
 If you want the whole common bundle as defaults, you can also use:
 
@@ -47,16 +47,15 @@ That preset supplies default values for:
 - `render = "jinja"`
 - `pull_view_repo = "render"`
 - `pull_view_live = "raw"`
-- `reconcile = "jinja"`
-- `reconcile_io = "tty"`
+- `reconcile = { run = "jinja", io = "tty" }`
 
 Explicit target keys still win over the preset.
 
-If your template references other files dynamically, use an explicit `reconcile = 'dotman reconcile editor ...'` command instead.
+If your template references other files dynamically, use an explicit `reconcile = { run = 'dotman reconcile editor ...', io = 'tty' }` command instead.
 
-If `reconcile` opens an editor or otherwise needs a real terminal, also set:
+If `reconcile` opens an editor or otherwise needs a real terminal, set:
 
-- `reconcile_io = "tty"`
+- `reconcile = { run = "...", io = "tty" }`
 
 ## Built-In `capture = "patch"`
 
@@ -103,8 +102,7 @@ If you want the same patch-first workflow but also want built-in interactive fal
 
 That preset supplies the same defaults as `jinja-patch`, plus:
 
-- `reconcile = "jinja"`
-- `reconcile_io = "tty"`
+- `reconcile = { run = "jinja", io = "tty" }`
 
 ## Example
 
@@ -132,8 +130,7 @@ path = "~/.profile"
 render = "jinja"
 pull_view_repo = "render"
 pull_view_live = "raw"
-reconcile_io = "tty"
-reconcile = "jinja"
+reconcile = { run = "jinja", io = "tty" }
 ```
 
 Or, if you want a fully explicit custom editor command:
@@ -148,8 +145,9 @@ path = "~/.profile"
 render = "jinja"
 pull_view_repo = "render"
 pull_view_live = "raw"
-reconcile_io = "tty"
-reconcile = '''
+
+[targets.profile.reconcile]
+run = '''
 dotman reconcile editor \
   --review-repo-path "${DOTMAN_REVIEW_REPO_PATH:-$DOTMAN_REPO_PATH}" \
   --review-live-path "${DOTMAN_REVIEW_LIVE_PATH:-$DOTMAN_LIVE_PATH}" \
@@ -157,6 +155,7 @@ dotman reconcile editor \
   --live-path "$DOTMAN_LIVE_PATH" \
   --additional-source "$DOTMAN_PACKAGE_ROOT/files/env.core.sh"
 '''
+io = "tty"
 ```
 
 `files/profile`:
@@ -194,12 +193,12 @@ export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
   - pull review compares the rendered repo-side result, not raw source text
 - `pull_view_live = "raw"`
   - pull review compares against the actual live file
-- `reconcile = "dotman reconcile editor ..."`
+- `reconcile = { run = "dotman reconcile editor ...", io = "tty" }`
   - explicit editor-based reconcile workflow
-- `reconcile = "jinja"`
+- `reconcile = { run = "jinja", io = "tty" }`
   - shortcut for the built-in Jinja reconcile helper
   - auto-adds recursively discovered static template dependencies as editable sources
-- `reconcile_io = "tty"`
+- `reconcile = { run = "...", io = "tty" }`
   - required for full-screen editor workflows
 - `--additional-source ...`
   - includes extra repo source files that also need to be editable, such as included partials
@@ -247,9 +246,9 @@ Notes:
 
 If your template uses `{% include %}`, shared fragments, or helper files, add them with `--additional-source`. Otherwise the reconcile flow only edits the top-level source file.
 
-## Built-In `reconcile = "jinja"` and `dotman reconcile jinja`
+## Built-In `reconcile = { run = "jinja", io = "tty" }` and `dotman reconcile jinja`
 
-`reconcile = "jinja"` is the shortcut form for the common Jinja editor reconcile workflow.
+`reconcile = { run = "jinja", io = "tty" }` is the shortcut form for the common Jinja editor reconcile workflow.
 
 It uses the same helper as:
 
@@ -310,4 +309,4 @@ dotman render jinja --profile basic --os linux --var git.user_name='Example User
   - `pull_view_repo = "render"`
   - `pull_view_live = "raw"`
 - For template-style pull execution, use either `capture = "patch"` for automatic source patching or `reconcile` for interactive/manual work
-- If `reconcile` is interactive, set `reconcile_io = "tty"`
+- If `reconcile` is interactive, set `reconcile = { run = "...", io = "tty" }`
