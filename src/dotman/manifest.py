@@ -111,7 +111,6 @@ def normalize_string_list(value: Any) -> tuple[str, ...] | None:
 def normalize_hook_command_specs(
     value: Any,
     *,
-    allow_command_objects: bool,
     manifest_kind: str,
     manifest_path: Path,
     owner_label: str,
@@ -129,7 +128,7 @@ def normalize_hook_command_specs(
         if isinstance(item, str):
             commands.append(HookCommandSpec(run=item))
             continue
-        if allow_command_objects and isinstance(item, dict):
+        if isinstance(item, dict):
             commands.append(
                 _build_hook_command_spec(
                     command_payload=item,
@@ -140,9 +139,8 @@ def normalize_hook_command_specs(
                 )
             )
             continue
-        expected = "strings or command objects" if allow_command_objects else "strings"
         raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' commands must contain only {expected}"
+            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' commands must contain only strings or command objects"
         )
     return tuple(commands)
 
@@ -402,7 +400,7 @@ def build_hook_spec(
     hook_name: str,
     hook_payload: Any,
     manifest_path: Path,
-    owner_label: str = "hook",
+    owner_label: str = "package",
     manifest_kind: str = "package manifest",
 ) -> HookSpec:
     commands_payload = hook_payload
@@ -427,7 +425,6 @@ def build_hook_spec(
         run_noop = run_noop_value
     commands = normalize_hook_command_specs(
         commands_payload,
-        allow_command_objects=isinstance(hook_payload, dict),
         manifest_kind=manifest_kind,
         manifest_path=manifest_path,
         owner_label=owner_label,

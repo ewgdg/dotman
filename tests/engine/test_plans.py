@@ -359,6 +359,29 @@ def test_package_hook_shorthand_defaults_run_noop_false(
     assert hook.run_noop is False
 
 
+def test_package_hook_shorthand_list_accepts_command_objects(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_hook_metadata_repo(
+        tmp_path,
+        package_manifest=[
+            "[hooks]",
+            'pre_push = ["echo pre", { run = "echo tty", io = "tty" }]',
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    hook = engine.get_repo("fixture").resolve_package("app").hooks["pre_push"]
+    assert hook.commands == (
+        HookCommandSpec(run="echo pre"),
+        HookCommandSpec(run="echo tty", io="tty"),
+    )
+    assert hook.run_noop is False
+
+
 def test_package_hook_planning_preserves_per_command_io_and_json_payload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -443,9 +466,9 @@ def test_package_hook_planning_preserves_per_command_privileged_metadata(
         (
             [
                 "[hooks]",
-                'pre_push = ["echo pre", { run = "echo tty", io = "tty" }]',
+                'pre_push = ["echo pre", { run = "echo tty", nope = true }]',
             ],
-            r"commands must contain only strings",
+            r"command object has unsupported keys: nope",
         ),
     ],
 )
@@ -458,6 +481,64 @@ def test_package_hook_command_objects_fail_fast_on_invalid_shapes(
 
     with pytest.raises(ValueError, match=error_match):
         DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+
+def test_package_hook_error_message_does_not_repeat_hook_word(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_hook_metadata_repo(
+        tmp_path,
+        package_manifest=[
+            "[hooks]",
+            "pre_push = [42]",
+        ],
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    message = str(exc_info.value)
+    assert "hook hook" not in message
+    assert "package hook 'pre_push' commands" in message
+
+
+def test_repo_hook_error_message_names_repo_scope(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        repo_manifest=[
+            "[hooks]",
+            "pre_push = [42]",
+        ],
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    message = str(exc_info.value)
+    assert "hook hook" not in message
+    assert "repo hook 'pre_push' commands" in message
+
+
+def test_target_hook_error_message_names_target_scope(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=[],
+        target_manifest=[
+            "[targets.config.hooks]",
+            "pre_push = [42]",
+        ],
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    message = str(exc_info.value)
+    assert "hook hook" not in message
+    assert "target 'config' hook 'pre_push' commands" in message
 
 
 def test_package_hook_table_form_allows_empty_commands_and_skips_execution(

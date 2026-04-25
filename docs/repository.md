@@ -225,12 +225,11 @@ sync_policy = "pull-only"
 - `run_noop` defaults to `false`.
 - Repo, package, and target hook shorthand still work and normalize to `run_noop = false`.
 - Empty hook command lists are allowed and mean the hook is effectively disabled at that package layer.
-- Table-form hook `commands = [...]` may mix plain strings and command objects.
+- Hook command lists may mix plain strings and command objects in either shorthand or table form.
 - Command objects use `{ run = "...", io = "pipe" | "tty", privileged = true | false }`.
 - `run` is required for command objects and must not be empty after trimming.
 - `io` defaults to `pipe`.
 - `privileged` defaults to `false`; when `true`, dotman runs that command through its sudo flow and shows the command's privilege reason before execution.
-- Command objects are only supported inside table-form `commands = [...]`, not inside shorthand `[hooks] pre_push = [...]` arrays.
 
 Repo hooks live in `repo.toml` under top-level `[hooks]` and run once per repo per operation:
 
