@@ -14,6 +14,7 @@ from typing import Iterator, Sequence
 from dotman.atomic_files import write_bytes_atomic as atomic_write_bytes_atomic
 from dotman.atomic_files import write_symlink_atomic as atomic_write_symlink_atomic
 from dotman.capture import BUILTIN_PATCH_CAPTURE, capture_patch
+from dotman.elevation import current_elevation_broker, elevation_broker_session
 from dotman.engine import HOOK_NAMES_BY_OPERATION
 from dotman.file_access import (
     chmod as sudo_chmod,
@@ -26,7 +27,7 @@ from dotman.file_access import (
     sudo_prefix_command,
     write_bytes_atomic as sudo_write_bytes_atomic,
 )
-from dotman.models import DirectoryPlanItem, HookPlan, OperationPlan, PackagePlan, TargetPlan, package_plans_for_operation_plan, repo_qualified_target_text
+from dotman.models import DirectoryPlanItem, ElevationMode, HookPlan, OperationPlan, PackagePlan, TargetPlan, package_plans_for_operation_plan, repo_qualified_target_text
 from dotman.repo_access import restore_repo_path_access_for_invoking_user
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_string
@@ -120,7 +121,7 @@ def _build_repo_units_from_packages(packages: tuple[PackageExecutionUnit, ...] |
 def _hook_plan_needs_sudo(hook_plan: HookPlan) -> bool:
     # Hooks remain unprivileged by default even near protected target work.
     # Root execution is allowed only through explicit command metadata.
-    return hook_plan.privileged
+    return hook_plan.elevation == "root"
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,7 @@ class ExecutionStepResult:
             "status": self.status,
             "skip_reason": self.skip_reason,
             "privileged": step.privileged,
+            "elevation": _step_command_elevation(step),
             "exit_code": self.exit_code,
             "stdout": self.stdout,
             "stderr": self.stderr,
@@ -154,6 +156,14 @@ class ExecutionStepResult:
             "live_path": str(live_path) if live_path is not None else None,
             "command": step.command,
         }
+
+
+def _step_command_elevation(step: ExecutionStep) -> ElevationMode:
+    if step.hook_plan is not None:
+        return step.hook_plan.elevation
+    if step.action == "reconcile" and step.target_plan is not None and step.target_plan.reconcile is not None:
+        return step.target_plan.reconcile.elevation
+    return "root" if step.privileged else "none"
 
 
 @dataclass(frozen=True)
@@ -454,6 +464,28 @@ def execute_session(
     on_step_finish=None,
     on_package_finish=None,
 ) -> ExecutionResult:
+    with elevation_broker_session():
+        return _execute_session_inner(
+            session,
+            stream_output=stream_output,
+            assume_yes=assume_yes,
+            on_package_start=on_package_start,
+            on_step_start=on_step_start,
+            on_step_finish=on_step_finish,
+            on_package_finish=on_package_finish,
+        )
+
+
+def _execute_session_inner(
+    session: ExecutionSession,
+    *,
+    stream_output: bool,
+    assume_yes: bool = False,
+    on_package_start=None,
+    on_step_start=None,
+    on_step_finish=None,
+    on_package_finish=None,
+) -> ExecutionResult:
     _preflight_execution_session_sudo(session)
     repo_results: list[RepoExecutionResult] = []
     failed = False
@@ -662,7 +694,7 @@ def _reconcile_step_needs_sudo(target_plan: TargetPlan) -> bool:
     # silently run them as root; users must opt in through command metadata.
     if target_plan.reconcile is None:
         return False
-    if target_plan.reconcile.privileged:
+    if target_plan.reconcile.elevation == "root":
         return True
     return target_plan.reconcile.run == BUILTIN_JINJA_RECONCILE and needs_sudo_for_read(target_plan.live_path)
 
@@ -694,7 +726,7 @@ def _target_step_needs_sudo(
 def _reconcile_fallback_needs_sudo(target_plan: TargetPlan, *, directory_item: DirectoryPlanItem | None = None) -> bool:
     if directory_item is not None or target_plan.capture_command is None or target_plan.reconcile is None:
         return False
-    return target_plan.reconcile.privileged
+    return target_plan.reconcile.elevation == "root"
 
 
 def _preflight_execution_session_sudo(session: ExecutionSession) -> None:
@@ -723,7 +755,7 @@ def _sudo_reason_for_step(step: ExecutionStep) -> str:
         step.action in {"reconcile", "create_repo", "update_repo"}
         and step.target_plan is not None
         and step.target_plan.reconcile is not None
-        and step.target_plan.reconcile.privileged
+        and step.target_plan.reconcile.elevation == "root"
     ):
         return f"execute privileged reconcile for {_step_target_label(step)}"
     if step.action in {"create", "update", "delete"} and live_path is not None:
@@ -891,7 +923,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                 env=_build_hook_env(step, assume_yes=assume_yes),
                 stream_output=stream_output,
                 interactive=step.hook_plan.io == "tty",
-                privileged=step.privileged,
+                elevation=step.hook_plan.elevation,
             )
             if exit_code == 0:
                 return ExecutionStepResult(step=step, status="ok", exit_code=exit_code, stdout=stdout, stderr=stderr)
@@ -934,7 +966,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                 target_plan=target_plan,
                 stream_output=stream_output,
                 assume_yes=assume_yes,
-                privileged=step.privileged,
+                elevation=target_plan.reconcile.elevation if target_plan.reconcile is not None else "root",
             )
             return ExecutionStepResult(
                 step=step,
@@ -998,7 +1030,7 @@ def _execute_target_step_with_capture_fallback(
                 target_plan=target_plan,
                 stream_output=stream_output,
                 assume_yes=assume_yes,
-                privileged=_reconcile_step_needs_sudo(target_plan),
+                elevation=target_plan.reconcile.elevation if target_plan.reconcile is not None else "none",
             )
         except Exception as reconcile_exc:  # noqa: BLE001 - surface both failures together.
             raise ValueError(f"capture failed ({capture_exc}); reconcile failed ({reconcile_exc})") from reconcile_exc
@@ -1112,7 +1144,7 @@ def _run_reconcile_target_plan(
     target_plan: TargetPlan,
     stream_output: bool,
     assume_yes: bool,
-    privileged: bool,
+    elevation: ElevationMode,
 ) -> tuple[int, str, str]:
     with _materialize_reconcile_review_env(target_plan) as review_env:
         if target_plan.reconcile is None:
@@ -1136,7 +1168,7 @@ def _run_reconcile_target_plan(
                 command=target_plan.reconcile.run,
                 cwd=target_plan.command_cwd,
                 env=command_env,
-                privileged=privileged,
+                elevation=elevation,
             )
         return _run_command(
             command=target_plan.reconcile.run,
@@ -1144,7 +1176,7 @@ def _run_reconcile_target_plan(
             env=command_env,
             stream_output=stream_output,
             interactive=False,
-            privileged=privileged,
+            elevation=elevation,
         )
 
 
@@ -1157,7 +1189,7 @@ def _pull_desired_bytes(target_plan: TargetPlan) -> bytes:
         env=_build_target_env(target_plan),
         stream_output=False,
         interactive=False,
-        privileged=needs_sudo_for_read(target_plan.live_path),
+        elevation="root" if needs_sudo_for_read(target_plan.live_path) else "none",
     )
     if exit_code != 0:
         _raise_for_interrupt_exit_code(exit_code)
@@ -1235,7 +1267,7 @@ def _build_patch_capture_projector(*, target_plan: TargetPlan, package_plan: Pac
                 env=command_env,
                 stream_output=False,
                 interactive=False,
-                privileged=needs_sudo_for_read(target_plan.live_path),
+                elevation="root" if needs_sudo_for_read(target_plan.live_path) else "none",
             )
             if exit_code != 0:
                 _raise_for_interrupt_exit_code(exit_code)
@@ -1280,6 +1312,31 @@ def _restore_repo_path_access_for_invoking_user(path: Path, *, repo_root: Path |
     restore_repo_path_access_for_invoking_user(path, repo_root=repo_root)
 
 
+def _prepare_command_elevation(*, command: str, env: dict[str, str], elevation: ElevationMode) -> tuple[str, dict[str, str]]:
+    if elevation == "none":
+        return command, env
+    if elevation == "root":
+        if os.geteuid() != 0:
+            request_sudo("run privileged command")
+            command = sudo_prefix_command(command)
+        return command, env
+    if elevation == "lease":
+        if os.geteuid() != 0:
+            request_sudo("run privileged command")
+        return command, env
+    if elevation in {"broker", "intercept"}:
+        broker_env = current_elevation_broker().env(
+            reason="run privileged command",
+            intercept=elevation == "intercept",
+        )
+        if elevation == "intercept" and "PATH" in env and "PATH" in broker_env:
+            # Preserve command-specific PATH overrides while still putting the sudo shim first.
+            shim_dir = broker_env["PATH"].split(os.pathsep, 1)[0]
+            broker_env["PATH"] = f"{shim_dir}{os.pathsep}{env['PATH']}"
+        return command, {**env, **broker_env}
+    raise ValueError(f"unsupported elevation mode '{elevation}'")
+
+
 def _run_command(
     *,
     command: str,
@@ -1287,13 +1344,11 @@ def _run_command(
     env: dict[str, str],
     stream_output: bool,
     interactive: bool,
-    privileged: bool = False,
+    elevation: ElevationMode = "none",
 ) -> tuple[int, str, str]:
-    if privileged and os.geteuid() != 0:
-        request_sudo("run privileged command")
-        command = sudo_prefix_command(command)
+    command, env = _prepare_command_elevation(command=command, env=env, elevation=elevation)
     if interactive:
-        return _run_command_with_terminal(command=command, cwd=cwd, env=env, privileged=False)
+        return _run_command_with_terminal(command=command, cwd=cwd, env=env, elevation="none")
 
     stdout_buffer: list[str] = []
     stderr_buffer: list[str] = []
@@ -1310,8 +1365,12 @@ def _run_command(
             stream.close()
 
     with preserve_terminal_state():
-        process = subprocess.Popen(
-            command,
+        # Normal pipe commands are fully detached from the controlling terminal
+        # so hidden prompts cannot steal input. Elevated pipe commands stay in
+        # the invoking terminal session so sudo's tty-scoped timestamp can be
+        # reused, while stdin remains closed and stdout/stderr stay captured.
+        owns_process_group = elevation == "none"
+        popen_kwargs = dict(
             cwd=str(cwd) if cwd is not None else None,
             env={**os.environ, **env},
             shell=True,
@@ -1323,10 +1382,12 @@ def _run_command(
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            # Parent handles Ctrl-C cleanup for pipe commands, so isolate the
-            # shell tree and signal the whole group on interruption.
-            start_new_session=True,
         )
+        if owns_process_group:
+            # Parent handles Ctrl-C cleanup for normal pipe commands, so isolate
+            # the shell tree and signal the whole group on interruption.
+            popen_kwargs["start_new_session"] = True
+        process = subprocess.Popen(command, **popen_kwargs)
         stdout_thread = Thread(target=pump, args=(process.stdout, stdout_buffer, sys.stdout), daemon=True)
         stderr_thread = Thread(target=pump, args=(process.stderr, stderr_buffer, sys.stderr), daemon=True)
         stdout_thread.start()
@@ -1334,7 +1395,7 @@ def _run_command(
         try:
             return_code = process.wait()
         except KeyboardInterrupt:
-            _interrupt_process_group(process)
+            _interrupt_pipe_process(process, owns_process_group=owns_process_group)
             _wait_for_process_exit(process)
             raise
         finally:
@@ -1343,13 +1404,11 @@ def _run_command(
     return _normalize_command_return_code(return_code), "".join(stdout_buffer), "".join(stderr_buffer)
 
 
-def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str, str], privileged: bool = False) -> tuple[int, str, str]:
+def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str, str], elevation: ElevationMode = "none") -> tuple[int, str, str]:
     # TTY-backed commands may launch full-screen editors or other terminal-native
     # tools. Piping and prefixing their output corrupts control sequences and can
     # leave the shell looking broken after exit, so dotman must hand them tty.
-    if privileged and os.geteuid() != 0:
-        request_sudo("run privileged command")
-        command = sudo_prefix_command(command)
+    command, env = _prepare_command_elevation(command=command, env=env, elevation=elevation)
     with preserve_terminal_state():
         process = subprocess.Popen(
             command,
@@ -1370,7 +1429,13 @@ def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str,
     return _normalize_command_return_code(return_code), "", ""
 
 
-def _interrupt_process_group(process: subprocess.Popen) -> None:
+def _interrupt_pipe_process(process: subprocess.Popen, *, owns_process_group: bool) -> None:
+    if not owns_process_group:
+        try:
+            process.terminate()
+        except OSError:
+            pass
+        return
     try:
         os.killpg(process.pid, signal.SIGINT)
     except (ProcessLookupError, PermissionError, OSError):

@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from dotman.add import prepare_add_to_package, write_add_result
 from dotman.engine import TrackedTargetConflictError
+from dotman.elevation import request_elevation_from_env
 from dotman.file_access import sudo_session
 from dotman.models import FullSpecSelector, package_ref_text
 from dotman.selection_menu_context import selection_menu_config_scope
@@ -168,6 +169,8 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
 
 
 def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> int | None:
+    if args.command == "elevation" and args.elevation_command == "request":
+        return request_elevation_from_env(args.reason)
     if args.command == "capture" and args.capture_command == "patch":
         return handlers.run_patch_capture(
             repo_path=args.repo_path,

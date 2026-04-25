@@ -293,7 +293,7 @@ def summarize_targets(
             HookCommandSpec(
                 run=render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in),
                 io=target.reconcile.io,
-                privileged=target.reconcile.privileged,
+                elevation=target.reconcile.elevation,
             )
             if target.reconcile is not None
             else None

@@ -226,10 +226,34 @@ sync_policy = "pull-only"
 - Repo, package, and target hook shorthand still work and normalize to `run_noop = false`.
 - Empty hook command lists are allowed and mean the hook is effectively disabled at that package layer.
 - Hook command lists may mix plain strings and command objects in either shorthand or table form.
-- Command objects use `{ run = "...", io = "pipe" | "tty", privileged = true | false }`.
+- Command objects use `{ run = "...", io = "pipe" | "tty", elevation = "none" | "root" | "lease" | "broker" | "intercept" }`.
 - `run` is required for command objects and must not be empty after trimming.
 - `io` defaults to `pipe`.
-- `privileged` defaults to `false`; when `true`, dotman runs that command through its sudo flow and shows the command's privilege reason before execution.
+- `elevation` defaults to `none`.
+
+Elevation modes:
+
+| Mode | Behavior | Use for |
+| --- | --- | --- |
+| `none` | No dotman-managed elevation. | Normal commands. |
+| `root` | Dotman requests sudo and runs the whole command through non-interactive sudo. | Root-only actions such as `systemctl restart ...`. Do not use for AUR helpers such as `yay`. |
+| `lease` | Dotman requests/keeps a sudo lease but runs the command as the user. | User commands that may call sudo later. |
+| `broker` | Dotman exposes a lazy broker to the child through `DOTMAN_ELEVATION_BROKER`; the child calls `dotman elevation request [reason]` only when needed. | Conditional install/setup scripts. |
+| `intercept` | Same broker plus a temporary `sudo` shim first in `PATH`; the shim asks dotman for the lease, then execs real `sudo -n`. | Legacy scripts that cannot be edited. |
+
+Example conditional package installer:
+
+```toml
+[hooks.pre_push]
+commands = [{ run = "sh hooks/install-arch-packages.sh", elevation = "broker" }]
+```
+
+```sh
+[ -n "$missing_packages" ] || exit 0
+dotman elevation request "install missing Arch packages"
+printf '%s\n' "$missing_packages" |
+  xargs -r yay -S --needed --answerdiff=None --answeredit=None
+```
 
 Repo hooks live in `repo.toml` under top-level `[hooks]` and run once per repo per operation:
 
@@ -298,7 +322,8 @@ run_noop = true
 - Target hook env keeps the usual repo/package/profile vars and also includes `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, and `DOTMAN_TARGET_LIVE_PATH`.
 - Hook env also includes `DOTMAN_ASSUME_YES`, set to `1` when CLI `--yes` is active and `0` otherwise.
 - Hooks never auto-escalate through `sudo`, even when adjacent target work touches protected paths.
-- If a hook really must run as root, prefer explicit command metadata such as `{ run = "systemctl restart sddm", privileged = true }`; script-local `sudo ...` still works but dotman cannot plan or explain it ahead of time unless sudo is already leased.
+- If a hook really must run as root, use explicit command metadata such as `{ run = "systemctl restart sddm", elevation = "root" }`.
+- If a hook only sometimes needs elevation, prefer `elevation = "broker"` and call `dotman elevation request "reason"` after the script proves privileged work is required.
 - Repo-wide helper scripts live under `scripts/`.
 - Package-specific scripts live inside the package, for example `hooks/`.
 - Prefer explicit runner commands such as `sh hooks/push.sh`, `python3 hooks/render.py`, or `uv run hooks/render.py` instead of relying on executable bits.
@@ -324,15 +349,16 @@ run_noop = true
   - default live-side view: `capture` if available via a capture command, otherwise `raw`
 - `pull_view_repo` and `pull_view_live` must stay non-interactive and side-effect free.
 - `reconcile` is the explicit reverse workflow. A `reconcile` command may open an editor or otherwise guide manual source reconciliation.
-- Custom `reconcile` commands never auto-escalate through `sudo`; if they need root, set `privileged = true` on the reconcile object or request sudo inside the command.
+- Custom `reconcile` commands never auto-escalate through `sudo`; if they need root, set `elevation = "root"` on the reconcile object or request sudo inside the command.
 - Hook command `io` controls how that hook command is executed.
   - `pipe`: default behavior; dotman captures and prefixes stdout/stderr like other hook commands.
   - `tty`: run attached to the current terminal and require an interactive tty.
+- Pipe commands normally detach from the controlling terminal so hidden prompts cannot steal input. When `elevation` is not `none`, pipe commands keep the invoking terminal session so sudo timestamps can be reused; stdin still stays closed and stdout/stderr stay captured.
 - Use hook command `io = "tty"` for full-screen editors, password prompts, or other terminal-native tools that would break if dotman piped and prefixed their output.
 - `reconcile.run` is the selected reconcile command and `reconcile.io` controls how it is executed.
   - `pipe`: default behavior; dotman captures stdout/stderr like other command-backed steps.
   - `tty`: run attached to the current terminal and require an interactive tty.
-- `reconcile.privileged = true` runs the reconcile command through dotman's sudo flow.
+- `reconcile.elevation = "root"` runs the reconcile command through dotman's sudo flow.
 - Use `reconcile = { run = "...", io = "tty" }` for full-screen editors or other terminal-native tools that would break if dotman piped and prefixed their output.
 - Dotman may provide helper commands for package-authored `reconcile` workflows; for example, `dotman reconcile editor` can accept repeated `--additional-source` args for multi-source reconcile workflows.
 - For `dotman reconcile editor`, `--repo-path` is the primary repo-side target source and repeated `--additional-source` args are for extra repo files that should be opened alongside it during reconciliation.

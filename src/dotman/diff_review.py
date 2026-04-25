@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
+from dotman.elevation import current_elevation_broker
 from dotman.file_access import request_sudo, sudo_prefix_command
 from dotman.models import HookCommandSpec, PackagePlan
 from dotman.reconcile import run_basic_reconcile
@@ -177,9 +178,18 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
                     review_live_path=review_env.get("DOTMAN_REVIEW_LIVE_PATH"),
                 )
             command = review_item.reconcile.run
-            if review_item.reconcile.privileged and os.geteuid() != 0:
+            if review_item.reconcile.elevation == "root" and os.geteuid() != 0:
                 request_sudo("run privileged reconcile command")
                 command = sudo_prefix_command(command)
+            elif review_item.reconcile.elevation == "lease" and os.geteuid() != 0:
+                request_sudo("run privileged reconcile command")
+            elif review_item.reconcile.elevation in {"broker", "intercept"}:
+                review_env.update(
+                    current_elevation_broker().env(
+                        reason="run privileged reconcile command",
+                        intercept=review_item.reconcile.elevation == "intercept",
+                    )
+                )
             with preserve_terminal_state():
                 completed = subprocess.run(
                     command,

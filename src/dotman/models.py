@@ -76,19 +76,20 @@ class TargetSpec:
 
 
 HookCommandIO = Literal["pipe", "tty"]
+ElevationMode = Literal["none", "root", "lease", "broker", "intercept"]
 
 
 @dataclass(frozen=True)
 class HookCommandSpec:
     run: str
     io: HookCommandIO = "pipe"
-    privileged: bool = False
+    elevation: ElevationMode = "none"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run": self.run,
             "io": self.io,
-            "privileged": self.privileged,
+            "elevation": self.elevation,
         }
 
 
@@ -259,7 +260,7 @@ class HookPlan:
     target_name: str | None = None
     scope_kind: str = "package"
     io: HookCommandIO = "pipe"
-    privileged: bool = False
+    elevation: ElevationMode = "none"
     env: dict[str, str] | None = field(default=None, repr=False)
     run_noop: bool = False
 
@@ -273,7 +274,7 @@ class HookPlan:
             "command": self.command,
             "cwd": str(self.cwd),
             "io": self.io,
-            "privileged": self.privileged,
+            "elevation": self.elevation,
         }
 
 

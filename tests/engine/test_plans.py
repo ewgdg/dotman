@@ -366,7 +366,7 @@ def test_package_hook_shorthand_list_accepts_command_objects(
         tmp_path,
         package_manifest=[
             "[hooks]",
-            'pre_push = ["echo pre", { run = "echo tty", io = "tty" }]',
+            'pre_push = ["echo pre", { run = "echo lease", elevation = "lease" }]',
         ],
     )
 
@@ -377,7 +377,7 @@ def test_package_hook_shorthand_list_accepts_command_objects(
     hook = engine.get_repo("fixture").resolve_package("app").hooks["pre_push"]
     assert hook.commands == (
         HookCommandSpec(run="echo pre"),
-        HookCommandSpec(run="echo tty", io="tty"),
+        HookCommandSpec(run="echo lease", elevation="lease"),
     )
     assert hook.run_noop is False
 
@@ -407,7 +407,7 @@ def test_package_hook_planning_preserves_per_command_io_and_json_payload(
     assert push_plan.to_dict()["hooks"]["pre_push"][1]["io"] == "tty"
 
 
-def test_package_hook_planning_preserves_per_command_privileged_metadata(
+def test_package_hook_planning_preserves_per_command_elevation_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -420,7 +420,7 @@ def test_package_hook_planning_preserves_per_command_privileged_metadata(
         package_manifest=[],
         hook_manifest=[
             "[hooks.pre_push]",
-            'commands = ["echo prep", { run = "systemctl restart sddm", privileged = true }]',
+            'commands = ["echo prep", { run = "systemctl restart sddm", elevation = "root" }]',
         ],
     )
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
@@ -428,8 +428,33 @@ def test_package_hook_planning_preserves_per_command_privileged_metadata(
     push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
 
     assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo prep", "systemctl restart sddm"]
-    assert [hook.privileged for hook in push_plan.hooks["pre_push"]] == [False, True]
-    assert push_plan.to_dict()["hooks"]["pre_push"][1]["privileged"] is True
+    assert [hook.elevation for hook in push_plan.hooks["pre_push"]] == ["none", "root"]
+    assert push_plan.to_dict()["hooks"]["pre_push"][1]["elevation"] == "root"
+
+
+@pytest.mark.parametrize("elevation", ["none", "root", "lease", "broker", "intercept"])
+def test_package_hook_command_object_accepts_elevation_modes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    elevation: str,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=[],
+        hook_manifest=[
+            "[hooks.pre_push]",
+            f'commands = [{{ run = "echo prep", elevation = "{elevation}" }}]',
+        ],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert push_plan.hooks["pre_push"][0].elevation == elevation
 
 
 @pytest.mark.parametrize(
@@ -459,9 +484,16 @@ def test_package_hook_planning_preserves_per_command_privileged_metadata(
         (
             [
                 "[hooks.pre_push]",
-                'commands = [{ run = "echo pre", privileged = "yes" }]',
+                'commands = [{ run = "echo pre", elevation = "bad" }]',
             ],
-            r"command object 'privileged' must be a boolean",
+            r"unsupported elevation 'bad'; expected one of: none, root, lease, broker, intercept",
+        ),
+        (
+            [
+                "[hooks.pre_push]",
+                'commands = [{ run = "echo pre", privileged = true }]',
+            ],
+            r"uses deprecated 'privileged'; use elevation = \"root\" instead",
         ),
         (
             [

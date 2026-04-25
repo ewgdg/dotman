@@ -11,6 +11,7 @@ from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 
 VALID_COMMAND_IO_VALUES = ("pipe", "tty")
 VALID_HOOK_IO_VALUES = VALID_COMMAND_IO_VALUES
+VALID_ELEVATION_VALUES = ("none", "root", "lease", "broker", "intercept")
 VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both")
 
 
@@ -170,7 +171,12 @@ def _build_command_spec(
     owner_label: str,
     command_label: str,
 ) -> HookCommandSpec:
-    unknown_keys = sorted(key for key in command_payload if key not in {"run", "io", "privileged"})
+    if "privileged" in command_payload:
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} {command_label} uses deprecated 'privileged'; "
+            "use elevation = \"root\" instead"
+        )
+    unknown_keys = sorted(key for key in command_payload if key not in {"run", "io", "elevation"})
     if unknown_keys:
         unknown_text = ", ".join(unknown_keys)
         raise ValueError(
@@ -190,12 +196,12 @@ def _build_command_spec(
             f"{manifest_kind} {manifest_path} {owner_label} {command_label} 'run' must not be empty"
         )
     io_value = normalize_optional_string_enum(command_payload.get("io"), key="io", allowed=VALID_HOOK_IO_VALUES) or "pipe"
-    privileged_value = command_payload.get("privileged", False)
-    if not isinstance(privileged_value, bool):
-        raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} {command_label} 'privileged' must be a boolean"
-        )
-    return HookCommandSpec(run=run_value, io=io_value, privileged=privileged_value)
+    elevation_value = normalize_optional_string_enum(
+        command_payload.get("elevation"),
+        key="elevation",
+        allowed=VALID_ELEVATION_VALUES,
+    ) or "none"
+    return HookCommandSpec(run=run_value, io=io_value, elevation=elevation_value)
 
 
 def _build_reconcile_spec(

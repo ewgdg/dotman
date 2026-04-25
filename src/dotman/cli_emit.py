@@ -407,7 +407,7 @@ def emit_payload(
                     command_count=len(hook_plans),
                     index=index,
                     io=getattr(hook_plan, "io", "pipe"),
-                    privileged=getattr(hook_plan, "privileged", False),
+                    elevation=getattr(hook_plan, "elevation", "none"),
                 ):
                     print(f"  {line}")
 
@@ -437,7 +437,7 @@ def emit_payload(
                         command_count=len(hook_plans),
                         index=index,
                         io=getattr(hook_plan, "io", "pipe"),
-                        privileged=getattr(hook_plan, "privileged", False),
+                        elevation=getattr(hook_plan, "elevation", "none"),
                     ):
                         print(f"  {line}")
         if section.target_hooks:
@@ -458,7 +458,7 @@ def emit_payload(
                             command_count=len(hook_plans),
                             index=index,
                             io=getattr(hook_plan, "io", "pipe"),
-                            privileged=getattr(hook_plan, "privileged", False),
+                            elevation=getattr(hook_plan, "elevation", "none"),
                         ):
                             print(f"    {line}")
     return 0
@@ -1206,13 +1206,14 @@ def render_hook_command_lines(
     command_count: int,
     index: int,
     io: str = "pipe",
-    privileged: bool = False,
+    elevation: str = "none",
 ) -> list[str]:
     command_lines = command.splitlines() or [""]
     # Number multi-command hooks so users can tell distinct commands apart without cluttering single-command hooks.
     first_prefix = f"      [{index}] " if command_count > 1 else "      "
     continuation_prefix = " " * len(first_prefix)
-    metadata_prefix = "".join(("[sudo] " if privileged else "", "[tty] " if io == "tty" else ""))
+    elevation_badge = "" if elevation == "none" else f"[{elevation}] "
+    metadata_prefix = "".join(("[tty] " if io == "tty" else "", elevation_badge))
     return [
         f"{first_prefix}{metadata_prefix}{command_lines[0]}",
         *[f"{continuation_prefix}{line}" for line in command_lines[1:]],
@@ -1382,7 +1383,7 @@ def emit_tracked_package_detail(*, package_detail: Any, json_output: bool, use_c
                     command_count=len(hook_plans),
                     index=index,
                     io=getattr(hook_plan, "io", "pipe"),
-                    privileged=getattr(hook_plan, "privileged", False),
+                    elevation=getattr(hook_plan, "elevation", "none"),
                 ):
                     print(line)
 
