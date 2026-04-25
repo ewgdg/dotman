@@ -5,13 +5,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from dotman.models import HookCommandSpec, HookSpec, PackageSpec, TargetSpec
+from dotman.models import DefaultCommandElevationMode, HookCommandSpec, HookSpec, PackageSpec, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 
 
 VALID_COMMAND_IO_VALUES = ("pipe", "tty")
 VALID_HOOK_IO_VALUES = VALID_COMMAND_IO_VALUES
 VALID_ELEVATION_VALUES = ("none", "root", "lease", "broker", "intercept")
+VALID_DEFAULT_COMMAND_ELEVATION_VALUES = ("none", "broker", "intercept")
 VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both")
 
 
@@ -116,9 +117,10 @@ def normalize_hook_command_specs(
     manifest_path: Path,
     owner_label: str,
     hook_name: str,
+    default_command_elevation: DefaultCommandElevationMode = "none",
 ) -> tuple[HookCommandSpec, ...]:
     if isinstance(value, str):
-        return (HookCommandSpec(run=value),)
+        return (HookCommandSpec(run=value, elevation=default_command_elevation),)
     if not isinstance(value, list):
         raise ValueError(
             f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' commands must be a string or list"
@@ -127,7 +129,7 @@ def normalize_hook_command_specs(
     commands: list[HookCommandSpec] = []
     for item in value:
         if isinstance(item, str):
-            commands.append(HookCommandSpec(run=item))
+            commands.append(HookCommandSpec(run=item, elevation=default_command_elevation))
             continue
         if isinstance(item, dict):
             commands.append(
@@ -137,6 +139,7 @@ def normalize_hook_command_specs(
                     manifest_path=manifest_path,
                     owner_label=owner_label,
                     hook_name=hook_name,
+                    default_command_elevation=default_command_elevation,
                 )
             )
             continue
@@ -153,6 +156,7 @@ def _build_hook_command_spec(
     manifest_path: Path,
     owner_label: str,
     hook_name: str,
+    default_command_elevation: DefaultCommandElevationMode = "none",
 ) -> HookCommandSpec:
     return _build_command_spec(
         command_payload=command_payload,
@@ -160,6 +164,7 @@ def _build_hook_command_spec(
         manifest_path=manifest_path,
         owner_label=owner_label,
         command_label=f"hook '{hook_name}' command object",
+        default_command_elevation=default_command_elevation,
     )
 
 
@@ -170,6 +175,7 @@ def _build_command_spec(
     manifest_path: Path,
     owner_label: str,
     command_label: str,
+    default_command_elevation: DefaultCommandElevationMode = "none",
 ) -> HookCommandSpec:
     if "privileged" in command_payload:
         raise ValueError(
@@ -200,7 +206,7 @@ def _build_command_spec(
         command_payload.get("elevation"),
         key="elevation",
         allowed=VALID_ELEVATION_VALUES,
-    ) or "none"
+    ) or default_command_elevation
     return HookCommandSpec(run=run_value, io=io_value, elevation=elevation_value)
 
 
@@ -210,13 +216,14 @@ def _build_reconcile_spec(
     manifest_kind: str,
     manifest_path: Path,
     owner_label: str,
+    default_command_elevation: DefaultCommandElevationMode = "none",
 ) -> HookCommandSpec | None:
     if reconcile_payload is None:
         return None
     if isinstance(reconcile_payload, str):
         if reconcile_payload == "jinja":
             return HookCommandSpec(run=reconcile_payload, io="tty")
-        return HookCommandSpec(run=reconcile_payload)
+        return HookCommandSpec(run=reconcile_payload, elevation=default_command_elevation)
     if not isinstance(reconcile_payload, dict):
         raise ValueError(
             f"{manifest_kind} {manifest_path} {owner_label} reconcile must be a string or table"
@@ -227,6 +234,7 @@ def _build_reconcile_spec(
         manifest_path=manifest_path,
         owner_label=owner_label,
         command_label="reconcile object",
+        default_command_elevation=default_command_elevation,
     )
 
 
@@ -239,6 +247,15 @@ def normalize_optional_string_enum(value: Any, *, key: str, allowed: tuple[str, 
         allowed_text = ", ".join(allowed)
         raise ValueError(f"unsupported {key} '{value}'; expected one of: {allowed_text}")
     return value
+
+
+def normalize_default_command_elevation(value: Any, *, manifest_path: Path) -> DefaultCommandElevationMode:
+    normalized = normalize_optional_string_enum(
+        value,
+        key="default_command_elevation",
+        allowed=VALID_DEFAULT_COMMAND_ELEVATION_VALUES,
+    )
+    return normalized or "none"
 
 
 def normalize_sync_policy(value: Any) -> str | None:
@@ -323,6 +340,7 @@ def build_target_spec(
     target_name: str,
     target_payload: dict[str, Any],
     manifest_path: Path,
+    default_command_elevation: DefaultCommandElevationMode = "none",
 ) -> TargetSpec:
     try:
         validate_target_name(target_name)
@@ -348,6 +366,7 @@ def build_target_spec(
                 hook_payload=hook_value,
                 manifest_path=manifest_path,
                 owner_label=f"target '{target_name}'",
+                default_command_elevation=default_command_elevation,
             )
             for hook_name, hook_value in hooks_payload.items()
         }
@@ -367,6 +386,7 @@ def build_target_spec(
             manifest_kind="package manifest",
             manifest_path=manifest_path,
             owner_label=f"target '{target_name}'",
+            default_command_elevation=default_command_elevation,
         ),
         pull_view_repo=read_target_schema_alias(
             target_payload=target_payload,
@@ -408,6 +428,7 @@ def build_hook_spec(
     manifest_path: Path,
     owner_label: str = "package",
     manifest_kind: str = "package manifest",
+    default_command_elevation: DefaultCommandElevationMode = "none",
 ) -> HookSpec:
     commands_payload = hook_payload
     run_noop = False
@@ -435,6 +456,7 @@ def build_hook_spec(
         manifest_path=manifest_path,
         owner_label=owner_label,
         hook_name=hook_name,
+        default_command_elevation=default_command_elevation,
     )
     return HookSpec(
         name=hook_name,

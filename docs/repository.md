@@ -229,7 +229,11 @@ sync_policy = "pull-only"
 - Command objects use `{ run = "...", io = "pipe" | "tty", elevation = "none" | "root" | "lease" | "broker" | "intercept" }`.
 - `run` is required for command objects and must not be empty after trimming.
 - `io` defaults to `pipe`.
-- `elevation` defaults to `none`.
+- `elevation` defaults to the repo-level `default_command_elevation`, or `none` when the repo default is omitted.
+- `repo.toml` may set `default_command_elevation = "none" | "broker" | "intercept"`. This applies to repo hooks, package hooks, target hooks, and custom reconcile commands that omit explicit `elevation`.
+- `default_command_elevation` does not support `root` or `lease`; set those on specific command objects instead.
+- Explicit command metadata wins over the repo default. Use `elevation = "none"` to opt a command out of a repo default.
+- `default_command_elevation = "intercept"` is a convenience for legacy repos: every command without explicit `elevation` gets the temporary `sudo` shim in `PATH`.
 
 Elevation modes:
 
@@ -244,8 +248,10 @@ Elevation modes:
 Example conditional package installer:
 
 ```toml
+default_command_elevation = "broker"
+
 [hooks.pre_push]
-commands = [{ run = "sh hooks/install-arch-packages.sh", elevation = "broker" }]
+commands = ["sh hooks/install-arch-packages.sh"]
 ```
 
 ```sh
@@ -321,7 +327,7 @@ run_noop = true
 - Repo hook template expansion and env stay repo-scoped only. Dotman provides values such as `DOTMAN_REPO_NAME`, `DOTMAN_OPERATION`, `DOTMAN_REPO_ROOT`, and `DOTMAN_STATE_PATH`, but intentionally does not inject ambiguous single-package-entry values like `DOTMAN_PROFILE` or `DOTMAN_PACKAGE_ID` there.
 - Target hook env keeps the usual repo/package/profile vars and also includes `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, and `DOTMAN_TARGET_LIVE_PATH`.
 - Hook env also includes `DOTMAN_ASSUME_YES`, set to `1` when CLI `--yes` is active and `0` otherwise.
-- Hooks never auto-escalate through `sudo`, even when adjacent target work touches protected paths.
+- Hooks never auto-escalate through target path permissions, even when adjacent target work touches protected paths. Elevation only comes from explicit command metadata or repo-level `default_command_elevation`.
 - If a hook really must run as root, use explicit command metadata such as `{ run = "systemctl restart sddm", elevation = "root" }`.
 - If a hook only sometimes needs elevation, prefer `elevation = "broker"` and call `dotman elevation request "reason"` after the script proves privileged work is required.
 - Repo-wide helper scripts live under `scripts/`.

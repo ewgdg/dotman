@@ -120,6 +120,7 @@ def write_repo_and_target_hook_repo(
     *,
     repo_manifest: list[str] | None = None,
     package_manifest: list[str] | None = None,
+    target_manifest: list[str] | None = None,
     child_manifest: list[str] | None = None,
 ) -> Path:
     repo_root = tmp_path / "repo"
@@ -138,6 +139,7 @@ def write_repo_and_target_hook_repo(
                 "[targets.config]",
                 'source = "files/config.txt"',
                 'path = "~/.config/app/config.txt"',
+                *(target_manifest or []),
                 "",
             ]
         ),
@@ -455,6 +457,64 @@ def test_package_hook_command_object_accepts_elevation_modes(
     push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
 
     assert push_plan.hooks["pre_push"][0].elevation == elevation
+
+
+@pytest.mark.parametrize("default_elevation", ["none", "broker", "intercept"])
+def test_repo_default_command_elevation_applies_to_omitted_command_elevation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    default_elevation: str,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        repo_manifest=[
+            f'default_command_elevation = "{default_elevation}"',
+            "[hooks.pre_push]",
+            'commands = ["echo repo", { run = "echo repo object" }, { run = "echo explicit", elevation = "none" }]',
+            "run_noop = true",
+        ],
+        package_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo package", { run = "echo package root", elevation = "root" }]',
+        ],
+        target_manifest=[
+            'reconcile = "sh hooks/reconcile.sh"',
+            "[targets.config.hooks.pre_push]",
+            'commands = ["echo target"]',
+        ],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    operation_plan = engine.plan_push_query("fixture:app@default")
+    package_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert [hook.elevation for hook in operation_plan.repo_hooks["fixture"]["pre_push"]] == [default_elevation, default_elevation, "none"]
+    assert [hook.elevation for hook in package_plan.hooks["pre_push"]] == [default_elevation, "root", default_elevation]
+    assert package_plan.target_plans[0].reconcile == HookCommandSpec(
+        run="sh hooks/reconcile.sh",
+        elevation=default_elevation,
+    )
+
+
+@pytest.mark.parametrize("default_elevation", ["root", "lease", "bad"])
+def test_repo_default_command_elevation_rejects_unsafe_or_unknown_modes(
+    tmp_path: Path,
+    default_elevation: str,
+) -> None:
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        repo_manifest=[f'default_command_elevation = "{default_elevation}"'],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"unsupported default_command_elevation '.+'; expected one of: none, broker, intercept",
+    ):
+        DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
 
 @pytest.mark.parametrize(

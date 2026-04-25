@@ -11,6 +11,7 @@ from dotman.manifest import (
     build_target_spec,
     deep_merge,
     merge_package_specs,
+    normalize_default_command_elevation,
     normalize_string_list,
     normalize_sync_policy,
     patch_remove_and_append,
@@ -19,6 +20,7 @@ from dotman.manifest import (
     validate_package_id,
 )
 from dotman.models import (
+    DefaultCommandElevationMode,
     GroupSpec,
     HookSpec,
     PackageSpec,
@@ -58,6 +60,7 @@ class Repository:
         self.config = config
         self.root = config.path
         self._repo_config_payload = self._load_repo_config_payload()
+        self.default_command_elevation = self._load_default_command_elevation()
         self.ignore_defaults = self._load_repo_ignore_defaults()
         self.hooks = self._load_repo_hooks()
         self.packages = self._load_packages()
@@ -71,6 +74,12 @@ class Repository:
         if not repo_config_path.exists():
             return {}
         return load_toml_file(repo_config_path, context="repo config")
+
+    def _load_default_command_elevation(self) -> DefaultCommandElevationMode:
+        return normalize_default_command_elevation(
+            self._repo_config_payload.get("default_command_elevation"),
+            manifest_path=self.root / "repo.toml",
+        )
 
     def _load_repo_ignore_defaults(self) -> RepoIgnoreDefaults:
         repo_config_path = self.root / "repo.toml"
@@ -109,6 +118,7 @@ class Repository:
                 manifest_path=repo_config_path,
                 owner_label="repo",
                 manifest_kind="repo config",
+                default_command_elevation=self.default_command_elevation,
             )
             for hook_name, hook_value in hooks_payload.items()
         }
@@ -149,6 +159,7 @@ class Repository:
                         target_name=target_name,
                         target_payload=target_payload,
                         manifest_path=manifest_path,
+                        default_command_elevation=self.default_command_elevation,
                     )
                     for target_name, target_payload in targets_payload.items()
                 }
@@ -168,6 +179,7 @@ class Repository:
                         hook_name=hook_name,
                         hook_payload=hook_value,
                         manifest_path=manifest_path,
+                        default_command_elevation=self.default_command_elevation,
                     )
                     for hook_name, hook_value in hooks_payload.items()
                 }
