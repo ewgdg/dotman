@@ -710,7 +710,11 @@ def _target_step_needs_sudo(
 ) -> bool:
     if operation == "push":
         live_path = directory_item.live_path if directory_item is not None else target_plan.live_path
-        return action in {"create", "update", "delete"} and needs_sudo_for_write(live_path)
+        if action in {"create", "update", "delete"}:
+            return needs_sudo_for_write(live_path)
+        if action == "chmod":
+            return needs_sudo_for_chmod(live_path)
+        return False
 
     if action in {"create_repo", "update_repo"}:
         source_path = directory_item.live_path if directory_item is not None else target_plan.live_path
@@ -1063,10 +1067,10 @@ def _execute_target_step(step: ExecutionStep) -> None:
         else:
             _write_bytes(live_path, source_bytes)
         if step.directory_item is not None and step.package_plan is not None and step.package_plan.operation == "push":
-            _apply_directory_file_mode(
-                source_path=step.directory_item.repo_path,
-                destination_path=step.directory_item.live_path,
-            )
+            _apply_directory_item_mode(step.directory_item)
+        return
+    if step.action == "chmod" and step.directory_item is not None:
+        _apply_directory_item_mode(step.directory_item)
         return
     if step.action == "delete":
         delete_path = step.directory_item.live_path if step.directory_item is not None else _push_live_path(target_plan)
@@ -1129,6 +1133,26 @@ def _apply_directory_file_mode(*, source_path: Path, destination_path: Path) -> 
         sudo_chmod(destination_path, desired_mode)
         return
     os.chmod(destination_path, desired_mode)
+
+
+def _apply_directory_item_mode(directory_item: DirectoryPlanItem) -> None:
+    if directory_item.chmod is not None:
+        _apply_exact_file_mode(directory_item.live_path, int(directory_item.chmod, 8))
+        return
+    _apply_directory_file_mode(
+        source_path=directory_item.repo_path,
+        destination_path=directory_item.live_path,
+    )
+
+
+def _apply_exact_file_mode(path: Path, desired_mode: int) -> None:
+    current_mode = stat.S_IMODE(path.stat().st_mode)
+    if current_mode == desired_mode:
+        return
+    if needs_sudo_for_chmod(path):
+        sudo_chmod(path, desired_mode)
+        return
+    os.chmod(path, desired_mode)
 
 
 def directory_synced_file_mode(*, destination_mode: int, source_mode: int) -> int:

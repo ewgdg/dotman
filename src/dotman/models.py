@@ -57,6 +57,18 @@ class ManagerConfig:
 
 
 @dataclass(frozen=True)
+class TargetPathRule:
+    path: str
+    chmod: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "chmod": self.chmod,
+        }
+
+
+@dataclass(frozen=True)
 class TargetSpec:
     name: str
     declared_in: Path
@@ -71,6 +83,7 @@ class TargetSpec:
     pull_view_live: str | None = None
     push_ignore: tuple[str, ...] | None = None
     pull_ignore: tuple[str, ...] | None = None
+    path_rules: tuple[TargetPathRule, ...] = ()
     hooks: dict[str, "HookSpec"] | None = None
     disabled: bool = False
 
@@ -596,6 +609,7 @@ class TargetPlan:
     push_ignore: tuple[str, ...] = ()
     pull_ignore: tuple[str, ...] = ()
     chmod: str | None = None
+    path_rules: tuple[TargetPathRule, ...] = ()
     command_cwd: Path | None = None
     command_env: dict[str, str] | None = field(default=None, repr=False)
     desired_bytes: bytes | None = field(default=None, repr=False)
@@ -621,6 +635,7 @@ class TargetPlan:
             "push_ignore": list(self.push_ignore),
             "pull_ignore": list(self.pull_ignore),
             "chmod": self.chmod,
+            "path_rules": [rule.to_dict() for rule in self.path_rules],
             "directory_items": [item.to_dict() for item in self.directory_items],
         }
 
@@ -825,6 +840,7 @@ class DirectoryPlanItem:
     action: str
     repo_path: Path
     live_path: Path
+    chmod: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -832,4 +848,5 @@ class DirectoryPlanItem:
             "action": self.action,
             "repo_path": str(self.repo_path),
             "live_path": str(self.live_path),
+            "chmod": self.chmod,
         }

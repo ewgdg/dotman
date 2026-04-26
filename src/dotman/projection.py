@@ -4,7 +4,7 @@ import os
 import stat
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from dotman.capture import BUILTIN_PATCH_CAPTURE
@@ -19,7 +19,7 @@ from dotman.manifest import (
     sync_policy_allows_operation,
     sync_policy_deletes_on_push,
 )
-from dotman.models import DirectoryPlanItem, HookCommandSpec, PackageSpec, ResolvedPackageSelection, TargetPlan, TargetSpec
+from dotman.models import DirectoryPlanItem, HookCommandSpec, PackageSpec, ResolvedPackageSelection, TargetPathRule, TargetPlan, TargetSpec
 from dotman.repository import Repository
 from dotman.templates import render_template_file, render_template_string
 
@@ -41,6 +41,7 @@ class TargetMetadata:
     push_ignore: tuple[str, ...]
     pull_ignore: tuple[str, ...]
     chmod: str | None
+    path_rules: tuple[TargetPathRule, ...]
     command_cwd: Path
     command_env: dict[str, str]
     package: PackageSpec
@@ -144,6 +145,7 @@ def build_target_metadata(
                     push_ignore=push_ignore,
                     pull_ignore=pull_ignore,
                     chmod=target.chmod,
+                    path_rules=target.path_rules,
                     command_cwd=target.declared_in,
                     command_env=build_target_command_env(
                         repo=repo,
@@ -201,6 +203,10 @@ def plan_targets(
         live_path = metadata.live_path
         sync_policy = resolve_sync_policy(package=package, target=target)
         target_kind = infer_target_kind(repo_path=repo_path, live_path=live_path)
+        if metadata.path_rules and target_kind == "file":
+            raise ValueError(
+                f"target '{package.id}:{target.name}' defines path_rules but is not a directory target"
+            )
         render_command = metadata.render_command
         capture_command = metadata.capture_command
         reconcile = metadata.reconcile
@@ -233,6 +239,7 @@ def plan_targets(
                         push_ignore=metadata.push_ignore,
                         pull_ignore=metadata.pull_ignore,
                         chmod=metadata.chmod,
+                        path_rules=metadata.path_rules,
                         command_cwd=metadata.command_cwd,
                         command_env=metadata.command_env,
                         directory_items=directory_items,
@@ -279,6 +286,7 @@ def plan_targets(
                     push_ignore=metadata.push_ignore,
                     pull_ignore=metadata.pull_ignore,
                     chmod=metadata.chmod,
+                    path_rules=metadata.path_rules,
                     command_cwd=metadata.command_cwd,
                     command_env=metadata.command_env,
                     review_before_bytes=review_before_bytes,
@@ -308,6 +316,7 @@ def plan_targets(
                     push_ignore=metadata.push_ignore,
                     pull_ignore=metadata.pull_ignore,
                     chmod=metadata.chmod,
+                    path_rules=metadata.path_rules,
                     command_cwd=metadata.command_cwd,
                     command_env=metadata.command_env,
                 )
@@ -327,6 +336,7 @@ def plan_targets(
                 metadata.push_ignore,
                 metadata.pull_ignore,
                 operation=operation,
+                path_rules=metadata.path_rules,
             )
             plans.append(
                 TargetPlan(
@@ -349,6 +359,7 @@ def plan_targets(
                     push_ignore=metadata.push_ignore,
                     pull_ignore=metadata.pull_ignore,
                     chmod=metadata.chmod,
+                    path_rules=metadata.path_rules,
                     command_cwd=metadata.command_cwd,
                     command_env=metadata.command_env,
                     directory_items=directory_items,
@@ -569,6 +580,7 @@ def plan_directory_action(
     pull_ignore: tuple[str, ...],
     *,
     operation: str,
+    path_rules: tuple[TargetPathRule, ...] = (),
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
     desired_files = list_directory_files(repo_path, push_ignore)
     live_exists = live_path.exists()
@@ -579,12 +591,14 @@ def plan_directory_action(
 
     if operation == "push":
         for relative_path in sorted(desired_rel_paths - live_rel_paths):
+            desired_chmod = directory_child_chmod(relative_path, path_rules)
             directory_items.append(
                 DirectoryPlanItem(
                     relative_path=relative_path,
                     action="create",
                     repo_path=desired_files[relative_path],
                     live_path=live_path / relative_path,
+                    chmod=desired_chmod,
                 )
             )
         for relative_path in sorted(live_rel_paths - desired_rel_paths):
@@ -600,13 +614,23 @@ def plan_directory_action(
             source_path = desired_files[relative_path]
             live_file = live_files[relative_path]
             desired_bytes = read_bytes(source_path)
-            if desired_bytes != read_bytes(live_file) or directory_executable_bit_differs(source_path, live_file):
+            live_bytes = read_bytes(live_file)
+            desired_chmod = directory_child_chmod(relative_path, path_rules)
+            child_chmod_differs = directory_child_chmod_differs(live_file, desired_chmod)
+            executable_bit_differs = desired_chmod is None and directory_executable_bit_differs(source_path, live_file)
+            if desired_bytes != live_bytes or executable_bit_differs or child_chmod_differs:
+                action = (
+                    "chmod"
+                    if child_chmod_differs and desired_bytes == live_bytes and not executable_bit_differs
+                    else "update"
+                )
                 directory_items.append(
                     DirectoryPlanItem(
                         relative_path=relative_path,
-                        action="update",
+                        action=action,
                         repo_path=source_path,
                         live_path=live_file,
+                        chmod=desired_chmod,
                     )
                 )
         if not directory_items:
@@ -659,6 +683,22 @@ def directory_executable_bit_differs(repo_file: Path, live_file: Path) -> bool:
     repo_mode = file_permission_mode(repo_file)
     live_mode = file_permission_mode(live_file)
     return repo_mode is not None and live_mode is not None and file_is_executable(repo_mode) != file_is_executable(live_mode)
+
+
+def directory_child_chmod(relative_path: str, path_rules: tuple[TargetPathRule, ...]) -> str | None:
+    desired_chmod = None
+    path = PurePosixPath(relative_path)
+    for rule in path_rules:
+        if rule.chmod is not None and path.match(rule.path):
+            desired_chmod = rule.chmod
+    return desired_chmod
+
+
+def directory_child_chmod_differs(live_file: Path, desired_chmod: str | None) -> bool:
+    if desired_chmod is None:
+        return False
+    live_mode = file_permission_mode(live_file)
+    return live_mode is not None and live_mode != int(desired_chmod, 8)
 
 
 def file_is_executable(mode: int) -> bool:

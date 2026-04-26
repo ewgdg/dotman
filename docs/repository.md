@@ -137,6 +137,23 @@ chmod = "600"
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
 - For file targets, `chmod` is the source of truth for the installed file mode when present.
 - For directory targets, `chmod` applies to the live directory root only; child files mirror Git semantics and carry only the executable bit, not full permission bits such as `600` vs `644`.
+- Directory targets may define `[[targets.<name>.path_rules]]` for path-scoped live child policy. In v1, path rules support `path` plus `chmod`.
+- Path-rule `path` values are relative glob-style patterns under the directory target root. They must not be absolute or contain `..` segments.
+- Path-rule `chmod` values apply during `push` only. `pull` still stores only bytes plus the Git executable bit because Git cannot represent full child file modes such as `600`.
+- If multiple path rules match the same child file, the later rule wins.
+
+Example:
+
+```toml
+[targets.config]
+source = "files/config"
+path = "~/.config/app"
+
+[[targets.config.path_rules]]
+path = "secrets/*.conf"
+chmod = "600"
+```
+
 - Targets may define `sync_policy` to narrow or widen the package-level operation gate for that target.
 - Use `push-only` for forward-managed targets, `pull-only` for reverse-only targets, `both` for targets that can participate in both operations, and `push-only-delete` for targets whose live file should be removed on push while the repo source is retained.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
@@ -189,6 +206,7 @@ chmod = "600"
 - For directory targets, `push` should install everything under the source tree except paths matched by `push_ignore`.
 - For directory targets, `push` should also remove stale live paths that are no longer present in the repo source, except paths matched by `pull_ignore`.
 - For directory-target child files, `push` and `pull` should plan and apply mode changes only when the executable bit differs. Non-executable permission drift such as `600` vs `644` should not trigger an update because Git does not preserve those bits in the repo.
+- For directory-target child files matched by `path_rules` with `chmod`, `push` should also plan and apply exact live chmod drift for those matching paths.
 - For directory targets, dotman should infer the target kind from either side:
   - if the repo source root exists and is a directory, treat it as a directory target
   - if the repo source root is missing but the live path is a directory, still treat it as a directory target

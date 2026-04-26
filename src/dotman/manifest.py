@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from dotman.models import DefaultCommandElevationMode, HookCommandSpec, HookSpec, PackageSpec, TargetSpec
+from dotman.models import DefaultCommandElevationMode, HookCommandSpec, HookSpec, PackageSpec, TargetPathRule, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 
 
@@ -339,6 +339,51 @@ def read_target_schema_alias(
     return preset_payload.get(primary_key)
 
 
+def normalize_target_path_rules(
+    value: Any,
+    *,
+    manifest_path: Path,
+    target_name: str,
+) -> tuple[TargetPathRule, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError(
+            f"package manifest {manifest_path} target '{target_name}' path_rules must be a list"
+        )
+    rules: list[TargetPathRule] = []
+    for index, rule_payload in enumerate(value, start=1):
+        if not isinstance(rule_payload, dict):
+            raise ValueError(
+                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}] must be a table"
+            )
+        path = rule_payload.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError(
+                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].path must be a non-empty string"
+            )
+        normalized_path = path.replace("\\", "/")
+        path_parts = normalized_path.split("/")
+        if normalized_path.startswith("/") or any(part == ".." for part in path_parts):
+            raise ValueError(
+                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].path must be relative to the target root"
+            )
+        chmod = rule_payload.get("chmod")
+        if chmod is not None:
+            if not isinstance(chmod, str):
+                raise ValueError(
+                    f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].chmod must be a string"
+                )
+            try:
+                int(chmod, 8)
+            except ValueError:
+                raise ValueError(
+                    f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].chmod must be an octal string"
+                ) from None
+        rules.append(TargetPathRule(path=normalized_path, chmod=chmod))
+    return tuple(rules)
+
+
 def build_target_spec(
     *,
     target_name: str,
@@ -419,6 +464,11 @@ def build_target_spec(
                 primary_key="pull_ignore",
                 legacy_key="import_ignore",
             )
+        ),
+        path_rules=normalize_target_path_rules(
+            get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path_rules"),
+            manifest_path=manifest_path,
+            target_name=target_name,
         ),
         hooks=hooks,
         disabled=bool(get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="disabled") or False),
@@ -524,6 +574,7 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         pull_view_live=override.pull_view_live if override.pull_view_live is not None else base.pull_view_live,
         push_ignore=override.push_ignore if override.push_ignore is not None else base.push_ignore,
         pull_ignore=override.pull_ignore if override.pull_ignore is not None else base.pull_ignore,
+        path_rules=override.path_rules or base.path_rules,
         hooks=hooks,
         disabled=override.disabled or base.disabled,
     )

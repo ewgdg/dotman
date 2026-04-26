@@ -482,6 +482,8 @@ def execution_step_display(step: Any, *, full_paths: bool) -> str:
             if step.package_plan.operation == "push"
             else step.directory_item.repo_path
         )
+        if step.action == "chmod" and step.directory_item.chmod is not None:
+            return f"{step.directory_item.chmod} {display_cli_path(reference_path, full_paths=full_paths)}"
         return display_cli_path(reference_path, full_paths=full_paths)
     reference_path = target.live_path if step.package_plan.operation == "push" else target.repo_path
     return display_cli_path(reference_path, full_paths=full_paths)
