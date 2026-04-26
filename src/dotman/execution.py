@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1061,6 +1062,8 @@ def _execute_target_step(step: ExecutionStep) -> None:
             sudo_write_bytes_atomic(live_path, source_bytes)
         else:
             _write_bytes(live_path, source_bytes)
+        if step.directory_item is not None and step.package_plan is not None and step.package_plan.operation == "push":
+            _apply_directory_push_file_mode(step.directory_item)
         return
     if step.action == "delete":
         delete_path = step.directory_item.live_path if step.directory_item is not None else _push_live_path(target_plan)
@@ -1101,6 +1104,21 @@ def _write_pull_repo_bytes(step: ExecutionStep, repo_bytes: bytes) -> None:
         return
     _write_bytes(repo_path, repo_bytes)
     _restore_repo_path_access_for_invoking_user(repo_path, repo_root=step.package_plan.repo_root)
+
+
+def _apply_directory_push_file_mode(directory_item: DirectoryPlanItem) -> None:
+    # Directory targets behave like file-tree sync: repo-side file modes are part
+    # of the installed tree, so scripts keep +x after atomic writes.
+    try:
+        desired_mode = stat.S_IMODE(directory_item.repo_path.stat().st_mode)
+    except FileNotFoundError:
+        return
+    if not directory_item.live_path.exists():
+        return
+    if needs_sudo_for_chmod(directory_item.live_path):
+        sudo_chmod(directory_item.live_path, desired_mode)
+        return
+    os.chmod(directory_item.live_path, desired_mode)
 
 
 def _execute_chmod_step(step: ExecutionStep) -> None:

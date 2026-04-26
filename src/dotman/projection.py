@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -599,7 +600,7 @@ def plan_directory_action(
             source_path = desired_files[relative_path]
             live_file = live_files[relative_path]
             desired_bytes = read_bytes(source_path)
-            if desired_bytes != read_bytes(live_file):
+            if desired_bytes != read_bytes(live_file) or directory_push_file_mode_differs(source_path, live_file):
                 directory_items.append(
                     DirectoryPlanItem(
                         relative_path=relative_path,
@@ -652,6 +653,19 @@ def plan_directory_action(
         return "noop", ()
     ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))
     return ("delete" if not live_exists else "update"), ordered_items
+
+
+def directory_push_file_mode_differs(repo_file: Path, live_file: Path) -> bool:
+    repo_mode = file_permission_mode(repo_file)
+    live_mode = file_permission_mode(live_file)
+    return repo_mode is not None and live_mode is not None and repo_mode != live_mode
+
+
+def file_permission_mode(path: Path) -> int | None:
+    try:
+        return stat.S_IMODE(path.stat().st_mode)
+    except (FileNotFoundError, PermissionError):
+        return None
 
 
 def plan_live_delete_directory_action(
