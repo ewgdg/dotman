@@ -2775,12 +2775,21 @@ def review_diff_header(review_item: ReviewItem, *, index: int, total: int) -> st
     )
 
 
-def print_review_diff_header(review_item: ReviewItem, *, index: int, total: int) -> None:
+def print_review_diff_header(
+    review_item: ReviewItem,
+    *,
+    index: int,
+    total: int,
+    full_paths: bool | None = None,
+) -> None:
+    full_paths = _effective_full_paths(full_paths)
     header_text = review_diff_header(review_item, index=index, total=total)
+    path_text = review_diff_path_line(review_item, full_paths=full_paths)
     separator = "-" * 5
     if not colors_enabled():
         print()
         print(f"{separator} {header_text} {separator}")
+        print(path_text)
         return
     repo_name = repo_name_from_selection_label(review_item.selection_label)
     prefix_text = style_text(f"Diff {index}/{total}:", *MENU_HINT_STYLE)
@@ -2796,6 +2805,13 @@ def print_review_diff_header(review_item: ReviewItem, *, index: int, total: int)
         f"{prefix_text} {package_label} {action_text} "
         f"{style_text(separator, *MENU_HINT_STYLE)}"
     )
+    print(style_text(path_text, *MENU_HINT_STYLE))
+
+
+def review_diff_path_line(review_item: ReviewItem, *, full_paths: bool | None = None) -> str:
+    full_paths = _effective_full_paths(full_paths)
+    destination_path = display_cli_path(review_item.destination_path, full_paths=full_paths)
+    return f"file: {destination_path}"
 
 
 def review_diff_footer(*, index: int, total: int) -> str:
@@ -2845,7 +2861,7 @@ def run_diff_review_menu(
         if command_name == "all":
             for item_index, item in enumerate(review_items, start=1):
                 try:
-                    print_review_diff_header(item, index=item_index, total=len(review_items))
+                    print_review_diff_header(item, index=item_index, total=len(review_items), full_paths=full_paths)
                     run_review_item_diff(item)
                     print_review_diff_footer(index=item_index, total=len(review_items))
                 except ValueError as exc:
@@ -2869,6 +2885,7 @@ def run_diff_review_menu(
                     review_items[selected_index],
                     index=selected_index + 1,
                     total=len(review_items),
+                    full_paths=full_paths,
                 )
                 run_review_item_diff(review_items[selected_index])
                 print_review_diff_footer(index=selected_index + 1, total=len(review_items))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +16,7 @@ from dotman.diff_review import (
     run_review_item_diff,
     run_review_item_edit,
 )
-from dotman.models import HookCommandSpec, TargetPlan
+from dotman.models import DirectoryPlanItem, HookCommandSpec, TargetPlan
 from tests.helpers import make_package_plan
 
 
@@ -54,6 +55,51 @@ def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) ->
     assert review_items[0].after_bytes == b"live planning view\n"
     assert review_items[0].source_path == str(live_path)
     assert review_items[0].destination_path == str(repo_path)
+
+
+def test_build_review_items_for_push_directory_includes_mode_metadata(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("same\n", encoding="utf-8")
+    live_path.write_text("same\n", encoding="utf-8")
+    repo_path.chmod(0o755)
+    live_path.chmod(0o644)
+
+    plan = make_package_plan(
+        operation="push",
+        repo_name="example",
+        package_id="scripts",
+        requested_profile="basic",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="scripts",
+                target_name="bin",
+                repo_path=repo_path.parent,
+                live_path=live_path.parent,
+                action="update",
+                target_kind="directory",
+                projection_kind="raw",
+                directory_items=(
+                    DirectoryPlanItem(
+                        relative_path="tool.sh",
+                        action="update",
+                        repo_path=repo_path,
+                        live_path=live_path,
+                    ),
+                ),
+            )
+        ],
+    )
+
+    review_items = build_review_items([plan], operation="push")
+
+    assert len(review_items) == 1
+    assert review_items[0].before_bytes == b"same\n"
+    assert review_items[0].after_bytes == b"same\n"
+    assert review_items[0].before_mode == 0o644
+    assert review_items[0].after_mode == 0o755
 
 
 def test_run_review_item_diff_invokes_git_diff(monkeypatch) -> None:
@@ -95,6 +141,41 @@ def test_run_review_item_diff_invokes_git_diff(monkeypatch) -> None:
     assert recorded["env"] is None
     assert recorded["command"][:5] == ["git", "diff", "--no-index", "--color=auto", "--"]
     assert recorded["command"][5:] == ["live/~/.../share/live-file", "repo/~/.config/repo-file"]
+
+
+def test_run_review_item_diff_materializes_executable_bit_change(monkeypatch, capsys) -> None:
+    repo_path = Path.home() / ".config" / "repo-file"
+    live_path = Path.home() / ".local" / "share" / "live-file"
+    review_item = ReviewItem(
+        selection_label="example:scripts@basic",
+        package_id="scripts",
+        target_name="bin",
+        action="update",
+        operation="push",
+        repo_path=repo_path,
+        live_path=live_path,
+        source_path="/repo-file",
+        destination_path="/live-file",
+        before_bytes=b"same\n",
+        after_bytes=b"same\n",
+        before_mode=0o644,
+        after_mode=0o755,
+    )
+
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr("dotman.diff_review._select_review_pager_command", lambda: None)
+
+    def fake_run(command: list[str], check: bool, env=None, cwd=None):
+        assert cwd is not None
+        assert stat.S_IMODE(Path(cwd, "live", "~", "...", "share", "live-file").stat().st_mode) == 0o644
+        assert stat.S_IMODE(Path(cwd, "repo", "~", ".config", "repo-file").stat().st_mode) == 0o755
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
+
+    run_review_item_diff(review_item)
+
+    assert "file mode:" not in capsys.readouterr().out
 
 
 def test_run_review_item_diff_materializes_absolute_paths_under_temp_root(monkeypatch) -> None:

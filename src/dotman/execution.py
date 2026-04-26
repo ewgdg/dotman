@@ -1107,18 +1107,29 @@ def _write_pull_repo_bytes(step: ExecutionStep, repo_bytes: bytes) -> None:
 
 
 def _apply_directory_push_file_mode(directory_item: DirectoryPlanItem) -> None:
-    # Directory targets behave like file-tree sync: repo-side file modes are part
-    # of the installed tree, so scripts keep +x after atomic writes.
+    # Git only stores a file executable bit, not full permissions like 600 vs
+    # 644. Directory targets mirror that: preserve live rw bits, sync only +x.
     try:
-        desired_mode = stat.S_IMODE(directory_item.repo_path.stat().st_mode)
+        repo_mode = stat.S_IMODE(directory_item.repo_path.stat().st_mode)
     except FileNotFoundError:
         return
     if not directory_item.live_path.exists():
+        return
+    live_mode = stat.S_IMODE(directory_item.live_path.stat().st_mode)
+    desired_mode = directory_push_file_mode(live_mode=live_mode, repo_mode=repo_mode)
+    if desired_mode == live_mode:
         return
     if needs_sudo_for_chmod(directory_item.live_path):
         sudo_chmod(directory_item.live_path, desired_mode)
         return
     os.chmod(directory_item.live_path, desired_mode)
+
+
+def directory_push_file_mode(*, live_mode: int, repo_mode: int) -> int:
+    exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    if repo_mode & exec_bits:
+        return live_mode | exec_bits
+    return live_mode & ~exec_bits
 
 
 def _execute_chmod_step(step: ExecutionStep) -> None:

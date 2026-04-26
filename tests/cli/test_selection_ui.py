@@ -720,8 +720,10 @@ def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(
     output = capsys.readouterr().out
     assert inspected == ["gitconfig", "zshrc"]
     assert "----- Diff 1/2: example:git.gitconfig [update] -----" in output
+    assert "file: /live/gitconfig" in output
     assert "----- End Diff 1/2 -----" in output
     assert "----- Diff 2/2: example:zsh.zshrc [update] -----" in output
+    assert "file: /live/.zshrc" in output
     assert "----- End Diff 2/2 -----" in output
 
 def test_run_diff_review_menu_prints_footer_after_single_inspect(
@@ -751,6 +753,7 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
 
     output = capsys.readouterr().out
     assert "----- Diff 1/1: example:git.gitconfig [update] -----" in output
+    assert "file: /live/gitconfig" in output
     assert "----- End Diff 1/1 -----" in output
 
 
@@ -780,7 +783,7 @@ def test_print_review_diff_header_dims_metadata_prefix_when_colored(
     assert "\033[2m-----\033[0m \033[2mDiff 1/1:\033[0m " in output
     assert "\033[2;34mexample\033[0m\033[2m:\033[0m\033[1mgit\033[0m\033[2m.\033[0m\033[2;33mgitconfig\033[0m" in output
     assert "\033[1;36m[update]\033[0m" in output
-    assert output.endswith(" \033[2m-----\033[0m\n")
+    assert "\033[2mfile: /live/gitconfig\033[0m" in output
 
 
 def test_run_diff_review_menu_default_command_views_next_diff(

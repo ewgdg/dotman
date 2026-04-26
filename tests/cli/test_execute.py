@@ -329,7 +329,7 @@ def test_push_cli_executes_tracked_binding_and_emits_json_results(
     assert payload["packages"][0]["steps"][0]["stdout"] == "guard push\n"
 
 
-def test_push_directory_target_create_preserves_repo_file_mode(
+def test_push_directory_target_create_preserves_repo_executable_bit(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -352,7 +352,7 @@ def test_push_directory_target_create_preserves_repo_file_mode(
     assert stat.S_IMODE(live_path.stat().st_mode) == 0o755
 
 
-def test_push_directory_target_updates_live_file_when_only_repo_file_mode_changed(
+def test_push_directory_target_updates_live_file_when_only_repo_executable_bit_changed(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -376,6 +376,32 @@ def test_push_directory_target_updates_live_file_when_only_repo_file_mode_change
     assert exit_code == 0
     assert live_path.read_text(encoding="utf-8") == "repo directory value\n"
     assert stat.S_IMODE(live_path.stat().st_mode) == 0o755
+
+
+def test_push_directory_target_ignores_non_executable_mode_drift(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(repo_root)
+    repo_path = repo_root / "packages" / "app" / "files" / "config" / "nested.txt"
+    repo_path.chmod(0o600)
+    live_path = home / ".config" / "app" / "nested.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo directory value\n", encoding="utf-8")
+    live_path.chmod(0o644)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--config", str(config_path), "push"])
+
+    assert exit_code == 0
+    assert live_path.read_text(encoding="utf-8") == "repo directory value\n"
+    assert stat.S_IMODE(live_path.stat().st_mode) == 0o644
 
 
 def test_push_cli_dry_run_emits_symlink_hazard_metadata(

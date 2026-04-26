@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,8 @@ class ReviewItem:
     destination_path: str
     before_bytes: bytes | None = field(default=None, repr=False)
     after_bytes: bytes | None = field(default=None, repr=False)
+    before_mode: int | None = None
+    after_mode: int | None = None
     reconcile: HookCommandSpec | None = None
     command_cwd: Path | None = None
     command_env: dict[str, str] | None = field(default=None, repr=False)
@@ -67,6 +70,8 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                             destination_path=destination_path,
                             before_bytes=_load_item_bytes(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=True),
                             after_bytes=_load_item_bytes(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=False),
+                            before_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=True),
+                            after_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=False),
                         )
                     )
                 continue
@@ -95,6 +100,8 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                     destination_path=destination_path,
                     before_bytes=target.review_before_bytes,
                     after_bytes=target.review_after_bytes,
+                    before_mode=_target_review_before_mode(target, operation=operation),
+                    after_mode=_target_review_after_mode(target, operation=operation),
                     reconcile=target.reconcile,
                     command_cwd=target.command_cwd,
                     command_env=target.command_env,
@@ -121,17 +128,20 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
     with tempfile.TemporaryDirectory(prefix="dotman-diff-") as temp_dir:
         temp_root = Path(temp_dir)
         left_side, right_side = _review_diff_side_names(operation=review_item.operation)
+        before_mode, after_mode = _review_diff_file_modes(review_item)
         left_path = _write_review_file(
             root=temp_root,
             side=left_side,
             reference_path=review_item.repo_path if review_item.operation == "pull" else review_item.live_path,
             content=review_item.before_bytes,
+            mode=before_mode or 0o644,
         )
         right_path = _write_review_file(
             root=temp_root,
             side=right_side,
             reference_path=review_item.live_path if review_item.operation == "pull" else review_item.repo_path,
             content=review_item.after_bytes,
+            mode=after_mode or 0o644,
         )
         try:
             pager_command = _select_review_pager_command() if sys.stdout.isatty() else None
@@ -223,13 +233,53 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
 
 
 def _load_item_bytes(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> bytes:
-    if operation == "pull":
-        target_path = repo_path if before else live_path
-    else:
-        target_path = live_path if before else repo_path
+    target_path = _review_item_side_path(repo_path=repo_path, live_path=live_path, operation=operation, before=before)
     if not target_path.exists():
         return b""
     return target_path.read_bytes()
+
+
+def _load_item_mode(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> int | None:
+    if operation != "push":
+        return None
+    target_path = _review_item_side_path(repo_path=repo_path, live_path=live_path, operation=operation, before=before)
+    try:
+        return git_file_mode(stat.S_IMODE(target_path.stat().st_mode))
+    except FileNotFoundError:
+        return None
+
+
+def _review_item_side_path(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> Path:
+    if operation == "pull":
+        return repo_path if before else live_path
+    return live_path if before else repo_path
+
+
+def _target_review_before_mode(target, *, operation: str) -> int | None:
+    if operation != "push" or target.chmod is None:
+        return None
+    try:
+        return git_file_mode(stat.S_IMODE(target.live_path.stat().st_mode))
+    except FileNotFoundError:
+        return None
+
+
+def _target_review_after_mode(target, *, operation: str) -> int | None:
+    if operation != "push" or target.chmod is None:
+        return None
+    return git_file_mode(int(target.chmod, 8))
+
+
+def git_file_mode(mode: int) -> int:
+    return 0o755 if mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) else 0o644
+
+
+def _review_diff_file_modes(review_item: ReviewItem) -> tuple[int | None, int | None]:
+    if review_item.before_mode is None or review_item.after_mode is None:
+        return None, None
+    if review_item.before_mode == review_item.after_mode:
+        return None, None
+    return review_item.before_mode, review_item.after_mode
 
 
 def _selection_item_paths(*, operation: str, repo_path: Path | str, live_path: Path | str) -> tuple[str, str]:
@@ -285,13 +335,13 @@ def _review_edit_reference_paths(*, review_item: ReviewItem) -> tuple[Path, Path
     return review_item.repo_path, review_item.live_path
 
 
-def _write_review_file(*, root: Path, side: str, reference_path: Path, content: bytes) -> Path:
+def _write_review_file(*, root: Path, side: str, reference_path: Path, content: bytes, mode: int = 0o444) -> Path:
     # Review temp files must stay under the temp root even when the display path
     # keeps an absolute slash for system files.
     output_path = root / side / _review_materialized_display_path(reference_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(content)
-    output_path.chmod(0o444)
+    output_path.chmod(mode)
     return output_path
 
 
