@@ -20,8 +20,10 @@ def _read_bytes(path: Path) -> None:
 
 
 
-def _write_bytes_atomic(path: Path, *, restore_root: Path | None) -> None:
+def _write_bytes_atomic(path: Path, *, restore_root: Path | None, mode: int | None) -> None:
     write_bytes_atomic(path, sys.stdin.buffer.read())
+    if mode is not None:
+        path.chmod(mode)
     if restore_root is not None:
         restore_repo_path_access_for_invoking_user(path, repo_root=restore_root)
 
@@ -74,10 +76,11 @@ def main(argv: list[str] | None = None) -> int:
             _read_bytes(Path(args[0]))
             return 0
         if command == "write-bytes-atomic":
-            if not 1 <= len(args) <= 2:
-                raise PrivilegedOperationError("write-bytes-atomic requires: PATH [RESTORE_ROOT]")
-            restore_root = Path(args[1]) if len(args) == 2 else None
-            _write_bytes_atomic(Path(args[0]), restore_root=restore_root)
+            if not 1 <= len(args) <= 3:
+                raise PrivilegedOperationError("write-bytes-atomic requires: PATH [RESTORE_ROOT] [MODE]")
+            restore_root = Path(args[1]) if len(args) >= 2 and args[1] != "-" else None
+            mode = int(args[2]) if len(args) == 3 else None
+            _write_bytes_atomic(Path(args[0]), restore_root=restore_root, mode=mode)
             return 0
         if command == "write-symlink-atomic":
             if len(args) != 2:

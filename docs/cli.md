@@ -164,6 +164,8 @@ This document captures the current command and selector direction for `dotman`.
 - Diff review headers should use explicit `live/...` and `repo/...` paths instead of opaque `before-*` or `after-*` temp names.
 - Diff review headers should compact long compared paths for readability, and should additionally collapse the current home directory to `~` instead of a machine-specific absolute prefix.
 - Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
+- Each reviewed diff should print the destination path under the banner so directory-target child diffs are identifiable even when the target label names the directory root.
+- Mode-only diff review should follow Git semantics: show executable-bit changes through `git diff` mode lines, but do not show or plan non-Git permission drift such as `600` vs `644` for directory-target child files.
 - In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
 - Review commands should support inspecting one item, inspecting all items, opening an editor for supported items, continuing, or aborting.
 - If the requested selector is not currently tracked, `push` should fail instead of implicitly creating or retargeting state. The user should use `track` for that.

@@ -135,6 +135,8 @@ chmod = "600"
 - `path` may use `~/...` for home-relative destinations or an absolute path otherwise.
 - Targets may define `chmod` when the installed root path needs an explicit mode.
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
+- For file targets, `chmod` is the source of truth for the installed file mode when present.
+- For directory targets, `chmod` applies to the live directory root only; child files mirror Git semantics and carry only the executable bit, not full permission bits such as `600` vs `644`.
 - Targets may define `sync_policy` to narrow or widen the package-level operation gate for that target.
 - Use `push-only` for forward-managed targets, `pull-only` for reverse-only targets, `both` for targets that can participate in both operations, and `push-only-delete` for targets whose live file should be removed on push while the repo source is retained.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
@@ -186,6 +188,7 @@ chmod = "600"
 - Dotman does not read package-local `.gitignore` files here; use `push_ignore` and `pull_ignore` instead.
 - For directory targets, `push` should install everything under the source tree except paths matched by `push_ignore`.
 - For directory targets, `push` should also remove stale live paths that are no longer present in the repo source, except paths matched by `pull_ignore`.
+- For directory-target child files, `push` and `pull` should plan and apply mode changes only when the executable bit differs. Non-executable permission drift such as `600` vs `644` should not trigger an update because Git does not preserve those bits in the repo.
 - For directory targets, dotman should infer the target kind from either side:
   - if the repo source root exists and is a directory, treat it as a directory target
   - if the repo source root is missing but the live path is a directory, still treat it as a directory target
@@ -380,7 +383,7 @@ run_noop = true
 - If that capture attempt fails, dotman should retry the selected pull step through `reconcile` using the same review projections.
 - If a transformed file target has no `reconcile`, dotman may still pull by writing repo-side content from `capture` alone.
 - When `pull` writes repo-side files while dotman is running under `sudo`, dotman should restore ownership of the written repo path back to the invoking user so the repo does not get stranded as root-owned.
-- Live file mode checks should compare against target `chmod` after both `push` and `pull`.
+- Live file mode checks should compare against explicit target `chmod` where applicable. Directory-target child-file checks should compare only the Git-tracked executable bit.
 
 ## V1 Bias
 

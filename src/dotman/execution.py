@@ -12,7 +12,7 @@ from pathlib import Path
 from threading import Thread
 from typing import Iterator, Sequence
 
-from dotman.atomic_files import write_bytes_atomic as atomic_write_bytes_atomic
+from dotman.atomic_files import default_created_file_mode, write_bytes_atomic as atomic_write_bytes_atomic
 from dotman.atomic_files import write_symlink_atomic as atomic_write_symlink_atomic
 from dotman.capture import BUILTIN_PATCH_CAPTURE, capture_patch
 from dotman.elevation import current_elevation_broker, elevation_broker_session
@@ -1063,7 +1063,10 @@ def _execute_target_step(step: ExecutionStep) -> None:
         else:
             _write_bytes(live_path, source_bytes)
         if step.directory_item is not None and step.package_plan is not None and step.package_plan.operation == "push":
-            _apply_directory_push_file_mode(step.directory_item)
+            _apply_directory_file_mode(
+                source_path=step.directory_item.repo_path,
+                destination_path=step.directory_item.live_path,
+            )
         return
     if step.action == "delete":
         delete_path = step.directory_item.live_path if step.directory_item is not None else _push_live_path(target_plan)
@@ -1099,37 +1102,52 @@ def _pull_repo_bytes(step: ExecutionStep) -> bytes:
 def _write_pull_repo_bytes(step: ExecutionStep, repo_bytes: bytes) -> None:
     target_plan = _require_target_plan(step)
     repo_path = step.directory_item.repo_path if step.directory_item is not None else target_plan.repo_path
+    directory_mode = (
+        _directory_synced_file_mode(source_path=step.directory_item.live_path, destination_path=repo_path)
+        if step.directory_item is not None
+        else None
+    )
     if needs_sudo_for_write(repo_path):
-        sudo_write_bytes_atomic(repo_path, repo_bytes, restore_root=step.package_plan.repo_root)
+        sudo_write_bytes_atomic(repo_path, repo_bytes, restore_root=step.package_plan.repo_root, mode=directory_mode)
         return
     _write_bytes(repo_path, repo_bytes)
+    if directory_mode is not None and repo_path.exists():
+        os.chmod(repo_path, directory_mode)
     _restore_repo_path_access_for_invoking_user(repo_path, repo_root=step.package_plan.repo_root)
 
 
-def _apply_directory_push_file_mode(directory_item: DirectoryPlanItem) -> None:
+def _apply_directory_file_mode(*, source_path: Path, destination_path: Path) -> None:
     # Git only stores a file executable bit, not full permissions like 600 vs
     # 644. Directory targets mirror that: preserve live rw bits, sync only +x.
-    try:
-        repo_mode = stat.S_IMODE(directory_item.repo_path.stat().st_mode)
-    except FileNotFoundError:
+    desired_mode = _directory_synced_file_mode(source_path=source_path, destination_path=destination_path)
+    if desired_mode is None:
         return
-    if not directory_item.live_path.exists():
+    destination_mode = stat.S_IMODE(destination_path.stat().st_mode)
+    if desired_mode == destination_mode:
         return
-    live_mode = stat.S_IMODE(directory_item.live_path.stat().st_mode)
-    desired_mode = directory_push_file_mode(live_mode=live_mode, repo_mode=repo_mode)
-    if desired_mode == live_mode:
+    if needs_sudo_for_chmod(destination_path):
+        sudo_chmod(destination_path, desired_mode)
         return
-    if needs_sudo_for_chmod(directory_item.live_path):
-        sudo_chmod(directory_item.live_path, desired_mode)
-        return
-    os.chmod(directory_item.live_path, desired_mode)
+    os.chmod(destination_path, desired_mode)
 
 
-def directory_push_file_mode(*, live_mode: int, repo_mode: int) -> int:
+def directory_synced_file_mode(*, destination_mode: int, source_mode: int) -> int:
     exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-    if repo_mode & exec_bits:
-        return live_mode | exec_bits
-    return live_mode & ~exec_bits
+    if source_mode & exec_bits:
+        return destination_mode | exec_bits
+    return destination_mode & ~exec_bits
+
+
+def _directory_synced_file_mode(*, source_path: Path, destination_path: Path) -> int | None:
+    try:
+        source_mode = stat.S_IMODE(source_path.stat().st_mode)
+    except FileNotFoundError:
+        return None
+    try:
+        destination_mode = stat.S_IMODE(destination_path.stat().st_mode)
+    except FileNotFoundError:
+        destination_mode = default_created_file_mode()
+    return directory_synced_file_mode(destination_mode=destination_mode, source_mode=source_mode)
 
 
 def _execute_chmod_step(step: ExecutionStep) -> None:

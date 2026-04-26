@@ -240,7 +240,7 @@ def _load_item_bytes(*, repo_path: Path, live_path: Path, operation: str, before
 
 
 def _load_item_mode(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> int | None:
-    if operation != "push":
+    if operation not in {"push", "pull"}:
         return None
     target_path = _review_item_side_path(repo_path=repo_path, live_path=live_path, operation=operation, before=before)
     try:

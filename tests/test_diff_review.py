@@ -102,6 +102,51 @@ def test_build_review_items_for_push_directory_includes_mode_metadata(tmp_path: 
     assert review_items[0].after_mode == 0o755
 
 
+def test_build_review_items_for_pull_directory_includes_mode_metadata(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("same\n", encoding="utf-8")
+    live_path.write_text("same\n", encoding="utf-8")
+    repo_path.chmod(0o644)
+    live_path.chmod(0o755)
+
+    plan = make_package_plan(
+        operation="pull",
+        repo_name="example",
+        package_id="scripts",
+        requested_profile="basic",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="scripts",
+                target_name="bin",
+                repo_path=repo_path.parent,
+                live_path=live_path.parent,
+                action="update",
+                target_kind="directory",
+                projection_kind="raw",
+                directory_items=(
+                    DirectoryPlanItem(
+                        relative_path="tool.sh",
+                        action="update",
+                        repo_path=repo_path,
+                        live_path=live_path,
+                    ),
+                ),
+            )
+        ],
+    )
+
+    review_items = build_review_items([plan], operation="pull")
+
+    assert len(review_items) == 1
+    assert review_items[0].before_bytes == b"same\n"
+    assert review_items[0].after_bytes == b"same\n"
+    assert review_items[0].before_mode == 0o644
+    assert review_items[0].after_mode == 0o755
+
+
 def test_run_review_item_diff_invokes_git_diff(monkeypatch) -> None:
     repo_path = Path.home() / ".config" / "repo-file"
     live_path = Path.home() / ".local" / "share" / "live-file"

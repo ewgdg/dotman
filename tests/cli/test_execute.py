@@ -716,6 +716,58 @@ def test_pull_cli_executes_directory_pull_when_repo_source_directory_is_missing(
     ]
 
 
+def test_pull_directory_target_updates_repo_executable_bit_when_only_live_executable_bit_changed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(repo_root)
+    repo_path = repo_root / "packages" / "app" / "files" / "config" / "nested.txt"
+    repo_path.chmod(0o644)
+    live_path = home / ".config" / "app" / "nested.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo directory value\n", encoding="utf-8")
+    live_path.chmod(0o755)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--config", str(config_path), "pull"])
+
+    assert exit_code == 0
+    assert repo_path.read_text(encoding="utf-8") == "repo directory value\n"
+    assert stat.S_IMODE(repo_path.stat().st_mode) == 0o755
+
+
+def test_pull_directory_target_ignores_non_executable_mode_drift(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(repo_root)
+    repo_path = repo_root / "packages" / "app" / "files" / "config" / "nested.txt"
+    repo_path.chmod(0o644)
+    live_path = home / ".config" / "app" / "nested.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo directory value\n", encoding="utf-8")
+    live_path.chmod(0o600)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--config", str(config_path), "pull"])
+
+    assert exit_code == 0
+    assert repo_path.read_text(encoding="utf-8") == "repo directory value\n"
+    assert stat.S_IMODE(repo_path.stat().st_mode) == 0o644
+
+
 
 def test_pull_cli_allows_symlinked_live_target_and_updates_repo(
     tmp_path: Path,

@@ -14,7 +14,7 @@ import dotman.execution as execution
 from dotman import file_access
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
-from dotman.models import HookCommandSpec, HookPlan, OperationPlan, TargetPlan
+from dotman.models import DirectoryPlanItem, HookCommandSpec, HookPlan, OperationPlan, TargetPlan
 from tests.helpers import make_package_plan, single_package_plan, write_named_manager_config
 
 
@@ -1695,18 +1695,75 @@ def test_execute_session_uses_sudo_writer_for_system_live_paths(
     )
     session = build_execution_session([plan], operation="push")
 
-    recorded_calls: list[tuple[Path, bytes, Path | None]] = []
+    recorded_calls: list[tuple[Path, bytes, Path | None, int | None]] = []
     monkeypatch.setattr("dotman.execution.request_sudo", lambda reason=None: None)
     monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == live_path)
     monkeypatch.setattr(
         "dotman.execution.sudo_write_bytes_atomic",
-        lambda path, content, restore_root=None: recorded_calls.append((Path(path), content, restore_root)),
+        lambda path, content, restore_root=None, mode=None: recorded_calls.append((Path(path), content, restore_root, mode)),
     )
 
     result = execute_session(session, stream_output=False)
 
     assert result.status == "ok"
-    assert recorded_calls == [(live_path, b"repo\n", None)]
+    assert recorded_calls == [(live_path, b"repo\n", None, None)]
+
+
+def test_execute_session_passes_directory_pull_executable_bit_to_privileged_repo_write(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_path = repo_root / "packages" / "app" / "files" / "config" / "script.sh"
+    live_path = tmp_path / "home" / ".config" / "app" / "script.sh"
+    repo_path.parent.mkdir(parents=True)
+    live_path.parent.mkdir(parents=True)
+    repo_path.write_text("old\n", encoding="utf-8")
+    repo_path.chmod(0o644)
+    live_path.write_text("live\n", encoding="utf-8")
+    live_path.chmod(0o755)
+
+    plan = make_package_plan(
+        operation="pull",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        repo_root=repo_root,
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="config",
+                repo_path=repo_path.parent,
+                live_path=live_path.parent,
+                action="update",
+                target_kind="directory",
+                projection_kind="raw",
+                directory_items=(
+                    DirectoryPlanItem(
+                        relative_path="script.sh",
+                        action="update",
+                        repo_path=repo_path,
+                        live_path=live_path,
+                    ),
+                ),
+            )
+        ],
+    )
+    session = build_execution_session([plan], operation="pull")
+
+    recorded_calls: list[tuple[Path, bytes, Path | None, int | None]] = []
+    monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == repo_path)
+    monkeypatch.setattr(
+        "dotman.execution.sudo_write_bytes_atomic",
+        lambda path, content, restore_root=None, mode=None: recorded_calls.append((Path(path), content, restore_root, mode)),
+    )
+
+    result = execute_session(session, stream_output=False)
+
+    assert result.status == "ok"
+    assert recorded_calls == [(repo_path, b"live\n", repo_root, 0o755)]
 
 
 

@@ -182,22 +182,24 @@ def read_bytes(path: Path) -> bytes:
 
 
 
-def write_bytes_atomic(path: Path, content: bytes, *, restore_root: Path | None = None) -> None:
+def write_bytes_atomic(path: Path, content: bytes, *, restore_root: Path | None = None, mode: int | None = None) -> None:
     if not needs_sudo_for_write(path):
         try:
             atomic_write_bytes_atomic(path, content)
+            if mode is not None:
+                os.chmod(path, mode)
             return
         except PermissionError:
             # Fall back to sudo if direct path check was too optimistic.
             pass
 
     request_sudo(f"write protected path: {path}")
-    completed = _run_privileged_operation(
-        "write-bytes-atomic",
-        str(path),
-        *( [str(restore_root)] if restore_root is not None else [] ),
-        input=content,
-    )
+    optional_args = []
+    if restore_root is not None or mode is not None:
+        optional_args.append(str(restore_root) if restore_root is not None else "-")
+    if mode is not None:
+        optional_args.append(str(mode))
+    completed = _run_privileged_operation("write-bytes-atomic", str(path), *optional_args, input=content)
     if completed.returncode != 0:
         stderr = completed.stderr.decode("utf-8", errors="replace").strip()
         raise PermissionError(stderr or f"permission denied for {path}")
