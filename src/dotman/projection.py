@@ -11,7 +11,13 @@ from dotman.collisions import validate_reserved_path_conflicts, validate_target_
 from dotman.config import expand_path
 from dotman.file_access import needs_sudo_for_read, read_bytes, sudo_prefix_command
 from dotman.ignore import list_directory_files
-from dotman.manifest import flatten_vars, merge_ignore_patterns, resolve_sync_policy, sync_policy_allows_operation
+from dotman.manifest import (
+    flatten_vars,
+    merge_ignore_patterns,
+    resolve_sync_policy,
+    sync_policy_allows_operation,
+    sync_policy_deletes_on_push,
+)
 from dotman.models import DirectoryPlanItem, HookCommandSpec, PackageSpec, ResolvedPackageSelection, TargetPlan, TargetSpec
 from dotman.repository import Repository
 from dotman.templates import render_template_file, render_template_string
@@ -192,10 +198,93 @@ def plan_targets(
         target = metadata.target
         repo_path = metadata.repo_path
         live_path = metadata.live_path
+        sync_policy = resolve_sync_policy(package=package, target=target)
         target_kind = infer_target_kind(repo_path=repo_path, live_path=live_path)
         render_command = metadata.render_command
         capture_command = metadata.capture_command
         reconcile = metadata.reconcile
+        if operation == "push" and sync_policy_deletes_on_push(sync_policy):
+            target_kind = infer_push_only_delete_target_kind(repo_path=repo_path, live_path=live_path)
+            if target_kind == "directory":
+                action, directory_items = plan_live_delete_directory_action(
+                    repo_path=repo_path,
+                    live_path=live_path,
+                    pull_ignore=metadata.pull_ignore,
+                )
+                plans.append(
+                    TargetPlan(
+                        package_id=package.id,
+                        target_name=target.name,
+                        repo_path=repo_path,
+                        live_path=live_path,
+                        action=action,
+                        target_kind="directory",
+                        projection_kind="directory",
+                        render_command=render_command,
+                        capture_command=capture_command,
+                        reconcile=reconcile,
+                        live_path_is_symlink=metadata.live_path_is_symlink,
+                        live_path_symlink_target=metadata.live_path_symlink_target,
+                        file_symlink_mode=engine.config.file_symlink_mode,
+                        dir_symlink_mode=engine.config.dir_symlink_mode,
+                        pull_view_repo=metadata.pull_view_repo,
+                        pull_view_live=metadata.pull_view_live,
+                        push_ignore=metadata.push_ignore,
+                        pull_ignore=metadata.pull_ignore,
+                        chmod=metadata.chmod,
+                        command_cwd=metadata.command_cwd,
+                        command_env=metadata.command_env,
+                        directory_items=directory_items,
+                    )
+                )
+                continue
+
+            action = "delete" if target_kind == "file" and (live_path.exists() or live_path.is_symlink()) else "noop"
+            review_before_bytes, review_after_bytes = build_file_review_bytes(
+                engine,
+                repo=repo,
+                package=package,
+                target=target,
+                repo_path=repo_path,
+                live_path=live_path,
+                desired_bytes=b"",
+                render_command=render_command,
+                capture_command=capture_command,
+                context=context,
+                selection=selection,
+                operation=operation,
+                inferred_os=inferred_os,
+                pull_view_repo=metadata.pull_view_repo,
+                pull_view_live=metadata.pull_view_live,
+            )
+            plans.append(
+                TargetPlan(
+                    package_id=package.id,
+                    target_name=target.name,
+                    repo_path=repo_path,
+                    live_path=live_path,
+                    action=action,
+                    target_kind=target_kind,
+                    projection_kind="raw" if target_kind != "unknown" else "unknown",
+                    render_command=render_command,
+                    capture_command=capture_command,
+                    reconcile=reconcile,
+                    live_path_is_symlink=metadata.live_path_is_symlink,
+                    live_path_symlink_target=metadata.live_path_symlink_target,
+                    file_symlink_mode=engine.config.file_symlink_mode,
+                    dir_symlink_mode=engine.config.dir_symlink_mode,
+                    pull_view_repo=metadata.pull_view_repo,
+                    pull_view_live=metadata.pull_view_live,
+                    push_ignore=metadata.push_ignore,
+                    pull_ignore=metadata.pull_ignore,
+                    chmod=metadata.chmod,
+                    command_cwd=metadata.command_cwd,
+                    command_env=metadata.command_env,
+                    review_before_bytes=review_before_bytes,
+                    review_after_bytes=review_after_bytes,
+                )
+            )
+            continue
         if target_kind == "unknown":
             plans.append(
                 TargetPlan(
@@ -380,6 +469,20 @@ def infer_target_kind(*, repo_path: Path, live_path: Path) -> str:
     return "unknown"
 
 
+def infer_push_only_delete_target_kind(*, repo_path: Path, live_path: Path) -> str:
+    if live_path.is_symlink():
+        return "file"
+    if live_path.is_dir():
+        return "directory"
+    if live_path.exists():
+        return "file"
+    if repo_path.is_dir():
+        return "directory"
+    if repo_path.exists():
+        return "file"
+    return "unknown"
+
+
 
 def default_pull_view_live(capture_command: str | None) -> str:
     if capture_command == BUILTIN_PATCH_CAPTURE:
@@ -549,6 +652,25 @@ def plan_directory_action(
         return "noop", ()
     ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))
     return ("delete" if not live_exists else "update"), ordered_items
+
+
+def plan_live_delete_directory_action(
+    *,
+    repo_path: Path,
+    live_path: Path,
+    pull_ignore: tuple[str, ...],
+) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
+    live_files = list_directory_files(live_path, pull_ignore) if live_path.exists() else {}
+    directory_items = tuple(
+        DirectoryPlanItem(
+            relative_path=relative_path,
+            action="delete",
+            repo_path=repo_path / relative_path,
+            live_path=live_file,
+        )
+        for relative_path, live_file in sorted(live_files.items())
+    )
+    return ("delete", directory_items) if directory_items else ("noop", ())
 
 
 

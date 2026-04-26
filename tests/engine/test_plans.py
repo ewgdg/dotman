@@ -828,6 +828,54 @@ def test_package_sync_policy_is_inherited_through_extends(
     assert [target.target_name for target in pull_plan.target_plans] == ["config"]
 
 
+def test_push_only_delete_sync_policy_deletes_live_path_without_touching_repo_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=[],
+        target_manifest=['sync_policy = "push-only-delete"'],
+    )
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("live\n", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+    pull_plan = single_package_plan(engine, "fixture:app@default", operation="pull")
+
+    target = push_plan.target_plans[0]
+    assert target.action == "delete"
+    assert target.repo_path.read_text(encoding="utf-8") == "config\n"
+    assert pull_plan.target_plans == []
+
+
+def test_push_only_delete_sync_policy_noops_when_live_path_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=[],
+        target_manifest=['sync_policy = "push-only-delete"'],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert plan.target_plans[0].action == "noop"
+
+
 @pytest.mark.parametrize(
     ("package_manifest", "target_manifest"),
     [

@@ -70,9 +70,10 @@ This document captures the current repository structure and configuration schema
 - Parent packages resolve in declaration order.
 - The child package is applied last.
 - The selected package is still resolved into one final package before `push` or `pull`.
-- A package may define `sync_policy = "push-only" | "pull-only" | "both"` to gate target participation by operation.
+- A package may define `sync_policy = "push-only" | "pull-only" | "both" | "push-only-delete"` to gate target participation by operation.
 - `sync_policy` defaults to `both` when omitted.
 - Target-level `sync_policy` overrides the package default for that target.
+- `push-only-delete` means the target participates only in `push`, and `push` removes the live file path while leaving the repo source untouched. For directory targets, it removes live child files that are not preserved by `pull_ignore`. Use it to retire live files while keeping repo-side sources as fallback/history.
 - Package inheritance should merge `sync_policy` with last-wins behavior, just like other scalar fields.
 - Target and reserved-path collision rules apply across all resolved package instances, including instances that come from the same `multi_instance` package definition.
 - Keep target reuse explicit by splitting shared logic into smaller packages or using normal `depends`; package dependencies stay package/group-only.
@@ -135,7 +136,7 @@ chmod = "600"
 - Targets may define `chmod` when the installed root path needs an explicit mode.
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
 - Targets may define `sync_policy` to narrow or widen the package-level operation gate for that target.
-- Use `push-only` for forward-managed targets, `pull-only` for reverse-only targets, and `both` for targets that can participate in both operations.
+- Use `push-only` for forward-managed targets, `pull-only` for reverse-only targets, `both` for targets that can participate in both operations, and `push-only-delete` for targets whose live file should be removed on push while the repo source is retained.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
 - Explicit target keys override preset defaults.
 - Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow, `jinja-patch` for the current built-in Jinja patch-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.

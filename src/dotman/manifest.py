@@ -13,7 +13,7 @@ VALID_COMMAND_IO_VALUES = ("pipe", "tty")
 VALID_HOOK_IO_VALUES = VALID_COMMAND_IO_VALUES
 VALID_ELEVATION_VALUES = ("none", "root", "lease", "broker", "intercept")
 VALID_DEFAULT_COMMAND_ELEVATION_VALUES = ("none", "broker", "intercept")
-VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both")
+VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both", "push-only-delete")
 
 
 def validate_package_id(package_id: str) -> None:
@@ -269,11 +269,15 @@ def resolve_sync_policy(*, package: PackageSpec, target: TargetSpec) -> str:
 def sync_policy_allows_operation(sync_policy: str, *, operation: str) -> bool:
     if sync_policy == "both":
         return True
-    if sync_policy == "push-only":
+    if sync_policy in {"push-only", "push-only-delete"}:
         return operation == "push"
     if sync_policy == "pull-only":
         return operation == "pull"
     raise ValueError(f"unsupported sync policy '{sync_policy}'")
+
+
+def sync_policy_deletes_on_push(sync_policy: str) -> bool:
+    return sync_policy == "push-only-delete"
 
 
 def read_schema_alias(payload: dict[str, Any], primary_key: str, legacy_key: str) -> Any:
