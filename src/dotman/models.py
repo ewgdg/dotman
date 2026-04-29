@@ -98,12 +98,14 @@ class HookCommandSpec:
     run: str
     io: HookCommandIO = "pipe"
     elevation: ElevationMode = "none"
+    run_noop: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run": self.run,
             "io": self.io,
             "elevation": self.elevation,
+            "run_noop": self.run_noop,
         }
 
 

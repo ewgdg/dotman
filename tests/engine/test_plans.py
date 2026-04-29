@@ -384,6 +384,46 @@ def test_package_hook_shorthand_list_accepts_command_objects(
     assert hook.run_noop is False
 
 
+def test_package_hook_command_object_parses_run_noop_metadata(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_hook_metadata_repo(
+        tmp_path,
+        package_manifest=[
+            "[hooks]",
+            'pre_push = ["echo normal", { run = "echo noop", run_noop = true }]',
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    hook = engine.get_repo("fixture").resolve_package("app").hooks["pre_push"]
+    assert hook.commands == (
+        HookCommandSpec(run="echo normal"),
+        HookCommandSpec(run="echo noop", run_noop=True),
+    )
+    assert hook.run_noop is False
+
+
+def test_package_hook_command_object_rejects_non_boolean_run_noop(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_hook_metadata_repo(
+        tmp_path,
+        package_manifest=[
+            "[hooks]",
+            'pre_push = [{ run = "echo bad", run_noop = "yes" }]',
+        ],
+    )
+
+    with pytest.raises(ValueError, match="run_noop must be a boolean"):
+        DotmanEngine.from_config_path(
+            write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+        )
+
+
 def test_package_hook_planning_preserves_per_command_io_and_json_payload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -432,6 +472,82 @@ def test_package_hook_planning_preserves_per_command_elevation_metadata(
     assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo prep", "systemctl restart sddm"]
     assert [hook.elevation for hook in push_plan.hooks["pre_push"]] == ["none", "root"]
     assert push_plan.to_dict()["hooks"]["pre_push"][1]["elevation"] == "root"
+
+
+def test_package_hook_command_run_noop_retains_only_noop_eligible_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_sync_policy_repo(
+        tmp_path,
+        package_manifest=[],
+        hook_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo normal", { run = "echo noop", run_noop = true }]',
+        ],
+    )
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("config\n", encoding="utf-8")
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo noop"]
+
+
+def test_target_hook_command_run_noop_retains_only_noop_eligible_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        package_manifest=[
+            "[targets.config.hooks.pre_push]",
+            'commands = ["echo target normal", { run = "echo target noop", run_noop = true }]',
+        ],
+    )
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("config\n", encoding="utf-8")
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo target noop"]
+
+
+def test_repo_hook_command_run_noop_retains_only_noop_eligible_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        repo_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo repo normal", { run = "echo repo noop", run_noop = true }]',
+        ],
+    )
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("config\n", encoding="utf-8")
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    operation_plan = engine.plan_push_query("fixture:app@default")
+
+    assert [hook.command for hook in operation_plan.repo_hooks["fixture"]["pre_push"]] == ["echo repo noop"]
 
 
 @pytest.mark.parametrize("elevation", ["none", "root", "lease", "broker", "intercept"])

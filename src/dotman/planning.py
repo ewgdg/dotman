@@ -678,7 +678,7 @@ def plan_hooks(
                         io=command_spec.io,
                         elevation=command_spec.elevation,
                         env=dict(package_env),
-                        run_noop=hook_spec.run_noop,
+                        run_noop=hook_spec.run_noop or command_spec.run_noop,
                     )
                 )
         for target_name, target_spec in (package.targets or {}).items():
@@ -704,7 +704,7 @@ def plan_hooks(
                             io=command_spec.io,
                             elevation=command_spec.elevation,
                             env=target_env,
-                            run_noop=hook_spec.run_noop,
+                            run_noop=hook_spec.run_noop or command_spec.run_noop,
                         )
                     )
     return dict(hooks)
@@ -734,7 +734,7 @@ def plan_repo_hooks(
                     io=command_spec.io,
                     elevation=command_spec.elevation,
                     env=dict(env),
-                    run_noop=hook_spec.run_noop,
+                    run_noop=hook_spec.run_noop or command_spec.run_noop,
                 )
             )
     return dict(hooks)

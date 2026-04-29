@@ -165,6 +165,7 @@ def _build_hook_command_spec(
         owner_label=owner_label,
         command_label=f"hook '{hook_name}' command object",
         default_command_elevation=default_command_elevation,
+        allow_run_noop=True,
     )
 
 
@@ -176,13 +177,17 @@ def _build_command_spec(
     owner_label: str,
     command_label: str,
     default_command_elevation: DefaultCommandElevationMode = "none",
+    allow_run_noop: bool = False,
 ) -> HookCommandSpec:
     if "privileged" in command_payload:
         raise ValueError(
             f"{manifest_kind} {manifest_path} {owner_label} {command_label} uses deprecated 'privileged'; "
             "use elevation = \"root\" instead"
         )
-    unknown_keys = sorted(key for key in command_payload if key not in {"run", "io", "elevation"})
+    supported_keys = {"run", "io", "elevation"}
+    if allow_run_noop:
+        supported_keys.add("run_noop")
+    unknown_keys = sorted(key for key in command_payload if key not in supported_keys)
     if unknown_keys:
         unknown_text = ", ".join(unknown_keys)
         raise ValueError(
@@ -207,7 +212,12 @@ def _build_command_spec(
         key="elevation",
         allowed=VALID_ELEVATION_VALUES,
     ) or default_command_elevation
-    return HookCommandSpec(run=run_value, io=io_value, elevation=elevation_value)
+    run_noop_value = command_payload.get("run_noop", False) if allow_run_noop else False
+    if allow_run_noop and not isinstance(run_noop_value, bool):
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} {command_label} run_noop must be a boolean"
+        )
+    return HookCommandSpec(run=run_value, io=io_value, elevation=elevation_value, run_noop=run_noop_value)
 
 
 def _build_reconcile_spec(

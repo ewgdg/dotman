@@ -244,11 +244,12 @@ sync_policy = "pull-only"
 - `check` is removed; there is no backward-compatibility alias.
 - Hook entries may be a single item, an ordered list, or a table with `commands` and optional metadata.
 - Repo, package, and target hook table form all support `run_noop = true | false`.
+- Hook command objects also support `run_noop = true | false` to make only that command noop-eligible.
 - `run_noop` defaults to `false`.
 - Repo, package, and target hook shorthand still work and normalize to `run_noop = false`.
 - Empty hook command lists are allowed and mean the hook is effectively disabled at that package layer.
 - Hook command lists may mix plain strings and command objects in either shorthand or table form.
-- Command objects use `{ run = "...", io = "pipe" | "tty", elevation = "none" | "root" | "lease" | "broker" | "intercept" }`.
+- Command objects use `{ run = "...", io = "pipe" | "tty", elevation = "none" | "root" | "lease" | "broker" | "intercept", run_noop = true | false }`.
 - `run` is required for command objects and must not be empty after trimming.
 - `io` defaults to `pipe`.
 - `elevation` defaults to the repo-level `default_command_elevation`, or `none` when the repo default is omitted.
@@ -320,9 +321,9 @@ post_pull = ["echo one", "echo two"]
 commands = [
   "echo prep",
   { run = "nvim files/config.txt", io = "tty" },
+  { run = "sh hooks/refresh-cache.sh", run_noop = true },
   "echo done",
 ]
-run_noop = true
 ```
 
 - Hook lists run in declaration order and stop on first non-zero exit.
@@ -343,6 +344,7 @@ run_noop = true
 - If a package hook declares `run_noop = true`, dotman may retain that hook as standalone hook-only package work when the package has no executable target steps for the active operation.
 - If a target hook declares `run_noop = true`, dotman may retain that hook as standalone hook-only target work when that target action is noop.
 - If a repo hook declares `run_noop = true`, dotman may retain that hook as standalone hook-only repo work when the finalized repo has no lower-scope work.
+- If only specific command objects declare `run_noop = true`, standalone noop hook work retains those commands only.
 - Standalone hook-only package execution must not fabricate target writes or snapshots.
 - Standalone hook-only target or repo execution must not fabricate target writes or snapshots.
 - Provenance alone should not cause hooks to execute.
