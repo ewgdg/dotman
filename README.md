@@ -152,4 +152,4 @@ Support editor-backed reconciliation during pull flows.
 
 ### First-class system files support
 
-Manage not only user dotfiles, but also system files when run with appropriate permissions.
+Manage user dotfiles and system files alike; dotman escalates privileges automatically when needed.
