@@ -20,7 +20,7 @@ from dotman.ui_context import current_ui_config
 from dotman.terminal import preserve_terminal_state
 
 
-DEFAULT_REVIEW_PAGER = "less -FRX -R"
+DEFAULT_REVIEW_PAGER = "less -FRX"
 DEFAULT_COMPACT_PATH_TAIL_SEGMENTS = 2
 REVIEW_PATH_HEAD_SEGMENTS = 1
 
@@ -432,21 +432,15 @@ def _build_review_diff_command(*, root: Path, left_path: Path, right_path: Path,
 def _select_review_pager_command() -> str | None:
     git_pager = os.environ.get("GIT_PAGER")
     if git_pager is not None:
-        if not _pager_command_is_disabled(git_pager):
-            return git_pager
-        return DEFAULT_REVIEW_PAGER if shutil.which("less") is not None else None
-
-    pager = os.environ.get("PAGER")
-    if pager is not None:
-        if not _pager_command_is_disabled(pager):
-            return pager
-        return DEFAULT_REVIEW_PAGER if shutil.which("less") is not None else None
+        return None if _pager_command_is_disabled(git_pager) else git_pager
 
     configured_pager = _git_configured_pager_command()
     if configured_pager is not None:
-        if not _pager_command_is_disabled(configured_pager):
-            return configured_pager
-        return DEFAULT_REVIEW_PAGER if shutil.which("less") is not None else None
+        return None if _pager_command_is_disabled(configured_pager) else configured_pager
+
+    pager = os.environ.get("PAGER")
+    if pager is not None:
+        return None if _pager_command_is_disabled(pager) else pager
 
     return DEFAULT_REVIEW_PAGER if shutil.which("less") is not None else None
 

@@ -377,20 +377,44 @@ def test_display_review_path_can_disable_compaction_and_home_collapse() -> None:
     assert display_review_path(full_path, compact=False) == str(full_path)
 
 
-def test_select_review_pager_command_prefers_less_when_pager_env_is_cat(monkeypatch) -> None:
+def test_select_review_pager_command_uses_git_pager_before_git_config_and_pager(monkeypatch) -> None:
+    monkeypatch.setenv("GIT_PAGER", "delta")
+    monkeypatch.setenv("PAGER", "less")
+    monkeypatch.setattr("dotman.diff_review._git_configured_pager_command", lambda: "diff-so-fancy")
+
+    assert _select_review_pager_command() == "delta"
+
+
+def test_select_review_pager_command_uses_git_config_before_pager_env(monkeypatch) -> None:
+    monkeypatch.delenv("GIT_PAGER", raising=False)
+    monkeypatch.setenv("PAGER", "less")
+    monkeypatch.setattr("dotman.diff_review._git_configured_pager_command", lambda: "delta")
+
+    assert _select_review_pager_command() == "delta"
+
+
+def test_select_review_pager_command_uses_pager_env_after_git_config(monkeypatch) -> None:
+    monkeypatch.delenv("GIT_PAGER", raising=False)
+    monkeypatch.setenv("PAGER", "less")
+    monkeypatch.setattr("dotman.diff_review._git_configured_pager_command", lambda: None)
+
+    assert _select_review_pager_command() == "less"
+
+
+def test_select_review_pager_command_treats_pager_cat_as_disabled(monkeypatch) -> None:
     monkeypatch.delenv("GIT_PAGER", raising=False)
     monkeypatch.setenv("PAGER", "cat")
     monkeypatch.setattr("dotman.diff_review._git_configured_pager_command", lambda: None)
     monkeypatch.setattr("dotman.diff_review.shutil.which", lambda name: "/usr/bin/less" if name == "less" else None)
 
-    assert _select_review_pager_command() == DEFAULT_REVIEW_PAGER
+    assert _select_review_pager_command() is None
 
 
-def test_select_review_pager_command_replaces_explicit_git_pager_cat_with_less(monkeypatch) -> None:
+def test_select_review_pager_command_treats_git_pager_cat_as_disabled(monkeypatch) -> None:
     monkeypatch.setenv("GIT_PAGER", "cat")
     monkeypatch.setattr("dotman.diff_review.shutil.which", lambda name: "/usr/bin/less" if name == "less" else None)
 
-    assert _select_review_pager_command() == DEFAULT_REVIEW_PAGER
+    assert _select_review_pager_command() is None
 
 
 def test_run_review_item_edit_prefers_pull_reconcile(monkeypatch, tmp_path: Path) -> None:
