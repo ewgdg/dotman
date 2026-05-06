@@ -50,13 +50,64 @@ def test_config_defaults_snapshot_settings(tmp_path: Path) -> None:
     assert engine.config.snapshots.enabled is True
     assert engine.config.snapshots.path == default_snapshot_root()
     assert engine.config.snapshots.max_generations == 10
-    assert engine.config.selection_menu.full_paths is False
-    assert engine.config.selection_menu.bottom_up is True
+    assert engine.config.ui.full_paths is False
+    assert engine.config.ui.menus.bottom_up is True
+    assert engine.config.ui.compact_path_tail_segments == 2
     assert engine.config.file_symlink_mode == "prompt"
     assert engine.config.dir_symlink_mode == "fail"
 
 
-def test_config_reads_selection_menu_overrides(tmp_path: Path) -> None:
+def test_config_reads_ui_overrides(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.example]",
+                f'path = "{EXAMPLE_REPO}"',
+                "order = 10",
+                "",
+                "[ui]",
+                "full_paths = true",
+                "compact_path_tail_segments = 3",
+                "",
+                "[ui.menus]",
+                "bottom_up = false",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    assert engine.config.ui.full_paths is True
+    assert engine.config.ui.menus.bottom_up is False
+    assert engine.config.ui.compact_path_tail_segments == 3
+
+
+@pytest.mark.parametrize("value", ["0", "false", '"2"'])
+def test_config_rejects_invalid_compact_path_tail_segments(tmp_path: Path, value: str) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[repos.example]",
+                f'path = "{EXAMPLE_REPO}"',
+                "order = 10",
+                "",
+                "[ui]",
+                f"compact_path_tail_segments = {value}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="compact_path_tail_segments"):
+        DotmanEngine.from_config_path(config_path)
+
+
+def test_config_rejects_legacy_selection_menu_config(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         "\n".join(
@@ -67,17 +118,15 @@ def test_config_reads_selection_menu_overrides(tmp_path: Path) -> None:
                 "",
                 "[selection_menu]",
                 "full_paths = true",
-                "bottom_up = false",
                 "",
             ]
         ),
         encoding="utf-8",
     )
 
-    engine = DotmanEngine.from_config_path(config_path)
+    with pytest.raises(ValueError, match="selection_menu"):
+        DotmanEngine.from_config_path(config_path)
 
-    assert engine.config.selection_menu.full_paths is True
-    assert engine.config.selection_menu.bottom_up is False
 
 def test_config_reads_symlink_mode_overrides(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"

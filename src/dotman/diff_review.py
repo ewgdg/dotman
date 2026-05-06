@@ -16,12 +16,13 @@ from dotman.file_access import request_sudo, sudo_prefix_command
 from dotman.models import HookCommandSpec, PackagePlan
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
+from dotman.ui_context import current_ui_config
 from dotman.terminal import preserve_terminal_state
 
 
 DEFAULT_REVIEW_PAGER = "less -FRX -R"
-MAX_UNCOMPACTED_REVIEW_PATH_PARTS = 3
-REVIEW_PATH_TAIL_PARTS = 2
+DEFAULT_COMPACT_PATH_TAIL_SEGMENTS = 2
+REVIEW_PATH_HEAD_SEGMENTS = 1
 
 
 @dataclass(frozen=True)
@@ -353,16 +354,16 @@ def _review_materialized_display_path(reference_path: Path) -> Path:
     return display_path
 
 
-def display_review_path(reference_path: Path | str, *, compact: bool = True) -> str:
+def display_review_path(reference_path: Path | str, *, compact: bool = True, tail_segments: int | None = None) -> str:
     path = Path(reference_path)
     if not compact:
         return str(path)
-    return str(_review_display_path(path))
+    return str(_review_display_path(path, tail_segments=tail_segments))
 
 
-def _review_display_path(reference_path: Path) -> Path:
+def _review_display_path(reference_path: Path, *, tail_segments: int | None = None) -> Path:
     normalized_path = _normalize_review_display_path(reference_path)
-    return _compact_review_display_path(normalized_path)
+    return _compact_review_display_path(normalized_path, tail_segments=tail_segments)
 
 
 def _normalize_review_display_path(reference_path: Path) -> Path:
@@ -377,21 +378,38 @@ def _normalize_review_display_path(reference_path: Path) -> Path:
     return Path("~") / home_relative_path if home_relative_path.parts else Path("~")
 
 
-def _compact_review_display_path(display_path: Path) -> Path:
+def _compact_review_display_path(display_path: Path, *, tail_segments: int | None = None) -> Path:
     parts = display_path.parts
     if not parts:
         return Path("content")
+    resolved_tail_segments = _effective_compact_path_tail_segments(tail_segments)
     if display_path.is_absolute():
-        if len(parts) <= MAX_UNCOMPACTED_REVIEW_PATH_PARTS + 1:
+        head_parts = parts[: 1 + REVIEW_PATH_HEAD_SEGMENTS]
+        if len(parts) <= len(head_parts) + resolved_tail_segments:
             return display_path
         # Absolute paths keep their root slash so system files stay clearly
         # distinguished from repo-relative paths in review and selection menus.
-        return Path(parts[0], parts[1], "...", *parts[-REVIEW_PATH_TAIL_PARTS:])
-    if len(parts) <= MAX_UNCOMPACTED_REVIEW_PATH_PARTS:
+        return Path(*head_parts, "...", *parts[-resolved_tail_segments:])
+    head_parts = parts[:REVIEW_PATH_HEAD_SEGMENTS]
+    if len(parts) <= len(head_parts) + resolved_tail_segments:
         return display_path
     # Keep the anchor and tail so long review labels stay short without
     # dropping the most useful disambiguating path context.
-    return Path(parts[0], "...", *parts[-REVIEW_PATH_TAIL_PARTS:])
+    return Path(*head_parts, "...", *parts[-resolved_tail_segments:])
+
+
+def _effective_compact_path_tail_segments(tail_segments: int | None) -> int:
+    configured_tail_segments = tail_segments
+    if configured_tail_segments is None:
+        ui_config = current_ui_config()
+        configured_tail_segments = (
+            ui_config.compact_path_tail_segments
+            if ui_config is not None
+            else DEFAULT_COMPACT_PATH_TAIL_SEGMENTS
+        )
+    if not isinstance(configured_tail_segments, int) or isinstance(configured_tail_segments, bool) or configured_tail_segments < 1:
+        raise ValueError("compact path tail segments must be an integer >= 1")
+    return configured_tail_segments
 
 
 def _build_review_diff_command(*, root: Path, left_path: Path, right_path: Path, paginate: bool) -> list[str]:

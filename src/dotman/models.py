@@ -37,9 +37,15 @@ class SnapshotConfig:
 
 
 @dataclass(frozen=True)
-class SelectionMenuConfig:
-    full_paths: bool = False
+class UiMenusConfig:
     bottom_up: bool = True
+
+
+@dataclass(frozen=True)
+class UiConfig:
+    full_paths: bool = False
+    compact_path_tail_segments: int = 2
+    menus: UiMenusConfig = field(default_factory=UiMenusConfig)
 
 
 @dataclass(frozen=True)
@@ -47,7 +53,7 @@ class ManagerConfig:
     config_path: Path
     repos: dict[str, RepoConfig]
     snapshots: SnapshotConfig
-    selection_menu: SelectionMenuConfig = field(default_factory=SelectionMenuConfig)
+    ui: UiConfig = field(default_factory=UiConfig)
     file_symlink_mode: str = "prompt"
     dir_symlink_mode: str = "fail"
 

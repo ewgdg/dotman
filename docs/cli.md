@@ -60,7 +60,7 @@ This document captures the current command and selector direction for `dotman`.
 - For longer candidate lists, dotman should prefer `fzf` when available instead of dumping a tall numbered menu.
 - Interactive selector menus should render bottom-up by default.
 - Bottom-up selector menus should remain user-toggleable, but the default should favor bottom-up display.
-- Manager config may override the default under `[selection_menu]`, and `DOTMAN_MENU_BOTTOM_UP` should still act as a single-run override.
+- Manager config may override the default under `[ui.menus]`, and `DOTMAN_MENU_BOTTOM_UP` should still act as a single-run override.
 
 ## Search
 

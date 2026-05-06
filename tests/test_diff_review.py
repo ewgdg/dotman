@@ -5,6 +5,8 @@ import stat
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from dotman.diff_review import (
     DEFAULT_REVIEW_PAGER,
     ReviewItem,
@@ -16,7 +18,8 @@ from dotman.diff_review import (
     run_review_item_diff,
     run_review_item_edit,
 )
-from dotman.models import DirectoryPlanItem, HookCommandSpec, TargetPlan
+from dotman.models import DirectoryPlanItem, HookCommandSpec, UiConfig, TargetPlan
+from dotman.ui_context import ui_config_scope
 from tests.helpers import make_package_plan
 
 
@@ -340,6 +343,20 @@ def test_review_display_path_uses_tilde_for_home_prefix() -> None:
 
 def test_review_display_path_compacts_long_home_relative_path() -> None:
     assert _review_display_path(Path.home() / ".local" / "share" / "nvim" / "init.lua") == Path("~/.../nvim/init.lua")
+
+
+def test_review_display_path_uses_configured_tail_segments() -> None:
+    assert _review_display_path(Path.home() / ".local" / "share" / "nvim" / "init.lua", tail_segments=3) == Path("~/.../share/nvim/init.lua")
+
+
+def test_review_display_path_uses_ui_context_tail_segments() -> None:
+    with ui_config_scope(UiConfig(compact_path_tail_segments=3)):
+        assert _review_display_path(Path.home() / ".local" / "share" / "nvim" / "init.lua") == Path("~/.../share/nvim/init.lua")
+
+
+def test_review_display_path_rejects_invalid_tail_segments() -> None:
+    with pytest.raises(ValueError, match="tail segments"):
+        _review_display_path(Path.home() / ".local" / "share" / "nvim" / "init.lua", tail_segments=0)
 
 
 def test_review_display_path_keeps_absolute_path_with_root_prefix() -> None:

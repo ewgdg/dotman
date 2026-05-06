@@ -66,15 +66,17 @@ This document captures the user-level dotman manager configuration.
 - `max_generations` is count-based retention. Dotman should prune the oldest snapshots when the retained snapshot count exceeds that limit.
 - Snapshot storage is distinct from repo tracked package state. Snapshots belong under data home, while tracked package state stays under state home.
 
-## Selection Menu
+## UI
 
-- Selection menu behavior is manager-level and applies across interactive selector pickers, exclusion menus, and diff review screens.
-- Selection menu settings should be declared under `[selection_menu]`.
-- `full_paths` is optional and defaults to `false`.
-- When `full_paths` is `true`, dotman should show unabridged absolute paths in the human-readable selection, review, and execution output that uses the shared menu path renderer.
-- `bottom_up` is optional and defaults to `true`.
-- When `bottom_up` is `true`, dotman should render interactive selector menus from bottom to top.
-- The `DOTMAN_MENU_BOTTOM_UP` environment variable should continue to override the bottom-up setting for a single run.
+- UI behavior is manager-level and applies across interactive selector pickers, exclusion menus, diff review screens, and shared human-readable path output.
+- UI settings should be declared under `[ui]` and `[ui.menus]`.
+- `ui.full_paths` is optional and defaults to `false`.
+- When `ui.full_paths` is `true`, dotman should show unabridged absolute paths in human-readable output that uses the shared path renderer.
+- `ui.compact_path_tail_segments` is optional, must be an integer greater than or equal to `1`, and defaults to `2`.
+- When paths are compacted, `ui.compact_path_tail_segments` controls how many ending path segments are kept, including the final file or directory name. For example, `3` renders `~/.local/share/nvim/init.lua` as `~/.../share/nvim/init.lua`.
+- `ui.menus.bottom_up` is optional and defaults to `true`.
+- When `ui.menus.bottom_up` is `true`, dotman should render interactive selector menus from bottom to top.
+- The `DOTMAN_MENU_BOTTOM_UP` environment variable should continue to override `ui.menus.bottom_up` for a single run.
 
 Example:
 
@@ -93,8 +95,11 @@ state_key = "test"
 enabled = true
 max_generations = 10
 
-[selection_menu]
+[ui]
 full_paths = false
+compact_path_tail_segments = 2
+
+[ui.menus]
 bottom_up = true
 
 [symlinks]

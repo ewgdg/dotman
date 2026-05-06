@@ -79,7 +79,7 @@ def test_dispatch_command_uses_parsed_full_path_default() -> None:
 
     args = build_parser().parse_args(["list", "tracked"])
     engine = SimpleNamespace(
-        config=SimpleNamespace(selection_menu=SimpleNamespace(full_paths=True)),
+        config=SimpleNamespace(ui=SimpleNamespace(full_paths=True)),
         list_tracked_state=lambda: SimpleNamespace(packages=[], invalid_package_entries=[]),
     )
 
@@ -251,7 +251,7 @@ def test_dispatch_command_routes_list_trackables() -> None:
 
     args = build_parser().parse_args(["list", "trackables"])
     engine = SimpleNamespace(
-        config=SimpleNamespace(selection_menu=SimpleNamespace(full_paths=True)),
+        config=SimpleNamespace(ui=SimpleNamespace(full_paths=True)),
         list_trackables=lambda: [SimpleNamespace(to_dict=lambda: {"kind": "package"})],
     )
 

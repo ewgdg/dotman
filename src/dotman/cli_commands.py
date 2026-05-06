@@ -8,7 +8,7 @@ from dotman.engine import TrackedTargetConflictError
 from dotman.elevation import request_elevation_from_env
 from dotman.file_access import sudo_session
 from dotman.models import FullSpecSelector, package_ref_text
-from dotman.selection_menu_context import selection_menu_config_scope
+from dotman.ui_context import ui_config_scope
 from dotman.snapshot import (
     build_rollback_actions,
     list_snapshots,
@@ -87,8 +87,8 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
         return pre_engine_result
 
     engine = engine_factory(args.config)
-    full_paths = args.full_path if args.full_path is not None else engine.config.selection_menu.full_paths
-    with selection_menu_config_scope(engine.config.selection_menu):
+    full_paths = args.full_path if args.full_path is not None else engine.config.ui.full_paths
+    with ui_config_scope(engine.config.ui):
         if args.command == "doctor":
             return handlers.emit_doctor_summary(
                 engine=engine,

@@ -61,7 +61,7 @@ from dotman.resolver import (
 from dotman.cli_parser import build_parser as build_cli_parser
 from dotman import cli_emit, cli_commands
 from dotman.planning import finalize_repo_hook_plans, standalone_repo_hook_summary
-from dotman.selection_menu_context import current_selection_menu_config
+from dotman.ui_context import current_ui_config
 from dotman.doctor import DoctorSummary
 
 
@@ -362,10 +362,10 @@ def render_menu_badge(text: str) -> str:
     return cli_style.render_menu_badge(text, use_color=colors_enabled())
 
 
-def selection_menu_full_paths_enabled() -> bool:
-    selection_menu_config = current_selection_menu_config()
-    if selection_menu_config is not None:
-        return selection_menu_config.full_paths
+def ui_full_paths_enabled() -> bool:
+    ui_config = current_ui_config()
+    if ui_config is not None:
+        return ui_config.full_paths
     return False
 
 
@@ -461,7 +461,7 @@ def parse_selection_indexes(raw_answer: str, item_count: int) -> set[int]:
 def _select_menu_option_with_prompt(*, header_text: str, option_labels: Sequence[str]) -> int:
     print_selection_header(header_text)
     indexed_labels = list(enumerate(option_labels, start=1))
-    if selection_menu_bottom_up_enabled():
+    if ui_menus_bottom_up_enabled():
         indexed_labels.reverse()
     for index, option_label in indexed_labels:
         print_selection_item(index, option_label)
@@ -480,20 +480,20 @@ def _fzf_available() -> bool:
     return shutil.which("fzf") is not None
 
 
-def selection_menu_bottom_up_enabled() -> bool:
+def ui_menus_bottom_up_enabled() -> bool:
     raw_value = os.environ.get("DOTMAN_MENU_BOTTOM_UP")
     if raw_value is not None:
         return raw_value.strip().lower() not in {"0", "false", "no", "off"}
-    selection_menu_config = current_selection_menu_config()
-    if selection_menu_config is not None:
-        return selection_menu_config.bottom_up
+    ui_config = current_ui_config()
+    if ui_config is not None:
+        return ui_config.menus.bottom_up
     return True
 
 
 def _effective_full_paths(full_paths: bool | None) -> bool:
     if full_paths is not None:
         return full_paths
-    return selection_menu_full_paths_enabled()
+    return ui_full_paths_enabled()
 
 
 def _should_use_fzf_for_selection(option_labels: Sequence[str]) -> bool:

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
-from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, OperationPlan, SelectionMenuConfig, TargetPlan
-from dotman.selection_menu_context import selection_menu_config_scope
+from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, OperationPlan, UiConfig, UiMenusConfig, TargetPlan
+from dotman.ui_context import ui_config_scope
 
 from tests.helpers import (
     EXAMPLE_REPO,
@@ -631,7 +631,7 @@ def test_resolve_candidate_match_ranks_leftmost_selector_segments_first(monkeypa
 
 def test_select_menu_option_with_prompt_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-    monkeypatch.setattr(cli, "selection_menu_bottom_up_enabled", lambda: True)
+    monkeypatch.setattr(cli, "ui_menus_bottom_up_enabled", lambda: True)
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
 
     assert cli._select_menu_option_with_prompt(
@@ -654,7 +654,7 @@ def test_select_menu_option_with_fzf_uses_structured_display_fields(monkeypatch)
         return subprocess.CompletedProcess(command, 0, stdout="2\n", stderr="")
 
     monkeypatch.setattr(cli.subprocess, "run", fake_run)
-    monkeypatch.setattr(cli, "selection_menu_bottom_up_enabled", lambda: True)
+    monkeypatch.setattr(cli, "ui_menus_bottom_up_enabled", lambda: True)
 
     selected_index = cli._select_menu_option_with_fzf(
         header_text="Select a package:",
@@ -1114,7 +1114,7 @@ def test_select_menu_option_uses_manager_bottom_up_default(monkeypatch, capsys) 
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
-    with selection_menu_config_scope(SelectionMenuConfig(bottom_up=False)):
+    with ui_config_scope(UiConfig(menus=UiMenusConfig(bottom_up=False))):
         selected_index = cli.select_menu_option(
             header_text="Select a profile:",
             option_labels=["basic", "work", "host/linux"],
@@ -1140,7 +1140,7 @@ def test_prompt_for_excluded_items_uses_manager_full_path_default(monkeypatch, c
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
-    with selection_menu_config_scope(SelectionMenuConfig(full_paths=True)):
+    with ui_config_scope(UiConfig(full_paths=True)):
         excluded = prompt_for_excluded_items(selection_items, operation="push")
 
     output = capsys.readouterr().out
