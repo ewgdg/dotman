@@ -12,6 +12,7 @@
       .create { fill: #d9d06f; }
       .red { fill: #ff6b68; }
       .gold { fill: #e5c79a; font-weight: 700; }
+      .target { fill: #d7ba7d; }
       .muted { fill: #9a8b6f; }
       .prompt { fill: #d7ba7d; }
       .cursor { fill: #d7ba7d; }
@@ -36,8 +37,7 @@
   <text x="62" y="146" class="mono line">
     <tspan class="green">1)</tspan>
     <tspan dx="14" class="update">[update]</tspan>
-    <tspan dx="14" class="cyan">sandbox</tspan><tspan class="fg">:</tspan><tspan class="gold">agents</tspan>
-    <tspan class="muted"> (d_agents)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="cyan">sandbox</tspan><tspan class="fg">:</tspan><tspan class="gold">agents</tspan><tspan class="muted">.</tspan><tspan class="target">d_agents</tspan><tspan class="fg">:</tspan>
     <tspan dx="14" class="fg">~/.../agents/AGENTS.md</tspan>
     <tspan class="muted"> -&gt; </tspan>
     <tspan class="fg">~/.agents/AGENTS.md</tspan>
@@ -46,8 +46,7 @@
   <text x="62" y="190" class="mono line">
     <tspan class="green">2)</tspan>
     <tspan dx="14" class="update">[update]</tspan>
-    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">git</tspan>
-    <tspan class="muted"> (gitconfig)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">git</tspan><tspan class="muted">.</tspan><tspan class="target">gitconfig</tspan><tspan class="fg">:</tspan>
     <tspan dx="14" class="fg">~/.../gitconfig</tspan>
     <tspan class="muted"> -&gt; </tspan>
     <tspan class="fg">~/.gitconfig</tspan>
@@ -56,8 +55,7 @@
   <text x="62" y="234" class="mono line">
     <tspan class="green">3)</tspan>
     <tspan dx="14" class="create">[create]</tspan>
-    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">nvim</tspan>
-    <tspan class="muted"> (init_lua)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">nvim</tspan><tspan class="muted">.</tspan><tspan class="target">init_lua</tspan><tspan class="fg">:</tspan>
     <tspan dx="14" class="fg">~/.../nvim/init.lua</tspan>
     <tspan class="muted"> -&gt; </tspan>
     <tspan class="fg">~/.config/nvim/init.lua</tspan>
@@ -66,8 +64,7 @@
   <text x="62" y="278" class="mono line">
     <tspan class="green">4)</tspan>
     <tspan dx="14" class="red">[delete]</tspan>
-    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">ssh</tspan>
-    <tspan class="muted"> (legacy)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">ssh</tspan><tspan class="muted">.</tspan><tspan class="target">legacy</tspan><tspan class="fg">:</tspan>
     <tspan dx="14" class="fg">~/.../ssh/legacy.conf</tspan>
     <tspan class="muted"> -&gt; </tspan>
     <tspan class="fg">/etc/ssh/legacy.conf</tspan>
@@ -76,8 +73,7 @@
   <text x="62" y="322" class="mono line">
     <tspan class="green">5)</tspan>
     <tspan dx="14" class="update">[update]</tspan>
-    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">zsh</tspan>
-    <tspan class="muted"> (zshrc)</tspan><tspan class="fg">:</tspan>
+    <tspan dx="14" class="cyan">main</tspan><tspan class="fg">:</tspan><tspan class="gold">zsh</tspan><tspan class="muted">.</tspan><tspan class="target">zshrc</tspan><tspan class="fg">:</tspan>
     <tspan dx="14" class="fg">~/.../zshrc</tspan>
     <tspan class="muted"> -&gt; </tspan>
     <tspan class="fg">~/.zshrc</tspan>
