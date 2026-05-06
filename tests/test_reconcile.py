@@ -8,7 +8,7 @@ from dotman.reconcile import _reconcile_write_confirmation_prompt, run_basic_rec
 
 
 def test_reconcile_write_confirmation_prompt_uses_bracket_style() -> None:
-    assert _reconcile_write_confirmation_prompt() == "Write these changes? [y/N] "
+    assert _reconcile_write_confirmation_prompt() == "Write these changes? [y/n] "
 
 
 def test_run_basic_reconcile_pins_vim_like_editor_to_review_header(
@@ -318,7 +318,7 @@ def test_run_basic_reconcile_lists_only_changed_repo_sources_before_prompt(
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
-    monkeypatch.setattr(reconcile_module, "prompt", lambda _message: "")
+    monkeypatch.setattr(reconcile_module, "prompt", lambda _message: "n")
 
     exit_code = run_basic_reconcile(
         repo_path=str(repo_path),
@@ -349,7 +349,7 @@ def test_run_basic_reconcile_discards_temp_edits_when_write_is_not_confirmed(
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
-    monkeypatch.setattr(reconcile_module, "prompt", lambda _message: "")
+    monkeypatch.setattr(reconcile_module, "prompt", lambda _message: "n")
 
     exit_code = run_basic_reconcile(
         repo_path=str(repo_path),
@@ -360,3 +360,33 @@ def test_run_basic_reconcile_discards_temp_edits_when_write_is_not_confirmed(
 
     assert exit_code == 0
     assert repo_path.read_text(encoding="utf-8") == "repo\n"
+
+
+def test_run_basic_reconcile_requires_explicit_confirmation_answer(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("repo\n", encoding="utf-8")
+    live_path.write_text("live\n", encoding="utf-8")
+
+    def fake_run(command: list[str], check: bool):
+        Path(command[2]).write_text("edited repo\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    answers = iter(["", "maybe", "y"])
+    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    monkeypatch.setattr(reconcile_module, "prompt", lambda _message: next(answers))
+
+    exit_code = run_basic_reconcile(
+        repo_path=str(repo_path),
+        live_path=str(live_path),
+        additional_sources=[],
+        editor="nvim",
+    )
+
+    assert exit_code == 0
+    assert repo_path.read_text(encoding="utf-8") == "edited repo\n"
+    assert capsys.readouterr().err.count("invalid confirmation: enter 'y' or 'n'") == 2

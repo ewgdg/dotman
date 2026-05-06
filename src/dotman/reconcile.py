@@ -170,7 +170,7 @@ def _changed_editable_sources(editable_sources: list[EditableSourceCopy]) -> lis
 
 def _reconcile_write_confirmation_prompt() -> str:
     prompt_text = "Write these changes?"
-    hint_text = "[y/N]"
+    hint_text = "[y/n]"
     if not colors_enabled():
         return f"{prompt_text} {hint_text} "
     # Keep reconcile prompt styling aligned with CLI confirmation prompts without
@@ -190,7 +190,7 @@ def _confirm_reconcile_write(*, changed_sources: list[EditableSourceCopy], assum
         return True
     while True:
         answer = prompt(_reconcile_write_confirmation_prompt()).strip().lower()
-        if answer in {"", "n", "no"}:
+        if answer in {"n", "no"}:
             return False
         if answer in {"y", "yes"}:
             return True
