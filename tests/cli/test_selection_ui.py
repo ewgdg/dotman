@@ -952,14 +952,30 @@ def test_write_manifest_confirmation_prompt_uses_bracket_style(monkeypatch) -> N
 
     assert (
         cli.write_manifest_confirmation_prompt(repo_name="fixture", package_id="git")
-        == 'Write package config changes for fixture:git? [y/N] '
+        == 'Write package config changes for fixture:git? [y/n] '
     )
 
 
 def test_push_symlink_replacement_prompt_uses_bracket_style(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
-    assert cli.push_symlink_replacement_prompt() == 'Replace symlinked live target(s) before push? [y/N] '
+    assert cli.push_symlink_replacement_prompt() == 'Replace symlinked live target(s) before push? [y/n] '
+
+
+def test_confirm_add_manifest_write_requires_explicit_answer(monkeypatch, capsys) -> None:
+    answers = iter(["", "maybe", "n"])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    assert cli.confirm_add_manifest_write(repo_name="fixture", package_id="git") is False
+    assert capsys.readouterr().err.count("invalid confirmation: enter 'y' or 'n'") == 2
+
+
+def test_confirm_push_symlink_replacement_requires_explicit_answer(monkeypatch, capsys) -> None:
+    answers = iter(["", "y"])
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+
+    assert cli.confirm_push_symlink_replacement() is True
+    assert capsys.readouterr().err.count("invalid confirmation: enter 'y' or 'n'") == 1
 
 
 def test_confirm_review_continue_skips_prompt_when_assume_yes(monkeypatch) -> None:

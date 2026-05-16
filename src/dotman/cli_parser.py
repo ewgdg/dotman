@@ -93,7 +93,7 @@ def add_assume_yes_argument(parser: argparse.ArgumentParser) -> None:
         "--yes",
         action="store_true",
         dest="assume_yes",
-        help="Auto-confirm safe yes/no prompts without prompting",
+        help="Auto-confirm yes/no prompts without prompting",
     )
 
 

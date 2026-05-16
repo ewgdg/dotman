@@ -26,7 +26,7 @@ This document captures the current command and selector direction for `dotman`.
 
 ## Confirmation and execution flags
 
-- `--yes` skips confirmation prompts that already have a safe default, but it does not auto-resolve ambiguous selector/profile menus.
+- `--yes` skips yes/no confirmation prompts, but it does not auto-resolve ambiguous selector/profile menus.
 - Dotman also exports `DOTMAN_ASSUME_YES=1` to hooks during execution when `--yes` is active, otherwise `DOTMAN_ASSUME_YES=0`.
 - `--run-noop` is only meaningful for `push` and `pull`.
 - `--run-noop` now feeds normal planning and selection instead of reviving hooks late in execution.

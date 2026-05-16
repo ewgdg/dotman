@@ -357,7 +357,7 @@ def test_track_cli_confirms_unique_partial_profile_in_interactive_mode(
     )
 
     assert exit_code == 0
-    assert "Did you mean 'work'? [y/N] " in prompts
+    assert "Did you mean 'work'? [y/n] " in prompts
     assert "tracked example:git@work" in capsys.readouterr().out
 
 def test_track_cli_interactively_selects_ambiguous_partial_profile_match(

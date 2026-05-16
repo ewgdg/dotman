@@ -412,12 +412,14 @@ def test_add_cli_keeps_manifest_unchanged_when_editor_review_is_declined(
         "review_add_manifest",
         lambda result: AddReviewResult(exit_code=0, manifest_text=result.after_text),
     )
-    prompt_messages: list[str] = []
-    monkeypatch.setattr(
-        cli,
-        "prompt",
-        lambda message: prompt_messages.append(message) or "",
-    )
+    confirmation_calls: list[dict[str, object]] = []
+
+    def decline_manifest_write(**kwargs: object) -> bool:
+        confirmation_calls.append(kwargs)
+        return False
+
+    monkeypatch.setattr(cli, "confirm_add_manifest_write", decline_manifest_write)
+    monkeypatch.setattr(cli, "prompt", lambda _message: "")
 
     exit_code = main([
         "--config",
@@ -429,6 +431,6 @@ def test_add_cli_keeps_manifest_unchanged_when_editor_review_is_declined(
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert prompt_messages[-1] == "Write package config changes for fixture:newpkg? [y/N] "
+    assert confirmation_calls == [{"repo_name": "fixture", "package_id": "newpkg", "assume_yes": False}]
     assert "kept package config unchanged fixture:newpkg" in output
     assert not (repo_root / "packages" / "newpkg" / "package.toml").exists()

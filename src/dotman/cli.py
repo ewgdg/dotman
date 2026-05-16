@@ -590,20 +590,20 @@ def review_menu_prompt() -> str:
 
 
 def confirmation_prompt() -> str:
-    prompt_text = "Confirm replacement"
-    hint_text = '("y" to confirm; default: no)'
+    prompt_text = "Confirm replacement?"
+    hint_text = "[y/n]"
     if not colors_enabled():
-        return f"{prompt_text} {hint_text}: "
+        return f"{prompt_text} {hint_text} "
     return (
         f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
         f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
-        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
     )
 
 
 def partial_match_confirmation_prompt(*, candidate_label: str) -> str:
     prompt_text = f"Did you mean '{candidate_label}'?"
-    hint_text = "[y/N]"
+    hint_text = "[y/n]"
     if not colors_enabled():
         return f"{prompt_text} {hint_text} "
     return (
@@ -614,7 +614,7 @@ def partial_match_confirmation_prompt(*, candidate_label: str) -> str:
 
 def write_manifest_confirmation_prompt(*, repo_name: str, package_id: str) -> str:
     prompt_text = f"Write package config changes for {repo_name}:{package_id}?"
-    hint_text = "[y/N]"
+    hint_text = "[y/n]"
     if not colors_enabled():
         return f"{prompt_text} {hint_text} "
     return (
@@ -626,7 +626,7 @@ def write_manifest_confirmation_prompt(*, repo_name: str, package_id: str) -> st
 
 def push_symlink_replacement_prompt() -> str:
     prompt_text = "Replace symlinked live target(s) before push?"
-    hint_text = "[y/N]"
+    hint_text = "[y/n]"
     if not colors_enabled():
         return f"{prompt_text} {hint_text} "
     return (
@@ -648,16 +648,22 @@ def review_continue_prompt() -> str:
     )
 
 
-def confirm_review_continue(*, assume_yes: bool = False) -> bool:
-    if assume_yes:
-        return True
+def _prompt_yes_no(message: str, *, default: bool | None = None) -> bool:
     while True:
-        answer = prompt(review_continue_prompt()).strip().lower()
-        if answer in {"", "y", "yes"}:
+        answer = prompt(message).strip().lower()
+        if answer == "" and default is not None:
+            return default
+        if answer in {"y", "yes"}:
             return True
         if answer in {"n", "no"}:
             return False
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+
+
+def confirm_review_continue(*, assume_yes: bool = False) -> bool:
+    if assume_yes:
+        return True
+    return _prompt_yes_no(review_continue_prompt(), default=True)
 
 
 def print_selection_help() -> None:
@@ -755,13 +761,7 @@ def confirm_tracked_package_entry_replacement(
     )
     if assume_yes:
         return True
-    while True:
-        answer = prompt(confirmation_prompt()).strip().lower()
-        if answer in {"", "n", "no"}:
-            return False
-        if answer in {"y", "yes"}:
-            return True
-        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+    return _prompt_yes_no(confirmation_prompt())
 
 
 def ensure_track_package_entry_replacement_confirmed(
@@ -821,23 +821,11 @@ def ensure_track_package_entry_replacement_confirmed(
     for existing_binding, replacement_binding in replacements:
         print(f"  existing: {render_full_spec_selector_reference(existing_binding)}")
         print(f"  new:      {render_full_spec_selector_reference(replacement_binding)}")
-    while True:
-        answer = prompt(confirmation_prompt()).strip().lower()
-        if answer in {"", "n", "no"}:
-            return False
-        if answer in {"y", "yes"}:
-            return True
-        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+    return _prompt_yes_no(confirmation_prompt())
 
 
 def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
-    while True:
-        answer = prompt(partial_match_confirmation_prompt(candidate_label=candidate_label)).strip().lower()
-        if answer in {"", "n", "no"}:
-            return False
-        if answer in {"y", "yes"}:
-            return True
-        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+    return _prompt_yes_no(partial_match_confirmation_prompt(candidate_label=candidate_label))
 
 
 def _render_override_candidate(candidate, *, role: str) -> str:
@@ -877,13 +865,7 @@ def confirm_track_package_entry_implicit_overrides(*, binding: FullSpecSelector,
             print(f"      {_render_override_candidate(contender, role='implicit')}")
     if assume_yes:
         return True
-    while True:
-        answer = prompt(confirmation_prompt()).strip().lower()
-        if answer in {"", "n", "no"}:
-            return False
-        if answer in {"y", "yes"}:
-            return True
-        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+    return _prompt_yes_no(confirmation_prompt())
 
 
 def ensure_track_package_entry_implicit_overrides_confirmed(
@@ -946,27 +928,15 @@ def ensure_track_package_entry_implicit_overrides_confirmed(
 def confirm_add_manifest_write(*, repo_name: str, package_id: str, assume_yes: bool = False) -> bool:
     if assume_yes:
         return True
-    while True:
-        answer = prompt(
-            write_manifest_confirmation_prompt(repo_name=repo_name, package_id=package_id)
-        ).strip().lower()
-        if answer in {"", "n", "no"}:
-            return False
-        if answer in {"y", "yes"}:
-            return True
-        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+    return _prompt_yes_no(
+        write_manifest_confirmation_prompt(repo_name=repo_name, package_id=package_id)
+    )
 
 
 def confirm_push_symlink_replacement(*, assume_yes: bool = False) -> bool:
     if assume_yes:
         return True
-    while True:
-        answer = prompt(push_symlink_replacement_prompt()).strip().lower()
-        if answer in {"", "n", "no"}:
-            return False
-        if answer in {"y", "yes"}:
-            return True
-        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+    return _prompt_yes_no(push_symlink_replacement_prompt())
 
 
 def prompt_for_conflicting_package_entry(
@@ -1016,13 +986,9 @@ def prompt_for_conflicting_package_entry(
         print(f"  requested: {binding_label}")
         print(f"  promote:   {promoted_binding.repo}:{promoted_binding.selector}@{promoted_binding.profile}")
         print("  explicit tracking can break the implicit tie for this package.")
-        while True:
-            answer = prompt(confirmation_prompt()).strip().lower()
-            if answer in {"", "n", "no"}:
-                return None
-            if answer in {"y", "yes"}:
-                return promoted_binding
-            print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+        if _prompt_yes_no(confirmation_prompt()):
+            return promoted_binding
+        return None
 
     selected_index = select_menu_option(
         header_text=f"Select a conflicting package to track explicitly for {binding_label}:",
