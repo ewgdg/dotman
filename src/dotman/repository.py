@@ -10,6 +10,7 @@ from dotman.manifest import (
     build_hook_spec,
     build_target_spec,
     deep_merge,
+    merge_ignore_patterns,
     merge_package_specs,
     normalize_default_command_elevation,
     normalize_string_list,
@@ -91,9 +92,16 @@ class Repository:
             return RepoIgnoreDefaults()
         if not isinstance(ignore_payload, dict):
             raise ValueError(f"repo config {repo_config_path} [ignore] must be a table")
+        shared_ignore = normalize_string_list(ignore_payload.get("shared")) or ()
         return RepoIgnoreDefaults(
-            push=normalize_string_list(read_schema_alias(ignore_payload, "push", "apply")) or (),
-            pull=normalize_string_list(read_schema_alias(ignore_payload, "pull", "import")) or (),
+            push=merge_ignore_patterns(
+                normalize_string_list(read_schema_alias(ignore_payload, "push", "apply")) or (),
+                shared_ignore,
+            ),
+            pull=merge_ignore_patterns(
+                normalize_string_list(read_schema_alias(ignore_payload, "pull", "import")) or (),
+                shared_ignore,
+            ),
         )
 
     def _load_repo_hooks(self) -> dict[str, HookSpec] | None:

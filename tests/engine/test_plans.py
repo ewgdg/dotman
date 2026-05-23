@@ -2561,6 +2561,43 @@ def test_push_plan_exposes_file_level_items_for_directory_targets(
         ("delete", "gamma.toml"),
     ]
 
+def test_shared_ignore_appends_to_repo_and_target_operation_ignores(tmp_path: Path) -> None:
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        repo_manifest=[
+            "[ignore]",
+            'push = ["repo.push"]',
+            'pull = ["repo.pull"]',
+            'shared = ["repo.shared"]',
+        ],
+        target_manifest=[
+            "",
+            "[targets.config.ignore]",
+            'push = ["target.push"]',
+            'pull = ["target.pull"]',
+            'shared = ["target.shared"]',
+        ],
+    )
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert plan.target_plans[0].push_ignore == (
+        "repo.push",
+        "repo.shared",
+        "target.push",
+        "target.shared",
+    )
+    assert plan.target_plans[0].pull_ignore == (
+        "repo.pull",
+        "repo.shared",
+        "target.pull",
+        "target.shared",
+    )
+
+
 def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

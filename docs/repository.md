@@ -198,19 +198,21 @@ capture = "json-capture-command"
 - A live-dump-style target should typically keep:
   - `pull_view_repo = "raw"`
   - `pull_view_live = "capture"`
-- Targets may define `push_ignore` as gitignore-style patterns relative to the directory target root.
-- `push_ignore` is operation-scoped: during `push`, matching repo and live child paths are ignored, so they are not created, updated, chmodded, or deleted.
-- Targets may define `pull_ignore` as gitignore-style patterns relative to the directory target root.
-- `pull_ignore` is operation-scoped: during `pull`, matching repo and live child paths are ignored, so they are not created, updated, or deleted in the repo.
+- Targets may define an `[targets.<name>.ignore]` table with gitignore-style patterns relative to the directory target root:
+  - `push = [...]` is operation-scoped: during `push`, matching repo and live child paths are ignored, so they are not created, updated, chmodded, or deleted.
+  - `pull = [...]` is operation-scoped: during `pull`, matching repo and live child paths are ignored, so they are not created, updated, or deleted in the repo.
+  - `shared = [...]` is appended to both `push` and `pull`.
+- Flat target keys `push_ignore` and `pull_ignore` remain accepted as legacy aliases for target-level `ignore.push` and `ignore.pull`.
 - Patterns follow gitignore semantics: `**`, leading `/`, trailing `/`, and `!` negation are all supported. The old `*/__pycache__/*` workaround is no longer needed.
 - Repos may define repo-wide ignore defaults in `repo.toml`:
   - `[ignore]`
   - `push = [...]`
   - `pull = [...]`
+  - `shared = [...]` for shared repo defaults appended to both `push` and `pull`
 - Repo-level ignore defaults are prepended to target-level ignore lists.
-- For directory targets, old install-ignore style rules should map to `push_ignore`.
-- For directory targets, old update-ignore style rules should map to `pull_ignore`.
-- Dotman does not read package-local `.gitignore` files here; use `push_ignore` and `pull_ignore` instead.
+- For directory targets, old install-ignore style rules should map to target-level `ignore.push`.
+- For directory targets, old update-ignore style rules should map to target-level `ignore.pull`.
+- Dotman does not read package-local `.gitignore` files here; use target or repo ignore tables instead.
 - For directory targets, `push` should install everything under the source tree except paths matched by `push_ignore`.
 - For directory targets, `push` should also remove stale live paths that are no longer present in the repo source, except paths matched by `push_ignore`.
 - For directory targets, `pull` should update the repo from live paths except paths matched by `pull_ignore`; ignored repo paths are also preserved during pull cleanup.

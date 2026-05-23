@@ -409,6 +409,67 @@ def normalize_target_path_rules(
     return tuple(rules)
 
 
+def read_target_ignore_table(
+    *,
+    target_payload: dict[str, Any],
+    preset_payload: dict[str, Any],
+    manifest_path: Path,
+    target_name: str,
+) -> dict[str, Any] | None:
+    ignore_payload = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="ignore")
+    if ignore_payload is None:
+        return None
+    if not isinstance(ignore_payload, dict):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' ignore must be a table")
+    return ignore_payload
+
+
+def build_target_operation_ignore(
+    *,
+    target_payload: dict[str, Any],
+    preset_payload: dict[str, Any],
+    manifest_path: Path,
+    target_name: str,
+    primary_key: str,
+    legacy_key: str,
+    table_key: str,
+    table_legacy_key: str,
+) -> tuple[str, ...] | None:
+    operation_ignore = normalize_string_list(
+        read_target_schema_alias(
+            target_payload=target_payload,
+            preset_payload=preset_payload,
+            primary_key=primary_key,
+            legacy_key=legacy_key,
+        )
+    )
+    ignore_payload = read_target_ignore_table(
+        target_payload=target_payload,
+        preset_payload=preset_payload,
+        manifest_path=manifest_path,
+        target_name=target_name,
+    )
+    table_operation_ignore = (
+        normalize_string_list(read_schema_alias(ignore_payload, table_key, table_legacy_key))
+        if ignore_payload is not None
+        else None
+    )
+    shared_ignore = normalize_string_list(
+        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="shared_ignore")
+    )
+    table_shared_ignore = (
+        normalize_string_list(ignore_payload.get("shared")) if ignore_payload is not None else None
+    )
+    if operation_ignore is None and table_operation_ignore is None and shared_ignore is None and table_shared_ignore is None:
+        return None
+    return merge_ignore_patterns(
+        operation_ignore or (),
+        table_operation_ignore or (),
+        shared_ignore or (),
+        table_shared_ignore or (),
+    )
+
+
 def build_target_spec(
     *,
     target_name: str,
@@ -477,21 +538,25 @@ def build_target_spec(
             primary_key="pull_view_live",
             legacy_key="import_view_live",
         ),
-        push_ignore=normalize_string_list(
-            read_target_schema_alias(
-                target_payload=target_payload,
-                preset_payload=preset_payload,
-                primary_key="push_ignore",
-                legacy_key="apply_ignore",
-            )
+        push_ignore=build_target_operation_ignore(
+            target_payload=target_payload,
+            preset_payload=preset_payload,
+            manifest_path=manifest_path,
+            target_name=target_name,
+            primary_key="push_ignore",
+            legacy_key="apply_ignore",
+            table_key="push",
+            table_legacy_key="apply",
         ),
-        pull_ignore=normalize_string_list(
-            read_target_schema_alias(
-                target_payload=target_payload,
-                preset_payload=preset_payload,
-                primary_key="pull_ignore",
-                legacy_key="import_ignore",
-            )
+        pull_ignore=build_target_operation_ignore(
+            target_payload=target_payload,
+            preset_payload=preset_payload,
+            manifest_path=manifest_path,
+            target_name=target_name,
+            primary_key="pull_ignore",
+            legacy_key="import_ignore",
+            table_key="pull",
+            table_legacy_key="import",
         ),
         path_rules=normalize_target_path_rules(
             get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path_rules"),
