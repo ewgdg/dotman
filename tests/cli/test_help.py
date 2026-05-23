@@ -87,6 +87,14 @@ def test_edit_help_lists_package_and_target_subcommands(capsys) -> None:
     assert "Open a tracked package directory in an editor" in output
     assert "target" in output
     assert "Open a tracked target repo path in an editor" in output
+    assert "config" in output
+    assert "Open dotman manager config in an editor" in output
+
+
+def test_edit_config_help_has_no_extra_arguments(capsys) -> None:
+    output = capture_parser_help(capsys, "edit", "config")
+    assert "usage: dotman edit config [-h]" in output
+    assert "--help" in output
 
 
 def test_edit_package_help_uses_explicit_package_placeholder(capsys) -> None:

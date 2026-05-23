@@ -238,6 +238,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Open a tracked target repo path in an editor",
     )
     add_target_argument(edit_target_parser)
+    edit_subparsers.add_parser(
+        "config",
+        help="Open dotman manager config in an editor",
+        description="Open dotman manager config in an editor",
+    )
     edit_query_parser = edit_subparsers.add_parser(
         "query",
         help=argparse.SUPPRESS,

@@ -124,6 +124,47 @@ def _write_tracked_binding_state(state_root: Path, *, repo_name: str, selector: 
     )
 
 
+def test_edit_config_cli_prints_selected_config_path_when_no_editor_is_configured(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("VISUAL", raising=False)
+    monkeypatch.delenv("EDITOR", raising=False)
+
+    config_path = tmp_path / "broken.toml"
+    config_path.write_text("not valid toml = [", encoding="utf-8")
+
+    exit_code = main(["--config", str(config_path), "edit", "config"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == f"No editor configured. Config path: {config_path.resolve()}\n"
+
+
+def test_edit_config_cli_opens_selected_config_without_loading_it(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "broken.toml"
+    config_path.write_text("not valid toml = [", encoding="utf-8")
+
+    monkeypatch.setenv("EDITOR", "nvim -d")
+    recorded: dict[str, object] = {}
+
+    def fake_run(command: list[str], check: bool):
+        recorded["command"] = command
+        recorded["check"] = check
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+
+    exit_code = main(["--config", str(config_path), "edit", "config"])
+
+    assert exit_code == 0
+    assert recorded["check"] is False
+    assert recorded["command"] == ["nvim", str(config_path.resolve())]
+
+
 def test_edit_cli_prints_package_directory_when_no_editor_is_configured(
     tmp_path: Path,
     monkeypatch,

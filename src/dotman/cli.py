@@ -3526,7 +3526,7 @@ def _rewrite_edit_query_argv(argv: Sequence[str]) -> list[str]:
     if command_index + 1 >= len(normalized_argv):
         return normalized_argv
     next_token = normalized_argv[command_index + 1]
-    if next_token in {"package", "target", "query"} or next_token.startswith("-"):
+    if next_token in {"package", "target", "config", "query"} or next_token.startswith("-"):
         return normalized_argv
     return [*normalized_argv[: command_index + 1], "query", *normalized_argv[command_index + 1 :]]
 

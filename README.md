@@ -106,7 +106,7 @@ dotman untrack example:git@basic
 ### Package scaffolding and authoring
 
 Use `add` to propose or extend package target definitions from live paths.
-Use `edit` to open repo-side package or target sources in your editor.
+Use `edit` to open repo-side package sources, target sources, or the dotman manager config in your editor.
 
 Example:
 
@@ -114,6 +114,7 @@ Example:
 dotman add ~/.gitconfig example:git
 dotman edit package example:git
 dotman edit target example:git.gitconfig
+dotman edit config
 ```
 
 ### Two-way sync

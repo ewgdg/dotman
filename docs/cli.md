@@ -347,10 +347,14 @@ This document captures the current command and selector direction for `dotman`.
 
 - `edit package <package>` should open the tracked package directory in `$VISUAL` or `$EDITOR`.
 - `edit target <target>` should open the tracked target repo-side source path in `$VISUAL` or `$EDITOR`.
+- `edit config` should open the selected dotman manager config path in `$VISUAL` or `$EDITOR`.
+- `edit config` should use `--config <config-path>` when provided, otherwise `$XDG_CONFIG_HOME/dotman/config.toml` (or `~/.config/dotman/config.toml`).
+- `edit config` should not load or validate the config before opening it, so invalid config can be fixed with the command.
 - `edit target` should resolve tracked targets only.
 - `edit target` should open the repo-side source file for file targets and the repo-side source directory for directory targets.
 - If no editor is configured, `edit package` should print the package directory path and exit successfully.
 - If no editor is configured, `edit target` should print the resolved repo-side source path and exit successfully.
+- If no editor is configured, `edit config` should print the selected manager config path and exit successfully.
 - `edit package` should use the tracked-package selector flow, so bare and repo-qualified package queries follow the same ambiguity rules as `info tracked`.
 - `edit target` should accept explicit target queries in the form `[<repo>:]<package>.<target>`.
 - `edit target` may also accept bare target-name queries when they resolve uniquely among tracked targets.

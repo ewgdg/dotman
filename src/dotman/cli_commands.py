@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from dotman.add import prepare_add_to_package, write_add_result
+from dotman.config import default_config_path
 from dotman.engine import TrackedTargetConflictError
 from dotman.elevation import request_elevation_from_env
 from dotman.file_access import sudo_session
@@ -168,6 +170,11 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
 
 
 
+def _resolve_edit_config_path(config_path: str | None) -> Path:
+    selected_path = Path(config_path).expanduser() if config_path is not None else default_config_path()
+    return selected_path.resolve()
+
+
 def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> int | None:
     if args.command == "elevation" and args.elevation_command == "request":
         return request_elevation_from_env(args.reason)
@@ -180,6 +187,11 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
             profile=args.profile,
             inferred_os=args.template_os,
             var_assignments=args.var,
+        )
+    if args.command == "edit" and args.edit_command == "config":
+        return handlers.open_editor_path(
+            path=_resolve_edit_config_path(args.config),
+            missing_editor_label="Config path",
         )
     if args.command == "reconcile" and args.reconcile_helper == "editor":
         return handlers.run_basic_reconcile(
