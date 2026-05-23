@@ -1912,7 +1912,7 @@ def test_sandbox_nested_directory_and_file_targets_plan_without_collision(
     assert "settings.ini" in gtk3_dir.push_ignore
     assert "settings.ini" in gtk3_dir.pull_ignore
 
-def test_repo_toml_pull_ignore_applies_to_directory_targets(
+def test_repo_toml_push_ignore_preserves_live_paths_during_push_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1928,7 +1928,7 @@ def test_repo_toml_pull_ignore_applies_to_directory_targets(
         "\n".join(
             [
                 "[ignore]",
-                'pull = ["*.bak"]',
+                'push = ["*.bak"]',
                 "",
             ]
         ),
@@ -2284,6 +2284,7 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
                 "[targets.config]",
                 'source = "files/config"',
                 'path = "~/.config/sample"',
+                'push_ignore = ["*.bak", "keep.local"]',
                 'pull_ignore = ["keep.local"]',
                 "",
             ]
@@ -2318,5 +2319,5 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
     plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
     assert plan.target_plans[0].action == "noop"
-    assert plan.target_plans[0].push_ignore == ("*.archived",)
+    assert plan.target_plans[0].push_ignore == ("*.archived", "*.bak", "keep.local")
     assert plan.target_plans[0].pull_ignore == ("*.bak", "keep.local")

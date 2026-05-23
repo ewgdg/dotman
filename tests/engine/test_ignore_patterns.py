@@ -131,7 +131,7 @@ def test_directory_target_push_ignore_uses_gitignore_semantics_for_nested_pycach
     assert [item.relative_path for item in target.directory_items] == ["visible.conf"]
 
 
-def test_directory_target_pull_ignore_preserves_gitignore_style_nested_pycache_files_during_push_cleanup(
+def test_directory_target_push_ignore_preserves_gitignore_style_nested_pycache_files_during_push_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -151,7 +151,7 @@ def test_directory_target_pull_ignore_preserves_gitignore_style_nested_pycache_f
                 '[targets.config]',
                 'source = "files/config"',
                 'path = "~/.config/sample"',
-                'pull_ignore = ["**/__pycache__/"]',
+                'push_ignore = ["**/__pycache__/"]',
                 '',
             ]
         ),
@@ -174,6 +174,52 @@ def test_directory_target_pull_ignore_preserves_gitignore_style_nested_pycache_f
     )
 
     plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+
+    target = plan.target_plans[0]
+    assert target.action == "noop"
+    assert [item.relative_path for item in target.directory_items] == []
+
+
+def test_directory_target_pull_ignore_hides_both_repo_and_live_children_during_pull(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                '',
+                '[targets.config]',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                'pull_ignore = ["*.local"]',
+                '',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (source_root / "repo-only.local").write_text("repo\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "sample"
+    live_root.mkdir(parents=True)
+    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (live_root / "live-only.local").write_text("live\n", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="pull")
 
     target = plan.target_plans[0]
     assert target.action == "noop"

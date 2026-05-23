@@ -845,7 +845,7 @@ def _validate_direct_package_plan_conflicts(
                         target.live_path_symlink_target,
                     )
                 )
-        validate_target_collisions(rendered_targets)
+        validate_target_collisions(rendered_targets, operation=repo_package_plans[0].operation)
         _validate_reserved_path_conflicts_for_package_plans(repo_package_plans, repo=repo, rendered_targets=rendered_targets)
 
 

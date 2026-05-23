@@ -168,7 +168,7 @@ def build_target_metadata(
 
     if validate_declaration_conflicts:
         rendered_targets = [_metadata_collision_tuple(metadata) for metadata in metadata_targets]
-        validate_target_collisions(rendered_targets)
+        validate_target_collisions(rendered_targets, operation=operation)
         validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
     return metadata_targets
 
@@ -216,7 +216,7 @@ def plan_targets(
                 action, directory_items = plan_live_delete_directory_action(
                     repo_path=repo_path,
                     live_path=live_path,
-                    pull_ignore=metadata.pull_ignore,
+                    push_ignore=metadata.push_ignore,
                 )
                 plans.append(
                     TargetPlan(
@@ -649,9 +649,12 @@ def plan_directory_action(
     pull_view_live: str,
     path_rules: tuple[TargetPathRule, ...] = (),
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
-    desired_files = list_directory_files(repo_path, push_ignore)
+    # Ignore lists are operation-scoped: an ignored child should disappear from
+    # both repo and live scans so planning does not create, update, or delete it.
+    operation_ignore = push_ignore if operation == "push" else pull_ignore
+    desired_files = list_directory_files(repo_path, operation_ignore)
     live_exists = live_path.exists()
-    live_files = list_directory_files(live_path, pull_ignore) if live_exists else {}
+    live_files = list_directory_files(live_path, operation_ignore) if live_exists else {}
     desired_rel_paths = set(desired_files)
     live_rel_paths = set(live_files)
     directory_items: list[DirectoryPlanItem] = []
@@ -1021,9 +1024,9 @@ def plan_live_delete_directory_action(
     *,
     repo_path: Path,
     live_path: Path,
-    pull_ignore: tuple[str, ...],
+    push_ignore: tuple[str, ...],
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
-    live_files = list_directory_files(live_path, pull_ignore) if live_path.exists() else {}
+    live_files = list_directory_files(live_path, push_ignore) if live_path.exists() else {}
     directory_items = tuple(
         DirectoryPlanItem(
             relative_path=relative_path,

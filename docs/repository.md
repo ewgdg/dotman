@@ -73,7 +73,7 @@ This document captures the current repository structure and configuration schema
 - A package may define `sync_policy = "push-only" | "pull-only" | "both" | "push-only-delete"` to gate target participation by operation.
 - `sync_policy` defaults to `both` when omitted.
 - Target-level `sync_policy` overrides the package default for that target.
-- `push-only-delete` means the target participates only in `push`, and `push` removes the live file path while leaving the repo source untouched. For directory targets, it removes live child files that are not preserved by `pull_ignore`. Use it to retire live files while keeping repo-side sources as fallback/history.
+- `push-only-delete` means the target participates only in `push`, and `push` removes the live file path while leaving the repo source untouched. For directory targets, it removes live child files except paths matched by `push_ignore`. Use it to retire live files while keeping repo-side sources as fallback/history.
 - Package inheritance should merge `sync_policy` with last-wins behavior, just like other scalar fields.
 - Target and reserved-path collision rules apply across all resolved package instances, including instances that come from the same `multi_instance` package definition.
 - Keep target reuse explicit by splitting shared logic into smaller packages or using normal `depends`; package dependencies stay package/group-only.
@@ -197,12 +197,11 @@ capture = "json-capture-command"
 - A live-dump-style target should typically keep:
   - `pull_view_repo = "raw"`
   - `pull_view_live = "capture"`
-- Targets may define `push_ignore` as gitignore-style patterns relative to the source root.
-- `push_ignore` is for tracked files that should stay in the repo but should not be installed, for example `*.archived` or `__pycache__/`.
-- The old `*/__pycache__/*` workaround is no longer needed.
-- Targets may define `pull_ignore` as gitignore-style patterns relative to the live target root.
-- `pull_ignore` is for live-side ignore during pull planning and reconciliation.
-- Patterns follow gitignore semantics: `**`, leading `/`, trailing `/`, and `!` negation are all supported.
+- Targets may define `push_ignore` as gitignore-style patterns relative to the directory target root.
+- `push_ignore` is operation-scoped: during `push`, matching repo and live child paths are ignored, so they are not created, updated, chmodded, or deleted.
+- Targets may define `pull_ignore` as gitignore-style patterns relative to the directory target root.
+- `pull_ignore` is operation-scoped: during `pull`, matching repo and live child paths are ignored, so they are not created, updated, or deleted in the repo.
+- Patterns follow gitignore semantics: `**`, leading `/`, trailing `/`, and `!` negation are all supported. The old `*/__pycache__/*` workaround is no longer needed.
 - Repos may define repo-wide ignore defaults in `repo.toml`:
   - `[ignore]`
   - `push = [...]`
@@ -210,10 +209,10 @@ capture = "json-capture-command"
 - Repo-level ignore defaults are prepended to target-level ignore lists.
 - For directory targets, old install-ignore style rules should map to `push_ignore`.
 - For directory targets, old update-ignore style rules should map to `pull_ignore`.
-- In v1, directory-target `pull_ignore` should also preserve matching live paths during push cleanup, so users do not need to maintain a duplicate preserve list.
 - Dotman does not read package-local `.gitignore` files here; use `push_ignore` and `pull_ignore` instead.
 - For directory targets, `push` should install everything under the source tree except paths matched by `push_ignore`.
-- For directory targets, `push` should also remove stale live paths that are no longer present in the repo source, except paths matched by `pull_ignore`.
+- For directory targets, `push` should also remove stale live paths that are no longer present in the repo source, except paths matched by `push_ignore`.
+- For directory targets, `pull` should update the repo from live paths except paths matched by `pull_ignore`; ignored repo paths are also preserved during pull cleanup.
 - For directory-target child files, `push` and `pull` should plan and apply mode changes only when the executable bit differs. Non-executable permission drift such as `600` vs `644` should not trigger an update because Git does not preserve those bits in the repo.
 - For directory-target child files matched by `path_rules` with `chmod`, `push` should also plan and apply exact live chmod drift for those matching paths.
 - For directory targets, dotman should infer the target kind from either side:

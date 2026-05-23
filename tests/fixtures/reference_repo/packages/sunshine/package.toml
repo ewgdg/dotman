@@ -8,6 +8,7 @@ push_ignore = [
   "__pycache__/",
   "tests/*",
   "sunshine-*.conf",
+  "sunshine.conf",
 ]
 pull_ignore = [
   "__pycache__/",

@@ -854,8 +854,8 @@ class DotmanEngine:
             declaration_package_ids=declaration_package_ids,
         )
 
-    def _validate_target_collisions(self, rendered_targets: list[Any]) -> None:
-        self._planning_helpers().validate_target_collisions(rendered_targets)
+    def _validate_target_collisions(self, rendered_targets: list[Any], *, operation: str = "push") -> None:
+        self._planning_helpers().validate_target_collisions(rendered_targets, operation=operation)
 
     def _validate_reserved_path_conflicts(
         self,
