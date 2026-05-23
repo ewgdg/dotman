@@ -689,7 +689,7 @@ def directory_child_chmod(relative_path: str, path_rules: tuple[TargetPathRule, 
     desired_chmod = None
     path = PurePosixPath(relative_path)
     for rule in path_rules:
-        if rule.chmod is not None and path.match(rule.path):
+        if rule.chmod is not None and path.match(rule.pattern):
             desired_chmod = rule.chmod
     return desired_chmod
 

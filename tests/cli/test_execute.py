@@ -425,7 +425,7 @@ def test_push_directory_target_path_rule_applies_child_chmod_on_create(
         repo_root,
         path_rules=[
             "[[targets.config.path_rules]]",
-            'path = "nested.txt"',
+            'pattern = "nested.txt"',
             'chmod = "600"',
         ],
     )
@@ -453,7 +453,7 @@ def test_push_directory_target_path_rule_repairs_child_chmod_drift(
         repo_root,
         path_rules=[
             "[[targets.config.path_rules]]",
-            'path = "nested.txt"',
+            'pattern = "nested.txt"',
             'chmod = "600"',
         ],
     )

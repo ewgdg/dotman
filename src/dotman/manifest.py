@@ -367,16 +367,16 @@ def normalize_target_path_rules(
             raise ValueError(
                 f"package manifest {manifest_path} target '{target_name}' path_rules[{index}] must be a table"
             )
-        path = rule_payload.get("path")
-        if not isinstance(path, str) or not path.strip():
+        pattern = rule_payload.get("pattern")
+        if not isinstance(pattern, str) or not pattern.strip():
             raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].path must be a non-empty string"
+                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pattern must be a non-empty string"
             )
-        normalized_path = path.replace("\\", "/")
-        path_parts = normalized_path.split("/")
-        if normalized_path.startswith("/") or any(part == ".." for part in path_parts):
+        normalized_pattern = pattern.replace("\\", "/")
+        pattern_parts = normalized_pattern.split("/")
+        if normalized_pattern.startswith("/") or any(part == ".." for part in pattern_parts):
             raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].path must be relative to the target root"
+                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pattern must be relative to the target root"
             )
         chmod = rule_payload.get("chmod")
         if chmod is not None:
@@ -390,7 +390,7 @@ def normalize_target_path_rules(
                 raise ValueError(
                     f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].chmod must be an octal string"
                 ) from None
-        rules.append(TargetPathRule(path=normalized_path, chmod=chmod))
+        rules.append(TargetPathRule(pattern=normalized_pattern, chmod=chmod))
     return tuple(rules)
 
 

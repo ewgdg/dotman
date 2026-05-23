@@ -64,12 +64,12 @@ class ManagerConfig:
 
 @dataclass(frozen=True)
 class TargetPathRule:
-    path: str
+    pattern: str
     chmod: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "path": self.path,
+            "pattern": self.pattern,
             "chmod": self.chmod,
         }
 
