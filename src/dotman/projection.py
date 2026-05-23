@@ -128,6 +128,7 @@ def build_target_metadata(
             )
             push_ignore = merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ())
             pull_ignore = merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ())
+            path_rules = render_target_path_rules(target.path_rules, context=context, base_dir=target.declared_in)
             metadata_targets.append(
                 TargetMetadata(
                     repo_name=repo.config.name,
@@ -145,7 +146,7 @@ def build_target_metadata(
                     push_ignore=push_ignore,
                     pull_ignore=pull_ignore,
                     chmod=target.chmod,
-                    path_rules=target.path_rules,
+                    path_rules=path_rules,
                     command_cwd=target.declared_in,
                     command_env=build_target_command_env(
                         repo=repo,
@@ -170,7 +171,6 @@ def build_target_metadata(
         validate_target_collisions(rendered_targets)
         validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
     return metadata_targets
-
 
 
 def plan_targets(
@@ -328,14 +328,29 @@ def plan_targets(
             target=target,
             target_kind=target_kind,
             render_command=render_command,
+            capture_command=capture_command,
+            pull_view_repo=metadata.pull_view_repo,
+            pull_view_live=metadata.pull_view_live,
+            repo_path=repo_path,
         )
         if target_kind == "directory":
             action, directory_items = plan_directory_action(
-                repo_path,
-                live_path,
-                metadata.push_ignore,
-                metadata.pull_ignore,
+                engine,
+                repo=repo,
+                package=package,
+                target=target,
+                repo_path=repo_path,
+                live_path=live_path,
+                push_ignore=metadata.push_ignore,
+                pull_ignore=metadata.pull_ignore,
                 operation=operation,
+                render_command=render_command,
+                capture_command=capture_command,
+                context=context,
+                selection=selection,
+                inferred_os=inferred_os,
+                pull_view_repo=metadata.pull_view_repo,
+                pull_view_live=metadata.pull_view_live,
                 path_rules=metadata.path_rules,
             )
             plans.append(
@@ -468,7 +483,6 @@ def plan_targets(
     return plans
 
 
-
 def infer_target_kind(*, repo_path: Path, live_path: Path) -> str:
     if repo_path.is_dir():
         return "directory"
@@ -495,7 +509,6 @@ def infer_push_only_delete_target_kind(*, repo_path: Path, live_path: Path) -> s
     return "unknown"
 
 
-
 def default_pull_view_live(capture_command: str | None) -> str:
     if capture_command == BUILTIN_PATCH_CAPTURE:
         return "raw"
@@ -504,6 +517,28 @@ def default_pull_view_live(capture_command: str | None) -> str:
     return "raw"
 
 
+def render_target_path_rules(
+    path_rules: tuple[TargetPathRule, ...],
+    *,
+    context: dict[str, Any],
+    base_dir: Path,
+) -> tuple[TargetPathRule, ...]:
+    rendered_rules: list[TargetPathRule] = []
+    for rule in path_rules:
+        rendered_rules.append(
+            TargetPathRule(
+                pattern=rule.pattern,
+                chmod=rule.chmod,
+                render=render_template_string(rule.render, context, base_dir=base_dir, source_path=base_dir)
+                if rule.render is not None
+                else None,
+                capture=render_template_string(rule.capture, context, base_dir=base_dir, source_path=base_dir)
+                if rule.capture is not None
+                else None,
+            )
+        )
+    return tuple(rendered_rules)
+
 
 def validate_patch_capture_target(
     *,
@@ -511,24 +546,46 @@ def validate_patch_capture_target(
     target: TargetSpec,
     target_kind: str,
     render_command: str | None,
+    capture_command: str | None,
+    pull_view_repo: str,
+    pull_view_live: str,
+    repo_path: Path,
 ) -> None:
-    if target.capture != BUILTIN_PATCH_CAPTURE:
+    if capture_command != BUILTIN_PATCH_CAPTURE:
+        return
+    if target_kind == "directory":
         return
     if target_kind != "file":
-        raise ValueError(f'capture = "patch" requires a file target for {package.id}:{target.name}')
-    if render_command is None:
-        raise ValueError(f'capture = "patch" requires render for {package.id}:{target.name}')
-    if target.pull_view_repo is None or target.pull_view_live is None:
-        raise ValueError(
-            f'capture = "patch" requires pull_view_repo = "render" and pull_view_live = "raw" for '
-            f"{package.id}:{target.name}"
-        )
-    if target.pull_view_repo != "render" or target.pull_view_live != "raw":
-        raise ValueError(
-            f'capture = "patch" requires pull_view_repo = "render" and pull_view_live = "raw" for '
-            f"{package.id}:{target.name}"
-        )
+        raise ValueError(f'capture = "patch" requires a file-like sync unit for {package.id}:{target.name}')
+    validate_patch_capture_unit(
+        label=f"{package.id}:{target.name}",
+        render_command=render_command,
+        capture_command=capture_command,
+        pull_view_repo=pull_view_repo,
+        pull_view_live=pull_view_live,
+        repo_path=repo_path,
+    )
 
+
+def validate_patch_capture_unit(
+    *,
+    label: str,
+    render_command: str | None,
+    capture_command: str | None,
+    pull_view_repo: str,
+    pull_view_live: str,
+    repo_path: Path | None = None,
+) -> None:
+    if capture_command != BUILTIN_PATCH_CAPTURE:
+        return
+    if render_command is None:
+        raise ValueError(f'capture = "patch" requires render for {label}')
+    if pull_view_repo != "render" or pull_view_live != "raw":
+        raise ValueError(
+            f'capture = "patch" requires pull_view_repo = "render" and pull_view_live = "raw" for {label}'
+        )
+    if repo_path is not None and not repo_path.exists():
+        raise ValueError(f'capture = "patch" requires existing repo source for {label}')
 
 
 def project_repo_file(
@@ -572,14 +629,24 @@ def project_repo_file(
         ) from exc
 
 
-
 def plan_directory_action(
+    engine: Any,
+    *,
+    repo: Repository,
+    package: PackageSpec,
+    target: TargetSpec,
     repo_path: Path,
     live_path: Path,
     push_ignore: tuple[str, ...],
     pull_ignore: tuple[str, ...],
-    *,
     operation: str,
+    render_command: str | None,
+    capture_command: str | None,
+    context: dict[str, Any],
+    selection: ResolvedPackageSelection,
+    inferred_os: str,
+    pull_view_repo: str,
+    pull_view_live: str,
     path_rules: tuple[TargetPathRule, ...] = (),
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
     desired_files = list_directory_files(repo_path, push_ignore)
@@ -591,14 +658,54 @@ def plan_directory_action(
 
     if operation == "push":
         for relative_path in sorted(desired_rel_paths - live_rel_paths):
-            desired_chmod = directory_child_chmod(relative_path, path_rules)
+            source_path = desired_files[relative_path]
+            child_policy = directory_child_policy(
+                relative_path,
+                path_rules,
+                default_render=render_command,
+                default_capture=capture_command,
+            )
+            child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+                target=target,
+                capture_command=child_policy[2],
+                target_pull_view_repo=pull_view_repo,
+                target_pull_view_live=pull_view_live,
+            )
+            validate_directory_child_patch_capture(
+                package=package,
+                target=target,
+                relative_path=relative_path,
+                render_command=child_policy[1],
+                capture_command=child_policy[2],
+                pull_view_repo=child_pull_view_repo,
+                pull_view_live=child_pull_view_live,
+                repo_path=source_path,
+            )
+            desired_bytes, _projection_kind = project_repo_file(
+                engine,
+                repo=repo,
+                package=package,
+                target=target,
+                repo_path=source_path,
+                live_path=live_path / relative_path,
+                render_command=child_policy[1],
+                context=context,
+                selection=selection,
+                operation=operation,
+                inferred_os=inferred_os,
+            )
             directory_items.append(
                 DirectoryPlanItem(
                     relative_path=relative_path,
                     action="create",
-                    repo_path=desired_files[relative_path],
+                    repo_path=source_path,
                     live_path=live_path / relative_path,
-                    chmod=desired_chmod,
+                    chmod=child_policy[0],
+                    render_command=child_policy[1],
+                    capture_command=child_policy[2],
+                    pull_view_repo=child_pull_view_repo,
+                    pull_view_live=child_pull_view_live,
+                    desired_bytes=desired_bytes,
                 )
             )
         for relative_path in sorted(live_rel_paths - desired_rel_paths):
@@ -613,9 +720,43 @@ def plan_directory_action(
         for relative_path in sorted(desired_rel_paths & live_rel_paths):
             source_path = desired_files[relative_path]
             live_file = live_files[relative_path]
-            desired_bytes = read_bytes(source_path)
+            child_policy = directory_child_policy(
+                relative_path,
+                path_rules,
+                default_render=render_command,
+                default_capture=capture_command,
+            )
+            child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+                target=target,
+                capture_command=child_policy[2],
+                target_pull_view_repo=pull_view_repo,
+                target_pull_view_live=pull_view_live,
+            )
+            validate_directory_child_patch_capture(
+                package=package,
+                target=target,
+                relative_path=relative_path,
+                render_command=child_policy[1],
+                capture_command=child_policy[2],
+                pull_view_repo=child_pull_view_repo,
+                pull_view_live=child_pull_view_live,
+                repo_path=source_path,
+            )
+            desired_bytes, _projection_kind = project_repo_file(
+                engine,
+                repo=repo,
+                package=package,
+                target=target,
+                repo_path=source_path,
+                live_path=live_file,
+                render_command=child_policy[1],
+                context=context,
+                selection=selection,
+                operation=operation,
+                inferred_os=inferred_os,
+            )
             live_bytes = read_bytes(live_file)
-            desired_chmod = directory_child_chmod(relative_path, path_rules)
+            desired_chmod = child_policy[0]
             child_chmod_differs = directory_child_chmod_differs(live_file, desired_chmod)
             executable_bit_differs = desired_chmod is None and directory_executable_bit_differs(source_path, live_file)
             if desired_bytes != live_bytes or executable_bit_differs or child_chmod_differs:
@@ -631,6 +772,11 @@ def plan_directory_action(
                         repo_path=source_path,
                         live_path=live_file,
                         chmod=desired_chmod,
+                        render_command=child_policy[1],
+                        capture_command=child_policy[2],
+                        pull_view_repo=child_pull_view_repo,
+                        pull_view_live=child_pull_view_live,
+                        desired_bytes=desired_bytes,
                     )
                 )
         if not directory_items:
@@ -642,34 +788,145 @@ def plan_directory_action(
         return ("create" if not live_exists else "update"), ordered_items
 
     for relative_path in sorted(desired_rel_paths - live_rel_paths):
+        child_policy = directory_child_policy(
+            relative_path,
+            path_rules,
+            default_render=render_command,
+            default_capture=capture_command,
+        )
+        child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+            target=target,
+            capture_command=child_policy[2],
+            target_pull_view_repo=pull_view_repo,
+            target_pull_view_live=pull_view_live,
+        )
+        validate_directory_child_patch_capture(
+            package=package,
+            target=target,
+            relative_path=relative_path,
+            render_command=child_policy[1],
+            capture_command=child_policy[2],
+            pull_view_repo=child_pull_view_repo,
+            pull_view_live=child_pull_view_live,
+            repo_path=desired_files[relative_path],
+        )
         directory_items.append(
             DirectoryPlanItem(
                 relative_path=relative_path,
                 action="delete",
                 repo_path=desired_files[relative_path],
                 live_path=live_path / relative_path,
+                render_command=child_policy[1],
+                capture_command=child_policy[2],
+                pull_view_repo=child_pull_view_repo,
+                pull_view_live=child_pull_view_live,
             )
         )
     for relative_path in sorted(live_rel_paths - desired_rel_paths):
+        child_policy = directory_child_policy(
+            relative_path,
+            path_rules,
+            default_render=render_command,
+            default_capture=capture_command,
+        )
+        child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+            target=target,
+            capture_command=child_policy[2],
+            target_pull_view_repo=pull_view_repo,
+            target_pull_view_live=pull_view_live,
+        )
+        validate_directory_child_patch_capture(
+            package=package,
+            target=target,
+            relative_path=relative_path,
+            render_command=child_policy[1],
+            capture_command=child_policy[2],
+            pull_view_repo=child_pull_view_repo,
+            pull_view_live=child_pull_view_live,
+            repo_path=repo_path / relative_path,
+        )
         directory_items.append(
             DirectoryPlanItem(
                 relative_path=relative_path,
                 action="create",
                 repo_path=repo_path / relative_path,
                 live_path=live_files[relative_path],
+                render_command=child_policy[1],
+                capture_command=child_policy[2],
+                pull_view_repo=child_pull_view_repo,
+                pull_view_live=child_pull_view_live,
             )
         )
     for relative_path in sorted(desired_rel_paths & live_rel_paths):
         source_path = desired_files[relative_path]
         live_file = live_files[relative_path]
-        desired_bytes = read_bytes(source_path)
-        if desired_bytes != read_bytes(live_file) or directory_executable_bit_differs(source_path, live_file):
+        child_policy = directory_child_policy(
+            relative_path,
+            path_rules,
+            default_render=render_command,
+            default_capture=capture_command,
+        )
+        child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+            target=target,
+            capture_command=child_policy[2],
+            target_pull_view_repo=pull_view_repo,
+            target_pull_view_live=pull_view_live,
+        )
+        validate_directory_child_patch_capture(
+            package=package,
+            target=target,
+            relative_path=relative_path,
+            render_command=child_policy[1],
+            capture_command=child_policy[2],
+            pull_view_repo=child_pull_view_repo,
+            pull_view_live=child_pull_view_live,
+            repo_path=source_path,
+        )
+        repo_bytes = pull_view_bytes(
+            engine,
+            repo=repo,
+            package=package,
+            target=target,
+            repo_path=source_path,
+            live_path=live_file,
+            view=child_pull_view_repo,
+            repo_side=True,
+            render_command=child_policy[1],
+            capture_command=child_policy[2],
+            context=context,
+            selection=selection,
+            operation=operation,
+            inferred_os=inferred_os,
+        )
+        live_bytes = pull_view_bytes(
+            engine,
+            repo=repo,
+            package=package,
+            target=target,
+            repo_path=source_path,
+            live_path=live_file,
+            view=child_pull_view_live,
+            repo_side=False,
+            render_command=child_policy[1],
+            capture_command=child_policy[2],
+            context=context,
+            selection=selection,
+            operation=operation,
+            inferred_os=inferred_os,
+        )
+        if repo_bytes != live_bytes or directory_executable_bit_differs(source_path, live_file):
             directory_items.append(
                 DirectoryPlanItem(
                     relative_path=relative_path,
                     action="update",
                     repo_path=source_path,
                     live_path=live_file,
+                    render_command=child_policy[1],
+                    capture_command=child_policy[2],
+                    pull_view_repo=child_pull_view_repo,
+                    pull_view_live=child_pull_view_live,
+                    review_before_bytes=repo_bytes,
+                    review_after_bytes=live_bytes,
                 )
             )
 
@@ -679,19 +936,67 @@ def plan_directory_action(
     return ("delete" if not live_exists else "update"), ordered_items
 
 
+def validate_directory_child_patch_capture(
+    *,
+    package: PackageSpec,
+    target: TargetSpec,
+    relative_path: str,
+    render_command: str | None,
+    capture_command: str | None,
+    pull_view_repo: str,
+    pull_view_live: str,
+    repo_path: Path | None = None,
+) -> None:
+    label = f"{package.id}:{target.name}:{relative_path}"
+    validate_patch_capture_unit(
+        label=label,
+        render_command=render_command,
+        capture_command=capture_command,
+        pull_view_repo=pull_view_repo,
+        pull_view_live=pull_view_live,
+        repo_path=repo_path,
+    )
+
+
 def directory_executable_bit_differs(repo_file: Path, live_file: Path) -> bool:
     repo_mode = file_permission_mode(repo_file)
     live_mode = file_permission_mode(live_file)
     return repo_mode is not None and live_mode is not None and file_is_executable(repo_mode) != file_is_executable(live_mode)
 
 
-def directory_child_chmod(relative_path: str, path_rules: tuple[TargetPathRule, ...]) -> str | None:
+def directory_child_pull_views(
+    *,
+    target: TargetSpec,
+    capture_command: str | None,
+    target_pull_view_repo: str,
+    target_pull_view_live: str,
+) -> tuple[str, str]:
+    pull_view_repo = target_pull_view_repo if target.pull_view_repo is not None else "raw"
+    pull_view_live = target_pull_view_live if target.pull_view_live is not None else default_pull_view_live(capture_command)
+    return pull_view_repo, pull_view_live
+
+
+def directory_child_policy(
+    relative_path: str,
+    path_rules: tuple[TargetPathRule, ...],
+    *,
+    default_render: str | None,
+    default_capture: str | None,
+) -> tuple[str | None, str | None, str | None]:
     desired_chmod = None
+    render_command = default_render
+    capture_command = default_capture
     path = PurePosixPath(relative_path)
     for rule in path_rules:
-        if rule.chmod is not None and path.match(rule.pattern):
+        if not path.match(rule.pattern):
+            continue
+        if rule.chmod is not None:
             desired_chmod = rule.chmod
-    return desired_chmod
+        if rule.render is not None:
+            render_command = rule.render
+        if rule.capture is not None:
+            capture_command = rule.capture
+    return desired_chmod, render_command, capture_command
 
 
 def directory_child_chmod_differs(live_file: Path, desired_chmod: str | None) -> bool:
@@ -729,7 +1034,6 @@ def plan_live_delete_directory_action(
         for relative_path, live_file in sorted(live_files.items())
     )
     return ("delete", directory_items) if directory_items else ("noop", ())
-
 
 
 def plan_file_action(
@@ -800,7 +1104,6 @@ def plan_file_action(
     return "noop" if repo_bytes == live_bytes else "update"
 
 
-
 def build_file_review_bytes(
     engine: Any,
     *,
@@ -861,7 +1164,6 @@ def build_file_review_bytes(
         inferred_os=inferred_os,
     )
     return repo_bytes, live_bytes
-
 
 
 def pull_view_bytes(
@@ -937,7 +1239,6 @@ def pull_view_bytes(
     )
 
 
-
 def run_command_projection(
     engine: Any,
     *,
@@ -981,7 +1282,6 @@ def run_command_projection(
         stderr = completed.stderr.decode("utf-8", errors="replace")
         raise ValueError(f"command projection failed for {package.id}:{target.name}: {stderr.strip()}")
     return completed.stdout
-
 
 
 def build_target_command_env(

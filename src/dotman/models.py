@@ -66,11 +66,15 @@ class ManagerConfig:
 class TargetPathRule:
     pattern: str
     chmod: str | None = None
+    render: str | None = None
+    capture: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "pattern": self.pattern,
             "chmod": self.chmod,
+            "render": self.render,
+            "capture": self.capture,
         }
 
 
@@ -849,6 +853,13 @@ class DirectoryPlanItem:
     repo_path: Path
     live_path: Path
     chmod: str | None = None
+    render_command: str | None = None
+    capture_command: str | None = None
+    pull_view_repo: str = "raw"
+    pull_view_live: str = "raw"
+    desired_bytes: bytes | None = field(default=None, repr=False)
+    review_before_bytes: bytes | None = field(default=None, repr=False)
+    review_after_bytes: bytes | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -857,4 +868,8 @@ class DirectoryPlanItem:
             "repo_path": str(self.repo_path),
             "live_path": str(self.live_path),
             "chmod": self.chmod,
+            "render_command": self.render_command,
+            "capture_command": self.capture_command,
+            "pull_view_repo": self.pull_view_repo,
+            "pull_view_live": self.pull_view_live,
         }

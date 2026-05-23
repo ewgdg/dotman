@@ -403,7 +403,6 @@ def build_execution_session(
     )
 
 
-
 def _ensure_no_unapproved_live_symlink_targets(plans: Sequence[PackagePlan], *, operation: str) -> None:
     if operation != "push":
         return
@@ -700,7 +699,6 @@ def _reconcile_step_needs_sudo(target_plan: TargetPlan) -> bool:
     return target_plan.reconcile.run == BUILTIN_JINJA_RECONCILE and needs_sudo_for_read(target_plan.live_path)
 
 
-
 def _target_step_needs_sudo(
     *,
     operation: str,
@@ -739,7 +737,6 @@ def _preflight_execution_session_sudo(session: ExecutionSession) -> None:
         request_sudo(_execution_session_sudo_reason(session))
 
 
-
 def _execution_session_sudo_reason(session: ExecutionSession) -> str:
     for repo in session.repos:
         for step in repo.steps:
@@ -750,7 +747,6 @@ def _execution_session_sudo_reason(session: ExecutionSession) -> str:
             if step.privileged:
                 return _sudo_reason_for_step(step)
     return "planned execution includes privileged operations"
-
 
 
 def _sudo_reason_for_step(step: ExecutionStep) -> str:
@@ -802,7 +798,6 @@ def _step_hook_label(step: ExecutionStep) -> str:
     if step.package_id is not None:
         return f"{step.repo_name}:{step.package_id}"
     return step.repo_name
-
 
 
 def _build_target_steps(*, plan: PackagePlan, target_plan: TargetPlan, operation: str) -> list[ExecutionStep]:
@@ -1057,7 +1052,7 @@ def _execute_target_step(step: ExecutionStep) -> None:
     target_plan = _require_target_plan(step)
     if step.action in {"create", "update"}:
         if step.directory_item is not None:
-            source_bytes = read_bytes(step.directory_item.repo_path)
+            source_bytes = _push_directory_item_bytes(step)
             live_path = step.directory_item.live_path
         else:
             source_bytes = _push_desired_bytes(target_plan)
@@ -1097,7 +1092,7 @@ def _execute_target_step(step: ExecutionStep) -> None:
 def _pull_repo_bytes(step: ExecutionStep) -> bytes:
     target_plan = _require_target_plan(step)
     if step.directory_item is not None:
-        return read_bytes(step.directory_item.live_path)
+        return _pull_directory_item_bytes(step)
     if target_plan.capture_command == BUILTIN_PATCH_CAPTURE:
         return _pull_patch_capture_bytes(target_plan=target_plan, package_plan=step.package_plan)
     return _pull_desired_bytes(target_plan)
@@ -1210,6 +1205,27 @@ def _push_desired_bytes(target_plan: TargetPlan) -> bytes:
     return stdout.encode("utf-8")
 
 
+def _push_directory_item_bytes(step: ExecutionStep) -> bytes:
+    directory_item = step.directory_item
+    if directory_item is None:
+        raise ValueError("missing directory item")
+    if directory_item.desired_bytes is not None:
+        return directory_item.desired_bytes
+    if directory_item.render_command is None:
+        return read_bytes(directory_item.repo_path)
+    exit_code, stdout, stderr = _run_command(
+        command=directory_item.render_command,
+        cwd=_require_target_plan(step).command_cwd,
+        env=_build_directory_item_env(step),
+        stream_output=False,
+        interactive=False,
+    )
+    if exit_code != 0:
+        _raise_for_interrupt_exit_code(exit_code)
+        raise ValueError(stderr.strip() or f"render command exited with status {exit_code}")
+    return stdout.encode("utf-8")
+
+
 def _run_reconcile_target_plan(
     *,
     target_plan: TargetPlan,
@@ -1268,6 +1284,28 @@ def _pull_desired_bytes(target_plan: TargetPlan) -> bytes:
     return stdout.encode("utf-8")
 
 
+def _pull_directory_item_bytes(step: ExecutionStep) -> bytes:
+    directory_item = step.directory_item
+    if directory_item is None:
+        raise ValueError("missing directory item")
+    if directory_item.capture_command is None:
+        return read_bytes(directory_item.live_path)
+    if directory_item.capture_command == BUILTIN_PATCH_CAPTURE:
+        return _pull_directory_patch_capture_bytes(step)
+    exit_code, stdout, stderr = _run_command(
+        command=directory_item.capture_command,
+        cwd=_require_target_plan(step).command_cwd,
+        env=_build_directory_item_env(step),
+        stream_output=False,
+        interactive=False,
+        elevation="root" if needs_sudo_for_read(directory_item.live_path) else "none",
+    )
+    if exit_code != 0:
+        _raise_for_interrupt_exit_code(exit_code)
+        raise ValueError(stderr.strip() or f"capture command exited with status {exit_code}")
+    return stdout.encode("utf-8")
+
+
 @contextmanager
 def _materialize_patch_capture_review_env(target_plan: TargetPlan) -> Iterator[None]:
     # Reverse capture needs the same review-side projection bytes the reviewer saw,
@@ -1291,63 +1329,151 @@ def _pull_patch_capture_bytes(*, target_plan: TargetPlan, package_plan: PackageP
         return capture_patch(repo_path=str(target_plan.repo_path), project_repo_bytes=projector)
 
 
+def _pull_directory_patch_capture_bytes(step: ExecutionStep) -> bytes:
+    directory_item = step.directory_item
+    if directory_item is None:
+        raise ValueError("missing directory item")
+    projector = _build_directory_item_patch_capture_projector(step)
+    with _materialize_directory_item_patch_capture_review_paths(directory_item) as review_paths:
+        review_repo_path, review_live_path = review_paths
+        return capture_patch(
+            repo_path=str(directory_item.repo_path),
+            project_repo_bytes=projector,
+            review_repo_path=review_repo_path,
+            review_live_path=review_live_path,
+        )
+
+
+@contextmanager
+def _materialize_directory_item_patch_capture_review_paths(directory_item: DirectoryPlanItem) -> Iterator[tuple[Path, Path]]:
+    if directory_item.review_before_bytes is None or directory_item.review_after_bytes is None:
+        raise ValueError(f"missing patch capture review bytes for {directory_item.relative_path}")
+
+    with tempfile.TemporaryDirectory(prefix="dotman-directory-patch-review-") as temp_dir:
+        temp_root = Path(temp_dir)
+        review_repo_path = temp_root / f"review-repo-{directory_item.repo_path.name}"
+        review_live_path = temp_root / f"review-live-{directory_item.live_path.name}"
+        _write_readonly_review_file(review_repo_path, directory_item.review_before_bytes)
+        _write_readonly_review_file(review_live_path, directory_item.review_after_bytes)
+        yield review_repo_path, review_live_path
+
+
 def _build_patch_capture_projector(*, target_plan: TargetPlan, package_plan: PackagePlan):
     if target_plan.render_command is None:
         raise ValueError(f'capture = "patch" requires render for {target_plan.package_id}:{target_plan.target_name}')
 
     if target_plan.render_command == "jinja":
-        context = build_template_context(
-            package_plan.variables,
-            profile=package_plan.requested_profile,
-            inferred_os=package_plan.inferred_os or sys.platform,
+        return _build_jinja_patch_capture_projector(
+            render_source_path=target_plan.repo_path,
+            package_plan=package_plan,
         )
-        base_dir = target_plan.repo_path.parent
-
-        def project(candidate_bytes: bytes) -> bytes:
-            candidate_text = candidate_bytes.decode("utf-8")
-            return render_template_string(candidate_text, context, base_dir=base_dir, source_path=target_plan.repo_path).encode("utf-8")
-
-        return project
 
     def project(candidate_bytes: bytes) -> bytes:
         command_env = {
             **_build_target_env(target_plan),
         }
-        # Keep temp source beside real source so command renderers that resolve
-        # sibling files relative to $DOTMAN_SOURCE still see same local layout.
-        with tempfile.NamedTemporaryFile(
-            prefix=f".dotman-patch-{target_plan.repo_path.stem}-",
-            suffix=target_plan.repo_path.suffix,
-            dir=target_plan.repo_path.parent,
-            delete=False,
-        ) as temp_source:
-            temp_source.write(candidate_bytes)
-            temp_source_path = Path(temp_source.name)
-        try:
-            temp_source_text = str(temp_source_path)
-            command_env.update(
-                {
-                    "DOTMAN_TARGET_REPO_PATH": temp_source_text,
-                    "DOTMAN_REPO_PATH": temp_source_text,
-                    "DOTMAN_SOURCE": temp_source_text,
-                }
-            )
-            exit_code, stdout, stderr = _run_command(
-                command=target_plan.render_command or "",
-                cwd=target_plan.command_cwd,
-                env=command_env,
-                stream_output=False,
-                interactive=False,
-                elevation="root" if needs_sudo_for_read(target_plan.live_path) else "none",
-            )
-            if exit_code != 0:
-                _raise_for_interrupt_exit_code(exit_code)
-                raise ValueError(stderr.strip() or f"render command exited with status {exit_code}")
-            return stdout.encode("utf-8")
-        finally:
-            temp_source_path.unlink(missing_ok=True)
+        return _run_patch_capture_command_projector(
+            candidate_bytes=candidate_bytes,
+            render_command=target_plan.render_command or "",
+            command_cwd=target_plan.command_cwd,
+            command_env=command_env,
+            render_source_path=target_plan.repo_path,
+            live_path=target_plan.live_path,
+        )
 
     return project
+
+
+def _build_directory_item_patch_capture_projector(step: ExecutionStep):
+    target_plan = _require_target_plan(step)
+    directory_item = step.directory_item
+    package_plan = step.package_plan
+    if directory_item is None:
+        raise ValueError("missing directory item")
+    if package_plan is None:
+        raise ValueError("missing package plan")
+    if directory_item.render_command is None:
+        raise ValueError(
+            f'capture = "patch" requires render for '
+            f"{target_plan.package_id}:{target_plan.target_name}:{directory_item.relative_path}"
+        )
+
+    if directory_item.render_command == "jinja":
+        return _build_jinja_patch_capture_projector(
+            render_source_path=directory_item.repo_path,
+            package_plan=package_plan,
+        )
+
+    def project(candidate_bytes: bytes) -> bytes:
+        return _run_patch_capture_command_projector(
+            candidate_bytes=candidate_bytes,
+            render_command=directory_item.render_command or "",
+            command_cwd=target_plan.command_cwd,
+            command_env=_build_directory_item_env(step),
+            render_source_path=directory_item.repo_path,
+            live_path=directory_item.live_path,
+        )
+
+    return project
+
+
+def _build_jinja_patch_capture_projector(*, render_source_path: Path, package_plan: PackagePlan):
+    context = build_template_context(
+        package_plan.variables,
+        profile=package_plan.requested_profile,
+        inferred_os=package_plan.inferred_os or sys.platform,
+    )
+    base_dir = render_source_path.parent
+
+    def project(candidate_bytes: bytes) -> bytes:
+        candidate_text = candidate_bytes.decode("utf-8")
+        return render_template_string(candidate_text, context, base_dir=base_dir, source_path=render_source_path).encode("utf-8")
+
+    return project
+
+
+def _run_patch_capture_command_projector(
+    *,
+    candidate_bytes: bytes,
+    render_command: str,
+    command_cwd: Path | None,
+    command_env: dict[str, str],
+    render_source_path: Path,
+    live_path: Path,
+) -> bytes:
+    # Keep temp source beside real source so command renderers that resolve
+    # sibling files relative to $DOTMAN_SOURCE still see same local layout.
+    with tempfile.NamedTemporaryFile(
+        prefix=f".dotman-patch-{render_source_path.stem}-",
+        suffix=render_source_path.suffix,
+        dir=render_source_path.parent,
+        delete=False,
+    ) as temp_source:
+        temp_source.write(candidate_bytes)
+        temp_source_path = Path(temp_source.name)
+    try:
+        temp_source_text = str(temp_source_path)
+        command_env.update(
+            {
+                "DOTMAN_TARGET_REPO_PATH": temp_source_text,
+                "DOTMAN_REPO_PATH": temp_source_text,
+                "DOTMAN_SOURCE": temp_source_text,
+            }
+        )
+        exit_code, stdout, stderr = _run_command(
+            command=render_command,
+            cwd=command_cwd,
+            env=command_env,
+            stream_output=False,
+            interactive=False,
+            elevation="root" if needs_sudo_for_read(live_path) else "none",
+        )
+        if exit_code != 0:
+            _raise_for_interrupt_exit_code(exit_code)
+            raise ValueError(stderr.strip() or f"render command exited with status {exit_code}")
+        return stdout.encode("utf-8")
+    finally:
+        temp_source_path.unlink(missing_ok=True)
 
 
 def write_bytes_atomic(path: Path, content: bytes) -> None:
@@ -1588,6 +1714,27 @@ def _build_hook_env(step: ExecutionStep, *, assume_yes: bool) -> dict[str, str]:
 
 def _build_target_env(target_plan: TargetPlan) -> dict[str, str]:
     return target_plan.command_env or {}
+
+
+def _build_directory_item_env(step: ExecutionStep) -> dict[str, str]:
+    target_plan = _require_target_plan(step)
+    directory_item = step.directory_item
+    if directory_item is None:
+        raise ValueError("missing directory item")
+    env = dict(_build_target_env(target_plan))
+    repo_path = str(directory_item.repo_path)
+    live_path = str(directory_item.live_path)
+    env.update(
+        {
+            "DOTMAN_TARGET_REPO_PATH": repo_path,
+            "DOTMAN_TARGET_LIVE_PATH": live_path,
+            "DOTMAN_REPO_PATH": repo_path,
+            "DOTMAN_SOURCE": repo_path,
+            "DOTMAN_LIVE_PATH": live_path,
+            "DOTMAN_TARGET_RELATIVE_PATH": directory_item.relative_path,
+        }
+    )
+    return env
 
 
 @contextmanager

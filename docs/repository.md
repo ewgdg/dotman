@@ -137,8 +137,12 @@ chmod = "600"
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
 - For file targets, `chmod` is the source of truth for the installed file mode when present.
 - For directory targets, `chmod` applies to the live directory root only; child files mirror Git semantics and carry only the executable bit, not full permission bits such as `600` vs `644`.
-- Directory targets may define `[[targets.<name>.path_rules]]` for path-scoped live child policy. In v1, path rules support `pattern` plus `chmod`.
+- Directory targets may define target-level `render` and `capture`; for directory targets these apply as defaults for every child file.
+- Directory targets may define `[[targets.<name>.path_rules]]` for path-scoped live child policy. Path rules support `pattern`, `chmod`, `render`, and `capture`.
 - Path-rule `pattern` values are relative glob-style patterns under the directory target root. They must not be absolute or contain `..` segments.
+- Path-rule `render` and `capture` override the directory target defaults for matching child files. Rule fields override independently, so a rule with only `capture` keeps the inherited `render`.
+- Child pull views are resolved per child: if `pull_view_live` is omitted, a child with effective `capture` defaults its live view to `capture`; otherwise it defaults to `raw`.
+- `capture = "patch"` is allowed for directory child files when the effective child settings satisfy the same file-like requirements: effective `render`, `pull_view_repo = "render"`, and `pull_view_live = "raw"`.
 - Path-rule `chmod` values apply during `push` only. `pull` still stores only bytes plus the Git executable bit because Git cannot represent full child file modes such as `600`.
 - If multiple path rules match the same child file, the later rule wins.
 
@@ -152,6 +156,11 @@ path = "~/.config/app"
 [[targets.config.path_rules]]
 pattern = "secrets/*.conf"
 chmod = "600"
+
+[[targets.config.path_rules]]
+pattern = "*/data.json"
+render = "json-render-command"
+capture = "json-capture-command"
 ```
 
 - Targets may define `sync_policy` to narrow or widen the package-level operation gate for that target.

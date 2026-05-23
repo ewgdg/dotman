@@ -73,6 +73,7 @@ def _write_directory_execution_repo(
     *,
     package_id: str = "app",
     live_dir_name: str = "app",
+    target_config: list[str] | None = None,
     path_rules: list[str] | None = None,
 ) -> None:
     package_root = repo_root / "packages" / package_id
@@ -87,8 +88,10 @@ def _write_directory_execution_repo(
         "[targets.config]",
         'source = "files/config"',
         f'path = "~/.config/{live_dir_name}"',
-        "",
     ]
+    if target_config:
+        target_lines.extend(target_config)
+    target_lines.append("")
     if path_rules:
         target_lines.extend(path_rules)
         target_lines.append("")
@@ -469,6 +472,177 @@ def test_push_directory_target_path_rule_repairs_child_chmod_drift(
     assert exit_code == 0
     assert live_path.read_text(encoding="utf-8") == "repo directory value\n"
     assert stat.S_IMODE(live_path.stat().st_mode) == 0o600
+
+
+def test_push_directory_target_uses_render_for_child_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(repo_root, target_config=['render = "sh hooks/render.sh"'])
+    package_root = repo_root / "packages" / "app"
+    (package_root / "hooks").mkdir()
+    (package_root / "hooks" / "render.sh").write_text(
+        "#!/bin/sh\nsed 's/^/rendered:/' \"$DOTMAN_SOURCE\"\n",
+        encoding="utf-8",
+    )
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--config", str(config_path), "push"])
+
+    assert exit_code == 0
+    live_path = home / ".config" / "app" / "nested.txt"
+    assert live_path.read_text(encoding="utf-8") == "rendered:repo directory value\n"
+
+
+def test_push_directory_target_path_rule_render_overrides_default_render(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(
+        repo_root,
+        target_config=['render = "sh hooks/default-render.sh"'],
+        path_rules=[
+            "[[targets.config.path_rules]]",
+            'pattern = "*.json"',
+            'render = "sh hooks/json-render.sh"',
+        ],
+    )
+    package_root = repo_root / "packages" / "app"
+    (package_root / "files" / "config" / "data.json").write_text("json value\n", encoding="utf-8")
+    (package_root / "hooks").mkdir()
+    (package_root / "hooks" / "default-render.sh").write_text(
+        "#!/bin/sh\nsed 's/^/default:/' \"$DOTMAN_SOURCE\"\n",
+        encoding="utf-8",
+    )
+    (package_root / "hooks" / "json-render.sh").write_text(
+        "#!/bin/sh\nsed 's/^/json:/' \"$DOTMAN_SOURCE\"\n",
+        encoding="utf-8",
+    )
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--config", str(config_path), "push"])
+
+    assert exit_code == 0
+    live_root = home / ".config" / "app"
+    assert (live_root / "nested.txt").read_text(encoding="utf-8") == "default:repo directory value\n"
+    assert (live_root / "data.json").read_text(encoding="utf-8") == "json:json value\n"
+
+
+def test_pull_directory_target_uses_capture_for_child_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(repo_root, target_config=['capture = "sh hooks/capture.sh"'])
+    package_root = repo_root / "packages" / "app"
+    (package_root / "hooks").mkdir()
+    (package_root / "hooks" / "capture.sh").write_text(
+        "#!/bin/sh\nsed 's/^live:/repo:/' \"$DOTMAN_LIVE_PATH\"\n",
+        encoding="utf-8",
+    )
+    live_path = home / ".config" / "app" / "nested.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("live:new value\n", encoding="utf-8")
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--config", str(config_path), "pull"])
+
+    assert exit_code == 0
+    repo_path = package_root / "files" / "config" / "nested.txt"
+    assert repo_path.read_text(encoding="utf-8") == "repo:new value\n"
+
+
+def test_pull_directory_target_patch_capture_updates_child_repo_source(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(
+        repo_root,
+        target_config=[
+            'render = "jinja"',
+            'capture = "patch"',
+            'pull_view_repo = "render"',
+            'pull_view_live = "raw"',
+        ],
+    )
+    repo_path = repo_root / "packages" / "app" / "files" / "config" / "nested.txt"
+    repo_path.write_text("greeting = hello\n", encoding="utf-8")
+    live_path = home / ".config" / "app" / "nested.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("greeting = world\n", encoding="utf-8")
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--config", str(config_path), "pull"])
+
+    assert exit_code == 0
+    assert repo_path.read_text(encoding="utf-8") == "greeting = world\n"
+
+
+def test_pull_directory_target_path_rule_capture_overrides_default_capture(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_directory_execution_repo(
+        repo_root,
+        target_config=['capture = "sh hooks/default-capture.sh"'],
+        path_rules=[
+            "[[targets.config.path_rules]]",
+            'pattern = "*.json"',
+            'capture = "sh hooks/json-capture.sh"',
+        ],
+    )
+    package_root = repo_root / "packages" / "app"
+    (package_root / "files" / "config" / "data.json").write_text("old json\n", encoding="utf-8")
+    (package_root / "hooks").mkdir()
+    (package_root / "hooks" / "default-capture.sh").write_text(
+        "#!/bin/sh\nsed 's/^/default:/' \"$DOTMAN_LIVE_PATH\"\n",
+        encoding="utf-8",
+    )
+    (package_root / "hooks" / "json-capture.sh").write_text(
+        "#!/bin/sh\nsed 's/^/json:/' \"$DOTMAN_LIVE_PATH\"\n",
+        encoding="utf-8",
+    )
+    live_root = home / ".config" / "app"
+    live_root.mkdir(parents=True)
+    (live_root / "nested.txt").write_text("plain value\n", encoding="utf-8")
+    (live_root / "data.json").write_text("json value\n", encoding="utf-8")
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--config", str(config_path), "pull"])
+
+    assert exit_code == 0
+    repo_root_path = package_root / "files" / "config"
+    assert (repo_root_path / "nested.txt").read_text(encoding="utf-8") == "default:plain value\n"
+    assert (repo_root_path / "data.json").read_text(encoding="utf-8") == "json:json value\n"
 
 
 def test_push_cli_dry_run_emits_symlink_hazard_metadata(

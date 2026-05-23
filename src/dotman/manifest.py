@@ -390,7 +390,17 @@ def normalize_target_path_rules(
                 raise ValueError(
                     f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].chmod must be an octal string"
                 ) from None
-        rules.append(TargetPathRule(pattern=normalized_pattern, chmod=chmod))
+        render = rule_payload.get("render")
+        if render is not None and not isinstance(render, str):
+            raise ValueError(
+                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].render must be a string"
+            )
+        capture = rule_payload.get("capture")
+        if capture is not None and not isinstance(capture, str):
+            raise ValueError(
+                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].capture must be a string"
+            )
+        rules.append(TargetPathRule(pattern=normalized_pattern, chmod=chmod, render=render, capture=capture))
     return tuple(rules)
 
 

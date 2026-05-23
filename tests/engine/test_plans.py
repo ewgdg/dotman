@@ -1356,18 +1356,23 @@ def test_target_preset_jinja_patch_editor_expands_default_workflow(
     assert pull_target.reconcile == HookCommandSpec(run="jinja", io="tty")
 
 
-def test_capture_patch_rejects_directory_targets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_capture_patch_accepts_directory_child_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
     repo_root = tmp_path / "repo"
-    (repo_root / "packages" / "shell" / "files" / "profile").mkdir(parents=True)
+    package_root = repo_root / "packages" / "shell"
+    (package_root / "files" / "profile").mkdir(parents=True)
     (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "shell" / "package.toml").write_text(
+    (package_root / "files" / "profile" / "config.sh").write_text("greeting = {{ vars.greeting }}\n", encoding="utf-8")
+    (package_root / "package.toml").write_text(
         "\n".join(
             [
                 'id = "shell"',
+                "",
+                '[vars]',
+                'greeting = "hello"',
                 "",
                 "[targets.profile]",
                 'source = "files/profile"',
@@ -1379,13 +1384,106 @@ def test_capture_patch_rejects_directory_targets(tmp_path: Path, monkeypatch: py
         encoding="utf-8",
     )
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    live_path = home / ".profile" / "config.sh"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("greeting = world\n", encoding="utf-8")
 
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
 
     engine = DotmanEngine.from_config_path(config_path)
 
-    with pytest.raises(ValueError, match="capture = \"patch\" requires a file target"):
+    operation_plan = engine.plan_pull_query("fixture:shell@default")
+
+    target = operation_plan.package_plans[0].target_plans[0]
+    assert target.target_kind == "directory"
+    assert target.directory_items[0].capture_command == "patch"
+    assert target.directory_items[0].render_command == "jinja"
+    assert target.directory_items[0].review_before_bytes == b"greeting = hello\n"
+    assert target.directory_items[0].review_after_bytes == b"greeting = world\n"
+
+
+def test_capture_patch_rejects_live_only_file_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    package_root = repo_root / "packages" / "shell"
+    package_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'render = "jinja"',
+                'capture = "patch"',
+                'pull_view_repo = "render"',
+                'pull_view_live = "raw"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (home / ".profile").write_text("live only\n", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    with pytest.raises(ValueError, match='capture = "patch" requires existing repo source'):
         engine.plan_pull_query("fixture:shell@default")
+
+
+
+def test_capture_patch_rejects_live_only_directory_child_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    package_root = repo_root / "packages" / "shell"
+    (package_root / "files" / "profile").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'render = "jinja"',
+                'capture = "patch"',
+                'pull_view_repo = "render"',
+                'pull_view_live = "raw"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    live_path = home / ".profile" / "new.sh"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("new file\n", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+
+    with pytest.raises(ValueError, match='capture = "patch" requires existing repo source'):
+        engine.plan_pull_query("fixture:shell@default")
+
 
 
 def test_capture_patch_rejects_raw_review_views(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
