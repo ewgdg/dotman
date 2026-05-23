@@ -96,6 +96,279 @@ def write_static_multi_instance_repo(repo_root: Path) -> None:
     )
 
 
+def write_nested_pull_only_repo(repo_root: Path, *, nested_repo_paths: bool) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "groups").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "groups" / "all.toml").write_text('members = ["parent", "child"]\n', encoding="utf-8")
+    (repo_root / "packages" / "parent" / "files" / "config").mkdir(parents=True)
+    (repo_root / "packages" / "child" / "files").mkdir(parents=True)
+    child_source = "files/generated.conf" if not nested_repo_paths else "../parent/files/config/generated.conf"
+    child_live_path = "~/.config/example/generated.conf" if not nested_repo_paths else "~/.config/generated.conf"
+    (repo_root / "packages" / "child" / "files" / "generated.conf").write_text("child\n", encoding="utf-8")
+    if nested_repo_paths:
+        (repo_root / "packages" / "parent" / "files" / "config" / "generated.conf").write_text("child\n", encoding="utf-8")
+
+    (repo_root / "packages" / "parent" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "parent"',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/example"',
+                'sync_policy = "pull-only"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "child" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "child"',
+                "",
+                "[targets.generated]",
+                f'source = "{child_source}"',
+                f'path = "{child_live_path}"',
+                'sync_policy = "pull-only"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_same_package_nested_pull_only_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "app" / "files" / "config").mkdir(parents=True)
+    (repo_root / "packages" / "app" / "files" / "generated").mkdir(parents=True)
+    (repo_root / "packages" / "app" / "files" / "generated" / "generated.conf").write_text("child\n", encoding="utf-8")
+    (repo_root / "packages" / "app" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "app"',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/example"',
+                'sync_policy = "pull-only"',
+                "",
+                "[targets.generated]",
+                'source = "files/generated/generated.conf"',
+                'path = "~/.config/example/generated.conf"',
+                'sync_policy = "pull-only"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_pull_only_same_live_path_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "alpha" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "beta" / "files").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "files" / "shared.conf").write_text("alpha\n", encoding="utf-8")
+    (repo_root / "packages" / "beta" / "files" / "shared.conf").write_text("beta\n", encoding="utf-8")
+    for package_id in ("alpha", "beta"):
+        (repo_root / "packages" / package_id / "package.toml").write_text(
+            "\n".join(
+                [
+                    f'id = "{package_id}"',
+                    "",
+                    "[targets.shared]",
+                    'source = "files/shared.conf"',
+                    'path = "~/.config/shared.conf"',
+                    'sync_policy = "pull-only"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+
+def write_pull_only_same_repo_path_repo(repo_root: Path) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "alpha" / "files").mkdir(parents=True)
+    (repo_root / "packages" / "beta").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "alpha" / "files" / "shared.conf").write_text("shared\n", encoding="utf-8")
+    for package_id, live_path in (("alpha", "~/.config/alpha.conf"), ("beta", "~/.config/beta.conf")):
+        source = "files/shared.conf" if package_id == "alpha" else "../alpha/files/shared.conf"
+        (repo_root / "packages" / package_id / "package.toml").write_text(
+            "\n".join(
+                [
+                    f'id = "{package_id}"',
+                    "",
+                    "[targets.shared]",
+                    f'source = "{source}"',
+                    f'path = "{live_path}"',
+                    'sync_policy = "pull-only"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+
+def test_pull_allows_nested_live_paths_within_package_when_repo_paths_do_not_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config" / "example").mkdir(parents=True)
+    (home / ".config" / "example" / "generated.conf").write_text("child\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_same_package_nested_pull_only_repo(repo_root)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    plan = engine.plan_pull_query("fixture:app@default")
+
+    assert [target.target_name for target in plan.package_plans[0].target_plans] == ["config", "generated"]
+
+
+def test_pull_allows_nested_live_paths_when_repo_paths_do_not_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config" / "example").mkdir(parents=True)
+    (home / ".config" / "example" / "generated.conf").write_text("child\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_nested_pull_only_repo(repo_root, nested_repo_paths=False)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    plan = engine.plan_pull_query("fixture:all@default")
+
+    assert [(item.package_id, item.operation) for item in plan.package_plans] == [
+        ("parent", "pull"),
+        ("child", "pull"),
+    ]
+
+
+def test_pull_rejects_nested_repo_paths_even_when_live_paths_do_not_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config" / "example").mkdir(parents=True)
+    (home / ".config" / "generated.conf").write_text("child\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_nested_pull_only_repo(repo_root, nested_repo_paths=True)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    with pytest.raises(ValueError, match=r"incompatible nested targets: parent:config contains child:generated"):
+        engine.plan_pull_query("fixture:all@default")
+
+
+def test_tracked_pull_allows_same_live_path_when_repo_paths_do_not_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config").mkdir(parents=True)
+    (home / ".config" / "shared.conf").write_text("live\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_pull_only_same_live_path_repo(repo_root)
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="fixture",
+        entries=[("alpha", "default"), ("beta", "default")],
+    )
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = engine.plan_pull()
+
+    assert [(item.package_id, item.operation) for item in plan.package_plans] == [
+        ("alpha", "pull"),
+        ("beta", "pull"),
+    ]
+
+
+def test_tracked_pull_rejects_same_repo_path_when_live_paths_do_not_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / ".config").mkdir(parents=True)
+    (home / ".config" / "alpha.conf").write_text("alpha\n", encoding="utf-8")
+    (home / ".config" / "beta.conf").write_text("beta\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_pull_only_same_repo_path_repo(repo_root)
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="fixture",
+        entries=[("alpha", "default"), ("beta", "default")],
+    )
+    engine = DotmanEngine.from_config_path(config_path)
+
+    with pytest.raises(
+        ValueError,
+        match=r"conflicting explicit tracked targets for .+shared\.conf: fixture:alpha@default -> fixture:alpha\.shared, fixture:beta@default -> fixture:beta\.shared",
+    ):
+        engine.plan_pull()
+
+
+def test_record_binding_allows_pull_only_same_live_path_when_repo_paths_do_not_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_pull_only_same_live_path_repo(repo_root)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    for selector_text in ("fixture:alpha@default", "fixture:beta@default"):
+        _repo, selector = engine.resolve_full_spec_selector_text(selector_text)
+        engine.record_tracked_package_entry(selector)
+
+    assert [(entry.selector, entry.profile) for entry in engine.read_tracked_package_entries(engine.get_repo("fixture"))] == [
+        ("alpha", "default"),
+        ("beta", "default"),
+    ]
+
+
+def test_record_binding_rejects_pull_only_same_repo_path_when_live_paths_do_not_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_pull_only_same_repo_path_repo(repo_root)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    _repo, selector = engine.resolve_full_spec_selector_text("fixture:alpha@default")
+    engine.record_tracked_package_entry(selector)
+
+    with pytest.raises(
+        ValueError,
+        match=r"conflicting explicit tracked targets for .+shared\.conf: fixture:alpha@default -> fixture:alpha\.shared, fixture:beta@default -> fixture:beta\.shared",
+    ):
+        _repo, selector = engine.resolve_full_spec_selector_text("fixture:beta@default")
+        engine.record_tracked_package_entry(selector)
+
+
 def test_package_reserved_paths_conflict_with_other_package_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

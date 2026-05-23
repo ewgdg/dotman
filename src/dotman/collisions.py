@@ -149,23 +149,25 @@ def validate_target_collisions(
     *,
     operation: str,
 ) -> None:
-    for index, (package, target, _repo_path, live_path, push_ignore, pull_ignore, _live_path_is_symlink, _live_path_symlink_target) in enumerate(rendered_targets):
+    for index, (package, target, repo_path, live_path, push_ignore, pull_ignore, _live_path_is_symlink, _live_path_symlink_target) in enumerate(rendered_targets):
+        path = operation_write_path(repo_path=repo_path, live_path=live_path, operation=operation)
         for (
             other_package,
             other_target,
-            _other_repo_path,
+            other_repo_path,
             other_live_path,
             other_push_ignore,
             other_pull_ignore,
             _other_live_path_is_symlink,
             _other_live_path_symlink_target,
         ) in rendered_targets[index + 1 :]:
-            if live_path == other_live_path:
+            other_path = operation_write_path(repo_path=other_repo_path, live_path=other_live_path, operation=operation)
+            if path == other_path:
                 raise ValueError(
-                    f"conflicting target ownership: {package.id}:{target.name} and {other_package.id}:{other_target.name} both map to {live_path}"
+                    f"conflicting target ownership: {package.id}:{target.name} and {other_package.id}:{other_target.name} both map to {path}"
                 )
-            if live_path in other_live_path.parents:
-                relative = other_live_path.relative_to(live_path).as_posix()
+            if path in other_path.parents:
+                relative = other_path.relative_to(path).as_posix()
                 parent_ignore = IgnoreMatcher.from_patterns(
                     _operation_ignore_patterns(
                         push_ignore=push_ignore,
@@ -177,8 +179,8 @@ def validate_target_collisions(
                     raise ValueError(
                         f"incompatible nested targets: {package.id}:{target.name} contains {other_package.id}:{other_target.name}"
                     )
-            elif other_live_path in live_path.parents:
-                relative = live_path.relative_to(other_live_path).as_posix()
+            elif other_path in path.parents:
+                relative = path.relative_to(other_path).as_posix()
                 parent_ignore = IgnoreMatcher.from_patterns(
                     _operation_ignore_patterns(
                         push_ignore=other_push_ignore,
@@ -190,6 +192,14 @@ def validate_target_collisions(
                     raise ValueError(
                         f"incompatible nested targets: {other_package.id}:{other_target.name} contains {package.id}:{target.name}"
                     )
+
+
+def operation_write_path(*, repo_path: Path, live_path: Path, operation: str) -> Path:
+    if operation == "push":
+        return live_path
+    if operation == "pull":
+        return repo_path
+    raise ValueError(f"unsupported operation '{operation}'")
 
 
 

@@ -348,6 +348,8 @@ def write_profile_ambiguous_dependency_repo(repo_root: Path, *, shared_binding_m
             'source = "files/shared.conf"',
             'path = "~/.config/shared/{{ profile }}.conf"',
             'render = "jinja"',
+            # Multi-instance fixture shares one source template; pull would collide on that repo path.
+            *(['sync_policy = "push-only"'] if shared_binding_mode != "singleton" else []),
             "",
         ]
     )
@@ -375,6 +377,8 @@ def write_multi_instance_repo(repo_root: Path) -> None:
         "profile={{ profile }}\n",
         encoding="utf-8",
     )
+    # Shared source template is push-only: pull would make profile instances write
+    # back into the same repo file, which strict ownership validation rejects.
     (repo_root / "packages" / "profiled" / "package.toml").write_text(
         "\n".join(
             [
@@ -385,6 +389,7 @@ def write_multi_instance_repo(repo_root: Path) -> None:
                 'source = "files/managed.conf"',
                 'path = "~/.config/profiled/{{ profile }}.conf"',
                 'render = "jinja"',
+                'sync_policy = "push-only"',
                 "",
             ]
         ),

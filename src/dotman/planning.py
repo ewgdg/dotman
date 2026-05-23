@@ -10,6 +10,7 @@ from dotman.collisions import (
     TrackedTargetCandidate,
     TrackedTargetConflictError,
     TrackedTargetOverride,
+    operation_write_path,
     paths_conflict,
     resolve_tracked_target_winners,
     tracked_target_signature,
@@ -369,11 +370,11 @@ def build_tracked_plans(
     operation: str,
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
 ) -> OperationPlan:
-    plans, candidates_by_live_path = engine._collect_tracked_candidates(
+    plans, candidates_by_path = engine._collect_tracked_candidates(
         operation=operation,
         entries_by_repo=entries_by_repo,
     )
-    winner_indexes = engine._resolve_tracked_target_winners(candidates_by_live_path)
+    winner_indexes = engine._resolve_tracked_target_winners(candidates_by_path)
     filtered_plans: list[PackagePlan] = []
     for plan_index, plan in enumerate(plans):
         filtered_targets = [
@@ -403,14 +404,19 @@ def collect_tracked_candidates(
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
 ) -> tuple[list[PackagePlan], dict[Path, list[TrackedTargetCandidate]]]:
     plans: list[PackagePlan] = []
-    candidates_by_live_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
+    candidates_by_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
     for selection in resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo):
         repo = engine.get_repo(selection.identity.repo)
         plan = build_package_plan(engine, repo, selection, operation=operation)
         plan_index = len(plans)
         plans.append(plan)
         for target_index, target in enumerate(plan.target_plans):
-            candidates_by_live_path[target.live_path].append(
+            candidate_path = operation_write_path(
+                repo_path=target.repo_path,
+                live_path=target.live_path,
+                operation=operation,
+            )
+            candidates_by_path[candidate_path].append(
                 TrackedTargetCandidate(
                     plan_index=plan_index,
                     target_index=target_index,
@@ -430,7 +436,7 @@ def collect_tracked_candidates(
                     signature=engine._tracked_target_signature(target),
                 )
             )
-    return plans, candidates_by_live_path
+    return plans, candidates_by_path
 
 
 def collect_tracked_ownership_candidates(
@@ -439,8 +445,9 @@ def collect_tracked_ownership_candidates(
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
     include_target_summary: bool = False,
     selections: list[ResolvedPackageSelection] | None = None,
+    operation: str = "push",
 ) -> dict[Path, list[TrackedTargetCandidate]]:
-    candidates_by_live_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
+    candidates_by_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
     candidate_index = 0
 
     resolved_selections = (
@@ -457,7 +464,7 @@ def collect_tracked_ownership_candidates(
             packages=package_context.resolved_packages,
             context=package_context.context,
             selection=selection,
-            operation="push",
+            operation=operation,
             inferred_os=package_context.inferred_os,
             declaration_package_ids={selection.identity.package_id},
             inspect_live_symlinks=False,
@@ -479,7 +486,12 @@ def collect_tracked_ownership_candidates(
                     pull_ignore=metadata.pull_ignore,
                     chmod=metadata.chmod,
                 )
-            candidates_by_live_path[metadata.live_path].append(
+            candidate_path = operation_write_path(
+                repo_path=metadata.repo_path,
+                live_path=metadata.live_path,
+                operation=operation,
+            )
+            candidates_by_path[candidate_path].append(
                 TrackedTargetCandidate(
                     plan_index=candidate_index,
                     target_index=target_index,
@@ -500,7 +512,7 @@ def collect_tracked_ownership_candidates(
                 )
             )
             candidate_index += 1
-    return candidates_by_live_path
+    return candidates_by_path
 
 
 def validate_tracked_package_ownership(
@@ -509,12 +521,14 @@ def validate_tracked_package_ownership(
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
 ) -> None:
     selections = resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo)
-    candidates_by_live_path = collect_tracked_ownership_candidates(
-        engine,
-        entries_by_repo=entries_by_repo,
-        selections=selections,
-    )
-    engine._resolve_tracked_target_winners(candidates_by_live_path)
+    for operation in ("push", "pull"):
+        candidates_by_path = collect_tracked_ownership_candidates(
+            engine,
+            entries_by_repo=entries_by_repo,
+            selections=selections,
+            operation=operation,
+        )
+        engine._resolve_tracked_target_winners(candidates_by_path)
 
 
 def preview_package_selection_implicit_overrides(
@@ -788,7 +802,7 @@ def build_operation_plan(
     allow_standalone_noop_hooks: bool = False,
     excluded_repo_names: set[str] | None = None,
 ) -> OperationPlan:
-    if operation == "push":
+    if operation in {"push", "pull"}:
         _validate_direct_package_plan_conflicts(package_plans, repo_by_name=repo_by_name)
     repo_order = tuple(
         repo_name
@@ -845,8 +859,10 @@ def _validate_direct_package_plan_conflicts(
                         target.live_path_symlink_target,
                     )
                 )
-        validate_target_collisions(rendered_targets, operation=repo_package_plans[0].operation)
-        _validate_reserved_path_conflicts_for_package_plans(repo_package_plans, repo=repo, rendered_targets=rendered_targets)
+        operation = repo_package_plans[0].operation
+        validate_target_collisions(rendered_targets, operation=operation)
+        if operation == "push":
+            _validate_reserved_path_conflicts_for_package_plans(repo_package_plans, repo=repo, rendered_targets=rendered_targets)
 
 
 def _validate_reserved_path_conflicts_for_package_plans(

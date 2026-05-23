@@ -169,7 +169,8 @@ def build_target_metadata(
     if validate_declaration_conflicts:
         rendered_targets = [_metadata_collision_tuple(metadata) for metadata in metadata_targets]
         validate_target_collisions(rendered_targets, operation=operation)
-        validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
+        if operation == "push":
+            validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
     return metadata_targets
 
 
