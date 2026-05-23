@@ -716,7 +716,13 @@ class DotmanEngine:
         package: PackageSpec,
         context: dict[str, Any],
     ) -> list[TrackedTargetSummary]:
-        return self._tracked_package_helpers().summarize_targets(repo, package, context)
+        return self._tracked_package_helpers().summarize_targets(
+            repo,
+            package,
+            context,
+            file_symlink_mode=self.config.file_symlink_mode,
+            dir_symlink_mode=self.config.dir_symlink_mode,
+        )
 
     def _tracked_target_summary_from_plan(self, target: Any) -> TrackedTargetSummary:
         return self._tracked_package_helpers().tracked_target_summary_from_plan(target)

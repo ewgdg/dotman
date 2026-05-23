@@ -6,7 +6,7 @@ from typing import Any
 
 from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
-from dotman.projection import default_pull_view_live, infer_target_kind
+from dotman.projection import default_pull_view_live, resolve_target_kind
 from dotman.models import (
     FullSpecSelector,
     HookCommandSpec,
@@ -220,7 +220,13 @@ def describe_tracked_package_entry(
         if executable
         else {}
     )
-    targets = summarize_targets(repo, package, context.context)
+    targets = summarize_targets(
+        repo,
+        package,
+        context.context,
+        file_symlink_mode=engine.config.file_symlink_mode,
+        dir_symlink_mode=engine.config.dir_symlink_mode,
+    )
     tracked_reason = "explicit" if selection.explicit else "implicit"
 
     return TrackedPackageEntryDetail(
@@ -268,6 +274,9 @@ def summarize_targets(
     repo: Repository,
     package: PackageSpec,
     context: dict[str, Any],
+    *,
+    file_symlink_mode: str = "prompt",
+    dir_symlink_mode: str = "fail",
 ) -> list[TrackedTargetSummary]:
     target_summaries: list[TrackedTargetSummary] = []
     for target in (package.targets or {}).values():
@@ -303,7 +312,14 @@ def summarize_targets(
                 target_name=target.name,
                 repo_path=repo_path,
                 live_path=live_path,
-                target_kind=infer_target_kind(repo_path=repo_path, live_path=live_path),
+                target_kind=resolve_target_kind(
+                    target_type=target.target_type,
+                    repo_path=repo_path,
+                    live_path=live_path,
+                    target_label=f"{package.id}:{target.name}",
+                    file_symlink_mode=file_symlink_mode,
+                    dir_symlink_mode=dir_symlink_mode,
+                ),
                 render_command=render_command,
                 capture_command=capture_command,
                 reconcile=reconcile,

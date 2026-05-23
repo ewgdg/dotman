@@ -203,7 +203,14 @@ def plan_targets(
         repo_path = metadata.repo_path
         live_path = metadata.live_path
         sync_policy = resolve_sync_policy(package=package, target=target)
-        target_kind = infer_target_kind(repo_path=repo_path, live_path=live_path)
+        target_kind = resolve_target_kind(
+            target_type=target.target_type,
+            repo_path=repo_path,
+            live_path=live_path,
+            target_label=f"{package.id}:{target.name}",
+            file_symlink_mode=engine.config.file_symlink_mode,
+            dir_symlink_mode=engine.config.dir_symlink_mode,
+        )
         if metadata.path_rules and target_kind == "file":
             raise ValueError(
                 f"target '{package.id}:{target.name}' defines path_rules but is not a directory target"
@@ -212,7 +219,14 @@ def plan_targets(
         capture_command = metadata.capture_command
         reconcile = metadata.reconcile
         if operation == "push" and sync_policy_deletes_on_push(sync_policy):
-            target_kind = infer_push_only_delete_target_kind(repo_path=repo_path, live_path=live_path)
+            target_kind = resolve_push_only_delete_target_kind(
+                target_type=target.target_type,
+                repo_path=repo_path,
+                live_path=live_path,
+                target_label=f"{package.id}:{target.name}",
+                file_symlink_mode=engine.config.file_symlink_mode,
+                dir_symlink_mode=engine.config.dir_symlink_mode,
+            )
             if target_kind == "directory":
                 action, directory_items = plan_live_delete_directory_action(
                     repo_path=repo_path,
@@ -484,6 +498,69 @@ def plan_targets(
     return plans
 
 
+def resolve_target_kind(
+    *,
+    target_type: str | None,
+    repo_path: Path,
+    live_path: Path,
+    target_label: str = "target",
+    file_symlink_mode: str = "prompt",
+    dir_symlink_mode: str = "fail",
+) -> str:
+    if target_type is None:
+        return infer_target_kind(repo_path=repo_path, live_path=live_path)
+    validate_explicit_target_type(
+        target_type=target_type,
+        repo_path=repo_path,
+        live_path=live_path,
+        target_label=target_label,
+        file_symlink_mode=file_symlink_mode,
+        dir_symlink_mode=dir_symlink_mode,
+    )
+    return target_type
+
+
+def validate_explicit_target_type(
+    *,
+    target_type: str,
+    repo_path: Path,
+    live_path: Path,
+    target_label: str,
+    file_symlink_mode: str,
+    dir_symlink_mode: str,
+) -> None:
+    live_follow_symlink = target_type == "file" or (
+        target_type == "directory" and dir_symlink_mode == "follow"
+    )
+    path_roles = (
+        ("repo source", repo_path, True),
+        ("live", live_path, live_follow_symlink),
+    )
+    for role, path, follow_symlink in path_roles:
+        existing_kind = existing_target_path_kind(path, follow_symlink=follow_symlink)
+        if existing_kind is not None and existing_kind != target_type:
+            raise ValueError(
+                f"target '{target_label}' declares type = \"{target_type}\" but {role} path is {existing_kind}: {path}"
+            )
+
+
+def existing_target_path_kind(path: Path, *, follow_symlink: bool = False) -> str | None:
+    if path.is_symlink():
+        if not follow_symlink:
+            return "file"
+        resolved_path = path.resolve(strict=False)
+        if resolved_path.is_dir():
+            return "directory"
+        if resolved_path.exists():
+            return "file"
+        return None
+    if path.is_dir():
+        return "directory"
+    if path.exists():
+        return "file"
+    return None
+
+
 def infer_target_kind(*, repo_path: Path, live_path: Path) -> str:
     if repo_path.is_dir():
         return "directory"
@@ -496,8 +573,36 @@ def infer_target_kind(*, repo_path: Path, live_path: Path) -> str:
     return "unknown"
 
 
-def infer_push_only_delete_target_kind(*, repo_path: Path, live_path: Path) -> str:
+def resolve_push_only_delete_target_kind(
+    *,
+    target_type: str | None,
+    repo_path: Path,
+    live_path: Path,
+    target_label: str = "target",
+    file_symlink_mode: str = "prompt",
+    dir_symlink_mode: str = "fail",
+) -> str:
+    if target_type is None:
+        return infer_push_only_delete_target_kind(
+            repo_path=repo_path,
+            live_path=live_path,
+            dir_symlink_mode=dir_symlink_mode,
+        )
+    validate_explicit_target_type(
+        target_type=target_type,
+        repo_path=repo_path,
+        live_path=live_path,
+        target_label=target_label,
+        file_symlink_mode=file_symlink_mode,
+        dir_symlink_mode=dir_symlink_mode,
+    )
+    return target_type
+
+
+def infer_push_only_delete_target_kind(*, repo_path: Path, live_path: Path, dir_symlink_mode: str = "fail") -> str:
     if live_path.is_symlink():
+        if dir_symlink_mode == "follow" and live_path.is_dir():
+            return "directory"
         return "file"
     if live_path.is_dir():
         return "directory"

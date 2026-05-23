@@ -14,6 +14,7 @@ VALID_HOOK_IO_VALUES = VALID_COMMAND_IO_VALUES
 VALID_ELEVATION_VALUES = ("none", "root", "lease", "broker", "intercept")
 VALID_DEFAULT_COMMAND_ELEVATION_VALUES = ("none", "broker", "intercept")
 VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both", "push-only-delete")
+VALID_TARGET_TYPE_VALUES = ("file", "directory")
 
 
 def validate_package_id(package_id: str) -> None:
@@ -272,6 +273,10 @@ def normalize_sync_policy(value: Any) -> str | None:
     return normalize_optional_string_enum(value, key="sync_policy", allowed=VALID_SYNC_POLICY_VALUES)
 
 
+def normalize_target_type(value: Any) -> str | None:
+    return normalize_optional_string_enum(value, key="target type", allowed=VALID_TARGET_TYPE_VALUES)
+
+
 def resolve_sync_policy(*, package: PackageSpec, target: TargetSpec) -> str:
     return target.sync_policy or package.sync_policy or "both"
 
@@ -444,6 +449,9 @@ def build_target_spec(
         declared_in=manifest_path.parent,
         source=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="source"),
         path=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path"),
+        target_type=normalize_target_type(
+            get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="type")
+        ),
         sync_policy=normalize_sync_policy(
             get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="sync_policy")
         ),
@@ -585,6 +593,7 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         declared_in=override.declared_in,
         source=override.source if override.source is not None else base.source,
         path=override.path if override.path is not None else base.path,
+        target_type=override.target_type if override.target_type is not None else base.target_type,
         sync_policy=override.sync_policy if override.sync_policy is not None else base.sync_policy,
         chmod=override.chmod if override.chmod is not None else base.chmod,
         render=override.render if override.render is not None else base.render,

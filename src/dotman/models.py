@@ -84,6 +84,7 @@ class TargetSpec:
     declared_in: Path
     source: str | None = None
     path: str | None = None
+    target_type: str | None = None
     sync_policy: str | None = None
     chmod: str | None = None
     render: str | None = None
@@ -366,6 +367,7 @@ class TrackableTargetDetail:
     target_name: str
     source: str | None
     path: str | None
+    target_type: str | None = None
     render_command: str | None = None
     capture_command: str | None = None
     reconcile: HookCommandSpec | None = None
@@ -380,6 +382,7 @@ class TrackableTargetDetail:
             "target_name": self.target_name,
             "source": self.source,
             "path": self.path,
+            "target_type": self.target_type,
             "render_command": self.render_command,
             "capture_command": self.capture_command,
             "reconcile": None if self.reconcile is None else self.reconcile.to_dict(),

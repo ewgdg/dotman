@@ -2135,6 +2135,314 @@ def test_push_plan_marks_directory_target_unknown_when_repo_and_live_paths_are_b
     assert target.directory_items == ()
 
 
+def test_push_plan_uses_explicit_file_type_when_custom_render_source_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.profile]",
+                'type = "file"',
+                'source = "generated/profile"',
+                'path = "~/.profile"',
+                'render = \'printf "generated\\n"\'',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+
+    target = plan.target_plans[0]
+    assert target.target_kind == "file"
+    assert target.action == "create"
+    assert target.projection_kind == "command"
+    assert target.desired_text == "generated\n"
+
+
+def test_push_plan_uses_explicit_directory_type_when_paths_are_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.empty]",
+                'type = "directory"',
+                'source = "files/empty"',
+                'path = "~/.config/sample/empty"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    engine = DotmanEngine.from_config_path(config_path)
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+
+    target = plan.target_plans[0]
+    assert target.target_kind == "directory"
+    assert target.action == "noop"
+    assert target.directory_items == ()
+
+
+def test_target_type_rejects_unknown_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.config]",
+                'type = "socket"',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    with pytest.raises(ValueError, match="unsupported target type 'socket'"):
+        DotmanEngine.from_config_path(config_path).plan_push_query("fixture:sample@default")
+
+
+def test_target_type_rejects_existing_repo_source_shape_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_path = repo_root / "packages" / "sample" / "files" / "config"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("repo file\n", encoding="utf-8")
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.config]",
+                'type = "directory"',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    with pytest.raises(ValueError, match='declares type = "directory" but repo source path is file'):
+        DotmanEngine.from_config_path(config_path).plan_push_query("fixture:sample@default")
+
+
+def test_target_type_rejects_existing_live_path_shape_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    live_path = home / ".config" / "sample"
+    live_path.mkdir(parents=True)
+    repo_root = tmp_path / "repo"
+    source_path = repo_root / "packages" / "sample" / "files" / "config"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("repo file\n", encoding="utf-8")
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.config]",
+                'type = "file"',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    with pytest.raises(ValueError, match='declares type = "file" but live path is directory'):
+        DotmanEngine.from_config_path(config_path).plan_push_query("fixture:sample@default")
+
+
+def test_target_type_rejects_live_directory_symlink_when_follow_is_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    real_live_dir = home / ".config" / "real-sample"
+    real_live_dir.mkdir(parents=True)
+    live_path = home / ".config" / "sample"
+    live_path.symlink_to(real_live_dir)
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.config]",
+                'type = "directory"',
+                'sync_policy = "push-only-delete"',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    with pytest.raises(ValueError, match='declares type = "directory" but live path is file'):
+        DotmanEngine.from_config_path(config_path).plan_push_query("fixture:sample@default")
+
+
+def test_target_type_allows_live_directory_symlink_when_follow_is_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    real_live_dir = home / ".config" / "real-sample"
+    real_live_dir.mkdir(parents=True)
+    (real_live_dir / "old.txt").write_text("old\n", encoding="utf-8")
+    live_path = home / ".config" / "sample"
+    live_path.symlink_to(real_live_dir, target_is_directory=True)
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.config]",
+                'type = "directory"',
+                'sync_policy = "push-only-delete"',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    engine = DotmanEngine.from_config_path(config_path, dir_symlink_mode="follow")
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+
+    target = plan.target_plans[0]
+    assert target.target_kind == "directory"
+    assert target.action == "delete"
+    assert [(item.action, item.relative_path) for item in target.directory_items] == [("delete", "old.txt")]
+
+
+def test_push_only_delete_infers_directory_symlink_when_follow_is_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    real_live_dir = home / ".config" / "real-sample"
+    real_live_dir.mkdir(parents=True)
+    (real_live_dir / "old.txt").write_text("old\n", encoding="utf-8")
+    live_path = home / ".config" / "sample"
+    live_path.symlink_to(real_live_dir, target_is_directory=True)
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.config]",
+                'sync_policy = "push-only-delete"',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    engine = DotmanEngine.from_config_path(config_path, dir_symlink_mode="follow")
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+
+    target = plan.target_plans[0]
+    assert target.target_kind == "directory"
+    assert target.action == "delete"
+    assert [(item.action, item.relative_path) for item in target.directory_items] == [("delete", "old.txt")]
+
+
 def test_pull_plan_exposes_file_level_items_for_directory_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

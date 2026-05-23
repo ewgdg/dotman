@@ -133,6 +133,7 @@ chmod = "600"
 - Target keys are arbitrary manifest identifiers.
 - Tools may still generate deterministic path-derived target keys for convenience, but that naming is a convention rather than a schema rule.
 - `path` may use `~/...` for home-relative destinations or an absolute path otherwise.
+- Targets may define `type = "file" | "directory"` when filesystem inference is not enough, such as generated targets or custom render/capture commands.
 - Targets may define `chmod` when the installed root path needs an explicit mode.
 - `chmod` is optional and should usually be omitted unless the target needs a non-default live mode.
 - For file targets, `chmod` is the source of truth for the installed file mode when present.
@@ -215,10 +216,12 @@ capture = "json-capture-command"
 - For directory targets, `pull` should update the repo from live paths except paths matched by `pull_ignore`; ignored repo paths are also preserved during pull cleanup.
 - For directory-target child files, `push` and `pull` should plan and apply mode changes only when the executable bit differs. Non-executable permission drift such as `600` vs `644` should not trigger an update because Git does not preserve those bits in the repo.
 - For directory-target child files matched by `path_rules` with `chmod`, `push` should also plan and apply exact live chmod drift for those matching paths.
-- For directory targets, dotman should infer the target kind from either side:
+- If `type` is omitted, dotman should infer the target kind from either side:
   - if the repo source root exists and is a directory, treat it as a directory target
   - if the repo source root is missing but the live path is a directory, still treat it as a directory target
   - if both repo and live paths are missing, treat the target as `unknown` and plan it as noop rather than guessing file vs directory
+- If `type` is set, it overrides inference and plans the target as that kind.
+- Explicit `type` still validates existing repo/live path shapes. Live symlink validation respects `file_symlink_mode` and `dir_symlink_mode`; directory symlinks are accepted only when `dir_symlink_mode = "follow"`.
 - Empty directory targets may therefore remain absent from the repo on disk; git cannot store empty directories directly, so dotman should not create placeholder repo directories just to represent them.
 - Source files can follow a default reverse-sync convention by mirroring the live path under `files/`.
 - Template suffixes such as `.tmpl` are optional conventions, not the source of truth.

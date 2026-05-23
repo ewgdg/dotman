@@ -182,6 +182,7 @@ def describe_trackable_package(engine: Any, *, repo: Repository, package_id: str
             target_name=target_name,
             source=target.source,
             path=target.path,
+            target_type=target.target_type,
             render_command=target.render,
             capture_command=target.capture,
             reconcile=target.reconcile,

@@ -42,6 +42,43 @@ def test_info_trackable_cli_emits_untracked_package_details_in_json(
     assert [target["target_name"] for target in trackable["targets"]] == ["gitconfig"]
 
 
+def test_info_trackable_cli_exposes_declared_target_type_in_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample" / "files").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "sample" / "files" / "profile").write_text("profile\n", encoding="utf-8")
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.profile]",
+                'type = "file"',
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+
+    exit_code = main(["--config", str(config_path), "--json", "info", "trackable", "sample"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["trackable"]["targets"][0]["target_type"] == "file"
+
+
 def test_info_trackable_cli_emits_partial_group_status_in_text_output(
     tmp_path: Path,
     monkeypatch,
