@@ -60,6 +60,50 @@ def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) ->
     assert review_items[0].destination_path == str(repo_path)
 
 
+def test_build_review_items_for_pull_directory_uses_planning_view_bytes(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo-file"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("raw repo\n", encoding="utf-8")
+    live_path.write_text("raw live with secret\n", encoding="utf-8")
+
+    plan = make_package_plan(
+        operation="pull",
+        repo_name="example",
+        package_id="config",
+        requested_profile="basic",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="config",
+                target_name="app",
+                repo_path=repo_path.parent,
+                live_path=live_path.parent,
+                action="update",
+                target_kind="directory",
+                projection_kind="directory",
+                directory_items=(
+                    DirectoryPlanItem(
+                        relative_path="data.json",
+                        action="update",
+                        repo_path=repo_path,
+                        live_path=live_path,
+                        review_before_bytes=b"repo planning view\n",
+                        review_after_bytes=b"live planning view without secret\n",
+                    ),
+                ),
+            )
+        ],
+    )
+
+    review_items = build_review_items([plan], operation="pull")
+
+    assert len(review_items) == 1
+    assert review_items[0].before_bytes == b"repo planning view\n"
+    assert review_items[0].after_bytes == b"live planning view without secret\n"
+
+
+
 def test_build_review_items_for_push_directory_includes_mode_metadata(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"

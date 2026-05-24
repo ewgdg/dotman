@@ -69,8 +69,8 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                             live_path=item.live_path,
                             source_path=source_path,
                             destination_path=destination_path,
-                            before_bytes=_load_item_bytes(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=True),
-                            after_bytes=_load_item_bytes(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=False),
+                            before_bytes=_directory_item_review_bytes(item, operation=operation, before=True),
+                            after_bytes=_directory_item_review_bytes(item, operation=operation, before=False),
                             before_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=True),
                             after_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=False),
                         )
@@ -231,6 +231,19 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
             )
         except FileNotFoundError as exc:
             raise ValueError("editor command was not found") from exc
+
+
+def _directory_item_review_bytes(item, *, operation: str, before: bool) -> bytes:
+    planned_bytes = item.review_before_bytes if before else item.review_after_bytes
+    if planned_bytes is not None:
+        return planned_bytes
+    return _load_item_bytes(
+        repo_path=item.repo_path,
+        live_path=item.live_path,
+        operation=operation,
+        before=before,
+    )
+
 
 
 def _load_item_bytes(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> bytes:
