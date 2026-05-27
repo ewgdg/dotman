@@ -22,6 +22,7 @@ from dotman.diff_review import (
     build_review_items,
     run_review_item_diff,
 )
+from dotman.config import load_manager_config
 from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_full_spec_selector_text, parse_package_ref_text
 from dotman.models import (
     FullSpecSelector,
@@ -2186,6 +2187,43 @@ def prompt_for_add_repo_name(engine: DotmanEngine, *, repo_query: str | None) ->
     return repo_names[selected_index]
 
 
+def resolve_edit_local_path(
+    *,
+    config_path: str | None,
+    repo_query: str | None,
+    json_output: bool,
+) -> Path:
+    config = load_manager_config(config_path)
+    if repo_query is not None and repo_query in config.repos:
+        return config.repos[repo_query].local_override_path
+
+    matching_repos = [
+        repo_config
+        for repo_config in config.ordered_repos
+        if repo_query is None or repo_query.lower() in repo_config.name.lower()
+    ]
+    if repo_query is None and len(matching_repos) == 1:
+        return matching_repos[0].local_override_path
+
+    repo_names = ", ".join(repo_config.name for repo_config in config.ordered_repos)
+    if not interactive_mode_enabled(json_output=json_output):
+        if repo_query is None:
+            raise ValueError(f"edit local repo is required in non-interactive mode: {repo_names}")
+        if len(matching_repos) == 1:
+            raise ValueError(f"edit local repo '{repo_query}' is not exact; use '{matching_repos[0].name}'")
+        if matching_repos:
+            matches_text = ", ".join(repo_config.name for repo_config in matching_repos)
+            raise ValueError(f"edit local repo '{repo_query}' is ambiguous: {matches_text}")
+        raise ValueError(f"edit local repo '{repo_query}' did not match any configured repo: {repo_names}")
+
+    repo_options = matching_repos or config.ordered_repos
+    selected_index = select_menu_option(
+        header_text="Select a repo for local overrides:",
+        option_labels=[style_text(repo_config.name, *MENU_REPO_STYLE) for repo_config in repo_options],
+    )
+    return repo_options[selected_index].local_override_path
+
+
 def resolve_add_package_text(
     engine: DotmanEngine,
     package_query: str | None,
@@ -3464,6 +3502,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_kept_add_result=emit_kept_add_result,
         open_editor_path=open_editor_path,
         resolve_edit_query_text=resolve_edit_query_text,
+        resolve_edit_local_path=resolve_edit_local_path,
         resolve_tracked_package_entry_text=resolve_tracked_package_entry_text,
         resolve_tracked_target_text=resolve_tracked_target_text,
         filter_plans_for_interactive_selection=filter_plans_for_interactive_selection,
@@ -3526,7 +3565,7 @@ def _rewrite_edit_query_argv(argv: Sequence[str]) -> list[str]:
     if command_index + 1 >= len(normalized_argv):
         return normalized_argv
     next_token = normalized_argv[command_index + 1]
-    if next_token in {"package", "target", "config", "query"} or next_token.startswith("-"):
+    if next_token in {"package", "target", "local", "config", "query"} or next_token.startswith("-"):
         return normalized_argv
     return [*normalized_argv[: command_index + 1], "query", *normalized_argv[command_index + 1 :]]
 

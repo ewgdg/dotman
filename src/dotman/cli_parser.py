@@ -217,8 +217,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     edit_parser = subparsers.add_parser(
         "edit",
-        help="Open a tracked package or target path",
-        description="Open a tracked package or target path",
+        help="Open a tracked package, target, local override, or config path",
+        description="Open a tracked package, target, local override, or config path",
     )
     edit_subparsers = edit_parser.add_subparsers(
         dest="edit_command",
@@ -238,6 +238,17 @@ def build_parser() -> argparse.ArgumentParser:
         description="Open a tracked target repo path in an editor",
     )
     add_target_argument(edit_target_parser)
+    edit_local_parser = edit_subparsers.add_parser(
+        "local",
+        help="Open a per-repo local override file in an editor",
+        description="Open a per-repo local override file in an editor",
+    )
+    edit_local_parser.add_argument(
+        "repo",
+        nargs="?",
+        metavar="<repo>",
+        help="Repo name; optional only when config has one repo",
+    )
     edit_subparsers.add_parser(
         "config",
         help="Open dotman manager config in an editor",

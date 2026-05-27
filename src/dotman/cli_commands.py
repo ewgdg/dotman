@@ -74,6 +74,7 @@ class CliCommandHandlers:
     emit_snapshot_list: Callable[..., int]
     emit_snapshot_detail: Callable[..., int]
     emit_doctor_summary: Callable[..., int] = field(default=lambda **kwargs: 0)
+    resolve_edit_local_path: Callable[..., Path] = field(default=lambda **kwargs: Path())
     resolve_trackable_selector_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
     emit_trackable_detail: Callable[..., int] = field(default=lambda **kwargs: 0)
     resolve_untrack_group_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
@@ -175,6 +176,12 @@ def _resolve_edit_config_path(config_path: str | None) -> Path:
     return selected_path.resolve()
 
 
+def _open_edit_local_path(*, path: Path, handlers: CliCommandHandlers) -> int:
+    if handlers.add_editor_available():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    return handlers.open_editor_path(path=path, missing_editor_label="Local override path")
+
+
 def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> int | None:
     if args.command == "elevation" and args.elevation_command == "request":
         return request_elevation_from_env(args.reason)
@@ -192,6 +199,15 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
         return handlers.open_editor_path(
             path=_resolve_edit_config_path(args.config),
             missing_editor_label="Config path",
+        )
+    if args.command == "edit" and args.edit_command == "local":
+        return _open_edit_local_path(
+            path=handlers.resolve_edit_local_path(
+                config_path=args.config,
+                repo_query=args.repo,
+                json_output=args.json_output,
+            ),
+            handlers=handlers,
         )
     if args.command == "reconcile" and args.reconcile_helper == "editor":
         return handlers.run_basic_reconcile(

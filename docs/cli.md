@@ -347,6 +347,10 @@ This document captures the current command and selector direction for `dotman`.
 
 - `edit package <package>` should open the tracked package directory in `$VISUAL` or `$EDITOR`.
 - `edit target <target>` should open the tracked target repo-side source path in `$VISUAL` or `$EDITOR`.
+- `edit local [<repo>]` should open the per-repo local override path in `$VISUAL` or `$EDITOR`; missing, ambiguous, or non-exact `<repo>` should use the interactive repo resolver when available.
+- `edit local <repo>` should open directly only for exact repo-name matches; non-interactive mode should reject non-exact matches.
+- `edit local` should load the manager config to resolve repo names, but should not load or validate the local override file before opening it.
+- `edit local` should create the local override parent directory before launching an editor.
 - `edit config` should open the selected dotman manager config path in `$VISUAL` or `$EDITOR`.
 - `edit config` should use `--config <config-path>` when provided, otherwise `$XDG_CONFIG_HOME/dotman/config.toml` (or `~/.config/dotman/config.toml`).
 - `edit config` should not load or validate the config before opening it, so invalid config can be fixed with the command.
@@ -354,6 +358,7 @@ This document captures the current command and selector direction for `dotman`.
 - `edit target` should open the repo-side source file for file targets and the repo-side source directory for directory targets.
 - If no editor is configured, `edit package` should print the package directory path and exit successfully.
 - If no editor is configured, `edit target` should print the resolved repo-side source path and exit successfully.
+- If no editor is configured, `edit local` should print the resolved local override path and exit successfully.
 - If no editor is configured, `edit config` should print the selected manager config path and exit successfully.
 - `edit package` should use the tracked-package selector flow, so bare and repo-qualified package queries follow the same ambiguity rules as `info tracked`.
 - `edit target` should accept explicit target queries in the form `[<repo>:]<package>.<target>`.

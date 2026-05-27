@@ -74,7 +74,8 @@ def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     assert "Search packages and groups" in output
     assert "Diagnose manager config and tracked package state" in output
     assert "Patch review content back into repo source" in output
-    assert "Open a tracked package or target path" in output
+    assert "Open a tracked package, target, local override, or" in output
+    assert "config path" in output
     assert "Re-run a reconcile helper subcommand" in output
     assert "Render built-in template helpers" in output
 
@@ -87,8 +88,17 @@ def test_edit_help_lists_package_and_target_subcommands(capsys) -> None:
     assert "Open a tracked package directory in an editor" in output
     assert "target" in output
     assert "Open a tracked target repo path in an editor" in output
+    assert "local" in output
+    assert "Open a per-repo local override file in an editor" in output
     assert "config" in output
     assert "Open dotman manager config in an editor" in output
+
+
+def test_edit_local_help_uses_optional_repo_placeholder(capsys) -> None:
+    output = capture_parser_help(capsys, "edit", "local")
+    assert "usage: dotman edit local [-h] [<repo>]" in output
+    assert "--help" in output
+    assert "<repo>" in output
 
 
 def test_edit_config_help_has_no_extra_arguments(capsys) -> None:
