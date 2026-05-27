@@ -1302,6 +1302,88 @@ def test_target_preset_jinja_patch_expands_default_workflow(
     assert pull_target.capture_command == "patch"
 
 
+def test_path_rule_preset_jinja_patch_expands_directory_child_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    package_root = repo_root / "packages" / "shell"
+    (package_root / "files" / "profile").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                '[vars]',
+                'greeting = "hello"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                "",
+                "[[targets.profile.path_rules]]",
+                'pattern = "*.tmpl"',
+                'preset = "jinja-patch"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (package_root / "files" / "profile" / "config.tmpl").write_text("greeting = {{ vars.greeting }}\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    live_path = home / ".profile" / "config.tmpl"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("greeting = world\n", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+    pull_plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
+
+    item = pull_plan.target_plans[0].directory_items[0]
+    assert item.render_command == "jinja"
+    assert item.capture_command == "patch"
+    assert item.pull_view_repo == "render"
+    assert item.pull_view_live == "raw"
+    assert item.review_before_bytes == b"greeting = hello\n"
+    assert item.review_after_bytes == b"greeting = world\n"
+
+
+def test_unknown_path_rule_preset_fails_engine_load(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    package_root = repo_root / "packages" / "shell"
+    (package_root / "files" / "profile").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                "",
+                "[[targets.profile.path_rules]]",
+                'pattern = "*.tmpl"',
+                'preset = "missing"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    with pytest.raises(ValueError, match="path_rules\\[1\\] uses unknown preset 'missing'"):
+        DotmanEngine.from_config_path(config_path)
+
+
 def test_target_preset_jinja_patch_editor_expands_default_workflow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

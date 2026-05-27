@@ -68,6 +68,8 @@ class TargetPathRule:
     chmod: str | None = None
     render: str | None = None
     capture: str | None = None
+    pull_view_repo: str | None = None
+    pull_view_live: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +77,8 @@ class TargetPathRule:
             "chmod": self.chmod,
             "render": self.render,
             "capture": self.capture,
+            "pull_view_repo": self.pull_view_repo,
+            "pull_view_live": self.pull_view_live,
         }
 
 

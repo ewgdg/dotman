@@ -632,6 +632,8 @@ def render_target_path_rules(
                 capture=render_template_string(rule.capture, context, base_dir=base_dir, source_path=base_dir)
                 if rule.capture is not None
                 else None,
+                pull_view_repo=rule.pull_view_repo,
+                pull_view_live=rule.pull_view_live,
             )
         )
     return tuple(rendered_rules)
@@ -770,6 +772,8 @@ def plan_directory_action(
                 capture_command=child_policy[2],
                 target_pull_view_repo=pull_view_repo,
                 target_pull_view_live=pull_view_live,
+                rule_pull_view_repo=child_policy[3],
+                rule_pull_view_live=child_policy[4],
             )
             validate_directory_child_patch_capture(
                 package=package,
@@ -831,6 +835,8 @@ def plan_directory_action(
                 capture_command=child_policy[2],
                 target_pull_view_repo=pull_view_repo,
                 target_pull_view_live=pull_view_live,
+                rule_pull_view_repo=child_policy[3],
+                rule_pull_view_live=child_policy[4],
             )
             validate_directory_child_patch_capture(
                 package=package,
@@ -899,6 +905,8 @@ def plan_directory_action(
             capture_command=child_policy[2],
             target_pull_view_repo=pull_view_repo,
             target_pull_view_live=pull_view_live,
+            rule_pull_view_repo=child_policy[3],
+            rule_pull_view_live=child_policy[4],
         )
         validate_directory_child_patch_capture(
             package=package,
@@ -934,6 +942,8 @@ def plan_directory_action(
             capture_command=child_policy[2],
             target_pull_view_repo=pull_view_repo,
             target_pull_view_live=pull_view_live,
+            rule_pull_view_repo=child_policy[3],
+            rule_pull_view_live=child_policy[4],
         )
         validate_directory_child_patch_capture(
             package=package,
@@ -971,6 +981,8 @@ def plan_directory_action(
             capture_command=child_policy[2],
             target_pull_view_repo=pull_view_repo,
             target_pull_view_live=pull_view_live,
+            rule_pull_view_repo=child_policy[3],
+            rule_pull_view_live=child_policy[4],
         )
         validate_directory_child_patch_capture(
             package=package,
@@ -1070,9 +1082,13 @@ def directory_child_pull_views(
     capture_command: str | None,
     target_pull_view_repo: str,
     target_pull_view_live: str,
+    rule_pull_view_repo: str | None,
+    rule_pull_view_live: str | None,
 ) -> tuple[str, str]:
-    pull_view_repo = target_pull_view_repo if target.pull_view_repo is not None else "raw"
-    pull_view_live = target_pull_view_live if target.pull_view_live is not None else default_pull_view_live(capture_command)
+    pull_view_repo = rule_pull_view_repo or (target_pull_view_repo if target.pull_view_repo is not None else "raw")
+    pull_view_live = rule_pull_view_live or (
+        target_pull_view_live if target.pull_view_live is not None else default_pull_view_live(capture_command)
+    )
     return pull_view_repo, pull_view_live
 
 
@@ -1082,10 +1098,12 @@ def directory_child_policy(
     *,
     default_render: str | None,
     default_capture: str | None,
-) -> tuple[str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
     desired_chmod = None
     render_command = default_render
     capture_command = default_capture
+    pull_view_repo = None
+    pull_view_live = None
     path = PurePosixPath(relative_path)
     for rule in path_rules:
         if not path.match(rule.pattern):
@@ -1096,7 +1114,11 @@ def directory_child_policy(
             render_command = rule.render
         if rule.capture is not None:
             capture_command = rule.capture
-    return desired_chmod, render_command, capture_command
+        if rule.pull_view_repo is not None:
+            pull_view_repo = rule.pull_view_repo
+        if rule.pull_view_live is not None:
+            pull_view_live = rule.pull_view_live
+    return desired_chmod, render_command, capture_command, pull_view_repo, pull_view_live
 
 
 def directory_child_chmod_differs(live_file: Path, desired_chmod: str | None) -> bool:

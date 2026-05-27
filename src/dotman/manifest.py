@@ -383,7 +383,22 @@ def normalize_target_path_rules(
             raise ValueError(
                 f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pattern must be relative to the target root"
             )
-        chmod = rule_payload.get("chmod")
+        preset_payload: dict[str, Any] = {}
+        preset_name = rule_payload.get("preset")
+        if preset_name is not None:
+            if not isinstance(preset_name, str):
+                raise ValueError(
+                    f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].preset must be a string"
+                )
+            preset = get_builtin_target_preset(preset_name)
+            if preset is None:
+                available = ", ".join(sorted(BUILTIN_TARGET_PRESETS))
+                raise ValueError(
+                    f"package manifest {manifest_path} target '{target_name}' path_rules[{index}] uses unknown preset '{preset_name}'; "
+                    f"available presets: {available}"
+                )
+            preset_payload = preset
+        chmod = get_target_value(target_payload=rule_payload, preset_payload=preset_payload, key="chmod")
         if chmod is not None:
             if not isinstance(chmod, str):
                 raise ValueError(
@@ -395,17 +410,46 @@ def normalize_target_path_rules(
                 raise ValueError(
                     f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].chmod must be an octal string"
                 ) from None
-        render = rule_payload.get("render")
+        render = get_target_value(target_payload=rule_payload, preset_payload=preset_payload, key="render")
         if render is not None and not isinstance(render, str):
             raise ValueError(
                 f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].render must be a string"
             )
-        capture = rule_payload.get("capture")
+        capture = get_target_value(target_payload=rule_payload, preset_payload=preset_payload, key="capture")
         if capture is not None and not isinstance(capture, str):
             raise ValueError(
                 f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].capture must be a string"
             )
-        rules.append(TargetPathRule(pattern=normalized_pattern, chmod=chmod, render=render, capture=capture))
+        pull_view_repo = read_target_schema_alias(
+            target_payload=rule_payload,
+            preset_payload=preset_payload,
+            primary_key="pull_view_repo",
+            legacy_key="import_view_repo",
+        )
+        if pull_view_repo is not None and not isinstance(pull_view_repo, str):
+            raise ValueError(
+                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pull_view_repo must be a string"
+            )
+        pull_view_live = read_target_schema_alias(
+            target_payload=rule_payload,
+            preset_payload=preset_payload,
+            primary_key="pull_view_live",
+            legacy_key="import_view_live",
+        )
+        if pull_view_live is not None and not isinstance(pull_view_live, str):
+            raise ValueError(
+                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pull_view_live must be a string"
+            )
+        rules.append(
+            TargetPathRule(
+                pattern=normalized_pattern,
+                chmod=chmod,
+                render=render,
+                capture=capture,
+                pull_view_repo=pull_view_repo,
+                pull_view_live=pull_view_live,
+            )
+        )
     return tuple(rules)
 
 
