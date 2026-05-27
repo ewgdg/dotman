@@ -1568,6 +1568,56 @@ def test_capture_patch_requires_render_command(tmp_path: Path, monkeypatch: pyte
 
 
 
+def test_pull_plan_reuses_file_review_views_for_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "shell" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'render = "render-cmd"',
+                'capture = "capture-cmd"',
+                'pull_view_repo = "render"',
+                'pull_view_live = "capture"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text("raw repo\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (home / ".profile").write_text("raw live\n", encoding="utf-8")
+
+    calls: list[str] = []
+
+    def fake_run_command_projection(*_args, **kwargs):
+        command = kwargs["command"]
+        calls.append(command)
+        return {"render-cmd": b"rendered repo\n", "capture-cmd": b"captured live\n"}[command]
+
+    monkeypatch.setattr("dotman.projection.run_command_projection", fake_run_command_projection)
+
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+    target = single_package_plan(engine, "fixture:shell@default", operation="pull").target_plans[0]
+
+    assert target.action == "update"
+    assert target.review_before_bytes == b"rendered repo\n"
+    assert target.review_after_bytes == b"captured live\n"
+    assert calls == ["render-cmd", "capture-cmd"]
+
+
 def test_capture_patch_accepts_command_renderers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
     home.mkdir()

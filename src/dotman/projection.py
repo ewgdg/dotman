@@ -399,9 +399,9 @@ def plan_targets(
 
         projection_error: str | None = None
         desired_bytes: bytes | None = None
-        projection_kind = "raw"
+        projection_kind = projection_kind_for_render_command(render_command)
         try:
-            if operation == "push" or repo_path.exists():
+            if operation == "push":
                 desired_bytes, projection_kind = project_repo_file(
                     engine,
                     repo=repo,
@@ -425,23 +425,6 @@ def plan_targets(
                 raise
         pull_view_repo = metadata.pull_view_repo
         pull_view_live = metadata.pull_view_live
-        action = plan_file_action(
-            engine,
-            repo=repo,
-            package=package,
-            target=target,
-            repo_path=repo_path,
-            live_path=live_path,
-            desired_bytes=desired_bytes,
-            render_command=render_command,
-            capture_command=capture_command,
-            context=context,
-            selection=selection,
-            operation=operation,
-            inferred_os=inferred_os,
-            pull_view_repo=pull_view_repo,
-            pull_view_live=pull_view_live,
-        )
         review_before_bytes, review_after_bytes = build_file_review_bytes(
             engine,
             repo=repo,
@@ -458,6 +441,14 @@ def plan_targets(
             inferred_os=inferred_os,
             pull_view_repo=pull_view_repo,
             pull_view_live=pull_view_live,
+        )
+        action = plan_file_action_from_review_bytes(
+            repo_path=repo_path,
+            live_path=live_path,
+            desired_bytes=desired_bytes,
+            review_before_bytes=review_before_bytes,
+            review_after_bytes=review_after_bytes,
+            operation=operation,
         )
         desired_text = None
         if desired_bytes is not None:
@@ -1143,6 +1134,41 @@ def plan_live_delete_directory_action(
         for relative_path, live_file in sorted(live_files.items())
     )
     return ("delete", directory_items) if directory_items else ("noop", ())
+
+
+def projection_kind_for_render_command(render_command: str | None) -> str:
+    if render_command == "jinja":
+        return "template"
+    if render_command is not None:
+        return "command"
+    return "raw"
+
+
+def plan_file_action_from_review_bytes(
+    *,
+    repo_path: Path,
+    live_path: Path,
+    desired_bytes: bytes | None,
+    review_before_bytes: bytes | None,
+    review_after_bytes: bytes | None,
+    operation: str,
+) -> str:
+    if operation == "push":
+        if not live_path.exists():
+            return "create"
+        if desired_bytes is None:
+            return "unknown"
+        return "noop" if desired_bytes == review_before_bytes else "update"
+
+    repo_exists = repo_path.exists()
+    live_exists = live_path.exists()
+    if not repo_exists and not live_exists:
+        return "noop"
+    if not live_exists:
+        return "delete"
+    if not repo_exists:
+        return "create"
+    return "noop" if review_before_bytes == review_after_bytes else "update"
 
 
 def plan_file_action(
