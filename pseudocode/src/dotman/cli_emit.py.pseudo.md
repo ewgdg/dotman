@@ -1,0 +1,51 @@
+# CLI Output and Execution Emission
+
+## Intent
+
+Render stable human/JSON output and run execution when requested.
+
+## Behavior
+
+```pseudo
+emit_payload(plans, format):
+  if format is json:
+    print operation plan dictionary
+    return
+
+  print operation header
+  print repo hook sections with hook labels
+  print package sections with package identity and target actions
+
+run_execution(plans, args):
+  mode = effective_execution_mode(args)
+
+  if mode is dry_run:
+    emit_payload(plans)
+    return success
+
+  if push plans contain unapproved live-symlink replacement hazards:
+    warn user
+    if user does not approve:
+      reject execution
+    mark hazards approved
+
+  execute plans using execution module
+  emit execution result
+  return result exit code
+
+emit_tracked_packages / emit_trackables / emit_search_matches / emit_variables:
+  if JSON requested:
+    serialize model dictionaries
+  else:
+    render styled grouped human output with stable identifiers
+
+emit_error(error):
+  if error has structured fields:
+    include those fields in JSON output
+  else:
+    render readable message and metadata labels
+```
+
+## Review Needed
+
+Human output is user-facing. Preserve identifier format, color roles, and JSON field contracts when changing behavior.

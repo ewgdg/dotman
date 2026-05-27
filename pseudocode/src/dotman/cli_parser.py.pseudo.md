@@ -1,0 +1,26 @@
+# CLI Parser
+
+## Intent
+
+Define the argparse command surface and shared options for `dotman`.
+
+## Behavior
+
+```pseudo
+build_parser():
+  create root parser
+  add global config/output/interactivity options
+
+  for each supported subcommand:
+    create subparser
+    add shared arguments through helper functions
+    add command-specific flags and positional args
+    assign command name for dispatch
+
+  hide internal aliases from help when requested
+  return parser
+
+argument helper functions:
+  add one shared concept consistently across commands
+  set metavar, default, action, and help text for that concept
+```
