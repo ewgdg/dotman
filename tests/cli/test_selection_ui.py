@@ -629,6 +629,42 @@ def test_resolve_candidate_match_ranks_leftmost_selector_segments_first(monkeypa
     assert selected == ("sandbox", "sunshine")
     assert captured["option_labels"] == ["sandbox:sunshine", "sandbox:host/linux-meta"]
 
+def test_resolve_candidate_match_routes_unique_partial_through_menu_by_default(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_select_menu_option(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(cli, "select_menu_option", fake_select_menu_option)
+    monkeypatch.setattr(
+        cli,
+        "prompt",
+        lambda _message: (_ for _ in ()).throw(AssertionError("expected resolver menu, not partial confirmation")),
+    )
+
+    selected = cli.resolve_candidate_match(
+        exact_matches=[],
+        partial_matches=["beta"],
+        query_text="bet",
+        interactive=True,
+        exact_header_text="unused",
+        partial_header_text="Select a repo for local overrides:",
+        option_resolver=lambda match: cli.ResolverOption(
+            display_label=match,
+            match_fields=(match,),
+            field_kinds=("repo",),
+        ),
+        exact_error_text="unused",
+        partial_error_text="unused",
+        not_found_text="unused",
+    )
+
+    assert selected == "beta"
+    assert captured["header_text"] == "Select a repo for local overrides:"
+    assert captured["option_labels"] == ["beta"]
+
+
 def test_select_menu_option_with_prompt_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
     monkeypatch.setattr(cli, "ui_menus_bottom_up_enabled", lambda: True)

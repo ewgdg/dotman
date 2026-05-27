@@ -328,7 +328,7 @@ def test_track_cli_rejects_unique_partial_profile_in_non_interactive_mode(
     assert "no exact match for 'wor'; use exact name 'work'" in capsys.readouterr().err
 
 
-def test_track_cli_confirms_unique_partial_profile_in_interactive_mode(
+def test_track_cli_selects_unique_partial_profile_in_interactive_mode(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -336,16 +336,19 @@ def test_track_cli_confirms_unique_partial_profile_in_interactive_mode(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    selected_menu: dict[str, object] = {}
 
-    prompts: list[str] = []
+    def select_profile_match(**kwargs):
+        selected_menu.update(kwargs)
+        return 0
 
-    def fake_prompt(message: str) -> str:
-        prompts.append(message)
-        return "y"
-
-    monkeypatch.setattr(cli, "prompt", fake_prompt)
+    monkeypatch.setattr(cli, "select_menu_option", select_profile_match)
+    monkeypatch.setattr(
+        cli,
+        "prompt",
+        lambda _message: (_ for _ in ()).throw(AssertionError("expected resolver menu, not partial confirmation")),
+    )
 
     exit_code = main(
         [
@@ -357,7 +360,8 @@ def test_track_cli_confirms_unique_partial_profile_in_interactive_mode(
     )
 
     assert exit_code == 0
-    assert "Did you mean 'work'? [y/n] " in prompts
+    assert selected_menu["header_text"] == "Select a profile match for 'wor' in example:git:"
+    assert selected_menu["option_labels"] == ["work"]
     assert "tracked example:git@work" in capsys.readouterr().out
 
 def test_track_cli_interactively_selects_ambiguous_partial_profile_match(

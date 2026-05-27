@@ -239,13 +239,18 @@ def test_push_cli_accepts_partial_owned_package_match(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    prompts: list[str] = []
+    selected_menu: dict[str, object] = {}
 
-    def confirm_partial_match(message: str) -> str:
-        prompts.append(message)
-        return "y"
+    def select_partial_match(**kwargs):
+        selected_menu.update(kwargs)
+        return 0
 
-    monkeypatch.setattr(cli, "prompt", confirm_partial_match)
+    monkeypatch.setattr(cli, "select_menu_option", select_partial_match)
+    monkeypatch.setattr(
+        cli,
+        "prompt",
+        lambda _message: (_ for _ in ()).throw(AssertionError("expected resolver menu, not partial confirmation")),
+    )
     monkeypatch.setattr(
         cli,
         "filter_plans_for_interactive_selection",
@@ -287,8 +292,8 @@ def test_push_cli_accepts_partial_owned_package_match(
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert prompts
-    assert "nvim@basic" in prompts[0]
+    assert selected_menu["header_text"] == "Select a tracked package entry for 'nv':"
+    assert any("nvim@basic" in label for label in selected_menu["option_labels"])
     assert ":: example:nvim@basic" in output
     assert "nvim.init_lua -> create" in output
 

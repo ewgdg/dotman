@@ -8,7 +8,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Sequence, TypeVar
+from typing import Callable, Literal, Sequence, TypeVar
 
 from dotman import cli_style
 from dotman.add import (
@@ -78,6 +78,7 @@ INTERRUPTED_EXIT_CODE = 130
 MENU_SELECTION_OVERHEAD_LINES = 6
 _EDIT_SUGAR_TOP_LEVEL_OPTIONS_WITH_VALUES = {"--config", "--file-symlink-mode", "--dir-symlink-mode"}
 SelectableItem = TypeVar("SelectableItem")
+SinglePartialResolverMode = Literal["confirm", "menu"]
 
 
 @dataclass(frozen=True)
@@ -1033,21 +1034,28 @@ def resolve_candidate_match(
     exact_error_text: str,
     partial_error_text: str,
     not_found_text: str,
+    single_partial_mode: SinglePartialResolverMode = "menu",
+    single_partial_error_text: str | None = None,
+    rank_matches: bool = True,
 ) -> SelectableItem:
-    ranked_exact_matches = sorted(
-        exact_matches,
-        key=lambda match: rank_resolver_option(
-            query=query_text,
-            option=option_resolver(match),
-        ),
-    )
-    ranked_partial_matches = sorted(
-        partial_matches,
-        key=lambda match: rank_resolver_option(
-            query=query_text,
-            option=option_resolver(match),
-        ),
-    )
+    if rank_matches:
+        ranked_exact_matches = sorted(
+            exact_matches,
+            key=lambda match: rank_resolver_option(
+                query=query_text,
+                option=option_resolver(match),
+            ),
+        )
+        ranked_partial_matches = sorted(
+            partial_matches,
+            key=lambda match: rank_resolver_option(
+                query=query_text,
+                option=option_resolver(match),
+            ),
+        )
+    else:
+        ranked_exact_matches = list(exact_matches)
+        ranked_partial_matches = list(partial_matches)
     if len(exact_matches) == 1:
         return ranked_exact_matches[0]
     if len(exact_matches) > 1:
@@ -1064,9 +1072,20 @@ def resolve_candidate_match(
         partial_match = ranked_partial_matches[0]
         partial_option = option_resolver(partial_match)
         if not interactive:
+            if single_partial_error_text is not None:
+                raise ValueError(single_partial_error_text)
             raise ValueError(
                 f"no exact match for '{query_text}'; use exact name '{partial_option.display_label}'"
             )
+        if single_partial_mode == "menu":
+            selected_index = select_menu_option(
+                header_text=partial_header_text,
+                option_labels=[partial_option.display_label],
+                option_display_fields=[partial_option.display_fields or (partial_option.display_label,)],
+            )
+            return ranked_partial_matches[selected_index]
+        if single_partial_mode != "confirm":
+            raise ValueError(f"unsupported single partial resolver mode: {single_partial_mode}")
         if not confirm_partial_candidate_match(candidate_label=partial_option.display_label):
             raise ValueError(f"confirmation required for partial match '{query_text}'")
         return partial_match
@@ -1964,14 +1983,6 @@ def _make_edit_query_candidate(
     )
 
 
-def _edit_query_candidate_sort_key(query_text: str, candidate: _EditQueryCandidate) -> tuple[int, int, int, int, str, str]:
-    return (
-        *rank_resolver_option(query=query_text, option=candidate.option),
-        candidate.kind,
-        candidate.ref_text.lower(),
-    )
-
-
 def _format_edit_query_candidates(candidates: Sequence[_EditQueryCandidate]) -> str:
     return ", ".join(f"{candidate.kind} {candidate.ref_text}" for candidate in candidates)
 
@@ -2043,41 +2054,25 @@ def resolve_edit_query_text(
             )
         )
 
-    exact_candidates = sorted(exact_candidates, key=lambda candidate: _edit_query_candidate_sort_key(query_text, candidate))
-    partial_candidates = sorted(partial_candidates, key=lambda candidate: _edit_query_candidate_sort_key(query_text, candidate))
-
-    if len(exact_candidates) == 1:
-        return exact_candidates[0].path
-
-    interactive = interactive_mode_enabled(json_output=json_output)
-    if len(exact_candidates) > 1:
-        if interactive:
-            selected_index = select_menu_option(
-                header_text=f"Select an edit target for '{query_text}':",
-                option_labels=[candidate.option.display_label for candidate in exact_candidates],
-                option_display_fields=[candidate.option.display_fields or (candidate.option.display_label,) for candidate in exact_candidates],
-            )
-            return exact_candidates[selected_index].path
-        raise ValueError(f"edit query '{query_text}' is ambiguous: " + _format_edit_query_candidates(exact_candidates))
-
-    if not partial_candidates:
-        raise ValueError(f"edit query '{query_text}' did not match any tracked package or target")
-
-    if interactive:
-        # This wording looks odd outside edit context, so keep comment nearby.
-        selected_index = select_menu_option(
-            header_text=f"Select an edit target for '{query_text}':",
-            option_labels=[candidate.option.display_label for candidate in partial_candidates],
-            option_display_fields=[candidate.option.display_fields or (candidate.option.display_label,) for candidate in partial_candidates],
-        )
-        return partial_candidates[selected_index].path
-
-    if len(partial_candidates) == 1:
-        raise ValueError(
+    selected_candidate = resolve_candidate_match(
+        exact_matches=exact_candidates,
+        partial_matches=partial_candidates,
+        query_text=query_text,
+        interactive=interactive_mode_enabled(json_output=json_output),
+        exact_header_text=f"Select an edit target for '{query_text}':",
+        partial_header_text=f"Select an edit target for '{query_text}':",
+        option_resolver=lambda candidate: candidate.option,
+        exact_error_text=f"edit query '{query_text}' is ambiguous: " + _format_edit_query_candidates(exact_candidates),
+        partial_error_text=f"edit query '{query_text}' is ambiguous: " + _format_edit_query_candidates(partial_candidates),
+        not_found_text=f"edit query '{query_text}' did not match any tracked package or target",
+        single_partial_mode="menu",
+        single_partial_error_text=(
             f"no exact match for '{query_text}'; use exact name '{partial_candidates[0].kind} {partial_candidates[0].ref_text}'"
-        )
-
-    raise ValueError(f"edit query '{query_text}' is ambiguous: " + _format_edit_query_candidates(partial_candidates))
+            if len(partial_candidates) == 1
+            else None
+        ),
+    )
+    return selected_candidate.path
 
 
 def parse_add_package_query(
@@ -2194,9 +2189,11 @@ def resolve_edit_local_path(
     json_output: bool,
 ) -> Path:
     config = load_manager_config(config_path)
-    if repo_query is not None and repo_query in config.repos:
-        return config.repos[repo_query].local_override_path
-
+    exact_repos = [
+        repo_config
+        for repo_config in config.ordered_repos
+        if repo_query is not None and repo_config.name == repo_query
+    ]
     matching_repos = [
         repo_config
         for repo_config in config.ordered_repos
@@ -2206,22 +2203,49 @@ def resolve_edit_local_path(
         return matching_repos[0].local_override_path
 
     repo_names = ", ".join(repo_config.name for repo_config in config.ordered_repos)
-    if not interactive_mode_enabled(json_output=json_output):
-        if repo_query is None:
-            raise ValueError(f"edit local repo is required in non-interactive mode: {repo_names}")
-        if len(matching_repos) == 1:
-            raise ValueError(f"edit local repo '{repo_query}' is not exact; use '{matching_repos[0].name}'")
-        if matching_repos:
-            matches_text = ", ".join(repo_config.name for repo_config in matching_repos)
-            raise ValueError(f"edit local repo '{repo_query}' is ambiguous: {matches_text}")
-        raise ValueError(f"edit local repo '{repo_query}' did not match any configured repo: {repo_names}")
-
-    repo_options = matching_repos or config.ordered_repos
-    selected_index = select_menu_option(
-        header_text="Select a repo for local overrides:",
-        option_labels=[style_text(repo_config.name, *MENU_REPO_STYLE) for repo_config in repo_options],
+    repo_options = matching_repos or (
+        list(config.ordered_repos) if interactive_mode_enabled(json_output=json_output) else []
     )
-    return repo_options[selected_index].local_override_path
+
+    def repo_option(repo_config) -> ResolverOption:
+        repo_label = style_text(repo_config.name, *MENU_REPO_STYLE)
+        return ResolverOption(
+            display_label=repo_label,
+            display_fields=(repo_label,),
+            match_fields=(repo_config.name,),
+            field_kinds=("repo",),
+        )
+
+    selected_repo = resolve_candidate_match(
+        exact_matches=exact_repos,
+        partial_matches=repo_options if not exact_repos else [],
+        query_text=repo_query or "",
+        interactive=interactive_mode_enabled(json_output=json_output),
+        exact_header_text="Select a repo for local overrides:",
+        partial_header_text="Select a repo for local overrides:",
+        option_resolver=repo_option,
+        exact_error_text=f"edit local repo '{repo_query}' is ambiguous: "
+        + ", ".join(repo_config.name for repo_config in exact_repos),
+        partial_error_text=(
+            f"edit local repo is required in non-interactive mode: {repo_names}"
+            if repo_query is None
+            else f"edit local repo '{repo_query}' is ambiguous: "
+            + ", ".join(repo_config.name for repo_config in matching_repos)
+        ),
+        not_found_text=(
+            f"edit local repo is required in non-interactive mode: {repo_names}"
+            if repo_query is None
+            else f"edit local repo '{repo_query}' did not match any configured repo: {repo_names}"
+        ),
+        single_partial_mode="menu",
+        single_partial_error_text=(
+            f"edit local repo '{repo_query}' is not exact; use '{matching_repos[0].name}'"
+            if repo_query is not None and len(matching_repos) == 1
+            else None
+        ),
+        rank_matches=repo_query is not None and bool(matching_repos),
+    )
+    return selected_repo.local_override_path
 
 
 def resolve_add_package_text(
