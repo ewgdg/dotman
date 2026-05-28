@@ -826,6 +826,7 @@ class DotmanEngine:
         inferred_os: str,
         variables: dict[str, Any],
         target_plans: list[Any],
+        declaration_package_ids: set[str] | None = None,
     ) -> dict[str, list[Any]]:
         return self._planning_helpers().plan_hooks(
             repo,
@@ -836,6 +837,7 @@ class DotmanEngine:
             inferred_os=inferred_os,
             variables=variables,
             target_plans=target_plans,
+            declaration_package_ids=declaration_package_ids,
         )
 
     def _plan_targets(

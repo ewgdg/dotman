@@ -328,6 +328,7 @@ def build_package_plan(
         inferred_os=package_context.inferred_os,
         variables=package_context.variables,
         target_plans=target_plans,
+        declaration_package_ids={selection.identity.package_id},
     )
     package_targets = [target for target in target_plans if target.package_id == selection.identity.package_id]
     hooks = _filter_package_hook_plans(
@@ -665,6 +666,7 @@ def plan_hooks(
     inferred_os: str,
     variables: dict[str, Any],
     target_plans: list[Any],
+    declaration_package_ids: set[str] | None = None,
 ) -> dict[str, list[HookPlan]]:
     del variables
     hook_names = HOOK_NAMES_BY_OPERATION.get(operation, VALID_HOOK_NAMES)
@@ -674,6 +676,8 @@ def plan_hooks(
         for target in target_plans
     }
     for package in packages:
+        if declaration_package_ids is not None and package.id not in declaration_package_ids:
+            continue
         package_env = build_package_hook_env(
             repo=repo,
             package=package,

@@ -36,6 +36,36 @@ def test_plan_push_query_returns_package_plans_for_direct_package(
     assert package_plan.bound_profile is None
 
 
+def test_plan_push_query_keeps_raw_hook_plans_owner_scoped_for_dependency_closure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_shared_stack_repo(repo_root)
+    for package_id in ("shared-stack", "shared"):
+        manifest_path = repo_root / "packages" / package_id / "package.toml"
+        manifest_path.write_text(
+            manifest_path.read_text(encoding="utf-8")
+            + "\n[hooks]\npre_push = \"echo " + package_id + "\"\n",
+            encoding="utf-8",
+        )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    operation_plan = engine.plan_push_query("fixture:shared-stack@basic")
+
+    assert [
+        (plan.package_id, [hook.package_id for hooks in (plan.hook_plans or {}).values() for hook in hooks])
+        for plan in operation_plan.package_plans
+    ] == [
+        ("shared-stack", ["shared-stack"]),
+        ("shared", ["shared"]),
+    ]
+
+
 def test_plan_push_query_expands_dependency_package_into_implicit_package_plan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

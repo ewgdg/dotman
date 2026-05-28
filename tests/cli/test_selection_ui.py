@@ -393,6 +393,42 @@ def test_filter_plans_for_interactive_selection_excludes_synthetic_hook_only_row
     assert filtered_plan.hooks == {}
 
 
+def test_run_noop_hook_selection_keeps_hook_only_package_without_targets(monkeypatch) -> None:
+    plan = make_package_plan(
+        operation="push",
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        hook_plans={
+            "pre_push": [
+                HookPlan(package_id="app", hook_name="pre_push", command="echo app", cwd=Path("/repo/app")),
+            ]
+        },
+        target_plans=[],
+    )
+
+    selection_items = cli.collect_pending_selection_items_for_operation(
+        [plan],
+        operation="push",
+        run_noop=True,
+        use_raw_hook_plans=True,
+    )
+
+    assert [(item.package_id, item.hook_names) for item in selection_items] == [("app", ("pre_push",))]
+
+    monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: False)
+    filtered_plan = cli.filter_plans_for_interactive_selection(
+        plans=[plan],
+        operation="push",
+        json_output=False,
+        run_noop=True,
+    )[0]
+
+    assert [hook.package_id for hook in filtered_plan.hooks["pre_push"]] == ["app"]
+
+
 def test_filter_plans_for_interactive_selection_run_noop_broadens_hook_only_eligibility(monkeypatch) -> None:
     plan = make_package_plan(
         operation="push",
