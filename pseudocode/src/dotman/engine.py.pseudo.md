@@ -31,9 +31,17 @@ resolve_selector_text(query_text):
 
 plan_push_query(query_text) / plan_pull_query(query_text):
   resolve query to package selection(s)
-  build package plans
+  build package plans in dependency-before-dependent order
   wrap them in operation plan with repo hooks and conflict validation
   return operation plan
+
+_resolve_package_ids(repo, selector, selector_kind):
+  resolve selector to root package(s)
+  recursively visit each package dependency and group member
+  if a graph edge reaches an active node:
+    stop descending that back-edge
+  append each package after its dependencies have been visited
+  return each reachable package once in dependency-before-dependent order
 
 plan_push() / plan_pull():
   read effective tracked entries

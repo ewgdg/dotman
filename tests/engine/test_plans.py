@@ -1025,7 +1025,7 @@ def test_example_group_push_plan_expands_depends_and_render_target(
 
     operation_plan = engine.plan_push_query("example:os/arch@basic")
 
-    assert [plan.package_id for plan in operation_plan.package_plans] == ["core-cli-meta", "git", "nvim"]
+    assert [plan.package_id for plan in operation_plan.package_plans] == ["git", "nvim", "core-cli-meta"]
     assert {plan.selection_label for plan in operation_plan.package_plans} == {
         "example:os/arch@basic",
         "example:git@basic",
@@ -1099,7 +1099,7 @@ def test_meta_package_depends_on_group_expands_group_members(
 
     operation_plan = engine.plan_push_query("fixture:tooling-meta@basic")
 
-    assert [plan.package_id for plan in operation_plan.package_plans] == ["tooling-meta", "git", "nvim"]
+    assert [plan.package_id for plan in operation_plan.package_plans] == ["git", "nvim", "tooling-meta"]
     assert {plan.selection_label for plan in operation_plan.package_plans} == {
         "fixture:tooling-meta@basic",
         "fixture:git@basic",
@@ -1152,7 +1152,7 @@ def test_dependency_resolution_allows_mixed_package_and_group_cycles_without_rev
 
     operation_plan = engine.plan_push_query("fixture:alpha@basic")
 
-    assert [plan.package_id for plan in operation_plan.package_plans] == ["alpha", "beta"]
+    assert [plan.package_id for plan in operation_plan.package_plans] == ["beta", "alpha"]
     assert {plan.selection_label for plan in operation_plan.package_plans} == {
         "fixture:alpha@basic",
         "fixture:beta@basic",

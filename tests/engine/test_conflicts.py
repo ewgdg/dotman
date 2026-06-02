@@ -672,8 +672,8 @@ def test_same_profile_singleton_implicit_dependency_dedupes(
     plan = engine.plan_push()
 
     assert [(item.package_id, item.requested_profile) for item in plan.package_plans] == [
-        ("meta-a", "basic"),
         ("shared", "basic"),
+        ("meta-a", "basic"),
         ("meta-b", "basic"),
     ]
 
@@ -697,10 +697,10 @@ def test_multi_instance_implicit_dependency_allows_different_profiles(
     plan = engine.plan_push()
 
     assert [(item.package_id, item.bound_profile, item.requested_profile) for item in plan.package_plans] == [
-        ("meta-a", None, "basic"),
         ("shared", "basic", "basic"),
-        ("meta-b", None, "work"),
+        ("meta-a", None, "basic"),
         ("shared", "work", "work"),
+        ("meta-b", None, "work"),
     ]
 
 

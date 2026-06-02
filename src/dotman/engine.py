@@ -699,11 +699,12 @@ class DotmanEngine:
                 completed_nodes.add(node)
                 return
 
+            for dependency in repo.resolve_package(current_selector).depends or ():
+                visit_selector(dependency, next_stack, source="dependency")
+            # Post-order keeps operation plans/execution sessions dependency-first.
             if current_selector not in seen_packages:
                 seen_packages.add(current_selector)
                 ordered.append(current_selector)
-            for dependency in repo.resolve_package(current_selector).depends or ():
-                visit_selector(dependency, next_stack, source="dependency")
             completed_nodes.add(node)
 
         for root_package in roots:

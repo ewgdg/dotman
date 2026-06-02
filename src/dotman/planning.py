@@ -120,10 +120,10 @@ def _resolved_package_selections_from_roots(
             source_kind=source_kind,
             source_selector=source_selector,
         )
-        _merge_selection(selections, selection_indexes, root_selection)
         related_package_ids = engine._resolve_package_ids(repo, root_package_id, "package")
         for related_package_id in related_package_ids:
             if related_package_id == root_package_id:
+                _merge_selection(selections, selection_indexes, root_selection)
                 continue
             _merge_selection(
                 selections,

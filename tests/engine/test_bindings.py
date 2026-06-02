@@ -170,8 +170,8 @@ def test_plan_push_uses_current_tracked_state_without_writing_new_state(
 
     assert len(plans) == 3
     assert plans[0].operation == "push"
-    assert plans[0].package_id == "core-cli-meta"
-    assert [plan.package_id for plan in plans] == ["core-cli-meta", "git", "nvim"]
+    assert plans[0].package_id == "git"
+    assert [plan.package_id for plan in plans] == ["git", "nvim", "core-cli-meta"]
     assert not (state_dir / "tracked-packages.toml").with_suffix(".tmp").exists()
 
 def test_plan_push_prefers_explicit_targets_over_implicit_targets(

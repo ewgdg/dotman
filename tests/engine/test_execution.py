@@ -15,7 +15,13 @@ from dotman import file_access
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
 from dotman.models import DirectoryPlanItem, HookCommandSpec, HookPlan, OperationPlan, TargetPlan
-from tests.helpers import make_package_plan, single_package_plan, write_named_manager_config
+from tests.helpers import (
+    make_package_plan,
+    single_package_plan,
+    write_named_manager_config,
+    write_shared_stack_repo,
+    write_single_repo_config,
+)
 
 
 def test_build_execution_session_orders_push_steps_per_package() -> None:
@@ -91,6 +97,40 @@ def test_build_execution_session_orders_push_steps_per_package() -> None:
         "guard_push",
         "update",
     ]
+
+
+def test_build_execution_session_orders_dependency_package_before_dependent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    write_shared_stack_repo(repo_root)
+    stack_root = repo_root / "packages" / "shared-stack"
+    (stack_root / "files").mkdir()
+    (stack_root / "files" / "stack.conf").write_text("stack\n", encoding="utf-8")
+    (stack_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shared-stack"',
+                'depends = ["shared"]',
+                "",
+                "[targets.stack]",
+                'source = "files/stack.conf"',
+                'path = "~/.config/stack.conf"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    session = build_execution_session(engine.plan_push_query("fixture:shared-stack@basic"), operation="push")
+
+    assert [unit.package_id for unit in session.packages] == ["shared", "shared-stack"]
 
 
 def test_execution_session_accepts_repo_units_without_touching_package_property() -> None:

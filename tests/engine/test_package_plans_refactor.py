@@ -61,8 +61,8 @@ def test_plan_push_query_keeps_raw_hook_plans_owner_scoped_for_dependency_closur
         (plan.package_id, [hook.package_id for hooks in (plan.hook_plans or {}).values() for hook in hooks])
         for plan in operation_plan.package_plans
     ] == [
-        ("shared-stack", ["shared-stack"]),
         ("shared", ["shared"]),
+        ("shared-stack", ["shared-stack"]),
     ]
 
 
@@ -81,10 +81,10 @@ def test_plan_push_query_expands_dependency_package_into_implicit_package_plan(
     operation_plan = engine.plan_push_query("fixture:shared-stack@basic")
 
     assert [(plan.package_id, plan.selection.explicit) for plan in operation_plan.package_plans] == [
-        ("shared-stack", True),
         ("shared", False),
+        ("shared-stack", True),
     ]
-    dependency_plan = operation_plan.package_plans[1]
+    dependency_plan = operation_plan.package_plans[0]
     assert dependency_plan.selection.source_kind == "dependency"
     assert dependency_plan.selection.owner_identity is not None
     assert dependency_plan.selection.owner_identity.package_id == "shared-stack"
@@ -126,7 +126,7 @@ def test_tracked_plan_returns_package_plans_for_explicit_and_implicit_packages(
     operation_plan = engine.plan_push()
 
     assert [(plan.package_id, plan.selection.explicit) for plan in operation_plan.package_plans] == [
-        ("shared-stack", True),
         ("shared", False),
+        ("shared-stack", True),
     ]
-    assert operation_plan.to_dict()["packages"][0]["package_id"] == "shared-stack"
+    assert operation_plan.to_dict()["packages"][0]["package_id"] == "shared"

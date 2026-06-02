@@ -9,13 +9,22 @@ Turn tracked or requested package selections into ordered operation plans with h
 ```pseudo
 resolve_tracked_package_selections(engine):
   read effective tracked entries from every repo
-  expand entries into package selections
+  expand entries into package selections in dependency-before-dependent order
   merge duplicate selections by resolved package identity
 
   if same package instance is claimed with incompatible profiles:
     reject TrackedPackageProfileConflictError
 
-  return sorted selections
+  return ordered selections
+
+resolve selection roots:
+  for each requested root package:
+    resolve related package ids in dependency-before-dependent order
+    for each related package id:
+      if it is the root package:
+        add explicit root selection at that ordered position
+      else:
+        add implicit dependency selection owned by the root selection
 
 build_package_planning_context(engine, repo, selection):
   resolve package with bound profile
