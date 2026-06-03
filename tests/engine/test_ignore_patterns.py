@@ -180,6 +180,191 @@ def test_directory_target_push_ignore_preserves_gitignore_style_nested_pycache_f
     assert [item.relative_path for item in target.directory_items] == []
 
 
+def test_directory_target_scan_rejects_nested_live_directory_symlink_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                '',
+                '[targets.config]',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                '',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "sample"
+    linked_target = home / ".config" / "linked-real"
+    live_root.mkdir(parents=True)
+    linked_target.mkdir(parents=True)
+    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (live_root / "linked").symlink_to(linked_target, target_is_directory=True)
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    with pytest.raises(ValueError, match="directory symlink encountered while scanning directory: linked"):
+        single_package_plan(engine, "fixture:sample@default", operation="push")
+
+
+
+def test_directory_target_scan_allows_ignored_nested_live_directory_symlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                '',
+                '[targets.config]',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                'push_ignore = ["linked/"]',
+                '',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "sample"
+    linked_target = home / ".config" / "linked-real"
+    live_root.mkdir(parents=True)
+    linked_target.mkdir(parents=True)
+    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (linked_target / "hidden.conf").write_text("hidden = true\n", encoding="utf-8")
+    (live_root / "linked").symlink_to(linked_target, target_is_directory=True)
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+
+    target = plan.target_plans[0]
+    assert target.action == "noop"
+    assert [item.relative_path for item in target.directory_items] == []
+
+
+
+def test_directory_target_scan_follows_nested_live_directory_symlink_when_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                '',
+                '[targets.config]',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                '',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "sample"
+    linked_target = home / ".config" / "linked-real"
+    live_root.mkdir(parents=True)
+    linked_target.mkdir(parents=True)
+    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (linked_target / "extra.conf").write_text("extra = true\n", encoding="utf-8")
+    (live_root / "linked").symlink_to(linked_target, target_is_directory=True)
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root),
+        dir_symlink_mode="follow",
+    )
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+
+    target = plan.target_plans[0]
+    assert target.action == "update"
+    assert [(item.action, item.relative_path) for item in target.directory_items] == [("delete", "linked/extra.conf")]
+
+
+
+def test_directory_target_scan_rejects_nested_directory_symlink_loop_when_following(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                '',
+                '[targets.config]',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                '',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "sample"
+    live_root.mkdir(parents=True)
+    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (live_root / "loop").symlink_to(live_root, target_is_directory=True)
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root),
+        dir_symlink_mode="follow",
+    )
+
+    with pytest.raises(ValueError, match="directory symlink loop encountered while scanning directory: loop"):
+        single_package_plan(engine, "fixture:sample@default", operation="push")
+
+
+
 def test_directory_target_pull_ignore_hides_both_repo_and_live_children_during_pull(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

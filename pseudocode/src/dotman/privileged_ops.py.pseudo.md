@@ -32,7 +32,10 @@ supported operations:
   write symlink atomically
   delete path and prune empty parents
   chmod path
-  list directory files
+  list directory files:
+    accept legacy stdin payload as ignore pattern list
+    accept current stdin payload with ignore_patterns and follow_dir_symlinks
+    return relative file path mapping produced by ignore directory scanner
 ```
 
 ## Review Needed

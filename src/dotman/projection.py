@@ -232,6 +232,7 @@ def plan_targets(
                     repo_path=repo_path,
                     live_path=live_path,
                     push_ignore=metadata.push_ignore,
+                    follow_dir_symlinks=engine.config.dir_symlink_mode == "follow",
                 )
                 plans.append(
                     TargetPlan(
@@ -751,9 +752,14 @@ def plan_directory_action(
     # Ignore lists are operation-scoped: an ignored child should disappear from
     # both repo and live scans so planning does not create, update, or delete it.
     operation_ignore = push_ignore if operation == "push" else pull_ignore
-    desired_files = list_directory_files(repo_path, operation_ignore)
+    follow_dir_symlinks = engine.config.dir_symlink_mode == "follow"
+    desired_files = list_directory_files(repo_path, operation_ignore, follow_dir_symlinks=follow_dir_symlinks)
     live_exists = live_path.exists()
-    live_files = list_directory_files(live_path, operation_ignore) if live_exists else {}
+    live_files = (
+        list_directory_files(live_path, operation_ignore, follow_dir_symlinks=follow_dir_symlinks)
+        if live_exists
+        else {}
+    )
     desired_rel_paths = set(desired_files)
     live_rel_paths = set(live_files)
     directory_items: list[DirectoryPlanItem] = []
@@ -1144,8 +1150,13 @@ def plan_live_delete_directory_action(
     repo_path: Path,
     live_path: Path,
     push_ignore: tuple[str, ...],
+    follow_dir_symlinks: bool = False,
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
-    live_files = list_directory_files(live_path, push_ignore) if live_path.exists() else {}
+    live_files = (
+        list_directory_files(live_path, push_ignore, follow_dir_symlinks=follow_dir_symlinks)
+        if live_path.exists()
+        else {}
+    )
     directory_items = tuple(
         DirectoryPlanItem(
             relative_path=relative_path,

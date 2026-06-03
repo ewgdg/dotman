@@ -56,8 +56,14 @@ def _chmod(path: Path, mode: int) -> None:
 
 
 def _list_directory_files(root: Path) -> None:
-    ignore_patterns = tuple(json.loads(sys.stdin.read()))
-    files = _list_directory_files_without_sudo(root, ignore_patterns)
+    payload = json.loads(sys.stdin.read())
+    if isinstance(payload, dict):
+        ignore_patterns = tuple(payload.get("ignore_patterns", ()))
+        follow_dir_symlinks = bool(payload.get("follow_dir_symlinks", False))
+    else:
+        ignore_patterns = tuple(payload)
+        follow_dir_symlinks = False
+    files = _list_directory_files_without_sudo(root, ignore_patterns, follow_dir_symlinks=follow_dir_symlinks)
     sys.stdout.write(json.dumps({relative: str(path) for relative, path in files.items()}))
 
 

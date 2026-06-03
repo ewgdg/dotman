@@ -43,7 +43,17 @@ plan_file_action(engine):
     return conflict target plan
 
 plan_directory_action(engine):
-  list repo children and live children with ignore rules
+  choose operation-scoped ignore rules
+  set follow_dir_symlinks from engine config symlinks.dir_symlink_mode == "follow"
+  list repo children and live children with ignore rules and follow_dir_symlinks
+
+  if scanner sees an ignored nested directory symlink:
+    ignore it
+  else if scanner sees a nested directory symlink and follow_dir_symlinks is false:
+    reject planning instead of silently skipping it
+  else if scanner follows nested directory symlinks:
+    include files under symlink-relative paths and reject symlink loops
+
   for each child path:
     derive child policy from target path rules
 
@@ -54,6 +64,12 @@ plan_directory_action(engine):
       produce child noop/write/delete/chmod/conflict action
 
   return directory target plan with child items
+
+plan_live_delete_directory_action(engine):
+  set follow_dir_symlinks from engine config for push-only-delete directory targets
+  list live children with ignore rules and follow_dir_symlinks
+  create delete item for each listed live child
+  return delete plan when any listed child exists, otherwise noop
 
 project_repo_file(engine):
   if target has render command:
