@@ -394,9 +394,12 @@ commands = [
 - Standalone hook-only package execution must not fabricate target writes or snapshots.
 - Standalone hook-only target or repo execution must not fabricate target writes or snapshots.
 - Provenance alone should not cause hooks to execute.
-- Repo hook template expansion and env stay repo-scoped only. Dotman provides values such as `DOTMAN_REPO_NAME`, `DOTMAN_OPERATION`, `DOTMAN_REPO_ROOT`, and `DOTMAN_STATE_PATH`, but intentionally does not inject ambiguous single-package-entry values like `DOTMAN_PROFILE` or `DOTMAN_PACKAGE_ID` there.
-- Target hook env keeps the usual repo/package/profile vars and also includes `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, and `DOTMAN_TARGET_LIVE_PATH`.
-- Hook env also includes `DOTMAN_ASSUME_YES`, set to `1` when CLI `--yes` is active and `0` otherwise.
+- Repo hook template expansion and env stay repo-scoped only. Dotman intentionally does not inject ambiguous single-package-entry values like `DOTMAN_PROFILE` or `DOTMAN_PACKAGE_ID` there.
+- Repo hook env includes `DOTMAN_REPO_NAME`, `DOTMAN_REPO_ROOT`, `DOTMAN_STATE_PATH`, `DOTMAN_OPERATION`, `DOTMAN_ASSUME_YES`, and flattened repo vars as `DOTMAN_VAR_*`.
+- Package hook env includes repo hook vars plus `DOTMAN_PACKAGE_ID`, `DOTMAN_PACKAGE_ROOT`, `DOTMAN_PROFILE`, `DOTMAN_OS`, and flattened package vars as `DOTMAN_VAR_*`.
+- `DOTMAN_PACKAGE_ROOT` is the package directory containing that package's `package.toml`.
+- Target hook env includes package hook vars plus `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, `DOTMAN_TARGET_LIVE_PATH`, `DOTMAN_REPO_PATH`, `DOTMAN_SOURCE`, and `DOTMAN_LIVE_PATH`.
+- `DOTMAN_ASSUME_YES` is set to `1` when CLI `--yes` is active and `0` otherwise.
 - Hooks never auto-escalate through target path permissions, even when adjacent target work touches protected paths. Elevation only comes from explicit command metadata or repo-level `default_command_elevation`.
 - If a hook really must run as root, use explicit command metadata such as `{ run = "systemctl restart sddm", elevation = "root" }`.
 - If a hook only sometimes needs elevation, prefer `elevation = "broker"` and call `dotman elevation request "reason"` after the script proves privileged work is required.
