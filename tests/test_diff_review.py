@@ -23,6 +23,31 @@ from dotman.ui_context import ui_config_scope
 from tests.helpers import make_package_plan
 
 
+def test_build_review_items_skips_probe_targets() -> None:
+    plan = make_package_plan(
+        operation="push",
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="version",
+                repo_path=Path("/repo/app"),
+                live_path=Path("/repo/app"),
+                action="probe",
+                target_kind="probe",
+                projection_kind="probe",
+                probe_command="exit 0",
+            )
+        ],
+    )
+
+    assert build_review_items([plan], operation="push") == []
+
+
 def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"

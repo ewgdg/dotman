@@ -49,6 +49,7 @@ from dotman.projection import (
     project_repo_file,
     pull_view_bytes,
     run_command_projection,
+    target_claims_path,
 )
 from dotman.repository import Repository, VALID_HOOK_NAMES
 from dotman.templates import build_template_context, render_template_string
@@ -381,7 +382,7 @@ def build_tracked_plans(
         filtered_targets = [
             target
             for target_index, target in enumerate(plan.target_plans)
-            if (plan_index, target_index) in winner_indexes
+            if target.target_kind == "probe" or (plan_index, target_index) in winner_indexes
         ]
         filtered_plans.append(
             replace(
@@ -412,6 +413,8 @@ def collect_tracked_candidates(
         plan_index = len(plans)
         plans.append(plan)
         for target_index, target in enumerate(plan.target_plans):
+            if target.target_kind == "probe":
+                continue
             candidate_path = operation_write_path(
                 repo_path=target.repo_path,
                 live_path=target.live_path,
@@ -471,6 +474,8 @@ def collect_tracked_ownership_candidates(
             inspect_live_symlinks=False,
         )
         for target_index, metadata in enumerate(metadata_targets):
+            if not target_claims_path(metadata.target):
+                continue
             target_summary = None
             if include_target_summary:
                 target_summary = TrackedTargetSummary(
@@ -856,6 +861,8 @@ def _validate_direct_package_plan_conflicts(
         rendered_targets = []
         for plan in repo_package_plans:
             for target in plan.target_plans:
+                if target.target_kind == "probe":
+                    continue
                 package = repo.resolve_package(target.package_id)
                 target_spec = package.targets[target.target_name]
                 rendered_targets.append(

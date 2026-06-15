@@ -79,6 +79,42 @@ def test_info_trackable_cli_exposes_declared_target_type_in_json(
     assert payload["trackable"]["targets"][0]["target_type"] == "file"
 
 
+def test_info_trackable_cli_exposes_probe_targets_in_json_and_text(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "sample").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[targets.version]",
+                'probe = "exit 0"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+
+    assert main(["--config", str(config_path), "--json", "info", "trackable", "sample"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["trackable"]["targets"][0]["probe_command"] == "exit 0"
+
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+    assert main(["--config", str(config_path), "info", "trackable", "sample"]) == 0
+    assert "version [probe]" in capsys.readouterr().out
+
+
 def test_info_trackable_cli_emits_partial_group_status_in_text_output(
     tmp_path: Path,
     monkeypatch,

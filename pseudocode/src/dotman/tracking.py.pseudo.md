@@ -53,6 +53,7 @@ remove_tracked_package_entry(engine, binding_text):
 list_trackables(engine):
   enumerate configured packages and groups
   mark tracked state from effective entries
+  include probe target command metadata in package target details
   return catalog entries
 
 describe_tracked_package(engine, package_text):

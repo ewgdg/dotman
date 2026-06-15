@@ -15,6 +15,7 @@ emit_payload(plans, format):
   print operation header
   print repo hook sections with hook labels
   print package sections with package identity and target actions
+  render probe target actions without fake repo/live path lines
 
 run_execution(plans, args):
   mode = effective_execution_mode(args)

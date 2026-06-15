@@ -42,6 +42,8 @@ build_package_plan(engine, repo, selection):
 build_tracked_plans(engine):
   selections = resolve tracked package selections
   package_plans = build package plan for each selection
+  collect ownership candidates only for targets that claim repo/live write paths
+  keep non-path targets such as probes after ownership winner filtering
   validate tracked ownership and direct conflicts
   return package plans
 

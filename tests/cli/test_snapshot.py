@@ -5,8 +5,38 @@ from pathlib import Path
 
 import dotman.cli as cli
 from dotman.cli import main
-from dotman.snapshot import list_snapshots
-from tests.helpers import capture_parser_help, write_named_manager_config
+from dotman.models import SnapshotConfig, TargetPlan
+from dotman.snapshot import create_push_snapshot, list_snapshots
+from tests.helpers import capture_parser_help, make_package_plan, write_named_manager_config
+
+
+def test_create_push_snapshot_skips_probe_targets(tmp_path: Path) -> None:
+    plan = make_package_plan(
+        operation="push",
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="version",
+                repo_path=Path("/repo/app"),
+                live_path=Path("/repo/app"),
+                action="probe",
+                target_kind="probe",
+                projection_kind="probe",
+                probe_command="exit 0",
+            )
+        ],
+    )
+
+    snapshot = create_push_snapshot(
+        [plan],
+        SnapshotConfig(enabled=True, path=tmp_path / "snapshots", max_generations=5),
+    )
+
+    assert snapshot is None
+    assert not (tmp_path / "snapshots").exists()
 
 
 def _write_snapshot_execution_repo(

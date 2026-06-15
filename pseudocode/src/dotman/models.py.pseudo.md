@@ -12,10 +12,17 @@ reference text helpers:
   target_ref_text(identity, target) appends .target
   repo_qualified_target_text includes repo-qualified target identity
 
+target models:
+  TargetSpec may contain a probe command instead of file source/path fields
+  active probe TargetPlan uses target_kind = "probe" and action = "probe"
+  inactive probe TargetPlan uses target_kind = "probe" and action = "noop"
+  probe targets are executable for hook eligibility but do not represent repo/live file paths
+
 to_dict methods:
   serialize model fields into JSON-compatible dictionaries
   serialize nested model objects recursively
   preserve field names expected by CLI/API output
+  serialize probe command metadata and avoid exposing fake file paths for probe target plans
 
 ResolvedPackageSelection helpers:
   repo_name() returns selected repo

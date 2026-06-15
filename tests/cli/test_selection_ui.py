@@ -130,6 +130,90 @@ def test_print_pending_selection_item_renders_hook_summary_in_parentheses(monkey
 
     assert capsys.readouterr().out == "   1) [hooks] example:git (guard_push, pre_push)\n"
 
+
+def test_collect_pending_selection_items_adds_probe_target_row(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+    plan = make_package_plan(
+        operation="push",
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="version",
+                repo_path=Path("/repo/app"),
+                live_path=Path("/repo/app"),
+                action="probe",
+                target_kind="probe",
+                projection_kind="probe",
+                probe_command="exit 0",
+            )
+        ],
+    )
+
+    selection_items = cli.collect_pending_selection_items_for_operation([plan], operation="push")
+
+    assert len(selection_items) == 1
+    assert selection_items[0].action == "probe"
+    assert selection_items[0].source_path is None
+    assert selection_items[0].destination_path is None
+    cli.print_pending_selection_item(1, selection_items[0])
+    assert capsys.readouterr().out == "   1) [probe] sandbox:app.version\n"
+
+def test_filter_plans_for_interactive_selection_excludes_probe_target(monkeypatch) -> None:
+    plan = make_package_plan(
+        operation="push",
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        hook_plans={
+            "pre_push": [
+                HookPlan(
+                    package_id="app",
+                    target_name="version",
+                    scope_kind="target",
+                    hook_name="pre_push",
+                    command="echo target pre",
+                    cwd=Path("/repo/app"),
+                )
+            ]
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="version",
+                repo_path=Path("/repo/app"),
+                live_path=Path("/repo/app"),
+                action="probe",
+                target_kind="probe",
+                projection_kind="probe",
+                probe_command="exit 0",
+            )
+        ],
+    )
+
+    monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: True)
+    monkeypatch.setattr(
+        cli,
+        "prompt_for_excluded_items",
+        lambda selection_items, *, operation, full_paths=False: {1},
+    )
+
+    filtered_plan = cli.filter_plans_for_interactive_selection(
+        plans=[plan],
+        operation="push",
+        json_output=False,
+    )[0]
+
+    assert filtered_plan.target_plans == []
+    assert filtered_plan.hooks == {}
+
+
 def test_filter_plans_for_interactive_selection_excludes_directory_child_pull_item(
     monkeypatch,
 ) -> None:

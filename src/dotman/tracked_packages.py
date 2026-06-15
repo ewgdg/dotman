@@ -6,7 +6,7 @@ from typing import Any
 
 from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
-from dotman.projection import default_pull_view_live, resolve_target_kind
+from dotman.projection import default_pull_view_live, resolve_target_kind, validate_probe_target_config
 from dotman.models import (
     FullSpecSelector,
     HookCommandSpec,
@@ -282,6 +282,18 @@ def summarize_targets(
     for target in (package.targets or {}).values():
         if target.disabled:
             continue
+        if target.probe is not None:
+            validate_probe_target_config(package=package, target=target)
+            target_summaries.append(
+                TrackedTargetSummary(
+                    target_name=target.name,
+                    repo_path=None,
+                    live_path=None,
+                    target_kind="probe",
+                    probe_command=render_template_string(target.probe, context, base_dir=target.declared_in, source_path=target.declared_in),
+                )
+            )
+            continue
         if target.source is None or target.path is None:
             raise ValueError(f"target '{package.id}:{target.name}' must define source and path")
         rendered_source = render_template_string(target.source, context, base_dir=target.declared_in, source_path=target.declared_in)
@@ -340,6 +352,7 @@ def tracked_target_summary_from_plan(target: TargetPlan) -> TrackedTargetSummary
         repo_path=target.repo_path,
         live_path=target.live_path,
         target_kind=target.target_kind,
+        probe_command=target.probe_command,
         render_command=target.render_command,
         capture_command=target.capture_command,
         reconcile=target.reconcile,

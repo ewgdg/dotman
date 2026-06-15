@@ -99,6 +99,57 @@ def test_build_execution_session_orders_push_steps_per_package() -> None:
     ]
 
 
+def test_build_execution_session_uses_probe_target_as_hook_premise_without_target_step() -> None:
+    plan = make_package_plan(
+        operation="push",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={
+            "pre_push": [
+                HookPlan(
+                    package_id="app",
+                    target_name="version",
+                    scope_kind="target",
+                    hook_name="pre_push",
+                    command="echo target pre",
+                    cwd=Path("/repo/app"),
+                )
+            ],
+            "post_push": [
+                HookPlan(
+                    package_id="app",
+                    target_name="version",
+                    scope_kind="target",
+                    hook_name="post_push",
+                    command="echo target post",
+                    cwd=Path("/repo/app"),
+                )
+            ],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="version",
+                repo_path=Path("/repo/app"),
+                live_path=Path("/repo/app"),
+                action="probe",
+                target_kind="probe",
+                projection_kind="probe",
+                probe_command="exit 0",
+            )
+        ],
+    )
+
+    session = build_execution_session([plan], operation="push")
+
+    assert [(step.kind, step.action) for step in session.packages[0].steps] == [
+        ("hook", "pre_push"),
+        ("hook", "post_push"),
+    ]
+
+
 def test_build_execution_session_orders_dependency_package_before_dependent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

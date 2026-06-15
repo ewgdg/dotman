@@ -479,7 +479,7 @@ def _iter_push_snapshot_entries(plans: Sequence[PackagePlan]):
                         "target_name": target.target_name,
                     }
                 continue
-            if target.action == "noop":
+            if target.action == "noop" or target.target_kind == "probe":
                 continue
             if target.live_path in seen_live_paths:
                 raise ValueError(f"duplicate snapshot live path: {target.live_path}")

@@ -12,6 +12,9 @@ style_text(text, role):
     return text unchanged
   return text wrapped with role-specific style
 
+menu action styles:
+  style create/update/delete/probe action badges consistently in selection and payload output
+
 render_package_label(identity):
   if package has instance/profile annotation:
     render repo:package<instance>

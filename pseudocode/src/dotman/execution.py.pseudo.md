@@ -13,6 +13,7 @@ build_execution_session(plans):
 
   group package plans into repo execution units
   build ordered steps for repo hooks, package hooks, target actions, chmods, and guards
+  for active probe targets, build no target filesystem step but keep target hooks eligible around the probe slot
   return execution session
 
 execute_session(session):

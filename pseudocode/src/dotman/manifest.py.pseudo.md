@@ -32,11 +32,14 @@ normalize_* helpers(value):
 build_target_spec(payload):
   resolve target schema aliases
   apply target preset if present
-  normalize path, type, sync policy, render/pull/reconcile/patch-capture config, ignore rules, metadata, and path rules
+  normalize path, type, sync policy, probe, render/pull/reconcile/patch-capture config, ignore rules, metadata, and path rules
+  if probe is present:
+    require probe to be a non-empty command string
+    reject source, path, type, chmod, render, capture, reconcile, pull views, ignore rules, and path rules
   return TargetSpec
 
 merge_target_specs(base, override):
-  merge scalar target fields by override precedence
+  merge scalar target fields, including probe, by override precedence
   merge maps and hooks according to manifest merge rules
   return merged TargetSpec
 

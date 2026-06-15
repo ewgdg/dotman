@@ -33,6 +33,7 @@ class TargetMetadata:
     target_name: str
     repo_path: Path
     live_path: Path
+    probe_command: str | None
     render_command: str | None
     capture_command: str | None
     reconcile: HookCommandSpec | None
@@ -63,6 +64,35 @@ def _metadata_collision_tuple(metadata: TargetMetadata):
     )
 
 
+def target_claims_path(target: TargetSpec) -> bool:
+    return target.probe is None
+
+
+def validate_probe_target_config(*, package: PackageSpec, target: TargetSpec) -> None:
+    if target.probe is None:
+        return
+    forbidden_probe_fields = {
+        "source": target.source,
+        "path": target.path,
+        "type": target.target_type,
+        "chmod": target.chmod,
+        "render": target.render,
+        "capture": target.capture,
+        "reconcile": target.reconcile,
+        "pull_view_repo": target.pull_view_repo,
+        "pull_view_live": target.pull_view_live,
+        "push_ignore": target.push_ignore,
+        "pull_ignore": target.pull_ignore,
+        "path_rules": target.path_rules or None,
+    }
+    forbidden = sorted(name for name, value in forbidden_probe_fields.items() if value is not None)
+    if forbidden:
+        raise ValueError(
+            f"target '{package.id}:{target.name}' uses probe and must not define: "
+            + ", ".join(forbidden)
+        )
+
+
 def build_target_metadata(
     engine: Any,
     *,
@@ -86,6 +116,51 @@ def build_target_metadata(
                 continue
             sync_policy = resolve_sync_policy(package=package, target=target)
             if not sync_policy_allows_operation(sync_policy, operation=operation):
+                continue
+            if target.probe is not None:
+                validate_probe_target_config(package=package, target=target)
+                probe_command = render_template_string(
+                    target.probe,
+                    context,
+                    base_dir=target.declared_in,
+                    source_path=target.declared_in,
+                )
+                placeholder_path = target.declared_in.resolve()
+                metadata_targets.append(
+                    TargetMetadata(
+                        repo_name=repo.config.name,
+                        package_id=package.id,
+                        bound_profile=selection.bound_profile,
+                        requested_profile=selection.requested_profile,
+                        target_name=target.name,
+                        repo_path=placeholder_path,
+                        live_path=placeholder_path,
+                        probe_command=probe_command,
+                        render_command=None,
+                        capture_command=None,
+                        reconcile=None,
+                        pull_view_repo="raw",
+                        pull_view_live="raw",
+                        push_ignore=(),
+                        pull_ignore=(),
+                        chmod=None,
+                        path_rules=(),
+                        command_cwd=target.declared_in,
+                        command_env=build_target_command_env(
+                            repo=repo,
+                            package=package,
+                            target=target,
+                            repo_path=placeholder_path,
+                            live_path=placeholder_path,
+                            selection=selection,
+                            operation=operation,
+                            inferred_os=inferred_os,
+                            context=context,
+                        ),
+                        package=package,
+                        target=target,
+                    )
+                )
                 continue
             if target.source is None or target.path is None:
                 raise ValueError(
@@ -138,6 +213,7 @@ def build_target_metadata(
                     target_name=target.name,
                     repo_path=repo_path,
                     live_path=live_path,
+                    probe_command=None,
                     render_command=render_command,
                     capture_command=capture_command,
                     reconcile=reconcile,
@@ -167,7 +243,7 @@ def build_target_metadata(
             )
 
     if validate_declaration_conflicts:
-        rendered_targets = [_metadata_collision_tuple(metadata) for metadata in metadata_targets]
+        rendered_targets = [_metadata_collision_tuple(metadata) for metadata in metadata_targets if target_claims_path(metadata.target)]
         validate_target_collisions(rendered_targets, operation=operation)
         if operation == "push":
             validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
@@ -202,6 +278,23 @@ def plan_targets(
         target = metadata.target
         repo_path = metadata.repo_path
         live_path = metadata.live_path
+        if target.probe is not None:
+            probe_active = run_probe_command(metadata)
+            plans.append(
+                TargetPlan(
+                    package_id=package.id,
+                    target_name=target.name,
+                    repo_path=repo_path,
+                    live_path=live_path,
+                    action="probe" if probe_active else "noop",
+                    target_kind="probe",
+                    projection_kind="probe",
+                    probe_command=metadata.probe_command,
+                    command_cwd=metadata.command_cwd,
+                    command_env=metadata.command_env,
+                )
+            )
+            continue
         sync_policy = resolve_sync_policy(package=package, target=target)
         target_kind = resolve_target_kind(
             target_type=target.target_type,
@@ -1404,6 +1497,33 @@ def pull_view_bytes(
         operation=operation,
         inferred_os=inferred_os,
         context=context,
+    )
+
+
+def run_probe_command(metadata: TargetMetadata) -> bool:
+    if metadata.probe_command is None:
+        raise ValueError(f"missing probe command for {metadata.package_id}:{metadata.target_name}")
+    env = os.environ.copy()
+    env.update(metadata.command_env)
+    completed = subprocess.run(
+        metadata.probe_command,
+        cwd=str(metadata.command_cwd),
+        env=env,
+        shell=True,
+        executable="/bin/sh",
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 100:
+        return False
+    stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+    stdout = completed.stdout.decode("utf-8", errors="replace").strip()
+    detail = stderr or stdout or f"exit status {completed.returncode}"
+    raise ValueError(
+        f"probe failed for {metadata.package_id}:{metadata.target_name} "
+        f"with status {completed.returncode}: {detail}"
     )
 
 

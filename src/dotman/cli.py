@@ -2444,6 +2444,17 @@ def collect_pending_selection_items_for_operation(
                 continue
             if target.action == "noop":
                 continue
+            if target.target_kind == "probe":
+                selection_items.append(
+                    PendingSelectionItem(
+                        selection_label=selection_label,
+                        package_id=target.package_id,
+                        action=selection_item_action(operation=operation, action=target.action),
+                        target_name=target.target_name,
+                        bound_profile=plan.bound_profile,
+                    )
+                )
+                continue
             source_path, destination_path = selection_item_paths(
                 operation=operation,
                 repo_path=target.repo_path,
@@ -2584,6 +2595,22 @@ def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full
         bound_profile=item.bound_profile,
         target_name=item.target_name,
     )
+    if item.action == "probe":
+        if not colors_enabled():
+            print(f"  {index:>2}) [probe] {package_target}")
+            return
+        action_text = style_text("[probe]", *MENU_ACTION_STYLE_BY_NAME.get("probe", ("1",)))
+        package_label = render_package_target_label(
+            repo_name=repo_name,
+            package_id=item.package_id,
+            target_name=item.target_name,
+            bound_profile=item.bound_profile,
+        )
+        print(
+            f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+            f"{action_text} {package_label}"
+        )
+        return
     source_path = display_cli_path(item.source_path, full_paths=full_paths)
     destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
     if not colors_enabled():
@@ -2684,6 +2711,17 @@ def filter_plans_for_interactive_selection(
         selection_label = plan.selection_label
         filtered_targets = []
         for target in plan.target_plans:
+            if target.target_kind == "probe":
+                probe_identity = (
+                    selection_label,
+                    target.package_id,
+                    target.target_name,
+                    "",
+                    "",
+                )
+                if probe_identity not in excluded_targets:
+                    filtered_targets.append(target)
+                continue
             if target.directory_items:
                 remaining_items = tuple(
                     item

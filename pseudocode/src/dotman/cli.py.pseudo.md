@@ -53,8 +53,14 @@ resolve_*_text(engine, query):
   if no match:
     reject query
 
+selection/review plan items:
+  include active probe targets as selectable target rows without source/destination paths
+  exclude inactive/noop probe targets from normal selection
+  when user excludes an active probe target, remove that target and recompute hook eligibility
+  do not create diff review items for probe targets because they have no file payload
+
 review_plans_for_interactive_diffs(plans):
-  build review items from plans
+  build review items from file/directory plans only
   for each review item:
     show diff header and diff output
     ask keep/edit/skip/continue command

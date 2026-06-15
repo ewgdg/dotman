@@ -277,6 +277,20 @@ def normalize_target_type(value: Any) -> str | None:
     return normalize_optional_string_enum(value, key="target type", allowed=VALID_TARGET_TYPE_VALUES)
 
 
+def normalize_probe_command(value: Any, *, manifest_path: Path, target_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(
+            f"package manifest {manifest_path} target '{target_name}' probe must be a string"
+        )
+    if not value.strip():
+        raise ValueError(
+            f"package manifest {manifest_path} target '{target_name}' probe must not be empty"
+        )
+    return value
+
+
 def resolve_sync_policy(*, package: PackageSpec, target: TargetSpec) -> str:
     return target.sync_policy or package.sync_policy or "both"
 
@@ -549,64 +563,104 @@ def build_target_spec(
             )
             for hook_name, hook_value in hooks_payload.items()
         }
+    source = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="source")
+    path = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path")
+    probe = normalize_probe_command(
+        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="probe"),
+        manifest_path=manifest_path,
+        target_name=target_name,
+    )
+    target_type = normalize_target_type(
+        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="type")
+    )
+    sync_policy = normalize_sync_policy(
+        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="sync_policy")
+    )
+    chmod = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="chmod")
+    render = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="render")
+    capture = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="capture")
+    reconcile = _build_reconcile_spec(
+        reconcile_payload=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile"),
+        manifest_kind="package manifest",
+        manifest_path=manifest_path,
+        owner_label=f"target '{target_name}'",
+        default_command_elevation=default_command_elevation,
+    )
+    pull_view_repo = read_target_schema_alias(
+        target_payload=target_payload,
+        preset_payload=preset_payload,
+        primary_key="pull_view_repo",
+        legacy_key="import_view_repo",
+    )
+    pull_view_live = read_target_schema_alias(
+        target_payload=target_payload,
+        preset_payload=preset_payload,
+        primary_key="pull_view_live",
+        legacy_key="import_view_live",
+    )
+    push_ignore = build_target_operation_ignore(
+        target_payload=target_payload,
+        preset_payload=preset_payload,
+        manifest_path=manifest_path,
+        target_name=target_name,
+        primary_key="push_ignore",
+        legacy_key="apply_ignore",
+        table_key="push",
+        table_legacy_key="apply",
+    )
+    pull_ignore = build_target_operation_ignore(
+        target_payload=target_payload,
+        preset_payload=preset_payload,
+        manifest_path=manifest_path,
+        target_name=target_name,
+        primary_key="pull_ignore",
+        legacy_key="import_ignore",
+        table_key="pull",
+        table_legacy_key="import",
+    )
+    path_rules = normalize_target_path_rules(
+        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path_rules"),
+        manifest_path=manifest_path,
+        target_name=target_name,
+    )
+    if probe is not None:
+        forbidden_probe_fields = {
+            "source": source,
+            "path": path,
+            "type": target_type,
+            "chmod": chmod,
+            "render": render,
+            "capture": capture,
+            "reconcile": reconcile,
+            "pull_view_repo": pull_view_repo,
+            "pull_view_live": pull_view_live,
+            "push_ignore": push_ignore,
+            "pull_ignore": pull_ignore,
+            "path_rules": path_rules or None,
+        }
+        forbidden = sorted(name for name, value in forbidden_probe_fields.items() if value is not None)
+        if forbidden:
+            raise ValueError(
+                f"package manifest {manifest_path} target '{target_name}' uses probe and must not define: "
+                + ", ".join(forbidden)
+            )
     return TargetSpec(
         name=target_name,
         declared_in=manifest_path.parent,
-        source=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="source"),
-        path=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path"),
-        target_type=normalize_target_type(
-            get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="type")
-        ),
-        sync_policy=normalize_sync_policy(
-            get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="sync_policy")
-        ),
-        chmod=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="chmod"),
-        render=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="render"),
-        capture=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="capture"),
-        reconcile=_build_reconcile_spec(
-            reconcile_payload=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile"),
-            manifest_kind="package manifest",
-            manifest_path=manifest_path,
-            owner_label=f"target '{target_name}'",
-            default_command_elevation=default_command_elevation,
-        ),
-        pull_view_repo=read_target_schema_alias(
-            target_payload=target_payload,
-            preset_payload=preset_payload,
-            primary_key="pull_view_repo",
-            legacy_key="import_view_repo",
-        ),
-        pull_view_live=read_target_schema_alias(
-            target_payload=target_payload,
-            preset_payload=preset_payload,
-            primary_key="pull_view_live",
-            legacy_key="import_view_live",
-        ),
-        push_ignore=build_target_operation_ignore(
-            target_payload=target_payload,
-            preset_payload=preset_payload,
-            manifest_path=manifest_path,
-            target_name=target_name,
-            primary_key="push_ignore",
-            legacy_key="apply_ignore",
-            table_key="push",
-            table_legacy_key="apply",
-        ),
-        pull_ignore=build_target_operation_ignore(
-            target_payload=target_payload,
-            preset_payload=preset_payload,
-            manifest_path=manifest_path,
-            target_name=target_name,
-            primary_key="pull_ignore",
-            legacy_key="import_ignore",
-            table_key="pull",
-            table_legacy_key="import",
-        ),
-        path_rules=normalize_target_path_rules(
-            get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path_rules"),
-            manifest_path=manifest_path,
-            target_name=target_name,
-        ),
+        source=source,
+        path=path,
+        probe=probe,
+        target_type=target_type,
+        sync_policy=sync_policy,
+        chmod=chmod,
+        render=render,
+        capture=capture,
+        reconcile=reconcile,
+        pull_view_repo=pull_view_repo,
+        pull_view_live=pull_view_live,
+        push_ignore=push_ignore,
+        pull_ignore=pull_ignore,
+        path_rules=path_rules,
         hooks=hooks,
         disabled=bool(get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="disabled") or False),
     )
@@ -702,6 +756,7 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         declared_in=override.declared_in,
         source=override.source if override.source is not None else base.source,
         path=override.path if override.path is not None else base.path,
+        probe=override.probe if override.probe is not None else base.probe,
         target_type=override.target_type if override.target_type is not None else base.target_type,
         sync_policy=override.sync_policy if override.sync_policy is not None else base.sync_policy,
         chmod=override.chmod if override.chmod is not None else base.chmod,

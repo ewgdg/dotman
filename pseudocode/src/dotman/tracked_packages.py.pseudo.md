@@ -25,9 +25,16 @@ find_tracked_target_matches(engine, target_text):
 
 summarize_targets(repo, package, context):
   for each package target:
-    project enough target state to know repo path, live path, action, policy, hooks, and status
-    create tracked target summary
+    if target is a probe target:
+      create probe target summary without repo/live ownership paths and without running the probe
+    else:
+      project enough target state to know repo path, live path, action, policy, hooks, and status
+      create tracked target summary
   return target summaries
+
+ownership candidates:
+  include only targets that claim repo/live write paths
+  skip probe targets because they do not participate in ownership conflict resolution
 
 describe_owned_package_targets(engine, repo_name, package_id, bound_profile):
   find effective tracked entries that own package instance

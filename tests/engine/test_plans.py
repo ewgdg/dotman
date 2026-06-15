@@ -115,6 +115,35 @@ def write_hook_metadata_repo(
     return repo_root
 
 
+def write_probe_repo(
+    tmp_path: Path,
+    *,
+    probe_command: str,
+    package_manifest: list[str] | None = None,
+    target_manifest: list[str] | None = None,
+) -> Path:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages" / "app").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "packages" / "app" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "app"',
+                *(package_manifest or []),
+                "",
+                "[targets.version]",
+                f"probe = {json.dumps(probe_command)}",
+                'sync_policy = "push-only"',
+                *(target_manifest or []),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return repo_root
+
+
 def write_repo_and_target_hook_repo(
     tmp_path: Path,
     *,
@@ -252,6 +281,194 @@ def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
     assert "email = local@example.test" in target.desired_text
     assert "editor = nvim" in target.desired_text
     assert "[include]" not in target.desired_text
+
+
+def test_probe_target_exit_zero_is_active_and_keeps_hooks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_probe_repo(
+        tmp_path,
+        probe_command='test "$DOTMAN_PACKAGE_ID:$DOTMAN_TARGET_NAME:$DOTMAN_OPERATION" = "app:version:push"',
+        package_manifest=[
+            "[hooks]",
+            'pre_push = "echo package pre"',
+        ],
+        target_manifest=[
+            "[targets.version.hooks]",
+            'pre_push = "echo target pre"',
+        ],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert [(target.target_name, target.target_kind, target.action) for target in plan.target_plans] == [
+        ("version", "probe", "probe"),
+    ]
+    assert [hook.command for hook in plan.hooks["pre_push"]] == ["echo package pre", "echo target pre"]
+    assert plan.target_plans[0].to_dict()["repo_path"] is None
+    assert plan.target_plans[0].to_dict()["probe_command"].startswith("test ")
+
+
+def test_probe_target_exit_100_is_noop_and_drops_default_hooks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_probe_repo(
+        tmp_path,
+        probe_command="exit 100",
+        package_manifest=[
+            "[hooks]",
+            'pre_push = "echo package pre"',
+        ],
+        target_manifest=[
+            "[targets.version.hooks]",
+            'pre_push = "echo target pre"',
+        ],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    plan = single_package_plan(engine, "fixture:app@default", operation="push")
+
+    assert [(target.target_name, target.target_kind, target.action) for target in plan.target_plans] == [
+        ("version", "probe", "noop"),
+    ]
+    assert plan.hooks == {}
+
+
+def test_probe_target_non_soft_nonzero_exit_rejects_planning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_probe_repo(tmp_path, probe_command="printf 'bad version check\\n' >&2; exit 12")
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    with pytest.raises(ValueError, match="probe failed for app:version.*bad version check"):
+        single_package_plan(engine, "fixture:app@default", operation="push")
+
+
+def test_probe_target_rejects_file_payload_fields(tmp_path: Path) -> None:
+    repo_root = write_probe_repo(
+        tmp_path,
+        probe_command="exit 0",
+        target_manifest=[
+            'source = "files/config.txt"',
+            'path = "~/.config/app/config.txt"',
+        ],
+    )
+
+    with pytest.raises(ValueError, match="target 'version' uses probe and must not define: path, source"):
+        DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+
+def test_tracked_push_keeps_active_probe_without_ownership_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+    repo_root = write_probe_repo(
+        tmp_path,
+        probe_command="exit 0",
+        target_manifest=[
+            "[targets.version.hooks]",
+            'pre_push = "echo target pre"',
+        ],
+    )
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
+    state_dir.mkdir(parents=True)
+    (state_dir / "tracked-packages.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                "",
+                "[[packages]]",
+                'repo = "fixture"',
+                'package_id = "app"',
+                'profile = "default"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    operation_plan = engine.plan_push()
+
+    plan = operation_plan.package_plans[0]
+    assert [(target.target_name, target.target_kind, target.action) for target in plan.target_plans] == [
+        ("version", "probe", "probe"),
+    ]
+    assert [hook.command for hook in plan.hooks["pre_push"]] == ["echo target pre"]
+
+
+def test_probe_target_does_not_create_direct_collision_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    probe_package_root = repo_root / "packages" / "probe-app"
+    file_package_root = repo_root / "packages" / "file-app"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "groups").mkdir(parents=True)
+    (probe_package_root).mkdir(parents=True)
+    (file_package_root / "files").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "groups" / "bundle.toml").write_text('members = ["probe-app", "file-app"]\n', encoding="utf-8")
+    (probe_package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "probe-app"',
+                "",
+                "[targets.version]",
+                'probe = "exit 0"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (file_package_root / "files" / "config.txt").write_text("config\n", encoding="utf-8")
+    # If probe targets entered path collision validation, their internal placeholder path
+    # would be the probe package root and would conflict with this nested live path.
+    (file_package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "file-app"',
+                "",
+                "[targets.config]",
+                'source = "files/config.txt"',
+                f"path = {json.dumps(str(probe_package_root / 'would-collide-if-probe-claimed-path'))}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    operation_plan = engine.plan_push_query("fixture:bundle@default")
+
+    target_kinds = sorted(target.target_kind for plan in operation_plan.package_plans for target in plan.target_plans)
+    assert target_kinds == ["file", "probe"]
 
 
 def test_default_sync_policy_keeps_targets_in_both_push_and_pull_plans(

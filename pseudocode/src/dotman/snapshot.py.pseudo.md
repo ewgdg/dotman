@@ -9,6 +9,7 @@ Capture live state before push and restore that state through rollback actions.
 ```pseudo
 create_push_snapshot(plans, snapshot_config):
   collect snapshot entries for push target plans that may change live paths
+  skip probe targets because they do not own or change live paths
 
   if no entries need snapshot:
     return no snapshot or empty snapshot according to config

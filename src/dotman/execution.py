@@ -802,6 +802,8 @@ def _step_hook_label(step: ExecutionStep) -> str:
 
 def _build_target_steps(*, plan: PackagePlan, target_plan: TargetPlan, operation: str) -> list[ExecutionStep]:
     steps: list[ExecutionStep] = []
+    if target_plan.target_kind == "probe":
+        return steps
     if operation == "push":
         if target_plan.target_kind == "directory":
             steps.extend(

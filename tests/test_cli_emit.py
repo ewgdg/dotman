@@ -14,10 +14,54 @@ pathspec_gitignore.GitIgnoreSpec = type("GitIgnoreSpec", (), {})
 sys.modules.setdefault("pathspec.gitignore", pathspec_gitignore)
 
 from dotman.capture import CaptureError
-from dotman.cli_emit import emit_error
-from dotman.models import ResolvedPackageIdentity
+from dotman.cli_emit import emit_error, emit_payload
+from dotman.models import ResolvedPackageIdentity, TargetPlan
 from dotman.planning import TrackedPackageProfileConflictError
 from dotman.templates import JinjaRenderError
+from tests.helpers import make_package_plan
+
+
+def test_emit_payload_renders_probe_targets_without_fake_paths(capsys) -> None:
+    plan = make_package_plan(
+        operation="push",
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="version",
+                repo_path=Path("/repo/app"),
+                live_path=Path("/repo/app"),
+                action="probe",
+                target_kind="probe",
+                projection_kind="probe",
+                probe_command="exit 0",
+            )
+        ],
+    )
+
+    exit_code = emit_payload(
+        operation="push",
+        plans=[plan],
+        json_output=False,
+        mode="dry-run",
+        use_color=False,
+        collect_pending_selection_items_for_operation=lambda _plans, *, operation: [
+            types.SimpleNamespace(
+                selection_label="sandbox:app@default",
+                package_id="app",
+                target_name="version",
+                bound_profile=None,
+                action="probe",
+            )
+        ],
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "sandbox:app.version -> probe" in output
+    assert "None" not in output
 
 
 class StructuredGenericError(ValueError):

@@ -101,6 +101,7 @@ class TargetSpec:
     path_rules: tuple[TargetPathRule, ...] = ()
     hooks: dict[str, "HookSpec"] | None = None
     disabled: bool = False
+    probe: str | None = None
 
 
 HookCommandIO = Literal["pipe", "tty"]
@@ -312,8 +313,8 @@ class HookPlan:
 @dataclass(frozen=True)
 class TrackedTargetSummary:
     target_name: str
-    repo_path: Path
-    live_path: Path
+    repo_path: Path | None
+    live_path: Path | None
     target_kind: str
     render_command: str | None = None
     capture_command: str | None = None
@@ -323,12 +324,13 @@ class TrackedTargetSummary:
     push_ignore: tuple[str, ...] = ()
     pull_ignore: tuple[str, ...] = ()
     chmod: str | None = None
+    probe_command: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "target_name": self.target_name,
-            "repo_path": str(self.repo_path),
-            "live_path": str(self.live_path),
+            "repo_path": None if self.repo_path is None else str(self.repo_path),
+            "live_path": None if self.live_path is None else str(self.live_path),
             "target_kind": self.target_kind,
             "render_command": self.render_command,
             "capture_command": self.capture_command,
@@ -339,6 +341,9 @@ class TrackedTargetSummary:
             "pull_ignore": list(self.pull_ignore),
             "chmod": self.chmod,
         }
+        if self.probe_command is not None:
+            payload["probe_command"] = self.probe_command
+        return payload
 
 
 @dataclass(frozen=True)
@@ -380,9 +385,10 @@ class TrackableTargetDetail:
     push_ignore: tuple[str, ...] = ()
     pull_ignore: tuple[str, ...] = ()
     chmod: str | None = None
+    probe_command: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "target_name": self.target_name,
             "source": self.source,
             "path": self.path,
@@ -396,6 +402,9 @@ class TrackableTargetDetail:
             "pull_ignore": list(self.pull_ignore),
             "chmod": self.chmod,
         }
+        if self.probe_command is not None:
+            payload["probe_command"] = self.probe_command
+        return payload
 
 
 @dataclass(frozen=True)
@@ -635,13 +644,15 @@ class TargetPlan:
     review_before_bytes: bytes | None = field(default=None, repr=False)
     review_after_bytes: bytes | None = field(default=None, repr=False)
     directory_items: tuple["DirectoryPlanItem", ...] = ()
+    probe_command: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        is_probe = self.target_kind == "probe"
+        payload = {
             "package_id": self.package_id,
             "target_name": self.target_name,
-            "repo_path": str(self.repo_path),
-            "live_path": str(self.live_path),
+            "repo_path": None if is_probe else str(self.repo_path),
+            "live_path": None if is_probe else str(self.live_path),
             "action": self.action,
             "target_kind": self.target_kind,
             "projection_kind": self.projection_kind,
@@ -657,6 +668,9 @@ class TargetPlan:
             "path_rules": [rule.to_dict() for rule in self.path_rules],
             "directory_items": [item.to_dict() for item in self.directory_items],
         }
+        if self.probe_command is not None:
+            payload["probe_command"] = self.probe_command
+        return payload
 
 
 def filter_hook_plans_for_targets(

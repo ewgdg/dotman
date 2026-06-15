@@ -77,7 +77,7 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                     )
                 continue
 
-            if target.action == "noop":
+            if target.action == "noop" or target.target_kind == "probe":
                 continue
 
             source_path, destination_path = _selection_item_paths(

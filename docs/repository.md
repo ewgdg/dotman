@@ -171,6 +171,14 @@ preset = "jinja-patch"
 
 - Targets may define `sync_policy` to narrow or widen the package-level operation gate for that target.
 - Use `push-only` for forward-managed targets, `pull-only` for reverse-only targets, `both` for targets that can participate in both operations, and `push-only-delete` for targets whose live file should be removed on push while the repo source is retained.
+- Targets may define `probe` as a side-effect-free planning command instead of file payload fields.
+- A probe target does not define `source`, `path`, `type`, `chmod`, `render`, `capture`, `reconcile`, pull views, ignore rules, or path rules.
+- Probe exit codes are:
+  - `0`: active; the target appears in normal selection and makes package/target hooks eligible.
+  - `100`: inactive/noop; the target stays out of normal selection and hooks run only if explicitly noop-eligible.
+  - any other non-zero status: hard planning failure.
+- Probe targets do not claim repo/live paths, do not participate in target ownership conflicts, do not create snapshots, and never execute file push/pull steps.
+- Use `sync_policy = "push-only"` for install/update probes that should run only before push-style setup.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
 - Explicit target keys override preset defaults.
 - Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow, `jinja-patch` for the current built-in Jinja patch-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.
@@ -254,6 +262,26 @@ path = "~/.profile"
 source = "files/history"
 path = "~/.local/share/history.txt"
 sync_policy = "pull-only"
+```
+
+Example probe target for install/update hooks:
+
+```toml
+[targets.nvim_version]
+sync_policy = "push-only"
+probe = "sh hooks/needs-nvim-update.sh"
+
+[targets.nvim_version.hooks]
+pre_push = "sh hooks/install-or-update-nvim.sh"
+```
+
+```sh
+# hooks/needs-nvim-update.sh
+# exit 0 means install/update is needed; exit 100 means already current.
+installed="$(nvim --version 2>/dev/null | head -n 1 || true)"
+wanted="NVIM vX.Y.Z"
+[ "$installed" = "$wanted" ] && exit 100
+exit 0
 ```
 
 ## Hooks And Commands

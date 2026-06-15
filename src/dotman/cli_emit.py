@@ -224,9 +224,6 @@ def _print_payload_target_item(item: Any, *, full_paths: bool, use_color: bool) 
         )
         print(f"      {target_label} -> {_render_payload_action('hooks', use_color=use_color)}{summary}")
         return
-    source_path = display_cli_path(item.source_path, full_paths=full_paths)
-    destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
-    arrow_text = cli_style.style_text("->", *cli_style.MENU_HINT_STYLE) if use_color else "->"
     repo_name = item.selection_label.split(":", 1)[0]
     target_label = cli_style.render_package_target_label(
         repo_name=repo_name,
@@ -236,6 +233,11 @@ def _print_payload_target_item(item: Any, *, full_paths: bool, use_color: bool) 
         use_color=use_color,
     )
     print(f"      {target_label} -> {_render_payload_action(item.action, use_color=use_color)}")
+    if item.action == "probe":
+        return
+    source_path = display_cli_path(item.source_path, full_paths=full_paths)
+    destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
+    arrow_text = cli_style.style_text("->", *cli_style.MENU_HINT_STYLE) if use_color else "->"
     print(f"        {source_path} {arrow_text} {destination_path}")
 
 
@@ -1313,6 +1315,10 @@ def emit_trackable_detail(*, trackable_detail: Any, json_output: bool, use_color
             print(cli_style.render_info_section_header("targets", use_color=use_color))
         for target in trackable_detail.targets:
             target_name = cli_style.style_text(target.target_name, "1") if use_color else target.target_name
+            if getattr(target, "probe_command", None) is not None:
+                badge = cli_style.render_menu_badge("[probe]", use_color=use_color)
+                print(f"    {cli_style.join_menu_display_fields(target_name, badge)}")
+                continue
             if target.path is None:
                 print(f"    {target_name}")
                 continue

@@ -11,6 +11,18 @@ plan_targets(engine):
   build target metadata for selected package
 
   for each target:
+    if target is a probe target:
+      validate it has no file payload fields
+      run probe command with target/package/repo planning environment
+      if probe exits 0:
+        emit action = "probe" with target_kind = "probe"
+      else if probe exits 100:
+        emit action = "noop" with target_kind = "probe"
+      else:
+        reject planning with probe failure details
+      skip file/directory validation and path collision ownership
+      continue
+
     validate target type and patch-capture config
 
     if target is directory:
@@ -88,6 +100,13 @@ run_command_projection(engine):
     reject projection
 
   return command stdout bytes
+
+run_probe_command(engine):
+  build target command environment without assuming meaningful repo/live file paths
+  run configured probe command during push/pull planning
+  return active when command exits 0
+  return inactive when command exits 100
+  reject on any other nonzero exit
 ```
 
 ## Review Needed
