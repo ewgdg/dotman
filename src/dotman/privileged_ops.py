@@ -59,11 +59,18 @@ def _list_directory_files(root: Path) -> None:
     payload = json.loads(sys.stdin.read())
     if isinstance(payload, dict):
         ignore_patterns = tuple(payload.get("ignore_patterns", ()))
+        skip_markers = tuple(payload.get("skip_markers", ()))
         follow_dir_symlinks = bool(payload.get("follow_dir_symlinks", False))
     else:
         ignore_patterns = tuple(payload)
+        skip_markers = ()
         follow_dir_symlinks = False
-    files = _list_directory_files_without_sudo(root, ignore_patterns, follow_dir_symlinks=follow_dir_symlinks)
+    files = _list_directory_files_without_sudo(
+        root,
+        ignore_patterns,
+        skip_markers=skip_markers,
+        follow_dir_symlinks=follow_dir_symlinks,
+    )
     sys.stdout.write(json.dumps({relative: str(path) for relative, path in files.items()}))
 
 

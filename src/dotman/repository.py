@@ -40,6 +40,24 @@ VALID_HOOK_NAMES = (
     "post_pull",
 )
 
+
+def normalize_skip_markers(value: Any, *, repo_config_path: Path) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"repo config {repo_config_path} [ignore].skip_markers must be a list[str]")
+    markers: list[str] = []
+    for marker in value:
+        if not marker:
+            raise ValueError(f"repo config {repo_config_path} [ignore].skip_markers entries must not be empty")
+        if marker in {".", ".."} or "/" in marker or "\\" in marker:
+            raise ValueError(
+                f"repo config {repo_config_path} [ignore].skip_markers entries must be basenames: {marker!r}"
+            )
+        markers.append(marker)
+    return tuple(markers)
+
+
 PACKAGE_MANIFEST_TOP_LEVEL_KEYS = {
     "binding_mode",
     "append",
@@ -101,6 +119,10 @@ class Repository:
             pull=merge_ignore_patterns(
                 normalize_string_list(read_schema_alias(ignore_payload, "pull", "import")) or (),
                 shared_ignore,
+            ),
+            skip_markers=normalize_skip_markers(
+                ignore_payload.get("skip_markers"),
+                repo_config_path=repo_config_path,
             ),
         )
 

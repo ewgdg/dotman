@@ -170,6 +170,7 @@ class ProfileSpec:
 class RepoIgnoreDefaults:
     push: tuple[str, ...] = ()
     pull: tuple[str, ...] = ()
+    skip_markers: tuple[str, ...] = ()
 
 
 SelectorKind = Literal["package", "group"]

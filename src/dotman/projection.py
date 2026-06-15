@@ -41,6 +41,7 @@ class TargetMetadata:
     pull_view_live: str
     push_ignore: tuple[str, ...]
     pull_ignore: tuple[str, ...]
+    skip_markers: tuple[str, ...]
     chmod: str | None
     path_rules: tuple[TargetPathRule, ...]
     command_cwd: Path
@@ -143,6 +144,7 @@ def build_target_metadata(
                         pull_view_live="raw",
                         push_ignore=(),
                         pull_ignore=(),
+                        skip_markers=(),
                         chmod=None,
                         path_rules=(),
                         command_cwd=target.declared_in,
@@ -203,6 +205,7 @@ def build_target_metadata(
             )
             push_ignore = merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ())
             pull_ignore = merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ())
+            skip_markers = repo.ignore_defaults.skip_markers
             path_rules = render_target_path_rules(target.path_rules, context=context, base_dir=target.declared_in)
             metadata_targets.append(
                 TargetMetadata(
@@ -221,6 +224,7 @@ def build_target_metadata(
                     pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
                     push_ignore=push_ignore,
                     pull_ignore=pull_ignore,
+                    skip_markers=skip_markers,
                     chmod=target.chmod,
                     path_rules=path_rules,
                     command_cwd=target.declared_in,
@@ -325,6 +329,7 @@ def plan_targets(
                     repo_path=repo_path,
                     live_path=live_path,
                     push_ignore=metadata.push_ignore,
+                    skip_markers=metadata.skip_markers,
                     follow_dir_symlinks=engine.config.dir_symlink_mode == "follow",
                 )
                 plans.append(
@@ -452,6 +457,7 @@ def plan_targets(
                 live_path=live_path,
                 push_ignore=metadata.push_ignore,
                 pull_ignore=metadata.pull_ignore,
+                skip_markers=metadata.skip_markers,
                 operation=operation,
                 render_command=render_command,
                 capture_command=capture_command,
@@ -832,6 +838,7 @@ def plan_directory_action(
     live_path: Path,
     push_ignore: tuple[str, ...],
     pull_ignore: tuple[str, ...],
+    skip_markers: tuple[str, ...],
     operation: str,
     render_command: str | None,
     capture_command: str | None,
@@ -846,10 +853,20 @@ def plan_directory_action(
     # both repo and live scans so planning does not create, update, or delete it.
     operation_ignore = push_ignore if operation == "push" else pull_ignore
     follow_dir_symlinks = engine.config.dir_symlink_mode == "follow"
-    desired_files = list_directory_files(repo_path, operation_ignore, follow_dir_symlinks=follow_dir_symlinks)
+    desired_files = list_directory_files(
+        repo_path,
+        operation_ignore,
+        skip_markers=skip_markers,
+        follow_dir_symlinks=follow_dir_symlinks,
+    )
     live_exists = live_path.exists()
     live_files = (
-        list_directory_files(live_path, operation_ignore, follow_dir_symlinks=follow_dir_symlinks)
+        list_directory_files(
+            live_path,
+            operation_ignore,
+            skip_markers=skip_markers,
+            follow_dir_symlinks=follow_dir_symlinks,
+        )
         if live_exists
         else {}
     )
@@ -1243,10 +1260,16 @@ def plan_live_delete_directory_action(
     repo_path: Path,
     live_path: Path,
     push_ignore: tuple[str, ...],
+    skip_markers: tuple[str, ...],
     follow_dir_symlinks: bool = False,
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
     live_files = (
-        list_directory_files(live_path, push_ignore, follow_dir_symlinks=follow_dir_symlinks)
+        list_directory_files(
+            live_path,
+            push_ignore,
+            skip_markers=skip_markers,
+            follow_dir_symlinks=follow_dir_symlinks,
+        )
         if live_path.exists()
         else {}
     )

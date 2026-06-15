@@ -222,7 +222,10 @@ preset = "jinja-patch"
   - `push = [...]`
   - `pull = [...]`
   - `shared = [...]` for shared repo defaults appended to both `push` and `pull`
+  - `skip_markers = [".dotman-skip"]` for marker filenames that skip whole directory subtrees
 - Repo-level ignore defaults are prepended to target-level ignore lists.
+- `skip_markers` entries are basenames, not patterns. If a scanned directory contains one of these marker names, dotman treats that directory subtree as unmanaged during both `push` and `pull`; marker file contents are ignored.
+- Recommended marker name: `.dotman-skip`. Dotman does not use `.dotmanignore` for this feature.
 - For directory targets, old install-ignore style rules should map to target-level `ignore.push`.
 - For directory targets, old update-ignore style rules should map to target-level `ignore.pull`.
 - Dotman does not read package-local `.gitignore` files here; use target or repo ignore tables instead.
@@ -245,8 +248,12 @@ Example repo defaults:
 
 ```toml
 [ignore]
+shared = ["*.bak"]
 pull = ["*.dotdropbak"]
+skip_markers = [".dotman-skip"]
 ```
+
+With that marker config, `files/config/app/cache/.dotman-skip` makes dotman ignore all of `files/config/app/cache/`, including `state.db` or other siblings, during directory target scans.
 
 Example sync policy split:
 

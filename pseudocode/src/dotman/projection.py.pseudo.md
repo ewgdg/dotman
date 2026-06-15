@@ -56,8 +56,9 @@ plan_file_action(engine):
 
 plan_directory_action(engine):
   choose operation-scoped ignore rules
+  use repo-level skip markers for both push and pull
   set follow_dir_symlinks from engine config symlinks.dir_symlink_mode == "follow"
-  list repo children and live children with ignore rules and follow_dir_symlinks
+  list repo children and live children with ignore rules, skip markers, and follow_dir_symlinks
 
   if scanner sees an ignored nested directory symlink:
     ignore it
@@ -79,7 +80,7 @@ plan_directory_action(engine):
 
 plan_live_delete_directory_action(engine):
   set follow_dir_symlinks from engine config for push-only-delete directory targets
-  list live children with ignore rules and follow_dir_symlinks
+  list live children with ignore rules, skip markers, and follow_dir_symlinks
   create delete item for each listed live child
   return delete plan when any listed child exists, otherwise noop
 

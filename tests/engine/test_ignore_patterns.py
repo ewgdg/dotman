@@ -86,6 +86,65 @@ def test_negated_directory_patterns_do_not_reinclude_still_ignored_descendant_fi
     assert "plugins/pinned-window/BarWidget.qml.dotdropbak" not in files
 
 
+
+def test_skip_marker_skips_nested_directory_subtree(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
+    (root / "cache").mkdir()
+    (root / "cache" / ".dotman-skip").write_text("", encoding="utf-8")
+    (root / "cache" / "state.db").write_text("state\n", encoding="utf-8")
+
+    files = list_directory_files(root, (), skip_markers=(".dotman-skip",))
+
+    assert sorted(files) == ["keep.txt"]
+
+
+def test_skip_marker_file_is_absent_from_results(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".dotman-skip").write_text("", encoding="utf-8")
+    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
+
+    files = list_directory_files(root, (), skip_markers=(".dotman-skip",))
+
+    assert files == {}
+
+
+def test_no_prune_marker_config_treats_marker_as_normal_file(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".dotman-skip").write_text("", encoding="utf-8")
+    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
+
+    files = list_directory_files(root, ())
+
+    assert sorted(files) == [".dotman-skip", "keep.txt"]
+
+
+def test_followed_directory_symlink_with_skip_marker_is_skipped_only_when_following(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    target = tmp_path / "target"
+    root.mkdir()
+    target.mkdir()
+    (target / ".dotman-skip").write_text("", encoding="utf-8")
+    (target / "state.db").write_text("state\n", encoding="utf-8")
+    (root / "linked").symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="directory symlink encountered"):
+        list_directory_files(root, (), skip_markers=(".dotman-skip",))
+
+    files = list_directory_files(
+        root,
+        (),
+        skip_markers=(".dotman-skip",),
+        follow_dir_symlinks=True,
+    )
+
+    assert files == {}
+
 def test_directory_target_push_ignore_uses_gitignore_semantics_for_nested_pycache_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -409,3 +468,147 @@ def test_directory_target_pull_ignore_hides_both_repo_and_live_children_during_p
     target = plan.target_plans[0]
     assert target.action == "noop"
     assert [item.relative_path for item in target.directory_items] == []
+
+
+def test_directory_target_push_skip_marker_preserves_live_subtree_during_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "repo.toml").write_text(
+        "\n".join(["[ignore]", 'skip_markers = [".dotman-skip"]', ""]),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                '',
+                '[targets.config]',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                '',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "sample"
+    live_root.mkdir(parents=True)
+    (live_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
+    (live_root / "cache").mkdir()
+    (live_root / "cache" / ".dotman-skip").write_text("", encoding="utf-8")
+    (live_root / "cache" / "local-state").write_text("keep\n", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+
+    target = plan.target_plans[0]
+    assert target.action == "noop"
+    assert target.directory_items == ()
+
+
+def test_directory_target_pull_skip_marker_preserves_repo_subtree_during_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "repo.toml").write_text(
+        "\n".join(["[ignore]", 'skip_markers = [".dotman-skip"]', ""]),
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                '',
+                '[targets.config]',
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                '',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
+    (source_root / "cache").mkdir()
+    (source_root / "cache" / ".dotman-skip").write_text("", encoding="utf-8")
+    (source_root / "cache" / "local-state").write_text("keep\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    live_root = home / ".config" / "sample"
+    live_root.mkdir(parents=True)
+    (live_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="pull")
+
+    target = plan.target_plans[0]
+    assert target.action == "noop"
+    assert target.directory_items == ()
+
+
+def test_repo_toml_loads_skip_markers_from_ignore_table(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages").mkdir()
+    (repo_root / "repo.toml").write_text(
+        "\n".join(["[ignore]", 'skip_markers = [".dotman-skip"]', ""]),
+        encoding="utf-8",
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    assert engine.get_repo("fixture").ignore_defaults.skip_markers == (".dotman-skip",)
+
+
+def test_repo_toml_rejects_prune_marker_path_names(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "repo.toml").write_text(
+        "\n".join(["[ignore]", 'skip_markers = ["nested/.dotman-skip"]', ""]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="skip_markers entries must be basenames"):
+        DotmanEngine.from_config_path(
+            write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+        )
+
+
+def test_repo_toml_rejects_empty_prune_marker_names(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "repo.toml").write_text(
+        "\n".join(["[ignore]", 'skip_markers = [""]', ""]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="skip_markers entries must not be empty"):
+        DotmanEngine.from_config_path(
+            write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+        )

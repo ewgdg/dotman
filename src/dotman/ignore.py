@@ -67,10 +67,22 @@ def _directory_identity(path: Path, *, relative_path: str) -> tuple[int, int]:
 
 
 
+def _directory_contains_skip_marker(directory: Path, skip_markers: tuple[str, ...]) -> bool:
+    for marker in skip_markers:
+        try:
+            (directory / marker).lstat()
+        except FileNotFoundError:
+            continue
+        return True
+    return False
+
+
+
 def _list_directory_files_without_sudo(
     root: Path,
     ignore_patterns: tuple[str, ...],
     *,
+    skip_markers: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
 ) -> dict[str, Path]:
     files: dict[str, Path] = {}
@@ -81,6 +93,8 @@ def _list_directory_files_without_sudo(
     active_dirs: set[tuple[int, int]] = set()
 
     def scan_directory(directory: Path, relative_directory: str) -> None:
+        if _directory_contains_skip_marker(directory, skip_markers):
+            return
         directory_identity = _directory_identity(directory, relative_path=relative_directory)
         if directory_identity in active_dirs:
             display_path = relative_directory or "."
@@ -104,9 +118,11 @@ def _list_directory_files_without_sudo(
                     scan_directory(child, relative)
                     continue
                 if child.is_dir():
+                    if matcher.matches_directory(relative):
+                        continue
                     scan_directory(child, relative)
                     continue
-                if matcher.matches(relative):
+                if child.name in skip_markers or matcher.matches(relative):
                     continue
                 files[relative] = child
         finally:
@@ -121,6 +137,7 @@ def _list_directory_files_via_sudo(
     root: Path,
     ignore_patterns: tuple[str, ...],
     *,
+    skip_markers: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
 ) -> dict[str, Path]:
     from dotman.file_access import request_sudo
@@ -129,7 +146,11 @@ def _list_directory_files_via_sudo(
     completed = subprocess.run(
         ["sudo", "-n", sys.executable, "-m", "dotman.privileged_ops", "list-directory-files", str(root)],
         input=json.dumps(
-            {"ignore_patterns": ignore_patterns, "follow_dir_symlinks": follow_dir_symlinks}
+            {
+                "ignore_patterns": ignore_patterns,
+                "skip_markers": skip_markers,
+                "follow_dir_symlinks": follow_dir_symlinks,
+            }
         ).encode("utf-8"),
         capture_output=True,
         check=False,
@@ -146,9 +167,20 @@ def list_directory_files(
     root: Path,
     ignore_patterns: tuple[str, ...],
     *,
+    skip_markers: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
 ) -> dict[str, Path]:
     try:
-        return _list_directory_files_without_sudo(root, ignore_patterns, follow_dir_symlinks=follow_dir_symlinks)
+        return _list_directory_files_without_sudo(
+            root,
+            ignore_patterns,
+            skip_markers=skip_markers,
+            follow_dir_symlinks=follow_dir_symlinks,
+        )
     except PermissionError:
-        return _list_directory_files_via_sudo(root, ignore_patterns, follow_dir_symlinks=follow_dir_symlinks)
+        return _list_directory_files_via_sudo(
+            root,
+            ignore_patterns,
+            skip_markers=skip_markers,
+            follow_dir_symlinks=follow_dir_symlinks,
+        )

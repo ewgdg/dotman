@@ -40,3 +40,26 @@ def test_privileged_ops_list_directory_files_returns_json_payload(tmp_path: Path
     assert json.loads(completed.stdout.decode("utf-8")) == {
         "keep.txt": str(root / "keep.txt"),
     }
+
+
+def test_privileged_ops_list_directory_files_accepts_skip_markers(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
+    (root / "cache").mkdir()
+    (root / "cache" / ".dotman-skip").write_text("", encoding="utf-8")
+    (root / "cache" / "state.db").write_text("state\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "dotman.privileged_ops", "list-directory-files", str(root)],
+        input=json.dumps(
+            {"ignore_patterns": [], "skip_markers": [".dotman-skip"]}
+        ).encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", errors="replace")
+    assert json.loads(completed.stdout.decode("utf-8")) == {
+        "keep.txt": str(root / "keep.txt"),
+    }

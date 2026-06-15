@@ -34,7 +34,7 @@ supported operations:
   chmod path
   list directory files:
     accept legacy stdin payload as ignore pattern list
-    accept current stdin payload with ignore_patterns and follow_dir_symlinks
+    accept current stdin payload with ignore_patterns, skip_markers, and follow_dir_symlinks
     return relative file path mapping produced by ignore directory scanner
 ```
 

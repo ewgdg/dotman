@@ -13,6 +13,7 @@ reference text helpers:
   repo_qualified_target_text includes repo-qualified target identity
 
 target models:
+  RepoIgnoreDefaults carries repo-wide push/pull ignore patterns and shared directory skip marker basenames
   TargetSpec may contain a probe command instead of file source/path fields
   active probe TargetPlan uses target_kind = "probe" and action = "probe"
   inactive probe TargetPlan uses target_kind = "probe" and action = "noop"
