@@ -29,6 +29,7 @@ MENU_ACTION_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "create": ("1", "32"),
     "update": ("1", "36"),
     "delete": ("1", "31"),
+    "install": ("1", "36"),
     "probe": ("1", "36"),
 }
 EXECUTION_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {

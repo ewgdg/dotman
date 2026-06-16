@@ -52,6 +52,7 @@ build_operation_plan(package_plans):
   validate reserved path conflicts
   collect repo hook plans
   finalize repo hooks against package plans
+  treat an active probe target as lower-scope work for repo hook eligibility
   return OperationPlan(repo_hooks, package_plans)
 
 preview_package_selections_implicit_overrides(selections):

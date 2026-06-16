@@ -2386,6 +2386,8 @@ def selection_item_paths(*, operation: str, repo_path: Path | str, live_path: Pa
 
 
 def selection_item_action(*, operation: str, action: str) -> str:
+    if action == "probe":
+        return "install"
     return action
 
 
@@ -2595,20 +2597,21 @@ def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full
         bound_profile=item.bound_profile,
         target_name=item.target_name,
     )
-    if item.action == "probe":
+    if item.action == "install" and item.source_path is None and item.destination_path is None:
         if not colors_enabled():
-            print(f"  {index:>2}) [probe] {package_target}")
+            print(f"  {index:>2}) [install] {package_target} [probe]")
             return
-        action_text = style_text("[probe]", *MENU_ACTION_STYLE_BY_NAME.get("probe", ("1",)))
+        action_text = style_text("[install]", *MENU_ACTION_STYLE_BY_NAME.get("install", ("1",)))
         package_label = render_package_target_label(
             repo_name=repo_name,
             package_id=item.package_id,
             target_name=item.target_name,
             bound_profile=item.bound_profile,
         )
+        probe_badge = cli_style.render_menu_badge("[probe]", use_color=True)
         print(
             f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
-            f"{action_text} {package_label}"
+            f"{action_text} {package_label} {probe_badge}"
         )
         return
     source_path = display_cli_path(item.source_path, full_paths=full_paths)

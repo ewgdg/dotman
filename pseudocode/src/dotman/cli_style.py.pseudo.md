@@ -13,7 +13,7 @@ style_text(text, role):
   return text wrapped with role-specific style
 
 menu action styles:
-  style create/update/delete/probe action badges consistently in selection and payload output
+  style create/update/delete/install/probe action badges consistently in selection and payload output
 
 render_package_label(identity):
   if package has instance/profile annotation:

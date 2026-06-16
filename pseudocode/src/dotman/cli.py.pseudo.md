@@ -54,7 +54,7 @@ resolve_*_text(engine, query):
     reject query
 
 selection/review plan items:
-  include active probe targets as selectable target rows without source/destination paths
+  include active probe targets as selectable install rows with a probe badge and no path payload
   exclude inactive/noop probe targets from normal selection
   when user excludes an active probe target, remove that target and recompute hook eligibility
   do not create diff review items for probe targets because they have no file payload

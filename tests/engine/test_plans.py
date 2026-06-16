@@ -315,6 +315,24 @@ def test_probe_target_exit_zero_is_active_and_keeps_hooks(
     assert plan.target_plans[0].to_dict()["probe_command"].startswith("test ")
 
 
+def test_probe_target_without_attached_hooks_enables_repo_hooks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = write_probe_repo(tmp_path, probe_command="exit 0")
+    (repo_root / "repo.toml").write_text("[hooks]\npre_push = \"echo repo pre\"\n", encoding="utf-8")
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    operation_plan = engine.plan_push_query("fixture:app@default")
+
+    assert operation_plan.package_plans[0].hooks == {}
+    assert [hook.command for hook in operation_plan.repo_hooks["fixture"]["pre_push"]] == ["echo repo pre"]
+
+
 def test_probe_target_exit_100_is_noop_and_drops_default_hooks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

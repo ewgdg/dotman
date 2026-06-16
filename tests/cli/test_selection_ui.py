@@ -157,11 +157,57 @@ def test_collect_pending_selection_items_adds_probe_target_row(capsys, monkeypat
     selection_items = cli.collect_pending_selection_items_for_operation([plan], operation="push")
 
     assert len(selection_items) == 1
-    assert selection_items[0].action == "probe"
+    assert selection_items[0].action == "install"
     assert selection_items[0].source_path is None
     assert selection_items[0].destination_path is None
     cli.print_pending_selection_item(1, selection_items[0])
-    assert capsys.readouterr().out == "   1) [probe] sandbox:app.version\n"
+    assert capsys.readouterr().out == "   1) [install] sandbox:app.version [probe]\n"
+
+
+def test_collect_pending_selection_items_renders_probe_same_with_hooks(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+    plan = make_package_plan(
+        operation="push",
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        hook_plans={
+            "pre_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="pre_push",
+                    command="echo package pre",
+                    cwd=Path("/repo/app"),
+                )
+            ],
+        },
+        target_plans=[
+            TargetPlan(
+                package_id="app",
+                target_name="version",
+                repo_path=Path("/repo/app"),
+                live_path=Path("/repo/app"),
+                action="probe",
+                target_kind="probe",
+                projection_kind="probe",
+                probe_command="exit 0",
+            )
+        ],
+    )
+
+    selection_items = cli.collect_pending_selection_items_for_operation(
+        [plan],
+        operation="push",
+        use_raw_hook_plans=True,
+    )
+
+    assert selection_items[0].action == "install"
+    assert selection_items[0].hook_names == ()
+    cli.print_pending_selection_item(1, selection_items[0])
+    assert capsys.readouterr().out == "   1) [install] sandbox:app.version [probe]\n"
+
 
 def test_filter_plans_for_interactive_selection_excludes_probe_target(monkeypatch) -> None:
     plan = make_package_plan(
