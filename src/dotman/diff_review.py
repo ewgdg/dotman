@@ -306,6 +306,8 @@ def _directory_item_review_bytes(item, *, operation: str, before: bool) -> bytes
     planned_bytes = item.review_before_bytes if before else item.review_after_bytes
     if planned_bytes is not None:
         return planned_bytes
+    if operation == "push" and not before and item.desired_bytes is not None:
+        return item.desired_bytes
     return _load_item_bytes(
         repo_path=item.repo_path,
         live_path=item.live_path,

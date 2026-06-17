@@ -154,6 +154,48 @@ def test_build_review_items_for_pull_directory_uses_planning_view_bytes(tmp_path
 
 
 
+def test_build_review_items_for_push_directory_reuses_planned_desired_bytes(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo-template"
+    live_path = tmp_path / "live-file"
+    repo_path.write_text("raw template {{ value }}\n", encoding="utf-8")
+    live_path.write_text("old rendered value\n", encoding="utf-8")
+
+    plan = make_package_plan(
+        operation="push",
+        repo_name="example",
+        package_id="scripts",
+        requested_profile="basic",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="scripts",
+                target_name="bin",
+                repo_path=repo_path.parent,
+                live_path=live_path.parent,
+                action="update",
+                target_kind="directory",
+                projection_kind="raw",
+                directory_items=(
+                    DirectoryPlanItem(
+                        relative_path="tool.sh",
+                        action="update",
+                        repo_path=repo_path,
+                        live_path=live_path,
+                        desired_bytes=b"new rendered value\n",
+                    ),
+                ),
+            )
+        ],
+    )
+
+    review_items = build_review_items([plan], operation="push")
+
+    assert len(review_items) == 1
+    assert review_items[0].before_bytes == b"old rendered value\n"
+    assert review_items[0].after_bytes == b"new rendered value\n"
+
+
 def test_build_review_items_for_push_directory_includes_mode_metadata(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"

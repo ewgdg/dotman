@@ -75,6 +75,10 @@ plan_directory_action(engine):
     else:
       compare repo/live bytes and modes
       produce child noop/write/delete/chmod/conflict action
+      when push planning already materialized child review-side bytes:
+        store those planned bytes on the child item for review reuse
+      when bytes were not needed during planning:
+        leave review bytes absent so review can load them lazily if requested
 
   return directory target plan with child items
 

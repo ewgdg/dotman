@@ -926,6 +926,8 @@ def plan_directory_action(
                     pull_view_repo=child_pull_view_repo,
                     pull_view_live=child_pull_view_live,
                     desired_bytes=desired_bytes,
+                    review_before_bytes=b"",
+                    review_after_bytes=desired_bytes,
                 )
             )
         for relative_path in sorted(live_rel_paths - desired_rel_paths):
@@ -999,6 +1001,8 @@ def plan_directory_action(
                         pull_view_repo=child_pull_view_repo,
                         pull_view_live=child_pull_view_live,
                         desired_bytes=desired_bytes,
+                        review_before_bytes=live_bytes,
+                        review_after_bytes=desired_bytes,
                     )
                 )
         if not directory_items:

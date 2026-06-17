@@ -13,6 +13,11 @@ build_review_items(plans):
       create probe ReviewItem with package, target, install action, probe badge data, and related target hook command summaries
     else if target has reviewable before/after content:
       create file ReviewItem with package, target, action, paths, bytes, and modes
+    else if target has changed directory child items:
+      create one ReviewItem per changed child
+      use planned review bytes when available
+      for push child after-side bytes, reuse planned desired bytes instead of rereading raw repo source
+      otherwise load the needed side from its repo/live path
   return review items in plan order so review menu numbers match selection menu numbers for active target rows
 
 run_review_item_diff(item):
