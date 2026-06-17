@@ -1168,6 +1168,7 @@ def plan_directory_action(
     return ("delete" if not live_exists else "update"), ordered_items
 
 
+
 def validate_directory_child_patch_capture(
     *,
     package: PackageSpec,

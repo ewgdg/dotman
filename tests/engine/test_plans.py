@@ -1638,6 +1638,45 @@ def test_push_directory_items_store_materialized_review_bytes_when_planning_alre
     assert item.review_after_bytes == b"greeting = hello\n"
 
 
+def test_pull_directory_create_delete_leave_missing_review_bytes_lazy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    package_root = repo_root / "packages" / "shell"
+    (package_root / "files" / "profile").mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (package_root / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "shell"',
+                "",
+                "[targets.profile]",
+                'source = "files/profile"',
+                'path = "~/.profile"',
+                'capture = "capture-cmd"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    live_path = home / ".profile" / "config"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("raw live\n", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+    item = single_package_plan(engine, "fixture:shell@default", operation="pull").target_plans[0].directory_items[0]
+
+    assert item.action == "create"
+    assert item.review_before_bytes is None
+    assert item.review_after_bytes is None
+
+
 def test_unknown_path_rule_preset_fails_engine_load(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     package_root = repo_root / "packages" / "shell"

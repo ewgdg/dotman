@@ -10,7 +10,10 @@ import pytest
 from dotman.diff_review import (
     DEFAULT_REVIEW_PAGER,
     ReviewItem,
+    _load_item_bytes,
+    _load_item_mode,
     _review_display_path,
+    _review_item_bytes,
     _select_review_pager_command,
     build_review_items,
     display_review_path,
@@ -194,6 +197,248 @@ def test_build_review_items_for_push_directory_reuses_planned_desired_bytes(tmp_
     assert len(review_items) == 1
     assert review_items[0].before_bytes == b"old rendered value\n"
     assert review_items[0].after_bytes == b"new rendered value\n"
+
+
+def test_build_review_items_for_pull_directory_create_lazily_loads_capture_view(tmp_path: Path) -> None:
+    live_path = tmp_path / "live-file"
+    live_path.write_text("raw live\n", encoding="utf-8")
+    repo_path = tmp_path / "repo-file"
+    plan = make_package_plan(
+        operation="pull",
+        repo_name="example",
+        package_id="scripts",
+        requested_profile="basic",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="scripts",
+                target_name="bin",
+                repo_path=repo_path.parent,
+                live_path=live_path.parent,
+                action="update",
+                target_kind="directory",
+                projection_kind="raw",
+                command_cwd=tmp_path,
+                command_env={},
+                directory_items=(
+                    DirectoryPlanItem(
+                        relative_path="tool.sh",
+                        action="create",
+                        repo_path=repo_path,
+                        live_path=live_path,
+                        capture_command="printf 'captured live\\n'",
+                        pull_view_live="capture",
+                    ),
+                ),
+            )
+        ],
+    )
+
+    review_item = build_review_items([plan], operation="pull")[0]
+
+    assert review_item.before_bytes == b""
+    assert review_item.after_bytes is None
+    assert review_item.after_bytes_loader is not None
+    assert _review_item_bytes(review_item, before=False) == b"captured live\n"
+
+
+def test_build_review_items_for_pull_directory_delete_lazily_loads_render_view(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo-file"
+    repo_path.write_text("raw repo\n", encoding="utf-8")
+    live_path = tmp_path / "live-file"
+    plan = make_package_plan(
+        operation="pull",
+        repo_name="example",
+        package_id="scripts",
+        requested_profile="basic",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="scripts",
+                target_name="bin",
+                repo_path=repo_path.parent,
+                live_path=live_path.parent,
+                action="update",
+                target_kind="directory",
+                projection_kind="raw",
+                command_cwd=tmp_path,
+                command_env={},
+                directory_items=(
+                    DirectoryPlanItem(
+                        relative_path="tool.sh",
+                        action="delete",
+                        repo_path=repo_path,
+                        live_path=live_path,
+                        render_command="printf 'rendered repo\\n'",
+                        pull_view_repo="render",
+                    ),
+                ),
+            )
+        ],
+    )
+
+    review_item = build_review_items([plan], operation="pull")[0]
+
+    assert review_item.before_bytes is None
+    assert review_item.before_bytes_loader is not None
+    assert review_item.after_bytes == b""
+    assert _review_item_bytes(review_item, before=True) == b"rendered repo\n"
+
+
+def test_pull_directory_lazy_capture_view_uses_sudo_when_live_read_needs_it(monkeypatch, tmp_path: Path) -> None:
+    live_path = tmp_path / "live-file"
+    live_path.write_text("raw live\n", encoding="utf-8")
+    repo_path = tmp_path / "repo-file"
+    plan = make_package_plan(
+        operation="pull",
+        repo_name="example",
+        package_id="scripts",
+        requested_profile="basic",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="scripts",
+                target_name="bin",
+                repo_path=repo_path.parent,
+                live_path=live_path.parent,
+                action="update",
+                target_kind="directory",
+                projection_kind="raw",
+                command_cwd=tmp_path,
+                command_env={},
+                directory_items=(
+                    DirectoryPlanItem(
+                        relative_path="tool.sh",
+                        action="create",
+                        repo_path=repo_path,
+                        live_path=live_path,
+                        capture_command="capture-cmd",
+                        pull_view_live="capture",
+                    ),
+                ),
+            )
+        ],
+    )
+    recorded: dict[str, object] = {}
+
+    monkeypatch.setattr("dotman.diff_review.needs_sudo_for_read", lambda path: path == live_path)
+
+    def fake_sudo_prefix(command: str) -> str:
+        recorded["unwrapped_command"] = command
+        return f"sudo-wrapper {command}"
+
+    def fake_run(command: str, **kwargs):
+        recorded["command"] = command
+        recorded["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout=b"captured live\n", stderr=b"")
+
+    monkeypatch.setattr("dotman.diff_review.sudo_prefix_command", fake_sudo_prefix)
+    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
+
+    review_item = build_review_items([plan], operation="pull")[0]
+
+    assert _review_item_bytes(review_item, before=False) == b"captured live\n"
+    assert recorded["unwrapped_command"] == "capture-cmd"
+    assert recorded["command"] == "sudo-wrapper capture-cmd"
+
+
+def test_push_directory_raw_live_review_bytes_use_privileged_file_access(monkeypatch, tmp_path: Path) -> None:
+    live_path = tmp_path / "live-file"
+    live_path.write_text("raw live\n", encoding="utf-8")
+    repo_path = tmp_path / "missing-repo-file"
+    plan = make_package_plan(
+        operation="push",
+        repo_name="example",
+        package_id="scripts",
+        requested_profile="basic",
+        variables={},
+        hooks={},
+        target_plans=[
+            TargetPlan(
+                package_id="scripts",
+                target_name="bin",
+                repo_path=repo_path.parent,
+                live_path=live_path.parent,
+                action="update",
+                target_kind="directory",
+                projection_kind="raw",
+                directory_items=(
+                    DirectoryPlanItem(
+                        relative_path="tool.sh",
+                        action="delete",
+                        repo_path=repo_path,
+                        live_path=live_path,
+                    ),
+                ),
+            )
+        ],
+    )
+    calls: list[Path] = []
+
+    def fake_read_bytes(path: Path) -> bytes:
+        calls.append(path)
+        if path == repo_path:
+            raise FileNotFoundError(path)
+        return b"privileged live\n"
+
+    monkeypatch.setattr("dotman.diff_review.read_bytes", fake_read_bytes)
+
+    review_item = build_review_items([plan], operation="push")[0]
+
+    assert review_item.before_bytes == b"privileged live\n"
+    assert calls == [live_path, repo_path]
+
+
+def test_load_item_bytes_attempts_privileged_read_when_exists_is_false(monkeypatch, tmp_path: Path) -> None:
+    live_path = tmp_path / "protected-live"
+    repo_path = tmp_path / "missing-repo"
+    original_exists = Path.exists
+    calls: list[Path] = []
+
+    def fake_exists(path: Path, *args, **kwargs) -> bool:
+        if path == live_path:
+            return False
+        return original_exists(path, *args, **kwargs)
+
+    def fake_read_bytes(path: Path) -> bytes:
+        calls.append(path)
+        return b"privileged live\n"
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+    monkeypatch.setattr("dotman.diff_review.read_bytes", fake_read_bytes)
+
+    assert _load_item_bytes(repo_path=repo_path, live_path=live_path, operation="push", before=True) == b"privileged live\n"
+    assert calls == [live_path]
+
+
+def test_load_item_bytes_returns_empty_for_missing_side(monkeypatch, tmp_path: Path) -> None:
+    live_path = tmp_path / "missing-live"
+    repo_path = tmp_path / "repo"
+
+    def fake_read_bytes(path: Path) -> bytes:
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr("dotman.diff_review.read_bytes", fake_read_bytes)
+
+    assert _load_item_bytes(repo_path=repo_path, live_path=live_path, operation="push", before=True) == b""
+
+
+def test_load_item_mode_ignores_permission_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    live_path = tmp_path / "protected-live"
+    repo_path = tmp_path / "repo"
+
+    def fake_stat(path: Path, *args, **kwargs):
+        if path == live_path:
+            raise PermissionError("permission denied")
+        return original_stat(path, *args, **kwargs)
+
+    original_stat = Path.stat
+    monkeypatch.setattr(Path, "stat", fake_stat)
+
+    assert _load_item_mode(repo_path=repo_path, live_path=live_path, operation="push", before=True) is None
 
 
 def test_build_review_items_for_push_directory_includes_mode_metadata(tmp_path: Path) -> None:

@@ -9,13 +9,15 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
+from dotman.capture import BUILTIN_PATCH_CAPTURE
 from dotman.elevation import current_elevation_broker
-from dotman.file_access import request_sudo, sudo_prefix_command
+from dotman.file_access import needs_sudo_for_read, read_bytes, request_sudo, sudo_prefix_command
 from dotman.models import HookCommandSpec, HookPlan, PackagePlan
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
+from dotman.templates import build_template_context, render_template_file, render_template_string
 from dotman.ui_context import current_ui_config
 from dotman.terminal import preserve_terminal_state
 
@@ -23,6 +25,7 @@ from dotman.terminal import preserve_terminal_state
 DEFAULT_REVIEW_PAGER = "less -FRX"
 DEFAULT_COMPACT_PATH_TAIL_SEGMENTS = 2
 REVIEW_PATH_HEAD_SEGMENTS = 1
+ReviewBytesLoader = Callable[[], bytes]
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,8 @@ class ReviewItem:
     destination_path: str
     before_bytes: bytes | None = field(default=None, repr=False)
     after_bytes: bytes | None = field(default=None, repr=False)
+    before_bytes_loader: ReviewBytesLoader | None = field(default=None, repr=False, compare=False)
+    after_bytes_loader: ReviewBytesLoader | None = field(default=None, repr=False, compare=False)
     before_mode: int | None = None
     after_mode: int | None = None
     reconcile: HookCommandSpec | None = None
@@ -62,6 +67,20 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                         repo_path=item.repo_path,
                         live_path=item.live_path,
                     )
+                    before_bytes, before_loader = _directory_item_review_byte_source(
+                        item,
+                        target=target,
+                        plan=plan,
+                        operation=operation,
+                        before=True,
+                    )
+                    after_bytes, after_loader = _directory_item_review_byte_source(
+                        item,
+                        target=target,
+                        plan=plan,
+                        operation=operation,
+                        before=False,
+                    )
                     review_items.append(
                         ReviewItem(
                             selection_label=selection_label,
@@ -73,10 +92,14 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                             live_path=item.live_path,
                             source_path=source_path,
                             destination_path=destination_path,
-                            before_bytes=_directory_item_review_bytes(item, operation=operation, before=True),
-                            after_bytes=_directory_item_review_bytes(item, operation=operation, before=False),
+                            before_bytes=before_bytes,
+                            after_bytes=after_bytes,
+                            before_bytes_loader=before_loader,
+                            after_bytes_loader=after_loader,
                             before_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=True),
                             after_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=False),
+                            command_cwd=target.command_cwd,
+                            command_env=target.command_env,
                             bound_profile=plan.bound_profile,
                         )
                     )
@@ -192,8 +215,8 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
         return
     if review_item.diff_unavailable_reason is not None:
         raise ValueError(review_item.diff_unavailable_reason)
-    if review_item.before_bytes is None or review_item.after_bytes is None:
-        raise ValueError("diff preview is unavailable")
+    before_bytes = _review_item_bytes(review_item, before=True)
+    after_bytes = _review_item_bytes(review_item, before=False)
 
     with tempfile.TemporaryDirectory(prefix="dotman-diff-") as temp_dir:
         temp_root = Path(temp_dir)
@@ -203,14 +226,14 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
             root=temp_root,
             side=left_side,
             reference_path=review_item.repo_path if review_item.operation == "pull" else review_item.live_path,
-            content=review_item.before_bytes,
+            content=before_bytes,
             mode=before_mode or 0o644,
         )
         right_path = _write_review_file(
             root=temp_root,
             side=right_side,
             reference_path=review_item.live_path if review_item.operation == "pull" else review_item.repo_path,
-            content=review_item.after_bytes,
+            content=after_bytes,
             mode=after_mode or 0o644,
         )
         try:
@@ -302,26 +325,172 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
             raise ValueError("editor command was not found") from exc
 
 
-def _directory_item_review_bytes(item, *, operation: str, before: bool) -> bytes:
+def _directory_item_review_byte_source(
+    item,
+    *,
+    target,
+    plan: PackagePlan,
+    operation: str,
+    before: bool,
+) -> tuple[bytes | None, ReviewBytesLoader | None]:
     planned_bytes = item.review_before_bytes if before else item.review_after_bytes
     if planned_bytes is not None:
-        return planned_bytes
+        return planned_bytes, None
     if operation == "push" and not before and item.desired_bytes is not None:
-        return item.desired_bytes
-    return _load_item_bytes(
-        repo_path=item.repo_path,
-        live_path=item.live_path,
+        return item.desired_bytes, None
+    loader = _directory_item_projected_pull_loader(
+        item,
+        target=target,
+        plan=plan,
         operation=operation,
         before=before,
     )
+    if loader is not None:
+        return None, loader
+    return (
+        _load_item_bytes(
+            repo_path=item.repo_path,
+            live_path=item.live_path,
+            operation=operation,
+            before=before,
+        ),
+        None,
+    )
+
+
+def _directory_item_projected_pull_loader(
+    item,
+    *,
+    target,
+    plan: PackagePlan,
+    operation: str,
+    before: bool,
+) -> ReviewBytesLoader | None:
+    if operation != "pull":
+        return None
+    if before and not (item.action == "delete" and item.pull_view_repo != "raw"):
+        return None
+    if not before and not (item.action == "create" and item.pull_view_live != "raw"):
+        return None
+
+    view = item.pull_view_repo if before else item.pull_view_live
+    context = build_template_context(
+        plan.variables,
+        profile=plan.requested_profile,
+        inferred_os=plan.inferred_os or "unknown",
+    )
+
+    def load() -> bytes:
+        return _directory_item_pull_view_bytes(
+            item,
+            target=target,
+            view=view,
+            repo_side=before,
+            context=context,
+        )
+
+    return load
+
+
+def _directory_item_pull_view_bytes(
+    item,
+    *,
+    target,
+    view: str,
+    repo_side: bool,
+    context: dict,
+) -> bytes:
+    if view == "raw":
+        return _load_item_bytes(
+            repo_path=item.repo_path,
+            live_path=item.live_path,
+            operation="pull",
+            before=repo_side,
+        )
+    if view == "render":
+        return _directory_item_rendered_repo_bytes(item, target=target, context=context)
+    if view == "capture":
+        if item.capture_command == BUILTIN_PATCH_CAPTURE:
+            raise ValueError("capture = 'patch' does not expose a capture review view")
+        if item.capture_command is None:
+            raise ValueError("directory item does not define capture")
+        return _run_directory_item_view_command(item, target=target, command=item.capture_command)
+    command = render_template_string(
+        view,
+        context,
+        base_dir=target.command_cwd or item.repo_path.parent,
+        source_path=target.command_cwd,
+    )
+    return _run_directory_item_view_command(item, target=target, command=command)
+
+
+def _directory_item_rendered_repo_bytes(item, *, target, context: dict) -> bytes:
+    if item.render_command == "jinja":
+        rendered_bytes, _kind = render_template_file(item.repo_path, context)
+        return rendered_bytes
+    if item.render_command is None:
+        return _load_item_bytes(
+            repo_path=item.repo_path,
+            live_path=item.live_path,
+            operation="pull",
+            before=True,
+        )
+    return _run_directory_item_view_command(item, target=target, command=item.render_command)
+
+
+def _run_directory_item_view_command(item, *, target, command: str) -> bytes:
+    if needs_sudo_for_read(item.live_path):
+        command = sudo_prefix_command(command)
+    completed = subprocess.run(
+        command,
+        cwd=target.command_cwd,
+        env={**os.environ, **_directory_item_command_env(item, target=target)},
+        shell=True,
+        executable="/bin/sh",
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(stderr or f"review projection command exited with status {completed.returncode}")
+    return completed.stdout
+
+
+def _directory_item_command_env(item, *, target) -> dict[str, str]:
+    env = dict(target.command_env or {})
+    repo_path = str(item.repo_path)
+    live_path = str(item.live_path)
+    env.update(
+        {
+            "DOTMAN_TARGET_REPO_PATH": repo_path,
+            "DOTMAN_TARGET_LIVE_PATH": live_path,
+            "DOTMAN_REPO_PATH": repo_path,
+            "DOTMAN_SOURCE": repo_path,
+            "DOTMAN_LIVE_PATH": live_path,
+            "DOTMAN_TARGET_RELATIVE_PATH": item.relative_path,
+        }
+    )
+    return env
+
+
+
+def _review_item_bytes(review_item: ReviewItem, *, before: bool) -> bytes:
+    bytes_value = review_item.before_bytes if before else review_item.after_bytes
+    if bytes_value is not None:
+        return bytes_value
+    loader = review_item.before_bytes_loader if before else review_item.after_bytes_loader
+    if loader is not None:
+        return loader()
+    raise ValueError("diff preview is unavailable")
 
 
 
 def _load_item_bytes(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> bytes:
     target_path = _review_item_side_path(repo_path=repo_path, live_path=live_path, operation=operation, before=before)
-    if not target_path.exists():
+    try:
+        return read_bytes(target_path)
+    except FileNotFoundError:
         return b""
-    return target_path.read_bytes()
 
 
 def _load_item_mode(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> int | None:
@@ -330,7 +499,7 @@ def _load_item_mode(*, repo_path: Path, live_path: Path, operation: str, before:
     target_path = _review_item_side_path(repo_path=repo_path, live_path=live_path, operation=operation, before=before)
     try:
         return git_file_mode(stat.S_IMODE(target_path.stat().st_mode))
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         return None
 
 
@@ -390,9 +559,8 @@ def _review_edit_side_names(*, operation: str) -> tuple[str, str]:
 
 
 def _materialize_review_edit_paths(*, review_item: ReviewItem, root: Path) -> tuple[Path, Path] | None:
-    if review_item.before_bytes is None or review_item.after_bytes is None:
+    if not _review_item_has_byte_sources(review_item):
         return None
-
     review_repo_bytes, review_live_bytes = _review_edit_bytes(review_item=review_item)
     repo_path, live_path = _review_edit_reference_paths(review_item=review_item)
     review_repo_path = _write_review_file(
@@ -410,10 +578,18 @@ def _materialize_review_edit_paths(*, review_item: ReviewItem, root: Path) -> tu
     return review_repo_path, review_live_path
 
 
+def _review_item_has_byte_sources(review_item: ReviewItem) -> bool:
+    return (review_item.before_bytes is not None or review_item.before_bytes_loader is not None) and (
+        review_item.after_bytes is not None or review_item.after_bytes_loader is not None
+    )
+
+
 def _review_edit_bytes(*, review_item: ReviewItem) -> tuple[bytes, bytes]:
+    before_bytes = _review_item_bytes(review_item, before=True)
+    after_bytes = _review_item_bytes(review_item, before=False)
     if review_item.operation == "pull":
-        return review_item.before_bytes, review_item.after_bytes
-    return review_item.after_bytes, review_item.before_bytes
+        return before_bytes, after_bytes
+    return after_bytes, before_bytes
 
 
 def _review_edit_reference_paths(*, review_item: ReviewItem) -> tuple[Path, Path]:

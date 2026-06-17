@@ -17,6 +17,10 @@ build_review_items(plans):
       create one ReviewItem per changed child
       use planned review bytes when available
       for push child after-side bytes, reuse planned desired bytes instead of rereading raw repo source
+      for pull create/delete children with transformed review views, attach a lazy loader for the missing projected side
+      when loading raw repo/live bytes, use privileged-aware file access and treat only actual missing files as empty
+      if mode metadata cannot be read because path is missing or inaccessible, omit mode metadata instead of failing review build
+      when running lazy review projection commands, preserve privileged live-read handling
       otherwise load the needed side from its repo/live path
   return review items in plan order so review menu numbers match selection menu numbers for active target rows
 
