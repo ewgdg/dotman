@@ -13,7 +13,7 @@ from typing import Sequence
 
 from dotman.elevation import current_elevation_broker
 from dotman.file_access import request_sudo, sudo_prefix_command
-from dotman.models import HookCommandSpec, PackagePlan
+from dotman.models import HookCommandSpec, HookPlan, PackagePlan
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.ui_context import current_ui_config
@@ -44,6 +44,10 @@ class ReviewItem:
     command_cwd: Path | None = None
     command_env: dict[str, str] | None = field(default=None, repr=False)
     diff_unavailable_reason: str | None = None
+    bound_profile: str | None = None
+    is_probe: bool = False
+    probe_command: str | None = field(default=None, repr=False)
+    hook_command_summaries: tuple[str, ...] = ()
 
 
 def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[ReviewItem]:
@@ -73,11 +77,35 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                             after_bytes=_directory_item_review_bytes(item, operation=operation, before=False),
                             before_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=True),
                             after_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=False),
+                            bound_profile=plan.bound_profile,
                         )
                     )
                 continue
 
-            if target.action == "noop" or target.target_kind == "probe":
+            if target.action == "noop":
+                continue
+            if target.target_kind == "probe":
+                review_items.append(
+                    ReviewItem(
+                        selection_label=selection_label,
+                        package_id=target.package_id,
+                        target_name=target.target_name,
+                        action="install",
+                        operation=operation,
+                        repo_path=target.repo_path,
+                        live_path=target.live_path,
+                        source_path="",
+                        destination_path="",
+                        bound_profile=plan.bound_profile,
+                        is_probe=True,
+                        probe_command=target.probe_command,
+                        hook_command_summaries=_related_hook_command_summaries(
+                            plan.hooks,
+                            package_id=target.package_id,
+                            target_name=target.target_name,
+                        ),
+                    )
+                )
                 continue
 
             source_path, destination_path = _selection_item_paths(
@@ -107,9 +135,41 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                     command_cwd=target.command_cwd,
                     command_env=target.command_env,
                     diff_unavailable_reason=diff_unavailable_reason,
+                    bound_profile=plan.bound_profile,
                 )
             )
     return review_items
+
+
+def _related_hook_command_summaries(
+    hooks: dict[str, list[HookPlan]],
+    *,
+    package_id: str,
+    target_name: str,
+) -> tuple[str, ...]:
+    summaries: list[str] = []
+    for hook_name, hook_plans in hooks.items():
+        for hook_plan in hook_plans:
+            if _hook_plan_matches_target(
+                hook_plan,
+                package_id=package_id,
+                target_name=target_name,
+            ):
+                summaries.append(f"{hook_name}: {hook_plan.command}")
+    return tuple(summaries)
+
+
+def _hook_plan_matches_target(
+    hook_plan: HookPlan,
+    *,
+    package_id: str,
+    target_name: str,
+) -> bool:
+    return (
+        hook_plan.scope_kind == "target"
+        and hook_plan.package_id == package_id
+        and hook_plan.target_name == target_name
+    )
 
 
 def edit_status(review_item: ReviewItem) -> str:
@@ -121,6 +181,15 @@ def edit_status(review_item: ReviewItem) -> str:
 
 
 def run_review_item_diff(review_item: ReviewItem) -> None:
+    if review_item.is_probe:
+        print("probe target: no file diff")
+        if review_item.hook_command_summaries:
+            print("related hook commands:")
+            for summary in review_item.hook_command_summaries:
+                print(f"  {summary}")
+        else:
+            print("related hook commands: none")
+        return
     if review_item.diff_unavailable_reason is not None:
         raise ValueError(review_item.diff_unavailable_reason)
     if review_item.before_bytes is None or review_item.after_bytes is None:

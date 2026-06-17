@@ -9,11 +9,17 @@ Create reviewable before/after items and run external diff/edit tools for planne
 ```pseudo
 build_review_items(plans):
   for each target plan in operation plan:
-    if target has reviewable before/after content:
-      create ReviewItem with package, target, action, paths, bytes, and modes
-  return review items in plan order
+    if target is active probe target:
+      create probe ReviewItem with package, target, install action, probe badge data, and related target hook command summaries
+    else if target has reviewable before/after content:
+      create file ReviewItem with package, target, action, paths, bytes, and modes
+  return review items in plan order so review menu numbers match selection menu numbers for active target rows
 
 run_review_item_diff(item):
+  if item is probe review item:
+    print probe summary instead of a file diff
+    include related hook command summaries when any exist
+    return success
   materialize before and after sides in temporary files
   choose diff/pager command
   run command with side names and file mode context

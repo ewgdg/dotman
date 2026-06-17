@@ -2807,6 +2807,24 @@ def print_review_item(index: int, item: ReviewItem, *, full_paths: bool | None =
         bound_profile=bound_profile,
         target_name=item.target_name,
     )
+    if item.is_probe:
+        if not colors_enabled():
+            print(f"  {index:>2}) [{item.action}] {package_target} [probe]")
+            return
+        action_text = style_text(f"[{item.action}]", *MENU_ACTION_STYLE_BY_NAME.get(item.action, ("1",)))
+        package_label = render_package_target_label(
+            repo_name=repo_name,
+            package_id=item.package_id,
+            target_name=item.target_name,
+            bound_profile=bound_profile,
+        )
+        probe_badge = cli_style.render_menu_badge("[probe]", use_color=True)
+        print(
+            f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+            f"{action_text} {package_label} {probe_badge}"
+        )
+        return
+
     diff_badge = "[diff unavailable]" if item.diff_unavailable_reason is not None else None
     source_path = display_cli_path(item.source_path, full_paths=full_paths)
     destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
@@ -2841,6 +2859,7 @@ def review_diff_header(review_item: ReviewItem, *, index: int, total: int) -> st
         f"{package_label_text(
             repo_name=repo_name_from_selection_label(review_item.selection_label),
             package_id=review_item.package_id,
+            bound_profile=review_item.bound_profile,
             target_name=review_item.target_name,
         )} "
         f"[{review_item.action}]"
@@ -2869,6 +2888,7 @@ def print_review_diff_header(
         repo_name=repo_name,
         package_id=review_item.package_id,
         target_name=review_item.target_name,
+        bound_profile=review_item.bound_profile,
     )
     action_text = style_text(f"[{review_item.action}]", *MENU_ACTION_STYLE_BY_NAME.get(review_item.action, ("1",)))
     print()
@@ -2882,6 +2902,8 @@ def print_review_diff_header(
 
 def review_diff_path_line(review_item: ReviewItem, *, full_paths: bool | None = None) -> str:
     full_paths = _effective_full_paths(full_paths)
+    if review_item.is_probe:
+        return "probe target: no file payload"
     destination_path = display_cli_path(review_item.destination_path, full_paths=full_paths)
     return f"file: {destination_path}"
 

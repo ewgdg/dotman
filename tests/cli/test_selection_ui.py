@@ -1462,6 +1462,28 @@ def test_print_review_item_shows_unavailable_badge(monkeypatch, capsys) -> None:
     assert "~/.../git/config -> ~/.../git/config" in output
 
 
+def test_print_review_item_shows_probe_badge_like_selection_menu(monkeypatch, capsys) -> None:
+    review_item = cli.ReviewItem(
+        selection_label="sandbox:app@default",
+        package_id="app",
+        target_name="version",
+        action="install",
+        operation="push",
+        repo_path=Path("/repo/app"),
+        live_path=Path("/repo/app"),
+        source_path="",
+        destination_path="",
+        is_probe=True,
+        hook_command_summaries=("pre_push: echo target pre",),
+    )
+
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    cli.print_review_item(1, review_item)
+
+    assert capsys.readouterr().out == "   1) [install] sandbox:app.version [probe]\n"
+
+
 def test_prompt_for_excluded_items_preserves_root_prefix_for_system_paths(monkeypatch, capsys) -> None:
     selection_items = [
         PendingSelectionItem(

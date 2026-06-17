@@ -18,19 +18,36 @@ from dotman.diff_review import (
     run_review_item_diff,
     run_review_item_edit,
 )
-from dotman.models import DirectoryPlanItem, HookCommandSpec, UiConfig, TargetPlan
+from dotman.models import DirectoryPlanItem, HookCommandSpec, HookPlan, UiConfig, TargetPlan
 from dotman.ui_context import ui_config_scope
 from tests.helpers import make_package_plan
 
 
-def test_build_review_items_skips_probe_targets() -> None:
+def test_build_review_items_adds_probe_targets_with_related_hooks() -> None:
     plan = make_package_plan(
         operation="push",
         repo_name="sandbox",
         package_id="app",
         requested_profile="default",
         variables={},
-        hooks={},
+        hooks={
+            "pre_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="pre_push",
+                    command="echo package pre",
+                    cwd=Path("/repo/app"),
+                ),
+                HookPlan(
+                    package_id="app",
+                    target_name="version",
+                    scope_kind="target",
+                    hook_name="pre_push",
+                    command="echo target pre",
+                    cwd=Path("/repo/app"),
+                ),
+            ]
+        },
         target_plans=[
             TargetPlan(
                 package_id="app",
@@ -45,7 +62,15 @@ def test_build_review_items_skips_probe_targets() -> None:
         ],
     )
 
-    assert build_review_items([plan], operation="push") == []
+    review_items = build_review_items([plan], operation="push")
+
+    assert len(review_items) == 1
+    assert review_items[0].action == "install"
+    assert review_items[0].is_probe is True
+    assert review_items[0].source_path == ""
+    assert review_items[0].destination_path == ""
+    assert review_items[0].probe_command == "exit 0"
+    assert review_items[0].hook_command_summaries == ("pre_push: echo target pre",)
 
 
 def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) -> None:
@@ -217,6 +242,31 @@ def test_build_review_items_for_pull_directory_includes_mode_metadata(tmp_path: 
     assert review_items[0].after_bytes == b"same\n"
     assert review_items[0].before_mode == 0o644
     assert review_items[0].after_mode == 0o755
+
+
+def test_run_review_item_diff_prints_probe_summary(capsys) -> None:
+    review_item = ReviewItem(
+        selection_label="example:app@basic",
+        package_id="app",
+        target_name="version",
+        action="install",
+        operation="push",
+        repo_path=Path("/repo/app"),
+        live_path=Path("/repo/app"),
+        source_path="",
+        destination_path="",
+        is_probe=True,
+        hook_command_summaries=("pre_push: echo pre", "post_push: echo post"),
+    )
+
+    run_review_item_diff(review_item)
+
+    assert capsys.readouterr().out == (
+        "probe target: no file diff\n"
+        "related hook commands:\n"
+        "  pre_push: echo pre\n"
+        "  post_push: echo post\n"
+    )
 
 
 def test_run_review_item_diff_invokes_git_diff(monkeypatch) -> None:

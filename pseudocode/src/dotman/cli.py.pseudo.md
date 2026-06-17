@@ -55,12 +55,14 @@ resolve_*_text(engine, query):
 
 selection/review plan items:
   include active probe targets as selectable install rows with a probe badge and no path payload
-  exclude inactive/noop probe targets from normal selection
+  include active probe targets in the review menu as probe rows so item numbers stay aligned with the later selection menu
+  exclude inactive/noop probe targets from normal selection and review
   when user excludes an active probe target, remove that target and recompute hook eligibility
-  do not create diff review items for probe targets because they have no file payload
+  for probe review rows, match the selection menu probe row without extra parenthetical metadata
+  for probe review inspection, show a probe summary instead of a file diff and fall back to related target hook command summaries when no custom review payload exists
 
 review_plans_for_interactive_diffs(plans):
-  build review items from file/directory plans only
+  build review items from file/directory plans plus active probe plans
   for each review item:
     show diff header and diff output
     ask inspect/next/all/list/skip-review/abort command
