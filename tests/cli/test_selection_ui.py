@@ -131,6 +131,50 @@ def test_print_pending_selection_item_renders_hook_summary_in_parentheses(monkey
     assert capsys.readouterr().out == "   1) [hooks] example:git (guard_push, pre_push)\n"
 
 
+def test_review_and_selection_items_keep_file_probe_order_alignment() -> None:
+    file_target = TargetPlan(
+        package_id="app",
+        target_name="config",
+        repo_path=Path("/repo/app/config"),
+        live_path=Path("/home/app/config"),
+        action="update",
+        target_kind="file",
+        projection_kind="raw",
+        review_before_bytes=b"old\n",
+        review_after_bytes=b"new\n",
+    )
+    probe_target = TargetPlan(
+        package_id="app",
+        target_name="version",
+        repo_path=Path("/repo/app"),
+        live_path=Path("/repo/app"),
+        action="probe",
+        target_kind="probe",
+        projection_kind="probe",
+        probe_command="exit 0",
+    )
+    plan = make_package_plan(
+        operation="push",
+        repo_name="sandbox",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={},
+        target_plans=[file_target, probe_target],
+    )
+
+    selection_items = cli.collect_pending_selection_items_for_operation([plan], operation="push")
+    review_items = cli.build_review_items([plan], operation="push")
+
+    assert [
+        (item.package_id, item.target_name, item.action)
+        for item in selection_items
+    ] == [
+        (item.package_id, item.target_name, item.action)
+        for item in review_items
+    ] == [("app", "config", "update"), ("app", "version", "install")]
+
+
 def test_collect_pending_selection_items_adds_probe_target_row(capsys, monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
     plan = make_package_plan(
