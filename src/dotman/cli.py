@@ -581,7 +581,7 @@ def pending_selection_prompt() -> str:
 
 def review_menu_prompt() -> str:
     prompt_text = "Review command"
-    hint_text = '("?", number, "n", "a", "s", "q"; default: next)'
+    hint_text = '("?", number, "n", "a", "l", "s", "q"; default: next)'
     if not colors_enabled():
         return f"\n{prompt_text} {hint_text}: "
     return (
@@ -686,6 +686,7 @@ def print_review_command_help() -> None:
     print("  <number>   inspect one diff")
     print("  n          inspect next diff")
     print("  a          inspect all diffs")
+    print("  l, list    list review items")
     print("  s, skip    skip remaining review")
     print("  q          abort")
     print('  "?"        show this help')
@@ -1010,6 +1011,8 @@ def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | N
         return "next", None
     if answer in {"s", "skip"}:
         return "skip_review", None
+    if answer in {"l", "list"}:
+        return "list", None
     if answer == "?":
         return "help", None
     if answer == "a":
@@ -2900,6 +2903,18 @@ def print_review_diff_footer(*, index: int, total: int) -> None:
     )
 
 
+def print_review_menu_items(
+    review_items: Sequence[ReviewItem],
+    *,
+    operation: str,
+    full_paths: bool | None = None,
+) -> None:
+    full_paths = _effective_full_paths(full_paths)
+    print_selection_header(f"Review pending diffs for {operation}:")
+    for index, item in enumerate(review_items, start=1):
+        print_review_item(index, item, full_paths=full_paths)
+
+
 def run_diff_review_menu(
     review_items: Sequence[ReviewItem],
     *,
@@ -2908,9 +2923,7 @@ def run_diff_review_menu(
     assume_yes: bool = False,
 ) -> bool:
     full_paths = _effective_full_paths(full_paths)
-    print_selection_header(f"Review pending diffs for {operation}:")
-    for index, item in enumerate(review_items, start=1):
-        print_review_item(index, item, full_paths=full_paths)
+    print_review_menu_items(review_items, operation=operation, full_paths=full_paths)
 
     last_viewed_index: int | None = None
     while True:
@@ -2922,6 +2935,9 @@ def run_diff_review_menu(
 
         if command_name == "help":
             print_review_command_help()
+            continue
+        if command_name == "list":
+            print_review_menu_items(review_items, operation=operation, full_paths=full_paths)
             continue
         if command_name == "skip_review":
             return True

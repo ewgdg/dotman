@@ -959,6 +959,35 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
     assert "----- End Diff 1/1 -----" in output
 
 
+def test_run_diff_review_menu_list_command_reprints_menu(
+    monkeypatch,
+    capsys,
+) -> None:
+    review_item = cli.ReviewItem(
+        selection_label="example:git@basic",
+        package_id="git",
+        target_name="gitconfig",
+        action="update",
+        operation="push",
+        repo_path=Path("/repo/gitconfig"),
+        live_path=Path("/live/gitconfig"),
+        source_path="/repo/gitconfig",
+        destination_path="/live/gitconfig",
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+    prompts = iter(["list", "s"])
+
+    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+
+    assert cli.run_diff_review_menu([review_item], operation="push") is True
+
+    output = capsys.readouterr().out
+    assert output.count("Review pending diffs for push:") == 2
+    assert output.count("  1) [update] example:git.gitconfig: /repo/gitconfig -> /live/gitconfig") == 2
+
+
 def test_print_review_diff_header_dims_metadata_prefix_when_colored(
     monkeypatch,
     capsys,
@@ -1125,8 +1154,8 @@ def test_run_diff_review_menu_next_command_at_end_prompts_for_continue(monkeypat
 
     assert inspected == ["gitconfig"]
     assert prompt_messages == [
-        '\nReview command ("?", number, "n", "a", "s", "q"; default: next): ',
-        '\nReview command ("?", number, "n", "a", "s", "q"; default: next): ',
+        '\nReview command ("?", number, "n", "a", "l", "s", "q"; default: next): ',
+        '\nReview command ("?", number, "n", "a", "l", "s", "q"; default: next): ',
         'Continue? [Y/n] ',
     ]
 
@@ -1141,7 +1170,12 @@ def test_print_selection_header_prepends_blank_line(monkeypatch, capsys) -> None
 def test_review_menu_prompt_prepends_blank_line(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
-    assert cli.review_menu_prompt() == '\nReview command ("?", number, "n", "a", "s", "q"; default: next): '
+    assert cli.review_menu_prompt() == '\nReview command ("?", number, "n", "a", "l", "s", "q"; default: next): '
+
+
+@pytest.mark.parametrize("command", ["l", "list"])
+def test_parse_review_command_lists_review_items(command: str) -> None:
+    assert cli.parse_review_command(command, 1) == ("list", None)
 
 
 @pytest.mark.parametrize("command", ["s", "skip"])

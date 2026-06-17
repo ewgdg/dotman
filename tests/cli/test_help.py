@@ -325,6 +325,7 @@ def test_run_diff_review_menu_shows_help_then_skips_review(monkeypatch, capsys) 
     assert "Review commands:" in output
     assert "  n          inspect next diff" in output
     assert "  a          inspect all diffs" in output
+    assert "  l, list    list review items" in output
     assert "  s, skip    skip remaining review" in output
     assert '  "?"        show this help' in output
 
