@@ -300,7 +300,7 @@ def test_prompt_for_excluded_items_uses_full_paths_when_requested(monkeypatch, c
     assert "repo/.../path/gitconfig" not in output
 
 
-def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> None:
+def test_run_diff_review_menu_shows_help_then_skips_review(monkeypatch, capsys) -> None:
     review_item = cli.ReviewItem(
         selection_label="example:git@basic",
         package_id="git",
@@ -314,7 +314,7 @@ def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> 
         before_bytes=b"before\n",
         after_bytes=b"after\n",
     )
-    prompts = iter(["?", "c"])
+    prompts = iter(["?", "s"])
 
     monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
@@ -325,6 +325,7 @@ def test_run_diff_review_menu_shows_help_then_continues(monkeypatch, capsys) -> 
     assert "Review commands:" in output
     assert "  n          inspect next diff" in output
     assert "  a          inspect all diffs" in output
+    assert "  s, skip    skip remaining review" in output
     assert '  "?"        show this help' in output
 
 
@@ -342,7 +343,7 @@ def test_run_diff_review_menu_uses_full_paths_when_requested(monkeypatch, capsys
         before_bytes=b"before\n",
         after_bytes=b"after\n",
     )
-    prompts = iter(["c"])
+    prompts = iter(["s"])
 
     monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)

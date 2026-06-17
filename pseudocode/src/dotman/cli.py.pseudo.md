@@ -63,7 +63,7 @@ review_plans_for_interactive_diffs(plans):
   build review items from file/directory plans only
   for each review item:
     show diff header and diff output
-    ask keep/edit/skip/continue command
+    ask inspect/next/all/skip-review/abort command
     apply command to pending plans
   return filtered or edited plans
 

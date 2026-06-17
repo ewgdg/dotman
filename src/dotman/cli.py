@@ -581,7 +581,7 @@ def pending_selection_prompt() -> str:
 
 def review_menu_prompt() -> str:
     prompt_text = "Review command"
-    hint_text = '("?", number, "n", "a", "c", "q"; default: next)'
+    hint_text = '("?", number, "n", "a", "s", "q"; default: next)'
     if not colors_enabled():
         return f"\n{prompt_text} {hint_text}: "
     return (
@@ -686,7 +686,7 @@ def print_review_command_help() -> None:
     print("  <number>   inspect one diff")
     print("  n          inspect next diff")
     print("  a          inspect all diffs")
-    print("  c          continue")
+    print("  s, skip    skip remaining review")
     print("  q          abort")
     print('  "?"        show this help')
 
@@ -1008,8 +1008,8 @@ def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | N
     answer = raw_answer.strip().lower()
     if not answer or answer == "n":
         return "next", None
-    if answer == "c":
-        return "continue", None
+    if answer in {"s", "skip"}:
+        return "skip_review", None
     if answer == "?":
         return "help", None
     if answer == "a":
@@ -2923,7 +2923,7 @@ def run_diff_review_menu(
         if command_name == "help":
             print_review_command_help()
             continue
-        if command_name == "continue":
+        if command_name == "skip_review":
             return True
         if command_name == "abort":
             return False

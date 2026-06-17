@@ -910,7 +910,7 @@ def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(
             after_bytes=b"after\n",
         ),
     ]
-    prompts = iter(["a", "c"])
+    prompts = iter(["a", "s"])
     inspected: list[str] = []
 
     monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
@@ -945,7 +945,7 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
         before_bytes=b"before\n",
         after_bytes=b"after\n",
     )
-    prompts = iter(["1", "c"])
+    prompts = iter(["1", "s"])
 
     monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: None)
@@ -1020,7 +1020,7 @@ def test_run_diff_review_menu_default_command_views_next_diff(
             after_bytes=b"after\n",
         ),
     ]
-    prompts = iter(["", "", "c"])
+    prompts = iter(["", "", "s"])
     inspected: list[str] = []
 
     monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
@@ -1080,7 +1080,7 @@ def test_run_diff_review_menu_next_command_uses_last_viewed_file(
             after_bytes=b"after\n",
         ),
     ]
-    prompts = iter(["2", "n", "c"])
+    prompts = iter(["2", "n", "s"])
     inspected: list[str] = []
 
     monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
@@ -1125,8 +1125,8 @@ def test_run_diff_review_menu_next_command_at_end_prompts_for_continue(monkeypat
 
     assert inspected == ["gitconfig"]
     assert prompt_messages == [
-        '\nReview command ("?", number, "n", "a", "c", "q"; default: next): ',
-        '\nReview command ("?", number, "n", "a", "c", "q"; default: next): ',
+        '\nReview command ("?", number, "n", "a", "s", "q"; default: next): ',
+        '\nReview command ("?", number, "n", "a", "s", "q"; default: next): ',
         'Continue? [Y/n] ',
     ]
 
@@ -1141,7 +1141,18 @@ def test_print_selection_header_prepends_blank_line(monkeypatch, capsys) -> None
 def test_review_menu_prompt_prepends_blank_line(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
-    assert cli.review_menu_prompt() == '\nReview command ("?", number, "n", "a", "c", "q"; default: next): '
+    assert cli.review_menu_prompt() == '\nReview command ("?", number, "n", "a", "s", "q"; default: next): '
+
+
+@pytest.mark.parametrize("command", ["s", "skip"])
+def test_parse_review_command_skips_remaining_review(command: str) -> None:
+    assert cli.parse_review_command(command, 1) == ("skip_review", None)
+
+
+def test_parse_review_command_rejects_legacy_continue_shortcut() -> None:
+    with pytest.raises(ValueError, match="unsupported review command: c"):
+        cli.parse_review_command("c", 1)
+
 
 def test_pending_selection_prompt_prepends_blank_line(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
