@@ -43,7 +43,9 @@ load repo ignore defaults:
   read [ignore].push, [ignore].pull, and [ignore].shared as gitignore-style patterns
   read [ignore].skip_markers as a list of marker basenames
   reject skip marker values that are empty, '.', '..', or contain path separators
-  return push defaults, pull defaults, and shared skip markers
+  read [ignore].gitignore as a list of operation names ("push", "pull")
+  reject gitignore values that are not "push" or "pull"
+  return push defaults, pull defaults, shared skip markers, and gitignore ops
 
 expand_group(group_id):
   if group does not exist:

@@ -618,6 +618,17 @@ def build_target_spec(
         table_key="pull",
         table_legacy_key="import",
     )
+    ignore_payload = read_target_ignore_table(
+        target_payload=target_payload,
+        preset_payload=preset_payload,
+        manifest_path=manifest_path,
+        target_name=target_name,
+    )
+    gitignore = (
+        normalize_gitignore_list(ignore_payload.get("gitignore"))
+        if ignore_payload is not None
+        else None
+    )
     path_rules = normalize_target_path_rules(
         get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path_rules"),
         manifest_path=manifest_path,
@@ -636,6 +647,7 @@ def build_target_spec(
             "pull_view_live": pull_view_live,
             "push_ignore": push_ignore,
             "pull_ignore": pull_ignore,
+            "gitignore": gitignore,
             "path_rules": path_rules or None,
         }
         forbidden = sorted(name for name, value in forbidden_probe_fields.items() if value is not None)
@@ -660,6 +672,7 @@ def build_target_spec(
         pull_view_live=pull_view_live,
         push_ignore=push_ignore,
         pull_ignore=pull_ignore,
+        gitignore=gitignore,
         path_rules=path_rules,
         hooks=hooks,
         disabled=bool(get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="disabled") or False),
@@ -720,6 +733,26 @@ def merge_ignore_patterns(*pattern_sets: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(merged)
 
 
+VALID_GITIGNORE_OPS = frozenset({"push", "pull"})
+
+
+def normalize_gitignore_list(value: Any) -> tuple[str, ...] | None:
+    """Normalize and validate a gitignore ops list.
+
+    Accepts a list of operation names ("push", "pull"). Returns None
+    when absent (inherit repo default), or tuple of ops (possibly empty
+    to explicitly disable).
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"gitignore must be a list[str], got {type(value).__name__}")
+    for op in value:
+        if op not in VALID_GITIGNORE_OPS:
+            raise ValueError(f"gitignore only supports 'push' and 'pull', got '{op}'")
+    return tuple(value)
+
+
 def flatten_vars(data: dict[str, Any], prefix: str = "") -> dict[str, str]:
     flattened: dict[str, str] = {}
     for key, value in data.items():
@@ -767,6 +800,7 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         pull_view_live=override.pull_view_live if override.pull_view_live is not None else base.pull_view_live,
         push_ignore=override.push_ignore if override.push_ignore is not None else base.push_ignore,
         pull_ignore=override.pull_ignore if override.pull_ignore is not None else base.pull_ignore,
+        gitignore=override.gitignore if override.gitignore is not None else base.gitignore,
         path_rules=override.path_rules or base.path_rules,
         hooks=hooks,
         disabled=override.disabled or base.disabled,

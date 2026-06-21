@@ -215,6 +215,7 @@ preset = "jinja-patch"
   - `push = [...]` is operation-scoped: during `push`, matching repo and live child paths are ignored, so they are not created, updated, chmodded, or deleted.
   - `pull = [...]` is operation-scoped: during `pull`, matching repo and live child paths are ignored, so they are not created, updated, or deleted in the repo.
   - `shared = [...]` is appended to both `push` and `pull`.
+  - `gitignore = ["push", "pull"]` opts this target into reading repo-source `.gitignore` files for selected operations. Use `gitignore = []` to disable inherited repo defaults for one target.
 - Flat target keys `push_ignore` and `pull_ignore` remain accepted as legacy aliases for target-level `ignore.push` and `ignore.pull`.
 - Patterns follow gitignore semantics: `**`, leading `/`, trailing `/`, and `!` negation are all supported. The old `*/__pycache__/*` workaround is no longer needed.
 - Repos may define repo-wide ignore defaults in `repo.toml`:
@@ -222,13 +223,15 @@ preset = "jinja-patch"
   - `push = [...]`
   - `pull = [...]`
   - `shared = [...]` for shared repo defaults appended to both `push` and `pull`
+  - `gitignore = ["push", "pull"]` as a directory-target default; omitted means disabled
   - `skip_markers = [".dotman-skip"]` for marker filenames that skip whole directory subtrees
 - Repo-level ignore defaults are prepended to target-level ignore lists.
+- Target-level `ignore.gitignore` replaces repo-level `ignore.gitignore`; lists are not merged. `gitignore = []` means explicitly off.
+- When `.gitignore` support is enabled for an operation, dotman reads `.gitignore` files from the repo source tree only, not the live tree. Matching repo and live child paths are unmanaged/preserved for that operation, and the `.gitignore` files themselves are treated as control files rather than synced payload. Control files cannot be re-included by `!` negation.
 - `skip_markers` entries are basenames, not patterns. If a scanned directory contains one of these marker names, dotman treats that directory subtree as unmanaged during both `push` and `pull`; marker file contents are ignored.
 - Recommended marker name: `.dotman-skip`. Dotman does not use `.dotmanignore` for this feature.
 - For directory targets, old install-ignore style rules should map to target-level `ignore.push`.
 - For directory targets, old update-ignore style rules should map to target-level `ignore.pull`.
-- Dotman does not read package-local `.gitignore` files here; use target or repo ignore tables instead.
 - For directory targets, `push` should install everything under the source tree except paths matched by `push_ignore`.
 - For directory targets, `push` should also remove stale live paths that are no longer present in the repo source, except paths matched by `push_ignore`.
 - For directory targets, `pull` should update the repo from live paths except paths matched by `pull_ignore`; ignored repo paths are also preserved during pull cleanup.

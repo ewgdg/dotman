@@ -11,7 +11,7 @@ from dotman.capture import BUILTIN_PATCH_CAPTURE
 from dotman.collisions import validate_reserved_path_conflicts, validate_target_collisions
 from dotman.config import expand_path
 from dotman.file_access import needs_sudo_for_read, read_bytes, sudo_prefix_command
-from dotman.ignore import list_directory_files
+from dotman.ignore import GITIGNORE_CONTROL_FILE_PATTERNS, collect_gitignore_patterns, list_directory_files
 from dotman.manifest import (
     flatten_vars,
     merge_ignore_patterns,
@@ -41,6 +41,7 @@ class TargetMetadata:
     pull_view_live: str
     push_ignore: tuple[str, ...]
     pull_ignore: tuple[str, ...]
+    gitignore_control_ops: tuple[str, ...]
     skip_markers: tuple[str, ...]
     chmod: str | None
     path_rules: tuple[TargetPathRule, ...]
@@ -84,6 +85,7 @@ def validate_probe_target_config(*, package: PackageSpec, target: TargetSpec) ->
         "pull_view_live": target.pull_view_live,
         "push_ignore": target.push_ignore,
         "pull_ignore": target.pull_ignore,
+        "gitignore": target.gitignore,
         "path_rules": target.path_rules or None,
     }
     forbidden = sorted(name for name, value in forbidden_probe_fields.items() if value is not None)
@@ -144,6 +146,7 @@ def build_target_metadata(
                         pull_view_live="raw",
                         push_ignore=(),
                         pull_ignore=(),
+                        gitignore_control_ops=(),
                         skip_markers=(),
                         chmod=None,
                         path_rules=(),
@@ -205,6 +208,13 @@ def build_target_metadata(
             )
             push_ignore = merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ())
             pull_ignore = merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ())
+            gitignore_ops = target.gitignore if target.gitignore is not None else repo.ignore_defaults.gitignore
+            if gitignore_ops:
+                gitignore_patterns = collect_gitignore_patterns(repo_path)
+                if "push" in gitignore_ops:
+                    push_ignore = merge_ignore_patterns(gitignore_patterns, push_ignore)
+                if "pull" in gitignore_ops:
+                    pull_ignore = merge_ignore_patterns(gitignore_patterns, pull_ignore)
             skip_markers = repo.ignore_defaults.skip_markers
             path_rules = render_target_path_rules(target.path_rules, context=context, base_dir=target.declared_in)
             metadata_targets.append(
@@ -224,6 +234,7 @@ def build_target_metadata(
                     pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
                     push_ignore=push_ignore,
                     pull_ignore=pull_ignore,
+                    gitignore_control_ops=gitignore_ops,
                     skip_markers=skip_markers,
                     chmod=target.chmod,
                     path_rules=path_rules,
@@ -458,6 +469,7 @@ def plan_targets(
                 push_ignore=metadata.push_ignore,
                 pull_ignore=metadata.pull_ignore,
                 skip_markers=metadata.skip_markers,
+                force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if operation in metadata.gitignore_control_ops else (),
                 operation=operation,
                 render_command=render_command,
                 capture_command=capture_command,
@@ -848,6 +860,7 @@ def plan_directory_action(
     pull_view_repo: str,
     pull_view_live: str,
     path_rules: tuple[TargetPathRule, ...] = (),
+    force_ignore_patterns: tuple[str, ...] = (),
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
     # Ignore lists are operation-scoped: an ignored child should disappear from
     # both repo and live scans so planning does not create, update, or delete it.
@@ -858,6 +871,7 @@ def plan_directory_action(
         operation_ignore,
         skip_markers=skip_markers,
         follow_dir_symlinks=follow_dir_symlinks,
+        force_ignore_patterns=force_ignore_patterns,
     )
     live_exists = live_path.exists()
     live_files = (
@@ -866,6 +880,7 @@ def plan_directory_action(
             operation_ignore,
             skip_markers=skip_markers,
             follow_dir_symlinks=follow_dir_symlinks,
+            force_ignore_patterns=force_ignore_patterns,
         )
         if live_exists
         else {}

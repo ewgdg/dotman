@@ -54,8 +54,18 @@ plan_file_action(engine):
   if states conflict and cannot be resolved by configured reconcile/capture:
     return conflict target plan
 
+build_target_metadata(engine):
+  merge repo-level and target-level push/pull ignore patterns
+  resolve target-level gitignore ops or inherit repo-level gitignore ops
+  if gitignore ops include push or pull:
+    collect .gitignore patterns from repo source tree root
+    prepend collected .gitignore patterns to the matching operation ignore list
+    keep explicit push/pull ignore patterns later so ! negation can override .gitignore exclusions
+  record which operations should hard-ignore .gitignore control files
+
 plan_directory_action(engine):
   choose operation-scoped ignore rules
+  hard-ignore .gitignore control files when the current operation has gitignore enabled
   use repo-level skip markers for both push and pull
   set follow_dir_symlinks from engine config symlinks.dir_symlink_mode == "follow"
   list repo children and live children with ignore rules, skip markers, and follow_dir_symlinks

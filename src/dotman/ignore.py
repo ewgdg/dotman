@@ -13,6 +13,48 @@ from pathspec.gitignore import GitIgnoreSpec
 
 
 
+GITIGNORE_CONTROL_FILE_PATTERNS = (".gitignore", "**/.gitignore")
+
+
+def _prefix_nested_gitignore_pattern(pattern: str, relative_directory: str) -> str:
+    if relative_directory == ".":
+        return pattern
+    negated = pattern.startswith("!")
+    body = pattern[1:] if negated else pattern
+    if body.startswith("/") or "/" in body.rstrip("/"):
+        prefixed = f"/{relative_directory}{body}" if body.startswith("/") else f"{relative_directory}/{body}"
+    else:
+        prefixed = f"{relative_directory}/**/{body}"
+    return f"!{prefixed}" if negated else prefixed
+
+
+def collect_gitignore_patterns(root: Path) -> tuple[str, ...]:
+    """Return .gitignore patterns under root, flattened relative to root."""
+    if not root.is_dir():
+        return ()
+    patterns: list[str] = []
+    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+        if ".gitignore" not in filenames:
+            continue
+        dir_path = Path(dirpath)
+        try:
+            relative_directory = dir_path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        gitignore_path = dir_path / ".gitignore"
+        try:
+            content = gitignore_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for raw_line in content.splitlines():
+            pattern = raw_line.strip()
+            if not pattern or pattern.startswith("#"):
+                continue
+            patterns.append(_prefix_nested_gitignore_pattern(pattern, relative_directory))
+    return tuple(patterns)
+
+
+
 def _normalize_relative_path(relative_path: str) -> str:
     normalized = relative_path.replace("\\", "/")
     if normalized.startswith("./"):
@@ -84,12 +126,14 @@ def _list_directory_files_without_sudo(
     *,
     skip_markers: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
+    force_ignore_patterns: tuple[str, ...] = (),
 ) -> dict[str, Path]:
     files: dict[str, Path] = {}
     if not root.exists():
         return files
 
     matcher = IgnoreMatcher.from_patterns(ignore_patterns)
+    force_matcher = IgnoreMatcher.from_patterns(force_ignore_patterns)
     active_dirs: set[tuple[int, int]] = set()
 
     def scan_directory(directory: Path, relative_directory: str) -> None:
@@ -107,7 +151,7 @@ def _list_directory_files_without_sudo(
             for child in sorted(directory.iterdir(), key=lambda path: path.name):
                 relative = f"{relative_directory}/{child.name}" if relative_directory else child.name
                 if child.is_symlink() and child.is_dir():
-                    if matcher.matches_directory(relative):
+                    if force_matcher.matches_directory(relative) or matcher.matches_directory(relative):
                         continue
                     if not follow_dir_symlinks:
                         raise ValueError(
@@ -118,11 +162,11 @@ def _list_directory_files_without_sudo(
                     scan_directory(child, relative)
                     continue
                 if child.is_dir():
-                    if matcher.matches_directory(relative):
+                    if force_matcher.matches_directory(relative) or matcher.matches_directory(relative):
                         continue
                     scan_directory(child, relative)
                     continue
-                if child.name in skip_markers or matcher.matches(relative):
+                if child.name in skip_markers or force_matcher.matches(relative) or matcher.matches(relative):
                     continue
                 files[relative] = child
         finally:
@@ -139,6 +183,7 @@ def _list_directory_files_via_sudo(
     *,
     skip_markers: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
+    force_ignore_patterns: tuple[str, ...] = (),
 ) -> dict[str, Path]:
     from dotman.file_access import request_sudo
 
@@ -150,6 +195,7 @@ def _list_directory_files_via_sudo(
                 "ignore_patterns": ignore_patterns,
                 "skip_markers": skip_markers,
                 "follow_dir_symlinks": follow_dir_symlinks,
+                "force_ignore_patterns": force_ignore_patterns,
             }
         ).encode("utf-8"),
         capture_output=True,
@@ -169,6 +215,7 @@ def list_directory_files(
     *,
     skip_markers: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
+    force_ignore_patterns: tuple[str, ...] = (),
 ) -> dict[str, Path]:
     try:
         return _list_directory_files_without_sudo(
@@ -176,6 +223,7 @@ def list_directory_files(
             ignore_patterns,
             skip_markers=skip_markers,
             follow_dir_symlinks=follow_dir_symlinks,
+            force_ignore_patterns=force_ignore_patterns,
         )
     except PermissionError:
         return _list_directory_files_via_sudo(
@@ -183,4 +231,5 @@ def list_directory_files(
             ignore_patterns,
             skip_markers=skip_markers,
             follow_dir_symlinks=follow_dir_symlinks,
+            force_ignore_patterns=force_ignore_patterns,
         )

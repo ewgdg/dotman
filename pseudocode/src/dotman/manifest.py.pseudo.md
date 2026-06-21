@@ -32,7 +32,7 @@ normalize_* helpers(value):
 build_target_spec(payload):
   resolve target schema aliases
   apply target preset if present
-  normalize path, type, sync policy, probe, render/pull/reconcile/patch-capture config, ignore rules, metadata, and path rules
+  normalize path, type, sync policy, probe, render/pull/reconcile/patch-capture config, ignore rules (including ignore.gitignore), metadata, and path rules
   if probe is present:
     require probe to be a non-empty command string
     reject source, path, type, chmod, render, capture, reconcile, pull views, ignore rules, and path rules

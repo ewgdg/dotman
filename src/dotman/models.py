@@ -98,6 +98,7 @@ class TargetSpec:
     pull_view_live: str | None = None
     push_ignore: tuple[str, ...] | None = None
     pull_ignore: tuple[str, ...] | None = None
+    gitignore: tuple[str, ...] | None = None
     path_rules: tuple[TargetPathRule, ...] = ()
     hooks: dict[str, "HookSpec"] | None = None
     disabled: bool = False
@@ -171,6 +172,7 @@ class RepoIgnoreDefaults:
     push: tuple[str, ...] = ()
     pull: tuple[str, ...] = ()
     skip_markers: tuple[str, ...] = ()
+    gitignore: tuple[str, ...] = ()
 
 
 SelectorKind = Literal["package", "group"]
