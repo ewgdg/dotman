@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 
+from dotman import cli_style
 from dotman.capture import BUILTIN_PATCH_CAPTURE
 from dotman.elevation import current_elevation_broker
 from dotman.file_access import needs_sudo_for_read, read_bytes, request_sudo, sudo_prefix_command
@@ -203,15 +204,18 @@ def edit_status(review_item: ReviewItem) -> str:
     return "edit unavailable"
 
 
+def _render_hook_command_summary(summary: str) -> str:
+    if ": " not in summary:
+        return summary
+    hook_name, command = summary.split(": ", 1)
+    hook_badge = cli_style.render_menu_badge(f"[{hook_name}]", use_color=cli_style.colors_enabled())
+    return f"{hook_badge} {command}"
+
+
 def run_review_item_diff(review_item: ReviewItem) -> None:
     if review_item.is_probe:
-        print("probe target: no file diff")
-        if review_item.hook_command_summaries:
-            print("related hook commands:")
-            for summary in review_item.hook_command_summaries:
-                print(f"  {summary}")
-        else:
-            print("related hook commands: none")
+        for summary in review_item.hook_command_summaries:
+            print(_render_hook_command_summary(summary))
         return
     if review_item.diff_unavailable_reason is not None:
         raise ValueError(review_item.diff_unavailable_reason)

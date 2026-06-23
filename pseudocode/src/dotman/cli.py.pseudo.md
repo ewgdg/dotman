@@ -59,7 +59,7 @@ selection/review plan items:
   exclude inactive/noop probe targets from normal selection and review
   when user excludes an active probe target, remove that target and recompute hook eligibility
   for probe review rows, match the selection menu probe row without extra parenthetical metadata
-  for probe review inspection, show a probe summary instead of a file diff and fall back to related target hook command summaries when no custom review payload exists
+  for probe review inspection, render the header detail as hint text `probe target: no files`, then show a probe summary instead of a file diff and fall back to related target hook command summaries when no custom review payload exists
 
 review_plans_for_interactive_diffs(plans):
   build review items from file/directory plans plus active probe plans

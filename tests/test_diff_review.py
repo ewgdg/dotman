@@ -549,10 +549,8 @@ def test_run_review_item_diff_prints_probe_summary(capsys) -> None:
     run_review_item_diff(review_item)
 
     assert capsys.readouterr().out == (
-        "probe target: no file diff\n"
-        "related hook commands:\n"
-        "  pre_push: echo pre\n"
-        "  post_push: echo post\n"
+        "[pre_push] echo pre\n"
+        "[post_push] echo post\n"
     )
 
 

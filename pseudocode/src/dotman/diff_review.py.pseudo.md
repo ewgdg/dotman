@@ -26,8 +26,10 @@ build_review_items(plans):
 
 run_review_item_diff(item):
   if item is probe review item:
-    print probe summary instead of a file diff
-    include related hook command summaries when any exist
+    do not repeat the probe header hint text
+    print related hook command summaries directly when any exist
+    do not print a heading, none line, or extra indentation
+    render each related hook command with the hook name as a dim badge such as [pre_push]
     return success
   materialize before and after sides in temporary files
   choose diff/pager command

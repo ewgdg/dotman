@@ -1061,6 +1061,32 @@ def test_print_review_diff_header_dims_metadata_prefix_when_colored(
     assert "\033[2mfile: /live/gitconfig\033[0m" in output
 
 
+def test_print_review_diff_header_renders_probe_no_files_as_hint_text(
+    monkeypatch,
+    capsys,
+) -> None:
+    review_item = cli.ReviewItem(
+        selection_label="sandbox:app@default",
+        package_id="app",
+        target_name="version",
+        action="install",
+        operation="push",
+        repo_path=Path("/repo/app"),
+        live_path=Path("/repo/app"),
+        source_path="",
+        destination_path="",
+        is_probe=True,
+    )
+
+    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+
+    cli.print_review_diff_header(review_item, index=1, total=1)
+
+    output = capsys.readouterr().out
+    assert "target: probe" not in output
+    assert "\033[2mprobe target: no files\033[0m" in output
+
+
 def test_run_diff_review_menu_default_command_views_next_diff(
     monkeypatch,
     capsys,

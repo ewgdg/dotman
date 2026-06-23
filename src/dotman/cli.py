@@ -2903,7 +2903,7 @@ def print_review_diff_header(
 def review_diff_path_line(review_item: ReviewItem, *, full_paths: bool | None = None) -> str:
     full_paths = _effective_full_paths(full_paths)
     if review_item.is_probe:
-        return "probe target: no file payload"
+        return "probe target: no files"
     destination_path = display_cli_path(review_item.destination_path, full_paths=full_paths)
     return f"file: {destination_path}"
 
