@@ -32,10 +32,15 @@ _handle_track(args):
     emit recorded result
 
 _handle_push_or_pull(args):
+  if output is JSON or stderr is not interactive:
+    use no planning progress sink
+  else:
+    use terminal planning progress sink
+
   if query provided:
     plan operation for query
   else:
-    plan operation from tracked state
+    plan operation from tracked state with progress sink
 
   apply interactive target selection when requested
   apply diff review when requested

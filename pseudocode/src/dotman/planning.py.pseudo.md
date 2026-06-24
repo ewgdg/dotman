@@ -39,9 +39,14 @@ build_package_plan(engine, repo, selection):
   hook_plans = filter hooks to executable selected targets
   return PackagePlan(selection, hooks, targets)
 
-build_tracked_plans(engine):
+build_tracked_plans(engine, optional progress sink):
   selections = resolve tracked package selections
-  package_plans = build package plan for each selection
+  if progress sink exists:
+    start it with the selection count
+  for each selection:
+    build package plan
+    after the package plan is built, advance progress
+  always close progress sink before returning or raising
   collect ownership candidates only for targets that claim repo/live write paths
   keep non-path targets such as probes after ownership winner filtering
   validate tracked ownership and direct conflicts

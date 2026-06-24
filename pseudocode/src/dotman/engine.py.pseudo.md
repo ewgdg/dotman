@@ -43,9 +43,9 @@ _resolve_package_ids(repo, selector, selector_kind):
   append each package after its dependencies have been visited
   return each reachable package once in dependency-before-dependent order
 
-plan_push() / plan_pull():
+plan_push(optional progress sink) / plan_pull(optional progress sink):
   read effective tracked entries
-  build tracked package plans
+  build tracked package plans, forwarding progress sink when provided
   wrap them in operation plan
   return operation plan
 

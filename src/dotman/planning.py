@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dotman.collisions import (
     TrackedTargetCandidate,
@@ -53,6 +53,9 @@ from dotman.projection import (
 )
 from dotman.repository import Repository, VALID_HOOK_NAMES
 from dotman.templates import build_template_context, render_template_string
+
+if TYPE_CHECKING:
+    from dotman.progress import ProgressSink
 
 HOOK_NAMES_BY_OPERATION = {
     "push": ("guard_push", "pre_push", "post_push"),
@@ -371,10 +374,12 @@ def build_tracked_plans(
     *,
     operation: str,
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
+    sink: "ProgressSink | None" = None,
 ) -> OperationPlan:
     plans, candidates_by_path = engine._collect_tracked_candidates(
         operation=operation,
         entries_by_repo=entries_by_repo,
+        sink=sink,
     )
     winner_indexes = engine._resolve_tracked_target_winners(candidates_by_path)
     filtered_plans: list[PackagePlan] = []
@@ -404,12 +409,32 @@ def collect_tracked_candidates(
     *,
     operation: str,
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
+    sink: "ProgressSink | None" = None,
+) -> tuple[list[PackagePlan], dict[Path, list[TrackedTargetCandidate]]]:
+    selections = resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo)
+    if sink is not None:
+        sink.start(len(selections))
+    try:
+        return _collect_tracked_candidates_impl(engine, selections, operation=operation, sink=sink)
+    finally:
+        if sink is not None:
+            sink.close()
+
+
+def _collect_tracked_candidates_impl(
+    engine: Any,
+    selections: list[ResolvedPackageSelection],
+    *,
+    operation: str,
+    sink: "ProgressSink | None" = None,
 ) -> tuple[list[PackagePlan], dict[Path, list[TrackedTargetCandidate]]]:
     plans: list[PackagePlan] = []
     candidates_by_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
-    for selection in resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo):
+    for selection in selections:
         repo = engine.get_repo(selection.identity.repo)
         plan = build_package_plan(engine, repo, selection, operation=operation)
+        if sink is not None:
+            sink.update(1)
         plan_index = len(plans)
         plans.append(plan)
         for target_index, target in enumerate(plan.target_plans):

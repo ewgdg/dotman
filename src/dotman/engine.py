@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dotman.config import load_manager_config
 from dotman.ignore import list_directory_files, matches_ignore_pattern
@@ -42,6 +42,9 @@ from dotman.tracking import (
     TrackedStateSummary,
 )
 from dotman import tracked_packages, tracking, variable_inspection
+
+if TYPE_CHECKING:
+    from dotman.progress import ProgressSink
 
 def parse_full_spec_selector_text(binding_text: str) -> tuple[str | None, str, str | None]:
     repo_name: str | None = None
@@ -399,11 +402,11 @@ class DotmanEngine:
         }
         return selector, profile, exact_matches, list(unique_partials.values()), list(unique_owners.values())
 
-    def plan_push(self) -> OperationPlan:
-        return self._build_tracked_plans(operation="push")
+    def plan_push(self, *, sink: "ProgressSink | None" = None) -> OperationPlan:
+        return self._build_tracked_plans(operation="push", sink=sink)
 
-    def plan_pull(self) -> OperationPlan:
-        return self._build_tracked_plans(operation="pull")
+    def plan_pull(self, *, sink: "ProgressSink | None" = None) -> OperationPlan:
+        return self._build_tracked_plans(operation="pull", sink=sink)
 
     def _tracking_helpers(self):
         return tracking
@@ -772,11 +775,13 @@ class DotmanEngine:
         *,
         operation: str,
         bindings_by_repo: dict[str, list[FullSpecSelector]] | None = None,
+        sink: "ProgressSink | None" = None,
     ) -> OperationPlan:
         return self._planning_helpers().build_tracked_plans(
             self,
             operation=operation,
             entries_by_repo=self._tracked_entries_by_repo_from_bindings(bindings_by_repo),
+            sink=sink,
         )
 
     def _build_operation_plan(self, plans: list[PackagePlan], *, operation: str, allow_standalone_noop_hooks: bool = False, excluded_repo_names: set[str] | None = None) -> OperationPlan:
@@ -794,11 +799,13 @@ class DotmanEngine:
         operation: str,
         bindings_by_repo: dict[str, list[FullSpecSelector]] | None = None,
         entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
+        sink: "ProgressSink | None" = None,
     ) -> tuple[list[PackagePlan], dict[Path, list[TrackedTargetCandidate]]]:
         return self._planning_helpers().collect_tracked_candidates(
             self,
             operation=operation,
             entries_by_repo=entries_by_repo or self._tracked_entries_by_repo_from_bindings(bindings_by_repo),
+            sink=sink,
         )
 
     def preview_package_selection_implicit_overrides(self, selection: ResolvedPackageSelection) -> list[TrackedTargetOverride]:

@@ -17,6 +17,7 @@ from dotman.snapshot import (
     record_snapshot_restore,
 )
 from dotman.doctor import doctor_engine
+from dotman.progress import make_planning_sink
 
 
 @dataclass(frozen=True)
@@ -358,7 +359,7 @@ def _handle_edit(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
 
 
 
-def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, operation: str) -> Any:
+def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, operation: str, sink: "ProgressSink | None" = None) -> Any:
     if args.binding:
         _repo, binding = handlers.resolve_tracked_package_entry_text(
             engine,
@@ -371,7 +372,7 @@ def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, ope
         if operation == "push":
             return engine.plan_push_query(binding_text, profile=binding.profile)
         return engine.plan_pull_query(binding_text, profile=binding.profile)
-    return engine.plan_push() if operation == "push" else engine.plan_pull()
+    return engine.plan_push(sink=sink) if operation == "push" else engine.plan_pull(sink=sink)
 
 
 
@@ -379,7 +380,8 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
     with sudo_session():
-        plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="push")
+        sink = make_planning_sink(json_output=args.json_output)
+        plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="push", sink=sink)
         if not handlers.review_plans_for_interactive_diffs(
             plans=plans,
             operation="push",
@@ -432,7 +434,8 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
     with sudo_session():
-        plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="pull")
+        sink = make_planning_sink(json_output=args.json_output)
+        plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="pull", sink=sink)
         if not handlers.review_plans_for_interactive_diffs(
             plans=plans,
             operation="pull",
