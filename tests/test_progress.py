@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -41,6 +43,43 @@ def test_tqdm_sink_closes_after_update() -> None:
     sink.start(1)
     sink.update(1)
     sink.close()
+
+
+def test_tqdm_sink_redraws_elapsed_without_progress_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTqdm:
+        instances: list["FakeTqdm"] = []
+
+        def __init__(self, **_kwargs) -> None:
+            self.refreshed = Event()
+            self.refresh_count = 0
+            self.closed = False
+            FakeTqdm.instances.append(self)
+
+        def update(self, _n: int = 1) -> None:
+            raise AssertionError("redraw timer must not advance progress")
+
+        def refresh(self) -> None:
+            self.refresh_count += 1
+            self.refreshed.set()
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setitem(sys.modules, "tqdm", SimpleNamespace(tqdm=FakeTqdm))
+    sink = _TqdmSink(refresh_interval=0.01)
+
+    sink.start(1)
+    fake_pbar = FakeTqdm.instances[0]
+    try:
+        assert fake_pbar.refreshed.wait(timeout=1)
+        assert fake_pbar.refresh_count >= 1
+    finally:
+        sink.close()
+
+    assert fake_pbar.closed
+    assert sink._refresh_thread is None
 
 
 def test_collect_tracked_candidates_reports_progress_after_package_build(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -21,8 +21,12 @@ ProgressSink:
   update(count):
     advance completed package count by count
     keep a stable description; do not show per-package labels in the progress bar
+    redraw the terminal progress display at least once per second while it remains open, even when no package has completed
+    do not advance completed package count during redraw-only refreshes
+    serialize progress updates, redraw-only refreshes, and close operations so the terminal progress display is not mutated concurrently
 
   close():
     finish and clear terminal progress display
     do not fail when no label was shown
+    stop any redraw-only refresh before closing the terminal progress display
 ```
