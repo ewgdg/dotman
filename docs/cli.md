@@ -391,6 +391,8 @@ This document captures the current command and selector direction for `dotman`.
 ## Tracked Package State
 
 - Snapshot history is separate from tracked package state.
+- `list repo` should list configured repos in configured order.
+- Human `list repo` output should show repo name, order, and repo path; JSON output should also include config/state metadata.
 - `list snapshots` and `rollback` should operate from snapshot manifests under the snapshot storage root, not from tracked package state.
 
 - `list tracked` should report the packages currently tracked by persisted explicit package entries.

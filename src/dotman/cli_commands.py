@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from dotman.add import prepare_add_to_package, write_add_result
-from dotman.config import default_config_path
+from dotman.config import default_config_path, load_manager_config
 from dotman.engine import TrackedTargetConflictError
 from dotman.elevation import request_elevation_from_env
 from dotman.file_access import sudo_session
@@ -80,6 +80,7 @@ class CliCommandHandlers:
     emit_trackable_detail: Callable[..., int] = field(default=lambda **kwargs: 0)
     resolve_untrack_group_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
     emit_untracked_package_entries: Callable[..., int] = field(default=lambda **kwargs: 0)
+    emit_repos: Callable[..., int] = field(default=lambda **kwargs: 0)
 
 
 EngineFactory = Callable[[str | None], Any]
@@ -209,6 +210,11 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
                 json_output=args.json_output,
             ),
             handlers=handlers,
+        )
+    if args.command == "list" and args.list_command == "repo":
+        return handlers.emit_repos(
+            repos=load_manager_config(args.config).ordered_repos,
+            json_output=args.json_output,
         )
     if args.command == "reconcile" and args.reconcile_helper == "editor":
         return handlers.run_basic_reconcile(

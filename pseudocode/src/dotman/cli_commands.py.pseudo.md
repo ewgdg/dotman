@@ -60,6 +60,11 @@ _handle_untrack(args):
 _handle_info(args):
   resolve requested tracked or trackable object
   emit detail in requested format
+
+list repo:
+  read configured repos from manager config in configured order
+  emit repo list before engine construction
+  do not load repo manifests, tracked package state, or package catalogs
 ```
 
 ## Review Needed

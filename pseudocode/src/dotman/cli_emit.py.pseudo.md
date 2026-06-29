@@ -34,7 +34,7 @@ run_execution(plans, args):
   emit execution result
   return result exit code
 
-emit_tracked_packages / emit_trackables / emit_search_matches / emit_variables:
+emit_repos / emit_tracked_packages / emit_trackables / emit_search_matches / emit_variables:
   if JSON requested:
     serialize model dictionaries
   else:

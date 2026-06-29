@@ -773,6 +773,38 @@ def emit_trackables(*, trackables: Sequence[Any], json_output: bool, use_color: 
     return 0
 
 
+def _repo_config_to_dict(repo: Any) -> dict[str, Any]:
+    return {
+        "name": repo.name,
+        "path": str(repo.path),
+        "order": repo.order,
+        "state_key": repo.state_key,
+        "state_path": str(repo.state_path),
+        "local_override_path": str(repo.local_override_path),
+    }
+
+
+def emit_repos(*, repos: Sequence[Any], json_output: bool, use_color: bool) -> int:
+    payload = {
+        "mode": "dry-run",
+        "operation": "list-repos",
+        "repos": [_repo_config_to_dict(repo) for repo in repos],
+    }
+    if json_output:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    for repo in repos:
+        repo_name = cli_style.style_text(repo.name, "1") if use_color else repo.name
+        order_badge = cli_style.render_menu_badge(f"[order {repo.order}]", use_color=use_color)
+        state_annotation = "" if repo.state_key == repo.name else f"state_key: {repo.state_key}"
+        print(
+            f"{cli_style.join_menu_display_fields(repo_name, order_badge, str(repo.path))}"
+            f"{cli_style.render_annotation_parentheses(state_annotation, use_color=use_color)}"
+        )
+    return 0
+
+
 _DOCTOR_CHECK_CATEGORY_ORDER = {
     "dependencies": 0,
     "environment": 1,

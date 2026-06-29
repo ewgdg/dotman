@@ -89,6 +89,51 @@ def test_list_tracked_cli_lists_unique_tracked_packages(
     assert [binding["package_id"] for binding in packages["git"]["package_entries"]] == ["core-cli-meta", "git"]
     assert packages["git"]["description"] == "Base Git configuration"
 
+
+def test_list_repo_cli_emits_configured_repos_in_json(tmp_path: Path, capsys) -> None:
+    config_path = write_named_manager_config(
+        tmp_path,
+        {
+            "example": EXAMPLE_REPO,
+            "sandbox": REFERENCE_REPO,
+        },
+    )
+
+    exit_code = main(["--config", str(config_path), "--json", "list", "repo"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "list-repos"
+    assert [(repo["name"], repo["path"], repo["order"], repo["state_key"]) for repo in payload["repos"]] == [
+        ("example", str(EXAMPLE_REPO), 10, "example"),
+        ("sandbox", str(REFERENCE_REPO), 20, "sandbox"),
+    ]
+
+
+def test_list_repo_cli_emits_readable_text_output(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+    config_path = write_named_manager_config(tmp_path, {"example": EXAMPLE_REPO})
+
+    exit_code = main(["--config", str(config_path), "list", "repo"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == f"example [order 10] {EXAMPLE_REPO}\n"
+
+
+def test_list_repo_cli_does_not_load_repo_manifests(tmp_path: Path, capsys) -> None:
+    repo_root = tmp_path / "repo"
+    bad_package_dir = repo_root / "packages" / "bad"
+    bad_package_dir.mkdir(parents=True)
+    (bad_package_dir / "package.toml").write_text("not valid toml = [", encoding="utf-8")
+    config_path = write_named_manager_config(tmp_path, {"broken": repo_root})
+
+    exit_code = main(["--config", str(config_path), "--json", "list", "repo"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repos"][0]["name"] == "broken"
+
+
 def test_list_tracked_cli_emits_readable_text_output(
     tmp_path: Path,
     monkeypatch,

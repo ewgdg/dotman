@@ -140,6 +140,7 @@ def test_list_help_shows_tracked_state_and_catalog_subcommands(capsys) -> None:
     assert "usage: dotman list [-h] <list-command> ..." in output
     assert "list commands:" in output
     assert "List tracked packages" in output
+    assert "List configured repos" in output
     assert "List trackable packages and groups" in output
     assert "List resolved variables" in output
     assert "installed" not in output

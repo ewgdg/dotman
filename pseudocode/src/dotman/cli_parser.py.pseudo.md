@@ -17,6 +17,8 @@ build_parser():
     add command-specific flags and positional args
     assign command name for dispatch
 
+  list supports configured repo discovery plus tracked state, trackables, variables, and snapshots
+
   hide internal aliases from help when requested
   return parser
 

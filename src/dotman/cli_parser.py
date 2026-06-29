@@ -330,6 +330,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="List tracked packages",
     )
     list_subparsers.add_parser(
+        "repo",
+        help="List configured repos",
+        description="List configured repos",
+    )
+    list_subparsers.add_parser(
         "trackables",
         help="List trackable packages and groups",
         description="List trackable packages and groups",
