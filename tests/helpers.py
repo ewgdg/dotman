@@ -22,6 +22,28 @@ EXAMPLE_REPO = PROJECT_ROOT / "examples" / "repo"
 REFERENCE_REPO = PROJECT_ROOT / "tests" / "fixtures" / "reference_repo"
 
 
+def write_tracked_packages_state(
+    state_root: Path,
+    *,
+    repo_name: str,
+    entries: list[tuple[str, str]],
+) -> None:
+    state_dir = state_root / "dotman" / "repos" / repo_name
+    state_dir.mkdir(parents=True, exist_ok=True)
+    lines = ["schema_version = 1", ""]
+    for package_id, profile in entries:
+        lines.extend(
+            [
+                "[[packages]]",
+                f'repo = "{repo_name}"',
+                f'package_id = "{package_id}"',
+                f'profile = "{profile}"',
+                "",
+            ]
+        )
+    (state_dir / "tracked-packages.toml").write_text("\n".join(lines), encoding="utf-8")
+
+
 def make_resolved_package_selection(
     *,
     repo_name: str,

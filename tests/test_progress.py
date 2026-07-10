@@ -82,13 +82,34 @@ def test_tqdm_sink_redraws_elapsed_without_progress_update(
     assert sink._refresh_thread is None
 
 
-def test_collect_tracked_candidates_reports_progress_after_package_build(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_package_plans_reports_progress_after_package_build(monkeypatch: pytest.MonkeyPatch) -> None:
     selection = make_resolved_package_selection(repo_name="example", package_id="git", requested_profile="basic")
+    planning_input = SimpleNamespace(
+        repo=SimpleNamespace(name="example"),
+        selection=selection,
+        package_context=SimpleNamespace(),
+        target_metadata=[],
+    )
     events: list[str] = []
 
-    monkeypatch.setattr(planning, "resolve_tracked_package_selections", lambda _engine, entries_by_repo=None: [selection])
+    monkeypatch.setattr(
+        planning,
+        "collect_static_target_candidates",
+        lambda _engine, selections, *, operation: ([planning_input], {}),
+    )
+    monkeypatch.setattr(
+        planning,
+        "_select_static_package_planning_inputs",
+        lambda inputs, *, winner_indexes: inputs,
+    )
+    monkeypatch.setattr(planning, "_validate_preprojection_conflicts", lambda inputs, *, operation: None)
+    monkeypatch.setattr(
+        planning,
+        "_build_host_package_planning_inputs",
+        lambda _engine, inputs, *, operation: inputs,
+    )
 
-    def build_package_plan(_engine, _repo, built_selection, *, operation: str):
+    def build_package_plan(_engine, _repo, built_selection, *, operation: str, **_kwargs):
         assert built_selection is selection
         events.append("built")
         return make_package_plan(
@@ -114,23 +135,44 @@ def test_collect_tracked_candidates_reports_progress_after_package_build(monkeyp
     monkeypatch.setattr(planning, "build_package_plan", build_package_plan)
     sink = OrderingSink()
 
-    plans, candidates_by_path = planning.collect_tracked_candidates(
-        SimpleNamespace(get_repo=lambda repo_name: SimpleNamespace(name=repo_name)),
+    plans = planning.build_package_plans(
+        SimpleNamespace(),
+        [selection],
         operation="push",
         sink=sink,
     )
 
     assert len(plans) == 1
-    assert candidates_by_path == {}
     assert events == ["start:1", "built", "update", "close"]
     assert sink.events == [("start", 1), ("update", 1), ("close", None)]
 
 
-def test_collect_tracked_candidates_closes_progress_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_package_plans_closes_progress_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     selection = make_resolved_package_selection(repo_name="example", package_id="git", requested_profile="basic")
+    planning_input = SimpleNamespace(
+        repo=SimpleNamespace(name="example"),
+        selection=selection,
+        package_context=SimpleNamespace(),
+        target_metadata=[],
+    )
     sink = FakeSink()
 
-    monkeypatch.setattr(planning, "resolve_tracked_package_selections", lambda _engine, entries_by_repo=None: [selection])
+    monkeypatch.setattr(
+        planning,
+        "collect_static_target_candidates",
+        lambda _engine, selections, *, operation: ([planning_input], {}),
+    )
+    monkeypatch.setattr(
+        planning,
+        "_select_static_package_planning_inputs",
+        lambda inputs, *, winner_indexes: inputs,
+    )
+    monkeypatch.setattr(planning, "_validate_preprojection_conflicts", lambda inputs, *, operation: None)
+    monkeypatch.setattr(
+        planning,
+        "_build_host_package_planning_inputs",
+        lambda _engine, inputs, *, operation: inputs,
+    )
 
     def fail_build_package_plan(*_args, **_kwargs):
         raise RuntimeError("planning failed")
@@ -138,8 +180,9 @@ def test_collect_tracked_candidates_closes_progress_on_failure(monkeypatch: pyte
     monkeypatch.setattr(planning, "build_package_plan", fail_build_package_plan)
 
     with pytest.raises(RuntimeError, match="planning failed"):
-        planning.collect_tracked_candidates(
-            SimpleNamespace(get_repo=lambda repo_name: SimpleNamespace(name=repo_name)),
+        planning.build_package_plans(
+            SimpleNamespace(),
+            [selection],
             operation="push",
             sink=sink,
         )

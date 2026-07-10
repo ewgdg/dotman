@@ -31,7 +31,8 @@ resolve_selector_text(query_text):
 
 plan_push_query(query_text) / plan_pull_query(query_text):
   resolve query to package selection(s)
-  build package plans in dependency-before-dependent order
+  resolve static target ownership and collisions before host-state planning
+  build winner and probe package plans in dependency-before-dependent order
   wrap them in operation plan with repo hooks and conflict validation
   return operation plan
 
@@ -45,7 +46,8 @@ _resolve_package_ids(repo, selector, selector_kind):
 
 plan_push(optional progress sink) / plan_pull(optional progress sink):
   read effective tracked entries
-  build tracked package plans, forwarding progress sink when provided
+  resolve static target ownership and collisions before host-state planning
+  build winner and probe tracked package plans, forwarding progress sink when provided
   wrap them in operation plan
   return operation plan
 

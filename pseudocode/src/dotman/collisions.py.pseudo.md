@@ -9,10 +9,8 @@ Choose tracked target owners and reject plans that would write conflicting paths
 ```pseudo
 resolve_tracked_target_winners(candidates_by_live_path):
   for each live_path and candidates:
-    if all candidates have the same tracked_target_signature:
-      choose one representative candidate
-      continue
-
+    deduplicate repeated declarations of the same package instance and target identity
+    keep distinct target names from the same package instance as separate contenders
     valid_overrides = candidates that explicitly override conflicting candidates
 
     if valid_overrides has exactly one candidate:
@@ -23,6 +21,9 @@ resolve_tracked_target_winners(candidates_by_live_path):
     reject with TrackedTargetConflictError for live_path
 
   return winners and override records
+
+Ownership candidates contain rendered static repo/live paths and declaration identity only.
+Their resolution never depends on projected bytes, probes, directory contents, or other host-state results.
 
 validate_target_collisions(rendered_targets):
   for each pair of rendered targets:

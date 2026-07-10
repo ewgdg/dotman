@@ -303,19 +303,13 @@ class DotmanEngine:
     def plan_push_query(self, query_text: str, *, profile: str | None = None) -> OperationPlan:
         _repo, query = self.resolve_full_spec_selector_text(query_text, profile=profile)
         selections = self._planning_helpers().resolve_full_spec_selector(self, query, operation="push")
-        plans = [
-            self._build_package_plan(self.get_repo(selection.identity.repo), selection, operation="push")
-            for selection in selections
-        ]
+        plans = self._planning_helpers().build_package_plans(self, selections, operation="push")
         return self._build_operation_plan(plans, operation="push")
 
     def plan_pull_query(self, query_text: str, *, profile: str | None = None) -> OperationPlan:
         _repo, query = self.resolve_full_spec_selector_text(query_text, profile=profile)
         selections = self._planning_helpers().resolve_full_spec_selector(self, query, operation="pull")
-        plans = [
-            self._build_package_plan(self.get_repo(selection.identity.repo), selection, operation="pull")
-            for selection in selections
-        ]
+        plans = self._planning_helpers().build_package_plans(self, selections, operation="pull")
         return self._build_operation_plan(plans, operation="pull")
 
     def resolve_tracked_binding(
@@ -793,29 +787,11 @@ class DotmanEngine:
             excluded_repo_names=excluded_repo_names,
         )
 
-    def _collect_tracked_candidates(
-        self,
-        *,
-        operation: str,
-        bindings_by_repo: dict[str, list[FullSpecSelector]] | None = None,
-        entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
-        sink: "ProgressSink | None" = None,
-    ) -> tuple[list[PackagePlan], dict[Path, list[TrackedTargetCandidate]]]:
-        return self._planning_helpers().collect_tracked_candidates(
-            self,
-            operation=operation,
-            entries_by_repo=entries_by_repo or self._tracked_entries_by_repo_from_bindings(bindings_by_repo),
-            sink=sink,
-        )
-
     def preview_package_selection_implicit_overrides(self, selection: ResolvedPackageSelection) -> list[TrackedTargetOverride]:
         return self._planning_helpers().preview_package_selection_implicit_overrides(self, selection)
 
     def preview_package_selections_implicit_overrides(self, selections: list[ResolvedPackageSelection]) -> list[TrackedTargetOverride]:
         return self._planning_helpers().preview_package_selections_implicit_overrides(self, selections)
-
-    def _tracked_target_signature(self, target: Any) -> tuple[Any, ...]:
-        return self._planning_helpers().tracked_target_signature(target)
 
     def _resolve_tracked_target_winners(
         self,
@@ -858,6 +834,8 @@ class DotmanEngine:
         operation: str,
         inferred_os: str,
         declaration_package_ids: set[str],
+        target_names: set[str] | None = None,
+        metadata_targets: list[Any] | None = None,
     ) -> list[Any]:
         return self._planning_helpers().plan_targets(
             self,
@@ -868,26 +846,12 @@ class DotmanEngine:
             operation=operation,
             inferred_os=inferred_os,
             declaration_package_ids=declaration_package_ids,
+            target_names=target_names,
+            metadata_targets=metadata_targets,
         )
 
     def _validate_target_collisions(self, rendered_targets: list[Any], *, operation: str = "push") -> None:
         self._planning_helpers().validate_target_collisions(rendered_targets, operation=operation)
-
-    def _validate_reserved_path_conflicts(
-        self,
-        packages: list[PackageSpec],
-        rendered_targets: list[Any],
-        context: dict[str, Any],
-    ) -> None:
-        self._planning_helpers().validate_reserved_path_conflicts(
-            self,
-            packages,
-            rendered_targets,
-            context,
-        )
-
-    def _paths_conflict(self, left: Path, right: Path) -> bool:
-        return self._planning_helpers().paths_conflict(left, right)
 
     def _project_repo_file(
         self,

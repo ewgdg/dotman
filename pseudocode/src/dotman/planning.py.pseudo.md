@@ -32,25 +32,42 @@ build_package_planning_context(engine, repo, selection):
   include operation direction and config needed by projection
   return context
 
-build_package_plan(engine, repo, selection):
-  context = build package planning context
-  target_plans = project targets for package
+build_package_plan(engine, repo, selection, selected target metadata):
+  reuse package planning context from static candidate collection
+  project only selected target metadata
   hook_plans = plan package hooks
   hook_plans = filter hooks to executable selected targets
   return PackagePlan(selection, hooks, targets)
 
-build_tracked_plans(engine, optional progress sink):
-  selections = resolve tracked package selections
+build_package_plans(engine, selections, optional progress sink):
   if progress sink exists:
     start it with the selection count
-  for each selection:
-    build package plan
+
+  for each selection before host-state planning:
+    build static package context and operation-eligible target metadata
+    validate static target configuration
+    collect ownership candidates only for targets that claim operation write paths
+    keep probes outside ownership candidate collection
+
+  resolve ownership winners and reject same-precedence conflicts
+
+  filter static metadata to ownership winners and probes
+  validate winner collisions and reserved paths from static metadata
+
+  for each selection after collision validation:
+    build host-state target metadata only for ownership winners and probes
+
+  for each selection in original order:
+    build package plan from winner and probe metadata
     after the package plan is built, advance progress
   always close progress sink before returning or raising
-  collect ownership candidates only for targets that claim repo/live write paths
-  keep non-path targets such as probes after ownership winner filtering
-  validate tracked ownership and direct conflicts
   return package plans
+
+build_tracked_plans(engine, optional progress sink):
+  selections = resolve tracked package selections
+  build package plans through static ownership pipeline
+  wrap package plans in operation plan
+  return operation plan
 
 build_operation_plan(package_plans):
   validate direct package conflicts

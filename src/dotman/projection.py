@@ -106,7 +106,9 @@ def build_target_metadata(
     operation: str,
     inferred_os: str,
     declaration_package_ids: set[str],
+    target_names: set[str] | None = None,
     inspect_live_symlinks: bool = True,
+    inspect_gitignore_patterns: bool = True,
     validate_declaration_conflicts: bool = True,
 ) -> list[TargetMetadata]:
     metadata_targets: list[TargetMetadata] = []
@@ -115,6 +117,8 @@ def build_target_metadata(
         if package.id not in declaration_package_ids:
             continue
         for target in (package.targets or {}).values():
+            if target_names is not None and target.name not in target_names:
+                continue
             if target.disabled:
                 continue
             sync_policy = resolve_sync_policy(package=package, target=target)
@@ -128,7 +132,7 @@ def build_target_metadata(
                     base_dir=target.declared_in,
                     source_path=target.declared_in,
                 )
-                placeholder_path = target.declared_in.resolve()
+                placeholder_path = expand_path(str(target.declared_in), dereference=False)
                 metadata_targets.append(
                     TargetMetadata(
                         repo_name=repo.config.name,
@@ -183,7 +187,9 @@ def build_target_metadata(
                 base_dir=target.declared_in,
                 source_path=target.declared_in,
             )
-            repo_path = (target.declared_in / rendered_source).resolve()
+            # Target identity must stay configuration-derived; following a source
+            # symlink here would make ownership depend on volatile host state.
+            repo_path = expand_path(str(target.declared_in / rendered_source), dereference=False)
             live_path = expand_path(rendered_path, dereference=False)
             live_path_is_symlink = inspect_live_symlinks and operation == "push" and live_path.is_symlink()
             live_path_symlink_target = os.readlink(live_path) if live_path_is_symlink else None
@@ -209,7 +215,7 @@ def build_target_metadata(
             push_ignore = merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ())
             pull_ignore = merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ())
             gitignore_ops = target.gitignore if target.gitignore is not None else repo.ignore_defaults.gitignore
-            if gitignore_ops:
+            if gitignore_ops and inspect_gitignore_patterns:
                 gitignore_patterns = collect_gitignore_patterns(repo_path)
                 if "push" in gitignore_ops:
                     push_ignore = merge_ignore_patterns(gitignore_patterns, push_ignore)
@@ -261,7 +267,7 @@ def build_target_metadata(
         rendered_targets = [_metadata_collision_tuple(metadata) for metadata in metadata_targets if target_claims_path(metadata.target)]
         validate_target_collisions(rendered_targets, operation=operation)
         if operation == "push":
-            validate_reserved_path_conflicts(engine, packages, rendered_targets, context)
+            validate_reserved_path_conflicts(packages, rendered_targets, context)
     return metadata_targets
 
 
@@ -275,17 +281,21 @@ def plan_targets(
     operation: str,
     inferred_os: str,
     declaration_package_ids: set[str],
+    target_names: set[str] | None = None,
+    metadata_targets: list[TargetMetadata] | None = None,
 ) -> list[TargetPlan]:
-    metadata_targets = build_target_metadata(
-        engine,
-        repo=repo,
-        packages=packages,
-        context=context,
-        selection=selection,
-        operation=operation,
-        inferred_os=inferred_os,
-        declaration_package_ids=declaration_package_ids,
-    )
+    if metadata_targets is None:
+        metadata_targets = build_target_metadata(
+            engine,
+            repo=repo,
+            packages=packages,
+            context=context,
+            selection=selection,
+            operation=operation,
+            inferred_os=inferred_os,
+            declaration_package_ids=declaration_package_ids,
+            target_names=target_names,
+        )
 
     plans: list[TargetPlan] = []
     for metadata in metadata_targets:

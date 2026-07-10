@@ -6,7 +6,7 @@ from typing import Any
 
 from dotman.config import expand_path
 from dotman.ignore import IgnoreMatcher
-from dotman.models import PackageSpec, ResolvedPackageSelection, TargetPlan, TargetSpec, TrackedTargetSummary
+from dotman.models import PackageSpec, ResolvedPackageSelection, TargetSpec, TrackedTargetSummary
 from dotman.templates import render_template_string
 
 
@@ -41,7 +41,6 @@ class TrackedTargetCandidate:
     package_id: str
     target_name: str
     target_label: str
-    signature: tuple[Any, ...] = ()
     target_summary: TrackedTargetSummary | None = None
 
 
@@ -50,62 +49,28 @@ class TrackedTargetOverride:
     winner: TrackedTargetCandidate
     overridden: tuple[TrackedTargetCandidate, ...]
 
-
-
-def tracked_target_signature(target: TargetPlan) -> tuple[Any, ...]:
-    if target.target_kind == "directory":
-        return (
-            "directory",
-            tuple(
-                (
-                    item.relative_path,
-                    item.action,
-                    str(item.repo_path),
-                )
-                for item in target.directory_items
-            ),
-            target.render_command,
-            target.capture_command,
-            target.reconcile,
-            target.push_ignore,
-            target.pull_ignore,
-        )
-    return (
-        "file",
-        target.desired_bytes,
-        target.projection_kind,
-        target.projection_error,
-        target.render_command,
-        target.capture_command,
-        target.reconcile,
-        target.push_ignore,
-        target.pull_ignore,
-        None if target.desired_bytes is not None else str(target.repo_path),
-    )
-
-
-
 def resolve_tracked_target_winners(
     candidates_by_live_path: dict[Path, list[TrackedTargetCandidate]],
 ) -> set[tuple[int, int]]:
     winner_indexes: set[tuple[int, int]] = set()
     for live_path, candidates in candidates_by_live_path.items():
-        candidates_by_instance: dict[tuple[str, str, str | None], TrackedTargetCandidate] = {}
+        candidates_by_instance_target: dict[tuple[str, str, str | None, str], TrackedTargetCandidate] = {}
         for candidate in candidates:
-            instance_key = (
+            instance_target_key = (
                 candidate.selection.identity.repo,
                 candidate.selection.identity.package_id,
                 candidate.selection.identity.bound_profile,
+                candidate.target_name,
             )
-            existing = candidates_by_instance.get(instance_key)
+            existing = candidates_by_instance_target.get(instance_target_key)
             if existing is None or (candidate.precedence, -candidate.plan_index, -candidate.target_index) > (
                 existing.precedence,
                 -existing.plan_index,
                 -existing.target_index,
             ):
-                candidates_by_instance[instance_key] = candidate
+                candidates_by_instance_target[instance_target_key] = candidate
 
-        deduped_candidates = list(candidates_by_instance.values())
+        deduped_candidates = list(candidates_by_instance_target.values())
         highest_precedence = max(candidate.precedence for candidate in deduped_candidates)
         contenders = [candidate for candidate in deduped_candidates if candidate.precedence == highest_precedence]
         first = contenders[0]
@@ -204,7 +169,6 @@ def operation_write_path(*, repo_path: Path, live_path: Path, operation: str) ->
 
 
 def validate_reserved_path_conflicts(
-    engine: Any,
     packages: list[PackageSpec],
     rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
     context: dict[str, Any],
@@ -219,11 +183,20 @@ def validate_reserved_path_conflicts(
             rendered_path = render_template_string(reserved_path, context, base_dir=package.package_root, source_path=package.package_root)
             reserved_claims.append((package.id, expand_path(rendered_path, dereference=False)))
 
+    validate_reserved_path_claims(target_claims=target_claims, reserved_claims=reserved_claims)
+
+
+def validate_reserved_path_claims(
+    *,
+    target_claims: list[tuple[str, str, Path]],
+    reserved_claims: list[tuple[str, Path]],
+) -> None:
+
     for package_id, reserved_path in reserved_claims:
         for target_package_id, target_label, target_path in target_claims:
             if package_id == target_package_id:
                 continue
-            if engine._paths_conflict(reserved_path, target_path):
+            if paths_conflict(reserved_path, target_path):
                 raise ValueError(
                     f"reserved path conflict: {package_id} reserves {reserved_path} and {target_label} maps to {target_path}"
                 )
@@ -232,7 +205,7 @@ def validate_reserved_path_conflicts(
         for other_package_id, other_reserved_path in reserved_claims[index + 1 :]:
             if package_id == other_package_id:
                 continue
-            if engine._paths_conflict(reserved_path, other_reserved_path):
+            if paths_conflict(reserved_path, other_reserved_path):
                 raise ValueError(
                     f"reserved path conflict: {package_id} reserves {reserved_path} and {other_package_id} reserves {other_reserved_path}"
                 )

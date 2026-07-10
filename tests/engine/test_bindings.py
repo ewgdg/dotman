@@ -264,19 +264,13 @@ def test_preview_multiple_explicit_selections_uses_metadata_candidates_without_p
     engine = DotmanEngine.from_config_path(config_path)
     engine.record_tracked_package_entry(FullSpecSelector(repo="fixture", selector="beta-meta", selector_kind="package", profile="basic"))
 
-    collect_call_count = 0
     build_tracked_plan_calls = 0
-
-    def collect_tracked_candidates_once(*args, **kwargs):
-        nonlocal collect_call_count
-        collect_call_count += 1
 
     def fail_build_tracked_plans(*args, **kwargs):
         nonlocal build_tracked_plan_calls
         build_tracked_plan_calls += 1
         raise AssertionError("preview must not build push plans")
 
-    monkeypatch.setattr(engine, "_collect_tracked_candidates", collect_tracked_candidates_once)
     monkeypatch.setattr(engine, "_build_tracked_plans", fail_build_tracked_plans)
     repo = engine.get_repo("fixture")
     selections = [
@@ -300,7 +294,6 @@ def test_preview_multiple_explicit_selections_uses_metadata_candidates_without_p
 
     overrides = engine.preview_package_selections_implicit_overrides(selections)
 
-    assert collect_call_count == 0
     assert build_tracked_plan_calls == 0
     assert len(overrides) == 1
     assert overrides[0].winner.selection_label == "fixture:alpha@basic"

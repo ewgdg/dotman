@@ -11,10 +11,8 @@ from dotman.collisions import (
     TrackedTargetConflictError,
     TrackedTargetOverride,
     operation_write_path,
-    paths_conflict,
     resolve_tracked_target_winners,
-    tracked_target_signature,
-    validate_reserved_path_conflicts,
+    validate_reserved_path_claims,
     validate_target_collisions,
 )
 from dotman.config import expand_path
@@ -37,6 +35,7 @@ from dotman.models import (
     TrackedTargetSummary,
 )
 from dotman.projection import (
+    TargetMetadata,
     build_target_metadata,
     build_package_hook_env,
     build_repo_hook_env,
@@ -222,6 +221,14 @@ class PackagePlanningContext:
     context: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class PackagePlanningInput:
+    repo: Repository
+    selection: ResolvedPackageSelection
+    package_context: PackagePlanningContext
+    target_metadata: list[TargetMetadata]
+
+
 def build_package_planning_context(
     engine: Any,
     repo: Repository,
@@ -312,8 +319,10 @@ def build_package_plan(
     selection: ResolvedPackageSelection,
     *,
     operation: str,
+    package_context: PackagePlanningContext | None = None,
+    target_metadata: list[TargetMetadata] | None = None,
 ) -> PackagePlan:
-    package_context = build_package_planning_context(engine, repo, selection)
+    package_context = package_context or build_package_planning_context(engine, repo, selection)
     target_plans = engine._plan_targets(
         repo=repo,
         packages=package_context.resolved_packages,
@@ -322,6 +331,7 @@ def build_package_plan(
         operation=operation,
         inferred_os=package_context.inferred_os,
         declaration_package_ids={selection.identity.package_id},
+        metadata_targets=target_metadata,
     )
     hook_plans = engine._plan_hooks(
         repo,
@@ -376,96 +386,224 @@ def build_tracked_plans(
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
     sink: "ProgressSink | None" = None,
 ) -> OperationPlan:
-    plans, candidates_by_path = engine._collect_tracked_candidates(
+    selections = resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo)
+    plans = build_package_plans(
+        engine,
+        selections,
         operation=operation,
-        entries_by_repo=entries_by_repo,
         sink=sink,
     )
-    winner_indexes = engine._resolve_tracked_target_winners(candidates_by_path)
-    filtered_plans: list[PackagePlan] = []
-    for plan_index, plan in enumerate(plans):
-        filtered_targets = [
-            target
-            for target_index, target in enumerate(plan.target_plans)
-            if target.target_kind == "probe" or (plan_index, target_index) in winner_indexes
-        ]
-        filtered_plans.append(
-            replace(
-                plan,
-                hooks=filter_hook_plans_for_targets(plan.hooks, filtered_targets),
-                target_plans=filtered_targets,
-            )
-        )
     repo_by_name = {repo_config.name: engine.get_repo(repo_config.name) for repo_config in engine.config.ordered_repos}
     return build_operation_plan(
-        filtered_plans,
+        plans,
         repo_by_name=repo_by_name,
         operation=operation,
     )
 
 
-def collect_tracked_candidates(
-    engine: Any,
-    *,
-    operation: str,
-    entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
-    sink: "ProgressSink | None" = None,
-) -> tuple[list[PackagePlan], dict[Path, list[TrackedTargetCandidate]]]:
-    selections = resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo)
-    if sink is not None:
-        sink.start(len(selections))
-    try:
-        return _collect_tracked_candidates_impl(engine, selections, operation=operation, sink=sink)
-    finally:
-        if sink is not None:
-            sink.close()
-
-
-def _collect_tracked_candidates_impl(
+def build_package_plans(
     engine: Any,
     selections: list[ResolvedPackageSelection],
     *,
     operation: str,
     sink: "ProgressSink | None" = None,
-) -> tuple[list[PackagePlan], dict[Path, list[TrackedTargetCandidate]]]:
-    plans: list[PackagePlan] = []
-    candidates_by_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
-    for selection in selections:
-        repo = engine.get_repo(selection.identity.repo)
-        plan = build_package_plan(engine, repo, selection, operation=operation)
+) -> list[PackagePlan]:
+    if sink is not None:
+        sink.start(len(selections))
+    try:
+        planning_inputs, candidates_by_path = collect_static_target_candidates(
+            engine,
+            selections,
+            operation=operation,
+        )
+        winner_indexes = resolve_tracked_target_winners(candidates_by_path)
+        selected_inputs = _select_static_package_planning_inputs(
+            planning_inputs,
+            winner_indexes=winner_indexes,
+        )
+        _validate_preprojection_conflicts(selected_inputs, operation=operation)
+        host_inputs = _build_host_package_planning_inputs(
+            engine,
+            selected_inputs,
+            operation=operation,
+        )
+
+        plans: list[PackagePlan] = []
+        for planning_input in host_inputs:
+            plans.append(
+                build_package_plan(
+                    engine,
+                    planning_input.repo,
+                    planning_input.selection,
+                    operation=operation,
+                    package_context=planning_input.package_context,
+                    target_metadata=planning_input.target_metadata,
+                )
+            )
+            if sink is not None:
+                sink.update(1)
+        return plans
+    finally:
         if sink is not None:
-            sink.update(1)
-        plan_index = len(plans)
-        plans.append(plan)
-        for target_index, target in enumerate(plan.target_plans):
-            if target.target_kind == "probe":
+            sink.close()
+
+
+def collect_static_target_candidates(
+    engine: Any,
+    selections: list[ResolvedPackageSelection],
+    *,
+    operation: str,
+) -> tuple[list[PackagePlanningInput], dict[Path, list[TrackedTargetCandidate]]]:
+    planning_inputs: list[PackagePlanningInput] = []
+    candidates_by_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
+    for plan_index, selection in enumerate(selections):
+        repo = engine.get_repo(selection.identity.repo)
+        package_context = build_package_planning_context(engine, repo, selection)
+        target_metadata = build_target_metadata(
+            engine,
+            repo=repo,
+            packages=package_context.resolved_packages,
+            context=package_context.context,
+            selection=selection,
+            operation=operation,
+            inferred_os=package_context.inferred_os,
+            declaration_package_ids={selection.identity.package_id},
+            inspect_live_symlinks=False,
+            inspect_gitignore_patterns=False,
+            validate_declaration_conflicts=False,
+        )
+        planning_inputs.append(
+            PackagePlanningInput(
+                repo=repo,
+                selection=selection,
+                package_context=package_context,
+                target_metadata=target_metadata,
+            )
+        )
+        for target_index, metadata in enumerate(target_metadata):
+            if not target_claims_path(metadata.target):
                 continue
             candidate_path = operation_write_path(
-                repo_path=target.repo_path,
-                live_path=target.live_path,
+                repo_path=metadata.repo_path,
+                live_path=metadata.live_path,
                 operation=operation,
             )
             candidates_by_path[candidate_path].append(
                 TrackedTargetCandidate(
                     plan_index=plan_index,
                     target_index=target_index,
-                    live_path=target.live_path,
-                    precedence=1 if plan.selection.explicit else 0,
-                    precedence_name="explicit" if plan.selection.explicit else "implicit",
-                    selection=plan.selection,
-                    selection_label=plan.selection.selection_label,
-                    package_id=target.package_id,
-                    target_name=target.target_name,
+                    live_path=metadata.live_path,
+                    precedence=1 if selection.explicit else 0,
+                    precedence_name="explicit" if selection.explicit else "implicit",
+                    selection=selection,
+                    selection_label=selection.selection_label,
+                    package_id=metadata.package_id,
+                    target_name=metadata.target_name,
                     target_label=repo_qualified_target_text(
-                        repo_name=plan.repo_name,
-                        package_id=target.package_id,
-                        target_name=target.target_name,
-                        bound_profile=plan.bound_profile,
+                        repo_name=repo.config.name,
+                        package_id=metadata.package_id,
+                        target_name=metadata.target_name,
+                        bound_profile=selection.bound_profile,
                     ),
-                    signature=engine._tracked_target_signature(target),
                 )
             )
-    return plans, candidates_by_path
+    return planning_inputs, candidates_by_path
+
+
+def _select_static_package_planning_inputs(
+    planning_inputs: list[PackagePlanningInput],
+    *,
+    winner_indexes: set[tuple[int, int]],
+) -> list[PackagePlanningInput]:
+    selected_inputs: list[PackagePlanningInput] = []
+    for plan_index, planning_input in enumerate(planning_inputs):
+        selected_metadata = [
+            metadata
+            for target_index, metadata in enumerate(planning_input.target_metadata)
+            if not target_claims_path(metadata.target) or (plan_index, target_index) in winner_indexes
+        ]
+        selected_inputs.append(replace(planning_input, target_metadata=selected_metadata))
+    return selected_inputs
+
+
+def _build_host_package_planning_inputs(
+    engine: Any,
+    planning_inputs: list[PackagePlanningInput],
+    *,
+    operation: str,
+) -> list[PackagePlanningInput]:
+    host_inputs: list[PackagePlanningInput] = []
+    for planning_input in planning_inputs:
+        target_metadata = build_target_metadata(
+            engine,
+            repo=planning_input.repo,
+            packages=planning_input.package_context.resolved_packages,
+            context=planning_input.package_context.context,
+            selection=planning_input.selection,
+            operation=operation,
+            inferred_os=planning_input.package_context.inferred_os,
+            declaration_package_ids={planning_input.selection.identity.package_id},
+            target_names={metadata.target_name for metadata in planning_input.target_metadata},
+            validate_declaration_conflicts=False,
+        )
+        host_inputs.append(replace(planning_input, target_metadata=target_metadata))
+    return host_inputs
+
+
+def _validate_preprojection_conflicts(
+    planning_inputs: list[PackagePlanningInput],
+    *,
+    operation: str,
+) -> None:
+    repo_names = dict.fromkeys(planning_input.repo.config.name for planning_input in planning_inputs)
+    for repo_name in repo_names:
+        repo_inputs = [
+            planning_input
+            for planning_input in planning_inputs
+            if planning_input.repo.config.name == repo_name
+        ]
+        rendered_targets = [
+            (
+                metadata.package,
+                metadata.target,
+                metadata.repo_path,
+                metadata.live_path,
+                metadata.push_ignore,
+                metadata.pull_ignore,
+                metadata.live_path_is_symlink,
+                metadata.live_path_symlink_target,
+            )
+            for planning_input in repo_inputs
+            for metadata in planning_input.target_metadata
+            if target_claims_path(metadata.target)
+        ]
+        validate_target_collisions(rendered_targets, operation=operation)
+        if operation == "push":
+            _validate_preprojection_reserved_path_conflicts(repo_inputs, rendered_targets=rendered_targets)
+
+
+def _validate_preprojection_reserved_path_conflicts(
+    planning_inputs: list[PackagePlanningInput],
+    *,
+    rendered_targets: list[tuple[PackageSpec, Any, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
+) -> None:
+    target_claims = [
+        (metadata_package.id, f"{metadata_package.id}:{target.name}", live_path)
+        for metadata_package, target, _repo_path, live_path, _push_ignore, _pull_ignore, _is_symlink, _symlink_target in rendered_targets
+    ]
+    reserved_claims: list[tuple[str, Path]] = []
+    for planning_input in planning_inputs:
+        package = planning_input.repo.resolve_package(planning_input.selection.identity.package_id)
+        for reserved_path in package.reserved_paths or ():
+            rendered_path = render_template_string(
+                reserved_path,
+                planning_input.package_context.context,
+                base_dir=package.package_root,
+                source_path=package.package_root,
+            )
+            reserved_claims.append((package.id, expand_path(rendered_path, dereference=False)))
+
+    validate_reserved_path_claims(target_claims=target_claims, reserved_claims=reserved_claims)
 
 
 def collect_tracked_ownership_candidates(
@@ -497,6 +635,8 @@ def collect_tracked_ownership_candidates(
             inferred_os=package_context.inferred_os,
             declaration_package_ids={selection.identity.package_id},
             inspect_live_symlinks=False,
+            inspect_gitignore_patterns=include_target_summary,
+            validate_declaration_conflicts=include_target_summary,
         )
         for target_index, metadata in enumerate(metadata_targets):
             if not target_claims_path(metadata.target):
@@ -935,20 +1075,4 @@ def _validate_reserved_path_conflicts_for_package_plans(
             )
             reserved_claims.append((package.id, expand_path(rendered_path, dereference=False)))
 
-    for package_id, reserved_path in reserved_claims:
-        for target_package_id, target_label, target_path in target_claims:
-            if package_id == target_package_id:
-                continue
-            if paths_conflict(reserved_path, target_path):
-                raise ValueError(
-                    f"reserved path conflict: {package_id} reserves {reserved_path} and {target_label} maps to {target_path}"
-                )
-
-    for index, (package_id, reserved_path) in enumerate(reserved_claims):
-        for other_package_id, other_reserved_path in reserved_claims[index + 1 :]:
-            if package_id == other_package_id:
-                continue
-            if paths_conflict(reserved_path, other_reserved_path):
-                raise ValueError(
-                    f"reserved path conflict: {package_id} reserves {reserved_path} and {other_package_id} reserves {other_reserved_path}"
-                )
+    validate_reserved_path_claims(target_claims=target_claims, reserved_claims=reserved_claims)

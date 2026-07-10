@@ -7,10 +7,11 @@ Compare repo/live target state and target configuration to produce concrete push
 ## Behavior
 
 ```pseudo
-plan_targets(engine):
-  build target metadata for selected package
+plan_targets(engine, optional prebuilt target metadata):
+  if prebuilt metadata is absent:
+    build target metadata for selected package
 
-  for each target:
+  for each target in supplied metadata order:
     if target is a probe target:
       validate it has no file payload fields
       run probe command with target/package/repo planning environment
@@ -55,6 +56,9 @@ plan_file_action(engine):
     return conflict target plan
 
 build_target_metadata(engine):
+  optionally limit metadata to selected target names
+  optionally skip live-symlink inspection and gitignore collection for static ownership collection
+  normalize configured repo paths without dereferencing filesystem symlinks
   merge repo-level and target-level push/pull ignore patterns
   resolve target-level gitignore ops or inherit repo-level gitignore ops
   if gitignore ops include push or pull:
