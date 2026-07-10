@@ -878,6 +878,7 @@ class DotmanEngine:
         declaration_package_ids: set[str],
         target_names: set[str] | None = None,
         metadata_targets: list[Any] | None = None,
+        guard_skips: list[GuardSkip] | None = None,
     ) -> list[Any]:
         return self._planning_helpers().plan_targets(
             self,
@@ -890,6 +891,7 @@ class DotmanEngine:
             declaration_package_ids=declaration_package_ids,
             target_names=target_names,
             metadata_targets=metadata_targets,
+            guard_skips=guard_skips,
         )
 
     def _validate_target_collisions(self, rendered_targets: list[Any], *, operation: str = "push") -> None:

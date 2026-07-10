@@ -316,7 +316,7 @@ def emit_planning_guard_skips(
     for skip in plans.guard_skips:
         status = cli_style.render_execution_status("skipped", use_color=use_color)
         annotation = cli_style.render_annotation_parentheses("guard", use_color=use_color)
-        if skip.scope_kind in {"package", "target"} and skip.package_id is not None:
+        if skip.scope_kind in {"package", "target", "path_rule"} and skip.package_id is not None:
             scope_label = cli_style.render_package_label(
                 repo_name=skip.repo_name,
                 package_id=skip.package_id,
@@ -326,8 +326,14 @@ def emit_planning_guard_skips(
             )
         else:
             scope_label = skip.scope_label
+        pattern = ""
+        if skip.path_rule_pattern is not None:
+            pattern = cli_style.render_annotation_parentheses(
+                f"path rule: {skip.path_rule_pattern}",
+                use_color=use_color,
+            )
         reason = cli_style.render_annotation_parentheses(skip.reason or "", use_color=use_color)
-        print(f"{status}{annotation} {scope_label}{reason}")
+        print(f"{status}{annotation} {scope_label}{pattern}{reason}")
 
 
 def emit_payload(
@@ -1674,12 +1680,13 @@ def _structured_error_fields(error: Any, *, use_color: bool) -> list[tuple[str, 
     package_id = getattr(error, "package_id", None)
     bound_profile = getattr(error, "bound_profile", None)
     target_name = getattr(error, "target_name", None)
+    path_rule_pattern = getattr(error, "path_rule_pattern", None)
     if scope_kind == "repo" and repo_name is not None:
         fields.append(("repo:", str(repo_name)))
-    elif scope_kind in {"package", "target"} and repo_name is not None and package_id is not None:
+    elif scope_kind in {"package", "target", "path_rule"} and repo_name is not None and package_id is not None:
         fields.append(
             (
-                f"{scope_kind}:",
+                "target:" if scope_kind == "path_rule" else f"{scope_kind}:",
                 cli_style.render_package_label(
                     repo_name=repo_name,
                     package_id=package_id,
@@ -1689,6 +1696,8 @@ def _structured_error_fields(error: Any, *, use_color: bool) -> list[tuple[str, 
                 ),
             )
         )
+        if path_rule_pattern is not None:
+            fields.append(("path rule:", str(path_rule_pattern)))
     else:
         package_repo = getattr(error, "package_repo", None)
         if package_repo is not None and package_id is not None:

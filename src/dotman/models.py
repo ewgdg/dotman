@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 
@@ -70,6 +70,7 @@ class TargetPathRule:
     capture: str | None = None
     pull_view_repo: str | None = None
     pull_view_live: str | None = None
+    hooks: dict[str, "HookSpec"] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +81,10 @@ class TargetPathRule:
             "pull_view_repo": self.pull_view_repo,
             "pull_view_live": self.pull_view_live,
         }
+
+
+def target_path_rule_matches(relative_path: str, pattern: str) -> bool:
+    return PurePosixPath(relative_path).match(pattern)
 
 
 @dataclass(frozen=True)
@@ -320,11 +325,12 @@ class GuardSkip:
     package_id: str | None = None
     bound_profile: str | None = None
     target_name: str | None = None
+    path_rule_pattern: str | None = None
     reason: str | None = None
 
     @property
     def scope_label(self) -> str:
-        if self.scope_kind == "target" and self.package_id is not None and self.target_name is not None:
+        if self.scope_kind in {"target", "path_rule"} and self.package_id is not None and self.target_name is not None:
             return repo_qualified_target_text(
                 repo_name=self.repo_name,
                 package_id=self.package_id,
@@ -350,6 +356,8 @@ class GuardSkip:
         }
         if self.target_name is not None:
             payload["target_name"] = self.target_name
+        if self.path_rule_pattern is not None:
+            payload["path_rule_pattern"] = self.path_rule_pattern
         return payload
 
 

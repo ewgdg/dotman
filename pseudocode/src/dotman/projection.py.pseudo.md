@@ -7,7 +7,7 @@ Compare repo/live target state and target configuration to produce concrete push
 ## Behavior
 
 ```pseudo
-plan_targets(engine, optional prebuilt target metadata):
+plan_targets(engine, optional prebuilt target metadata, optional guard-skip collector):
   if prebuilt metadata is absent:
     build target metadata for selected package
 
@@ -74,6 +74,11 @@ plan_directory_action(engine):
   set follow_dir_symlinks from engine config symlinks.dir_symlink_mode == "follow"
   list repo children and live children with ignore rules, skip markers, and follow_dir_symlinks
 
+  candidate paths = union of managed repo and live child paths
+  evaluate active path-rule guards in declaration order before projection or comparison
+  append path-rule skip diagnostics to the operation collector
+  remove guarded-out paths from both repo and live child sets
+
   if scanner sees an ignored nested directory symlink:
     ignore it
   else if scanner sees a nested directory symlink and follow_dir_symlinks is false:
@@ -99,6 +104,8 @@ plan_directory_action(engine):
 plan_live_delete_directory_action(engine):
   set follow_dir_symlinks from engine config for push-only-delete directory targets
   list live children with ignore rules, skip markers, and follow_dir_symlinks
+  evaluate path-rule guards against managed live candidates before creating delete items
+  remove guarded-out paths
   create delete item for each listed live child
   return delete plan when any listed child exists, otherwise noop
 

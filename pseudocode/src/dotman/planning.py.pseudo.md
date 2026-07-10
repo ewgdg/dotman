@@ -34,7 +34,7 @@ build_package_planning_context(engine, repo, selection):
 
 build_package_plan(engine, repo, selection, selected target metadata, run_noop):
   reuse package planning context from static candidate collection
-  project only selected target metadata
+  project only selected target metadata and collect directory path-rule guard skips
   hook_plans = plan package hooks
   remove package and target operation guards from executable hook plans
   filter pre/post hooks to executable selected targets
@@ -56,6 +56,8 @@ build_package_plans(engine, selections, run_noop, optional progress sink):
 
   filter static metadata to ownership winners and probes
   validate winner collisions and reserved paths from static metadata
+
+  open one elevation broker session for hierarchical and path-rule guards
 
   for each repo with Potential Work, in repo order:
     run its operation guard once from repo-static context
@@ -87,11 +89,16 @@ build_package_plans(engine, selections, run_noop, optional progress sink):
     build host-state target metadata only for admitted ownership winners and probes
     target guards therefore run before probes, file projection, and directory scanning
 
+  during admitted directory target planning:
+    discover managed repo/live candidate child paths
+    evaluate active path-rule guards before child projection/comparison
+    append path-rule skips after repo/package/target skips in planning order
+
   for each selection in original order:
     build package plan from winner and probe metadata
     after the package plan is built, advance progress
   always close progress sink before returning or raising
-  return package plans plus package guard-skip diagnostics and considered repos
+  return package plans plus all planning guard-skip diagnostics and considered repos
 
 build_tracked_plans(engine, run_noop, optional progress sink):
   selections = resolve tracked package selections

@@ -35,10 +35,16 @@ build operation guard hook specs for repo, package, and target owners:
   permit configured elevation
   reject hook-level or command-level run_noop
 
+build directory path-rule hooks:
+  accept only a hooks namespace containing guard_push and guard_pull
+  reuse operation guard command forms and validation
+  reject path-rule pre/post hooks and guard run_noop
+
 build_target_spec(payload):
   resolve target schema aliases
   apply target preset if present
   normalize path, type, sync policy, probe, render/pull/reconcile/patch-capture config, ignore rules (including ignore.gitignore), metadata, and path rules
+  preserve path-rule declaration order and guard specs independently from scalar policy precedence
   if probe is present:
     require probe to be a non-empty command string
     reject source, path, type, chmod, render, capture, reconcile, pull views, ignore rules, and path rules

@@ -33,6 +33,7 @@ This document captures the current command and selector direction for `dotman`.
 - For the active operation, `--run-noop` temporarily treats pre/post hooks as noop-eligible, even if they do not declare `run_noop = true` in the manifest.
 - `--run-noop` still does not fabricate target writes or snapshots.
 - A repo, package, or target `guard_*` that exits `100` omits that scope during planning. Lower work in a skipped repo is omitted; package and target skips stay local.
+- A directory path-rule guard that exits `100` omits only matching managed child paths. Its diagnostic keeps `repo:package.target` identity and shows path-rule pattern as an annotation.
 - Human planning output shows the omission as `skipped (guard)` before review or selection.
 - JSON planning output exposes structured `guard_skips` without guard command text.
 - If every selected scope is guard-skipped and no higher-scope pre/post work remains, the command succeeds without review, selection, execution, or snapshots.
@@ -201,7 +202,7 @@ This document captures the current command and selector direction for `dotman`.
 - Synthetic hook-only selection rows should stay owner-scoped, not per-hook command rows. Supported rows are repo (`[hooks] repo`), package (`[hooks] repo:package`), and target (`[hooks] repo:package.target`).
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `pull` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
-- A repo, package, or target `guard_pull` that exits `100` omits that scope before pull review and selection while eligible sibling scopes continue planning.
+- A repo, package, target, or active directory path-rule `guard_pull` that exits `100` omits its scope before pull review and selection while eligible sibling scopes continue planning.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.

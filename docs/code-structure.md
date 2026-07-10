@@ -39,7 +39,7 @@ Current responsibility split:
 - `tracking.py` — persisted tracked-package state flows
 - `tracked_packages.py` — tracked package lookup and detail helpers
 - `planning.py` — high-level plan orchestration, including the top-level operation-plan wrapper used for repo-scoped hooks
-- `planning_guards.py` — repo/package-instance/target planning eligibility and guard diagnostics
+- `planning_guards.py` — repo/package-instance/target/path-rule planning eligibility and guard diagnostics
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `projection.py` — target projection and file/directory action planning
 

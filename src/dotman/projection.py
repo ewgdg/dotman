@@ -4,7 +4,7 @@ import os
 import stat
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 from dotman.capture import BUILTIN_PATCH_CAPTURE
@@ -19,7 +19,17 @@ from dotman.manifest import (
     sync_policy_allows_operation,
     sync_policy_deletes_on_push,
 )
-from dotman.models import DirectoryPlanItem, HookCommandSpec, PackageSpec, ResolvedPackageSelection, TargetPathRule, TargetPlan, TargetSpec
+from dotman.models import (
+    DirectoryPlanItem,
+    GuardSkip,
+    HookCommandSpec,
+    PackageSpec,
+    ResolvedPackageSelection,
+    TargetPathRule,
+    TargetPlan,
+    TargetSpec,
+    target_path_rule_matches,
+)
 from dotman.repository import Repository
 from dotman.templates import render_template_file, render_template_string
 
@@ -283,6 +293,7 @@ def plan_targets(
     declaration_package_ids: set[str],
     target_names: set[str] | None = None,
     metadata_targets: list[TargetMetadata] | None = None,
+    guard_skips: list[GuardSkip] | None = None,
 ) -> list[TargetPlan]:
     if metadata_targets is None:
         metadata_targets = build_target_metadata(
@@ -351,7 +362,16 @@ def plan_targets(
                     live_path=live_path,
                     push_ignore=metadata.push_ignore,
                     skip_markers=metadata.skip_markers,
+                    force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if operation in metadata.gitignore_control_ops else (),
                     follow_dir_symlinks=engine.config.dir_symlink_mode == "follow",
+                    path_rules=metadata.path_rules,
+                    context=context,
+                    target_env=metadata.command_env,
+                    repo_name=repo.config.name,
+                    package_id=package.id,
+                    bound_profile=selection.bound_profile,
+                    target_name=target.name,
+                    guard_skips=guard_skips,
                 )
                 plans.append(
                     TargetPlan(
@@ -488,7 +508,9 @@ def plan_targets(
                 inferred_os=inferred_os,
                 pull_view_repo=metadata.pull_view_repo,
                 pull_view_live=metadata.pull_view_live,
+                target_env=metadata.command_env,
                 path_rules=metadata.path_rules,
+                guard_skips=guard_skips,
             )
             plans.append(
                 TargetPlan(
@@ -756,6 +778,7 @@ def render_target_path_rules(
                 else None,
                 pull_view_repo=rule.pull_view_repo,
                 pull_view_live=rule.pull_view_live,
+                hooks=rule.hooks,
             )
         )
     return tuple(rendered_rules)
@@ -850,6 +873,44 @@ def project_repo_file(
         ) from exc
 
 
+def filter_directory_candidates_by_path_rule_guards(
+    *,
+    desired_files: dict[str, Path],
+    live_files: dict[str, Path],
+    path_rules: tuple[TargetPathRule, ...],
+    operation: str,
+    context: dict[str, Any],
+    target_env: dict[str, str],
+    repo_name: str,
+    package_id: str,
+    bound_profile: str | None,
+    target_name: str,
+    guard_skips: list[GuardSkip] | None,
+) -> tuple[dict[str, Path], dict[str, Path]]:
+    from dotman.planning_guards import evaluate_directory_path_rule_guards
+
+    candidate_paths = set(desired_files) | set(live_files)
+    if not candidate_paths or not path_rules:
+        return desired_files, live_files
+    remaining_paths, path_rule_skips = evaluate_directory_path_rule_guards(
+        path_rules=path_rules,
+        candidate_paths=candidate_paths,
+        operation=operation,
+        context=context,
+        target_env=target_env,
+        repo_name=repo_name,
+        package_id=package_id,
+        bound_profile=bound_profile,
+        target_name=target_name,
+    )
+    if guard_skips is not None:
+        guard_skips.extend(path_rule_skips)
+    return (
+        {path: source for path, source in desired_files.items() if path in remaining_paths},
+        {path: source for path, source in live_files.items() if path in remaining_paths},
+    )
+
+
 def plan_directory_action(
     engine: Any,
     *,
@@ -869,8 +930,10 @@ def plan_directory_action(
     inferred_os: str,
     pull_view_repo: str,
     pull_view_live: str,
+    target_env: dict[str, str],
     path_rules: tuple[TargetPathRule, ...] = (),
     force_ignore_patterns: tuple[str, ...] = (),
+    guard_skips: list[GuardSkip] | None = None,
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
     # Ignore lists are operation-scoped: an ignored child should disappear from
     # both repo and live scans so planning does not create, update, or delete it.
@@ -894,6 +957,19 @@ def plan_directory_action(
         )
         if live_exists
         else {}
+    )
+    desired_files, live_files = filter_directory_candidates_by_path_rule_guards(
+        desired_files=desired_files,
+        live_files=live_files,
+        path_rules=path_rules,
+        operation=operation,
+        context=context,
+        target_env=target_env,
+        repo_name=repo.config.name,
+        package_id=package.id,
+        bound_profile=selection.bound_profile,
+        target_name=target.name,
+        guard_skips=guard_skips,
     )
     desired_rel_paths = set(desired_files)
     live_rel_paths = set(live_files)
@@ -1250,9 +1326,8 @@ def directory_child_policy(
     capture_command = default_capture
     pull_view_repo = None
     pull_view_live = None
-    path = PurePosixPath(relative_path)
     for rule in path_rules:
-        if not path.match(rule.pattern):
+        if not target_path_rule_matches(relative_path, rule.pattern):
             continue
         if rule.chmod is not None:
             desired_chmod = rule.chmod
@@ -1291,6 +1366,15 @@ def plan_live_delete_directory_action(
     live_path: Path,
     push_ignore: tuple[str, ...],
     skip_markers: tuple[str, ...],
+    path_rules: tuple[TargetPathRule, ...],
+    context: dict[str, Any],
+    target_env: dict[str, str],
+    repo_name: str,
+    package_id: str,
+    bound_profile: str | None,
+    target_name: str,
+    guard_skips: list[GuardSkip] | None,
+    force_ignore_patterns: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
     live_files = (
@@ -1299,9 +1383,23 @@ def plan_live_delete_directory_action(
             push_ignore,
             skip_markers=skip_markers,
             follow_dir_symlinks=follow_dir_symlinks,
+            force_ignore_patterns=force_ignore_patterns,
         )
         if live_path.exists()
         else {}
+    )
+    _, live_files = filter_directory_candidates_by_path_rule_guards(
+        desired_files={},
+        live_files=live_files,
+        path_rules=path_rules,
+        operation="push",
+        context=context,
+        target_env=target_env,
+        repo_name=repo_name,
+        package_id=package_id,
+        bound_profile=bound_profile,
+        target_name=target_name,
+        guard_skips=guard_skips,
     )
     directory_items = tuple(
         DirectoryPlanItem(

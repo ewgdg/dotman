@@ -139,14 +139,17 @@ chmod = "600"
 - For file targets, `chmod` is the source of truth for the installed file mode when present.
 - For directory targets, `chmod` applies to the live directory root only; child files mirror Git semantics and carry only the executable bit, not full permission bits such as `600` vs `644`.
 - Directory targets may define target-level `render` and `capture`; for directory targets these apply as defaults for every child file.
-- Directory targets may define `[[targets.<name>.path_rules]]` for path-scoped live child policy. Path rules support `pattern`, `preset`, `chmod`, `render`, `capture`, `pull_view_repo`, and `pull_view_live`.
+- Directory targets may define `[[targets.<name>.path_rules]]` for path-scoped child policy. Path rules support `pattern`, `preset`, `chmod`, `render`, `capture`, `pull_view_repo`, `pull_view_live`, and a guard-only `hooks` namespace.
 - Path-rule `pattern` values are relative glob-style patterns under the directory target root. They must not be absolute or contain `..` segments.
 - Path-rule `preset` reuses built-in target presets as defaults for matching child files. Useful example: `preset = "jinja-patch"` applies Jinja render, patch capture, and the required patch-review views for that path rule.
 - Path-rule `render`, `capture`, and pull-view keys override the directory target defaults for matching child files. Rule fields override independently, so a rule with only `capture` keeps the inherited `render`.
 - Child pull views are resolved per child: if `pull_view_live` is omitted, a child with effective `capture` defaults its live view to `capture`; otherwise it defaults to `raw`.
 - `capture = "patch"` is allowed for directory child files when the effective child settings satisfy the same file-like requirements: effective `render`, `pull_view_repo = "render"`, and `pull_view_live = "raw"`.
 - Path-rule `chmod` values apply during `push` only. `pull` still stores only bytes plus the Git executable bit because Git cannot represent full child file modes such as `600`.
-- If multiple path rules match the same child file, the later rule wins.
+- If multiple path rules match the same child file, later non-empty scalar policy values win. Matching guards accumulate in declaration order and must all pass.
+- A path-rule guard becomes active when its pattern matches any managed repo-side or live-side candidate path after operation ignores, `.gitignore` control-file exclusions, and skip markers. Shared noop candidates still activate guards.
+- Each active path-rule guard runs once per operation plan, not once per child. Exit `100` removes its remaining matching child work; later guards run only when matching Effective Work remains.
+- Path-rule guard environments retain target-root `DOTMAN_REPO_PATH` / `DOTMAN_LIVE_PATH` values and add `DOTMAN_PATH_RULE_PATTERN`. They do not expose one child path.
 
 Example:
 
@@ -158,6 +161,9 @@ path = "~/.config/app"
 [[targets.config.path_rules]]
 pattern = "secrets/*.conf"
 chmod = "600"
+
+[targets.config.path_rules.hooks]
+guard_push = "test -r /run/credentials/app || exit 100"
 
 [[targets.config.path_rules]]
 pattern = "*/data.json"
@@ -297,6 +303,7 @@ exit 0
 ## Hooks And Commands
 
 - Supported hook names are `guard_push`, `pre_push`, `post_push`, `guard_pull`, `pre_pull`, and `post_pull`.
+- Directory path-rule `[...path_rules.hooks]` tables support only `guard_push` and `guard_pull`; path-rule pre/post hooks are invalid.
 - `check` is removed; there is no backward-compatibility alias.
 - Hook entries may be a single item, an ordered list, or a table with `commands` and optional metadata.
 - Repo, package, and target pre/post hook tables support `run_noop = true | false`.
@@ -307,7 +314,7 @@ exit 0
 - Empty hook command lists are allowed and mean the hook is effectively disabled at that package layer.
 - Hook command lists may mix plain strings and command objects in either shorthand or table form.
 - Pre/post command objects use `{ run = "...", io = "pipe" | "tty", elevation = "none" | "root" | "lease" | "broker" | "intercept", run_noop = true | false }`.
-- Repo, package, and target guard command objects use `{ run = "...", io = "pipe", elevation = "none" | "root" | "lease" | "broker" | "intercept" }`.
+- Repo, package, target, and path-rule guard command objects use `{ run = "...", io = "pipe", elevation = "none" | "root" | "lease" | "broker" | "intercept" }`.
 - `run` is required for command objects and must not be empty after trimming.
 - `io` defaults to `pipe`.
 - `elevation` defaults to the repo-level `default_command_elevation`, or `none` when the repo default is omitted.

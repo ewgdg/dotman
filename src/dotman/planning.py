@@ -331,6 +331,7 @@ def build_package_plan(
     package_context: PackagePlanningContext | None = None,
     target_metadata: list[TargetMetadata] | None = None,
     run_noop: bool = False,
+    guard_skips: list[GuardSkip] | None = None,
 ) -> PackagePlan:
     package_context = package_context or build_package_planning_context(engine, repo, selection)
     target_plans = engine._plan_targets(
@@ -342,6 +343,7 @@ def build_package_plan(
         inferred_os=package_context.inferred_os,
         declaration_package_ids={selection.identity.package_id},
         metadata_targets=target_metadata,
+        guard_skips=guard_skips,
     )
     hook_plans = engine._plan_hooks(
         repo,
@@ -448,36 +450,41 @@ def build_package_plans(
         considered_repo_names = tuple(
             dict.fromkeys(planning_input.selection.identity.repo for planning_input in selected_inputs)
         )
-        admitted_inputs, guard_skips = evaluate_hierarchical_guards(
-            selected_inputs,
-            operation=operation,
-            run_noop=run_noop,
-            sink=sink,
-        )
-        host_inputs = _build_host_package_planning_inputs(
-            engine,
-            admitted_inputs,
-            operation=operation,
-        )
+        from dotman.elevation import elevation_broker_session
 
-        plans: list[PackagePlan] = []
-        for planning_input in host_inputs:
-            plans.append(
-                build_package_plan(
-                    engine,
-                    planning_input.repo,
-                    planning_input.selection,
-                    operation=operation,
-                    package_context=planning_input.package_context,
-                    target_metadata=planning_input.target_metadata,
-                    run_noop=run_noop,
-                )
+        with elevation_broker_session():
+            admitted_inputs, hierarchical_guard_skips = evaluate_hierarchical_guards(
+                selected_inputs,
+                operation=operation,
+                run_noop=run_noop,
+                sink=sink,
             )
-            if sink is not None:
-                sink.update(1)
+            all_guard_skips = list(hierarchical_guard_skips)
+            host_inputs = _build_host_package_planning_inputs(
+                engine,
+                admitted_inputs,
+                operation=operation,
+            )
+
+            plans: list[PackagePlan] = []
+            for planning_input in host_inputs:
+                plans.append(
+                    build_package_plan(
+                        engine,
+                        planning_input.repo,
+                        planning_input.selection,
+                        operation=operation,
+                        package_context=planning_input.package_context,
+                        target_metadata=planning_input.target_metadata,
+                        run_noop=run_noop,
+                        guard_skips=all_guard_skips,
+                    )
+                )
+                if sink is not None:
+                    sink.update(1)
         return PackagePlanningResult(
             package_plans=tuple(plans),
-            guard_skips=guard_skips,
+            guard_skips=tuple(all_guard_skips),
             considered_repo_names=considered_repo_names,
         )
     finally:

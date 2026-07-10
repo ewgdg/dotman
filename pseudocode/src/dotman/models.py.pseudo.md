@@ -14,6 +14,7 @@ reference text helpers:
 
 target models:
   RepoIgnoreDefaults carries repo-wide push/pull ignore patterns and shared directory skip marker basenames
+  TargetPathRule carries scalar child policy plus optional guard_push and guard_pull specs
   TargetSpec may contain a probe command instead of file source/path fields
   active probe TargetPlan uses target_kind = "probe" and action = "probe"
   inactive probe TargetPlan uses target_kind = "probe" and action = "noop"
@@ -45,10 +46,11 @@ OperationPlan compatibility:
   to_dict serializes repo hooks, package plans, and structured guard skips
 
 GuardSkip:
-  records scope kind, repo/package-instance/target identity, and optional reason
+  records scope kind, repo/package-instance/target identity, optional path-rule pattern, and optional reason
   repo scope renders as repo
   package scope renders as repo:package or repo:package<instance>
   target scope renders as repo:package.target or repo:package<instance>.target
+  path-rule scope renders the same target identity and keeps its pattern as separate annotation metadata
   serializes no command text
 ```
 

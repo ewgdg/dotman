@@ -374,11 +374,43 @@ def read_target_schema_alias(
     return preset_payload.get(primary_key)
 
 
+def normalize_path_rule_hooks(
+    value: Any,
+    *,
+    manifest_path: Path,
+    target_name: str,
+    rule_index: int,
+    default_command_elevation: DefaultCommandElevationMode,
+) -> dict[str, HookSpec] | None:
+    if value is None:
+        return None
+    owner_label = f"target '{target_name}' path_rules[{rule_index}]"
+    if not isinstance(value, dict):
+        raise ValueError(f"package manifest {manifest_path} {owner_label}.hooks must be a table")
+    unknown_hook_names = sorted(key for key in value if key not in {"guard_push", "guard_pull"})
+    if unknown_hook_names:
+        unknown_text = ", ".join(unknown_hook_names)
+        raise ValueError(
+            f"package manifest {manifest_path} {owner_label} uses unsupported hook names: {unknown_text}"
+        )
+    return {
+        hook_name: build_hook_spec(
+            hook_name=hook_name,
+            hook_payload=hook_value,
+            manifest_path=manifest_path,
+            owner_label=owner_label,
+            default_command_elevation=default_command_elevation,
+        )
+        for hook_name, hook_value in value.items()
+    }
+
+
 def normalize_target_path_rules(
     value: Any,
     *,
     manifest_path: Path,
     target_name: str,
+    default_command_elevation: DefaultCommandElevationMode = "none",
 ) -> tuple[TargetPathRule, ...]:
     if value is None:
         return ()
@@ -460,6 +492,13 @@ def normalize_target_path_rules(
             raise ValueError(
                 f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pull_view_live must be a string"
             )
+        hooks = normalize_path_rule_hooks(
+            rule_payload.get("hooks"),
+            manifest_path=manifest_path,
+            target_name=target_name,
+            rule_index=index,
+            default_command_elevation=default_command_elevation,
+        )
         rules.append(
             TargetPathRule(
                 pattern=normalized_pattern,
@@ -468,6 +507,7 @@ def normalize_target_path_rules(
                 capture=capture,
                 pull_view_repo=pull_view_repo,
                 pull_view_live=pull_view_live,
+                hooks=hooks,
             )
         )
     return tuple(rules)
@@ -639,6 +679,7 @@ def build_target_spec(
         get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path_rules"),
         manifest_path=manifest_path,
         target_name=target_name,
+        default_command_elevation=default_command_elevation,
     )
     if probe is not None:
         forbidden_probe_fields = {

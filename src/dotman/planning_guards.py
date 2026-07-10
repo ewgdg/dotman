@@ -4,7 +4,14 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from dotman.models import GuardSkip, HookSpec, PackageSpec, resolved_package_identity_key
+from dotman.models import (
+    GuardSkip,
+    HookSpec,
+    PackageSpec,
+    TargetPathRule,
+    resolved_package_identity_key,
+    target_path_rule_matches,
+)
 from dotman.projection import TargetMetadata, build_package_hook_env, build_repo_hook_env
 from dotman.templates import render_template_string
 
@@ -25,6 +32,7 @@ class GuardPlanningError(ValueError):
         package_id: str | None,
         bound_profile: str | None,
         target_name: str | None,
+        path_rule_pattern: str | None,
         hook_name: str,
         exit_code: int,
         detail: str | None,
@@ -34,6 +42,7 @@ class GuardPlanningError(ValueError):
         self.package_id = package_id
         self.bound_profile = bound_profile
         self.target_name = target_name
+        self.path_rule_pattern = path_rule_pattern
         self.hook_name = hook_name
         self.exit_code = exit_code
         message = f"{hook_name} failed with exit {exit_code}"
@@ -90,6 +99,7 @@ def _run_planning_guard(
     package_id: str | None = None,
     bound_profile: str | None = None,
     target_name: str | None = None,
+    path_rule_pattern: str | None = None,
 ) -> GuardSkip | None:
     from dotman.execution import INTERRUPTED_EXIT_CODE, run_command
 
@@ -121,6 +131,7 @@ def _run_planning_guard(
                 package_id=package_id,
                 bound_profile=bound_profile,
                 target_name=target_name,
+                path_rule_pattern=path_rule_pattern,
                 reason=detail,
             )
         raise GuardPlanningError(
@@ -129,6 +140,7 @@ def _run_planning_guard(
             package_id=package_id,
             bound_profile=bound_profile,
             target_name=target_name,
+            path_rule_pattern=path_rule_pattern,
             hook_name=guard_name,
             exit_code=exit_code,
             detail=detail,
@@ -310,6 +322,53 @@ def _evaluate_target_guards(
     return admitted_inputs, tuple(guard_skips)
 
 
+def evaluate_directory_path_rule_guards(
+    *,
+    path_rules: tuple[TargetPathRule, ...],
+    candidate_paths: set[str],
+    operation: str,
+    context: dict[str, Any],
+    target_env: dict[str, str],
+    repo_name: str,
+    package_id: str,
+    bound_profile: str | None,
+    target_name: str,
+) -> tuple[set[str], tuple[GuardSkip, ...]]:
+    remaining_paths = set(candidate_paths)
+    guard_skips: list[GuardSkip] = []
+    guard_name = f"guard_{operation}"
+    for rule in path_rules:
+        guard_spec = (rule.hooks or {}).get(guard_name)
+        if guard_spec is None or not guard_spec.commands:
+            continue
+        matching_paths = {
+            relative_path
+            for relative_path in remaining_paths
+            if target_path_rule_matches(relative_path, rule.pattern)
+        }
+        if not matching_paths:
+            continue
+        rule_env = dict(target_env)
+        rule_env["DOTMAN_PATH_RULE_PATTERN"] = rule.pattern
+        skip = _run_planning_guard(
+            guard_spec=guard_spec,
+            guard_name=guard_name,
+            context=context,
+            env=rule_env,
+            scope_kind="path_rule",
+            repo_name=repo_name,
+            package_id=package_id,
+            bound_profile=bound_profile,
+            target_name=target_name,
+            path_rule_pattern=rule.pattern,
+        )
+        if skip is None:
+            continue
+        guard_skips.append(skip)
+        remaining_paths.difference_update(matching_paths)
+    return remaining_paths, tuple(guard_skips)
+
+
 def evaluate_hierarchical_guards(
     planning_inputs: list["PackagePlanningInput"],
     *,
@@ -317,20 +376,17 @@ def evaluate_hierarchical_guards(
     run_noop: bool,
     sink: "ProgressSink | None" = None,
 ) -> tuple[list["PackagePlanningInput"], tuple[GuardSkip, ...]]:
-    from dotman.elevation import elevation_broker_session
-
-    with elevation_broker_session():
-        repo_inputs, repo_skips = _evaluate_repo_guards(
-            planning_inputs,
-            operation=operation,
-            run_noop=run_noop,
-            sink=sink,
-        )
-        package_inputs, package_skips = _evaluate_package_guards(
-            repo_inputs,
-            operation=operation,
-            run_noop=run_noop,
-            sink=sink,
-        )
-        target_inputs, target_skips = _evaluate_target_guards(package_inputs, operation=operation)
+    repo_inputs, repo_skips = _evaluate_repo_guards(
+        planning_inputs,
+        operation=operation,
+        run_noop=run_noop,
+        sink=sink,
+    )
+    package_inputs, package_skips = _evaluate_package_guards(
+        repo_inputs,
+        operation=operation,
+        run_noop=run_noop,
+        sink=sink,
+    )
+    target_inputs, target_skips = _evaluate_target_guards(package_inputs, operation=operation)
     return target_inputs, (*repo_skips, *package_skips, *target_skips)
