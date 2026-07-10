@@ -9,13 +9,18 @@ Render stable human/JSON output and run execution when requested.
 ```pseudo
 emit_payload(plans, format):
   if format is json:
-    print operation plan dictionary
+    print package entries, repo hooks, and structured guard skips
     return
 
   print operation header
   print repo hook sections with hook labels
   print package sections with package identity and target actions
   render probe target actions without fake repo/live path lines
+
+emit_planning_guard_skips(plans):
+  for each package guard skip:
+    print `skipped (guard)` with package-instance label and optional reason
+  never print guard command text
 
 run_execution(plans, args):
   mode = effective_execution_mode(args)
@@ -31,6 +36,7 @@ run_execution(plans, args):
     mark hazards approved
 
   execute plans using execution module
+  attach planning guard skips to JSON execution result
   emit execution result
   return result exit code
 

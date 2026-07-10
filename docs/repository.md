@@ -299,13 +299,15 @@ exit 0
 - Supported hook names are `guard_push`, `pre_push`, `post_push`, `guard_pull`, `pre_pull`, and `post_pull`.
 - `check` is removed; there is no backward-compatibility alias.
 - Hook entries may be a single item, an ordered list, or a table with `commands` and optional metadata.
-- Repo, package, and target hook table form all support `run_noop = true | false`.
-- Hook command objects also support `run_noop = true | false` to make only that command noop-eligible.
+- Repo, package, and target pre/post hook tables support `run_noop = true | false`.
+- Pre/post hook command objects support `run_noop = true | false` to make only that command noop-eligible.
+- Package guard hooks reject hook-level and command-level `run_noop`. Repo and target guards keep their existing execution-time schema until their planning slices land.
 - `run_noop` defaults to `false`.
 - Repo, package, and target hook shorthand still work and normalize to `run_noop = false`.
 - Empty hook command lists are allowed and mean the hook is effectively disabled at that package layer.
 - Hook command lists may mix plain strings and command objects in either shorthand or table form.
-- Command objects use `{ run = "...", io = "pipe" | "tty", elevation = "none" | "root" | "lease" | "broker" | "intercept", run_noop = true | false }`.
+- Pre/post command objects use `{ run = "...", io = "pipe" | "tty", elevation = "none" | "root" | "lease" | "broker" | "intercept", run_noop = true | false }`.
+- Package guard command objects use `{ run = "...", io = "pipe", elevation = "none" | "root" | "lease" | "broker" | "intercept" }`. Repo and target guard command objects retain existing execution-time I/O metadata until their planning slices land.
 - `run` is required for command objects and must not be empty after trimming.
 - `io` defaults to `pipe`.
 - `elevation` defaults to the repo-level `default_command_elevation`, or `none` when the repo default is omitted.
@@ -348,7 +350,6 @@ pre_push = "echo repo pre"
 
 [hooks.guard_pull]
 commands = ["echo repo guard pull"]
-run_noop = true
 ```
 
 Target hooks live under `[targets.<name>.hooks]` inside a package manifest:
@@ -382,16 +383,18 @@ commands = [
 ]
 ```
 
-- Hook lists run in declaration order and stop on first non-zero exit.
-- `guard_*` runs before package target work for that operation.
-- `guard_*` treats exit code `0` as pass, exit code `100` as a soft skip for that package, and any other non-zero exit as a hard failure.
-- A guard soft skip skips the rest of that package's guard list, its `pre_*`, its target steps, and its `post_*`, then execution continues with the next package.
+- Hook and guard command lists run in declaration order and stop on first non-zero exit.
+- Package `guard_*` is a non-interactive planning eligibility rule. It runs once per resolved package instance with Potential Work after static ownership resolution and before host-state projection.
+- Package `guard_*` treats exit code `0` as pass, exit code `100` as a planning skip for that package, and any other non-zero exit as a planning failure.
+- A package guard skip omits that package's work from review, selection, and execution. Later packages continue planning normally.
+- Package guards use captured pipe I/O, never receive `DOTMAN_ASSUME_YES`, and may use configured elevation.
+- Package guards are not emitted as execution steps or rerun after review or selection.
 - `pre_*` runs immediately before the package's selected target steps.
 - `pre_*` stays hard-fail only: any non-zero exit, including `100`, fails the run.
 - `post_*` runs only when earlier steps for that package succeed.
 - `post_*` stays hard-fail only: any non-zero exit, including `100`, fails the run if it executes.
-- Repo hooks execute in repo scope order: repo `guard_*`, repo `pre_*`, retained package/target work, then repo `post_*`.
-- Target hooks execute around their own target only: target `guard_*`, target `pre_*`, target action steps, then target `post_*`.
+- Repo hooks currently execute in repo scope order: repo `guard_*`, repo `pre_*`, retained package/target work, then repo `post_*`.
+- Target hooks currently execute around their own target only: target `guard_*`, target `pre_*`, target action steps, then target `post_*`.
 - Repo `guard_*` exit `100` soft-skips that repo subtree and continues with the next repo.
 - Target `guard_*` exit `100` soft-skips only that target subtree and continues with the next target.
 - Package hooks normally run when the package still owns at least one non-noop effective target after tracked-target winner resolution and any interactive target exclusion.
@@ -409,7 +412,7 @@ commands = [
 - Package hook env includes repo hook vars plus `DOTMAN_PACKAGE_ID`, `DOTMAN_PACKAGE_ROOT`, `DOTMAN_PROFILE`, `DOTMAN_OS`, and flattened package vars as `DOTMAN_VAR_*`.
 - `DOTMAN_PACKAGE_ROOT` is the package directory containing that package's `package.toml`.
 - Target hook env includes package hook vars plus `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, `DOTMAN_TARGET_LIVE_PATH`, `DOTMAN_REPO_PATH`, `DOTMAN_SOURCE`, and `DOTMAN_LIVE_PATH`.
-- `DOTMAN_ASSUME_YES` is set to `1` when CLI `--yes` is active and `0` otherwise.
+- Execution-time pre/post and remaining repo/target hooks receive `DOTMAN_ASSUME_YES=1` when CLI `--yes` is active and `0` otherwise. Planning-time package guards do not receive it.
 - Hooks never auto-escalate through target path permissions, even when adjacent target work touches protected paths. Elevation only comes from explicit command metadata or repo-level `default_command_elevation`.
 - If a hook really must run as root, use explicit command metadata such as `{ run = "systemctl restart sddm", elevation = "root" }`.
 - If a hook only sometimes needs elevation, prefer `elevation = "broker"` and call `dotman elevation request "reason"` after the script proves privileged work is required.

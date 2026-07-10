@@ -32,14 +32,17 @@ build_package_planning_context(engine, repo, selection):
   include operation direction and config needed by projection
   return context
 
-build_package_plan(engine, repo, selection, selected target metadata):
+build_package_plan(engine, repo, selection, selected target metadata, run_noop):
   reuse package planning context from static candidate collection
   project only selected target metadata
   hook_plans = plan package hooks
-  hook_plans = filter hooks to executable selected targets
+  remove package operation guards from executable hook plans
+  filter pre/post hooks to executable selected targets
+  if run_noop:
+    retain pre/post hooks for standalone noop work
   return PackagePlan(selection, hooks, targets)
 
-build_package_plans(engine, selections, optional progress sink):
+build_package_plans(engine, selections, run_noop, optional progress sink):
   if progress sink exists:
     start it with the selection count
 
@@ -54,28 +57,41 @@ build_package_plans(engine, selections, optional progress sink):
   filter static metadata to ownership winners and probes
   validate winner collisions and reserved paths from static metadata
 
-  for each selection after collision validation:
+  for each resolved package instance with Potential Work:
+    render its operation guard commands from static package context
+    run commands once in declaration order with closed stdin and captured output
+    if a command exits 0:
+      continue the guard list
+    if a command exits 100:
+      record one package guard skip with optional first stderr/stdout line
+      omit that package from later host-state planning
+    if a command is interrupted:
+      interrupt planning
+    otherwise:
+      reject planning with status and captured detail
+
+  for each admitted selection after collision validation and package guards:
     build host-state target metadata only for ownership winners and probes
 
   for each selection in original order:
     build package plan from winner and probe metadata
     after the package plan is built, advance progress
   always close progress sink before returning or raising
-  return package plans
+  return package plans plus package guard-skip diagnostics and considered repos
 
-build_tracked_plans(engine, optional progress sink):
+build_tracked_plans(engine, run_noop, optional progress sink):
   selections = resolve tracked package selections
-  build package plans through static ownership pipeline
-  wrap package plans in operation plan
+  build package plans through static ownership and package-guard pipeline
+  wrap package plans and guard-skip diagnostics in operation plan
   return operation plan
 
-build_operation_plan(package_plans):
+build_operation_plan(package_plans, guard skips, considered repos, run_noop):
   validate direct package conflicts
   validate reserved path conflicts
   collect repo hook plans
   finalize repo hooks against package plans
   treat an active probe target as lower-scope work for repo hook eligibility
-  return OperationPlan(repo_hooks, package_plans)
+  return OperationPlan(repo_hooks, package_plans, guard skips)
 
 preview_package_selections_implicit_overrides(selections):
   collect tracked target candidates

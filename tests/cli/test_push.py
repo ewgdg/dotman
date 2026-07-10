@@ -429,10 +429,10 @@ def test_push_cli_human_dry_run_output_includes_context_and_hooks(
     assert "preview only; no files or hooks will be changed" in output
     assert "packages: 1" in output
     assert "target actions: 1" in output
-    assert "hook commands: 4" in output
+    assert "hook commands: 3" in output
     assert ":: example:git@basic" in output
     assert "hooks:" in output
-    assert "[guard_push]" in output
+    assert "[guard_push]" not in output
     assert "[pre_push]" in output
     assert "[post_push]" in output
     assert "targets:" in output

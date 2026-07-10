@@ -30,10 +30,12 @@ This document captures the current command and selector direction for `dotman`.
 - Dotman also exports `DOTMAN_ASSUME_YES=1` to hooks during execution when `--yes` is active, otherwise `DOTMAN_ASSUME_YES=0`.
 - `--run-noop` is only meaningful for `push` and `pull`.
 - `--run-noop` now feeds normal planning and selection instead of reviving hooks late in execution.
-- For the active operation, `--run-noop` temporarily treats all package hooks as noop-eligible, even if they do not declare `run_noop = true` in the manifest.
+- For the active operation, `--run-noop` temporarily treats pre/post hooks as noop-eligible, even if they do not declare `run_noop = true` in the manifest.
 - `--run-noop` still does not fabricate target writes or snapshots.
-- A `guard_*` hook that exits `100` soft-skips that package scope and lets later packages continue.
-- Human execution output should show a guard skip as `skipped (guard)`.
+- A package `guard_*` that exits `100` omits that package during planning and lets later packages continue.
+- Human planning output shows the omission as `skipped (guard)` before review or selection.
+- JSON planning output exposes structured `guard_skips` without guard command text.
+- If every package is guard-skipped and no higher-scope pre/post work remains, the command succeeds without review, selection, execution, or snapshots.
 
 ## Selectors
 
@@ -199,7 +201,7 @@ This document captures the current command and selector direction for `dotman`.
 - Synthetic hook-only selection rows should stay owner-scoped, not per-hook command rows. Supported rows are repo (`[hooks] repo`), package (`[hooks] repo:package`), and target (`[hooks] repo:package.target`).
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `pull` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
-- A `guard_pull` hook that exits `100` soft-skips that package scope and lets later packages continue.
+- A package `guard_pull` that exits `100` omits that package before pull review and selection, while later packages continue planning.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.

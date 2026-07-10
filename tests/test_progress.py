@@ -105,6 +105,11 @@ def test_build_package_plans_reports_progress_after_package_build(monkeypatch: p
     monkeypatch.setattr(planning, "_validate_preprojection_conflicts", lambda inputs, *, operation: None)
     monkeypatch.setattr(
         planning,
+        "_evaluate_package_guards",
+        lambda inputs, *, operation, run_noop, sink: (inputs, ()),
+    )
+    monkeypatch.setattr(
+        planning,
         "_build_host_package_planning_inputs",
         lambda _engine, inputs, *, operation: inputs,
     )
@@ -142,7 +147,7 @@ def test_build_package_plans_reports_progress_after_package_build(monkeypatch: p
         sink=sink,
     )
 
-    assert len(plans) == 1
+    assert len(plans.package_plans) == 1
     assert events == ["start:1", "built", "update", "close"]
     assert sink.events == [("start", 1), ("update", 1), ("close", None)]
 
@@ -168,6 +173,11 @@ def test_build_package_plans_closes_progress_on_failure(monkeypatch: pytest.Monk
         lambda inputs, *, winner_indexes: inputs,
     )
     monkeypatch.setattr(planning, "_validate_preprojection_conflicts", lambda inputs, *, operation: None)
+    monkeypatch.setattr(
+        planning,
+        "_evaluate_package_guards",
+        lambda inputs, *, operation, run_noop, sink: (inputs, ()),
+    )
     monkeypatch.setattr(
         planning,
         "_build_host_package_planning_inputs",

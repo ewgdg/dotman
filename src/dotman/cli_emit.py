@@ -305,6 +305,30 @@ def collect_payload_repo_hook_sections(plans: Sequence[Any]) -> list[PayloadRepo
     ]
 
 
+def emit_planning_guard_skips(
+    *,
+    plans: Sequence[Any],
+    json_output: bool,
+    use_color: bool,
+) -> None:
+    if json_output or not isinstance(plans, OperationPlan):
+        return
+    for skip in plans.guard_skips:
+        status = cli_style.render_execution_status("skipped", use_color=use_color)
+        annotation = cli_style.render_annotation_parentheses("guard", use_color=use_color)
+        if skip.scope_kind == "package" and skip.package_id is not None:
+            scope_label = cli_style.render_package_label(
+                repo_name=skip.repo_name,
+                package_id=skip.package_id,
+                bound_profile=skip.bound_profile,
+                use_color=use_color,
+            )
+        else:
+            scope_label = skip.scope_label
+        reason = cli_style.render_annotation_parentheses(skip.reason or "", use_color=use_color)
+        print(f"{status}{annotation} {scope_label}{reason}")
+
+
 def emit_payload(
     *,
     operation: str,
@@ -343,6 +367,8 @@ def emit_payload(
         "operation": operation,
         "package_entries": [plan.to_dict() for plan in visible_plans],
     }
+    if isinstance(plans, OperationPlan) and plans.guard_skips:
+        payload["guard_skips"] = [skip.to_dict() for skip in plans.guard_skips]
     if isinstance(visible_operation_plans, OperationPlan) and visible_operation_plans.repo_hooks:
         payload["repo_hooks"] = {
             repo_name: {hook_name: [item.to_dict() for item in items] for hook_name, items in hooks.items()}
@@ -614,6 +640,11 @@ def execute_plans(
         prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
         snapshot = None
 
+    def attach_planning_diagnostics(execution_result: Any) -> Any:
+        if not isinstance(plans, OperationPlan):
+            return execution_result
+        return replace(execution_result, guard_skips=plans.guard_skips)
+
     with sudo_session():
         _preflight_execution_session_sudo(session)
         if json_output:
@@ -625,7 +656,7 @@ def execute_plans(
                     prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
                 raise
             finalize_snapshot(execution_result)
-            return execution_result
+            return attach_planning_diagnostics(execution_result)
         _print_execution_header(session=session, use_color=use_color)
         if not session.repos:
             try:
@@ -636,7 +667,7 @@ def execute_plans(
                     prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
                 raise
             finalize_snapshot(execution_result)
-            return execution_result
+            return attach_planning_diagnostics(execution_result)
         try:
             execution_result = execute_session(
                 session,
@@ -662,7 +693,7 @@ def execute_plans(
                 prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
             raise
         finalize_snapshot(execution_result)
-        return execution_result
+        return attach_planning_diagnostics(execution_result)
 
 
 def run_execution(

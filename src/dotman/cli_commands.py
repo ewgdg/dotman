@@ -81,6 +81,7 @@ class CliCommandHandlers:
     resolve_untrack_group_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
     emit_untracked_package_entries: Callable[..., int] = field(default=lambda **kwargs: 0)
     emit_repos: Callable[..., int] = field(default=lambda **kwargs: 0)
+    emit_planning_guard_skips: Callable[..., None] = field(default=lambda **kwargs: None)
 
 
 EngineFactory = Callable[[str | None], Any]
@@ -366,6 +367,7 @@ def _handle_edit(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int
 
 
 def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, operation: str, sink: "ProgressSink | None" = None) -> Any:
+    run_noop = getattr(args, "run_noop", False)
     if args.binding:
         _repo, binding = handlers.resolve_tracked_package_entry_text(
             engine,
@@ -376,9 +378,35 @@ def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, ope
         )
         binding_text = f"{binding.repo}:{binding.selector}"
         if operation == "push":
-            return engine.plan_push_query(binding_text, profile=binding.profile)
-        return engine.plan_pull_query(binding_text, profile=binding.profile)
-    return engine.plan_push(sink=sink) if operation == "push" else engine.plan_pull(sink=sink)
+            return engine.plan_push_query(binding_text, profile=binding.profile, run_noop=run_noop)
+        return engine.plan_pull_query(binding_text, profile=binding.profile, run_noop=run_noop)
+    return (
+        engine.plan_push(sink=sink, run_noop=run_noop)
+        if operation == "push"
+        else engine.plan_pull(sink=sink, run_noop=run_noop)
+    )
+
+
+def _finish_all_guard_skipped_operation(
+    *,
+    args: Any,
+    handlers: CliCommandHandlers,
+    plans: Any,
+    operation: str,
+    full_paths: bool,
+) -> int | None:
+    handlers.emit_planning_guard_skips(plans=plans, json_output=args.json_output)
+    if not getattr(plans, "guard_skips", ()) or getattr(plans, "has_effective_work", True):
+        return None
+    if args.json_output or args.dry_run:
+        return handlers.emit_payload(
+            operation=operation,
+            plans=plans,
+            json_output=args.json_output,
+            mode=handlers.effective_execution_mode(dry_run_requested=args.dry_run),
+            full_paths=full_paths,
+        )
+    return 0
 
 
 
@@ -388,6 +416,15 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
     with sudo_session():
         sink = make_planning_sink(json_output=args.json_output)
         plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="push", sink=sink)
+        skipped_result = _finish_all_guard_skipped_operation(
+            args=args,
+            handlers=handlers,
+            plans=plans,
+            operation="push",
+            full_paths=full_paths,
+        )
+        if skipped_result is not None:
+            return skipped_result
         if not handlers.review_plans_for_interactive_diffs(
             plans=plans,
             operation="push",
@@ -442,6 +479,15 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
     with sudo_session():
         sink = make_planning_sink(json_output=args.json_output)
         plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="pull", sink=sink)
+        skipped_result = _finish_all_guard_skipped_operation(
+            args=args,
+            handlers=handlers,
+            plans=plans,
+            operation="pull",
+            full_paths=full_paths,
+        )
+        if skipped_result is not None:
+            return skipped_result
         if not handlers.review_plans_for_interactive_diffs(
             plans=plans,
             operation="pull",

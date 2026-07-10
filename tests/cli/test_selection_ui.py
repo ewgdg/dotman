@@ -659,7 +659,7 @@ def test_filter_plans_for_interactive_selection_run_noop_broadens_hook_only_elig
         run_noop=True,
     )[0]
 
-    assert [hook.hook_name for hook in filtered_plan.hooks["guard_push"]] == ["guard_push"]
+    assert "guard_push" not in filtered_plan.hooks
     assert [hook.hook_name for hook in filtered_plan.hooks["pre_push"]] == ["pre_push"]
     assert [hook.hook_name for hook in filtered_plan.hooks["post_push"]] == ["post_push"]
 

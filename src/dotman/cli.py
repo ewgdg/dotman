@@ -3276,6 +3276,14 @@ def emit_payload(*, operation: str, plans: Sequence, json_output: bool, mode: st
     )
 
 
+def emit_planning_guard_skips(*, plans: Sequence, json_output: bool) -> None:
+    cli_emit.emit_planning_guard_skips(
+        plans=plans,
+        json_output=json_output,
+        use_color=colors_enabled(),
+    )
+
+
 emit_execution_result = cli_emit.emit_execution_result
 
 
@@ -3621,6 +3629,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_interrupt_notice=emit_interrupt_notice,
         interrupted_exit_code=INTERRUPTED_EXIT_CODE,
         emit_payload=emit_payload,
+        emit_planning_guard_skips=emit_planning_guard_skips,
         effective_execution_mode=effective_execution_mode,
         prepare_push_plans_for_execution=prepare_push_plans_for_execution,
         execute_plans=execute_plans,

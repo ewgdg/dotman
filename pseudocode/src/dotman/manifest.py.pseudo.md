@@ -29,6 +29,12 @@ normalize_* helpers(value):
     reject with validation error
   return normalized Python/domain value
 
+build package guard hook specs:
+  accept string, command object, or ordered command list
+  require command io = pipe
+  permit configured elevation
+  reject hook-level or command-level run_noop
+
 build_target_spec(payload):
   resolve target schema aliases
   apply target preset if present

@@ -41,7 +41,12 @@ finalize_hook_plans_for_targets(hooks, target_plans):
 
 OperationPlan compatibility:
   iteration, length, and indexing expose package plans
-  to_dict serializes repo hooks and package plans
+  has_effective_work reports whether targets or retained pre/post hooks remain
+  to_dict serializes repo hooks, package plans, and structured guard skips
+
+GuardSkip:
+  records scope kind, repo/package identity, and optional reason
+  serializes no command text
 ```
 
 ## Review Needed

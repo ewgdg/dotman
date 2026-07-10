@@ -19,6 +19,7 @@ from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os
 from dotman.models import (
     FullSpecSelector,
+    GuardSkip,
     executable_package_ids_for_targets,
     filter_hook_plans_for_targets,
     HookPlan,
@@ -60,6 +61,8 @@ HOOK_NAMES_BY_OPERATION = {
     "push": ("guard_push", "pre_push", "post_push"),
     "pull": ("guard_pull", "pre_pull", "post_pull"),
 }
+# Planning eligibility must not inherit execution-only confirmation state from parent environments.
+PLANNING_GUARD_EXCLUDED_ENV_KEYS = frozenset({"DOTMAN_ASSUME_YES"})
 
 
 class TrackedPackageProfileConflictError(ValueError):
@@ -81,6 +84,27 @@ class TrackedPackageProfileConflictError(ValueError):
         else:
             header = f"conflicting profile contexts for {package_label}:"
         super().__init__("\n".join([header, *(f"  {contender}" for contender in contenders)]))
+
+
+class GuardPlanningError(ValueError):
+    def __init__(
+        self,
+        *,
+        package_repo: str,
+        package_id: str,
+        hook_name: str,
+        exit_code: int,
+        detail: str | None,
+    ) -> None:
+        self.package_repo = package_repo
+        self.package_id = package_id
+        self.hook_name = hook_name
+        self.exit_code = exit_code
+        message = f"{hook_name} failed with exit {exit_code}"
+        if detail:
+            message = f"{message}: {detail}"
+        self.detail = message
+        super().__init__(message)
 
 
 def _package_identity_label(identity: ResolvedPackageIdentity) -> str:
@@ -229,6 +253,13 @@ class PackagePlanningInput:
     target_metadata: list[TargetMetadata]
 
 
+@dataclass(frozen=True)
+class PackagePlanningResult:
+    package_plans: tuple[PackagePlan, ...]
+    guard_skips: tuple[GuardSkip, ...]
+    considered_repo_names: tuple[str, ...]
+
+
 def build_package_planning_context(
     engine: Any,
     repo: Repository,
@@ -287,6 +318,7 @@ def _filter_package_hook_plans(
     *,
     package_id: str,
     target_plans: list[Any],
+    allow_standalone_noop_hooks: bool = False,
 ) -> dict[str, list[HookPlan]]:
     executable_package_ids = executable_package_ids_for_targets(target_plans)
     executable_target_ids = {
@@ -301,12 +333,13 @@ def _filter_package_hook_plans(
             if hook.package_id != package_id:
                 continue
             if hook.scope_kind == "package":
-                if package_id in executable_package_ids or hook.run_noop:
+                allow_standalone_for_hook = allow_standalone_noop_hooks and not hook_name.startswith("guard_")
+                if package_id in executable_package_ids or allow_standalone_for_hook or hook.run_noop:
                     retained.append(hook)
                 continue
             if hook.target_name is None:
                 continue
-            if (package_id, hook.target_name) in executable_target_ids or hook.run_noop:
+            if (package_id, hook.target_name) in executable_target_ids or allow_standalone_noop_hooks or hook.run_noop:
                 retained.append(hook)
         if retained:
             hooks[hook_name] = retained
@@ -321,6 +354,7 @@ def build_package_plan(
     operation: str,
     package_context: PackagePlanningContext | None = None,
     target_metadata: list[TargetMetadata] | None = None,
+    run_noop: bool = False,
 ) -> PackagePlan:
     package_context = package_context or build_package_planning_context(engine, repo, selection)
     target_plans = engine._plan_targets(
@@ -344,11 +378,21 @@ def build_package_plan(
         target_plans=target_plans,
         declaration_package_ids={selection.identity.package_id},
     )
+    hook_plans = {
+        hook_name: [
+            hook
+            for hook in items
+            if not (hook.scope_kind == "package" and hook_name.startswith("guard_"))
+        ]
+        for hook_name, items in hook_plans.items()
+    }
+    hook_plans = {hook_name: items for hook_name, items in hook_plans.items() if items}
     package_targets = [target for target in target_plans if target.package_id == selection.identity.package_id]
     hooks = _filter_package_hook_plans(
         hook_plans,
         package_id=selection.identity.package_id,
         target_plans=package_targets,
+        allow_standalone_noop_hooks=run_noop,
     )
     return PackagePlan(
         operation=operation,
@@ -379,25 +423,163 @@ def _merge_package_plans(plans: list[PackagePlan]) -> list[PackagePlan]:
     return merged
 
 
+def _selected_package(planning_input: PackagePlanningInput) -> PackageSpec:
+    package_id = planning_input.selection.identity.package_id
+    return next(
+        package
+        for package in planning_input.package_context.resolved_packages
+        if package.id == package_id
+    )
+
+
+def _package_has_potential_work(
+    planning_input: PackagePlanningInput,
+    *,
+    operation: str,
+    run_noop: bool,
+) -> bool:
+    if planning_input.target_metadata:
+        return True
+    package = _selected_package(planning_input)
+    for hook_name in (f"pre_{operation}", f"post_{operation}"):
+        hook_spec = (package.hooks or {}).get(hook_name)
+        if hook_spec is None or not hook_spec.commands:
+            continue
+        if run_noop or hook_spec.run_noop or any(command.run_noop for command in hook_spec.commands):
+            return True
+    return False
+
+
+def _first_nonempty_output_line(stderr: str, stdout: str) -> str | None:
+    for output in (stderr, stdout):
+        for line in output.splitlines():
+            stripped = line.strip()
+            if stripped:
+                return stripped
+    return None
+
+
+def _evaluate_package_guards(
+    planning_inputs: list[PackagePlanningInput],
+    *,
+    operation: str,
+    run_noop: bool,
+    sink: "ProgressSink | None" = None,
+) -> tuple[list[PackagePlanningInput], tuple[GuardSkip, ...]]:
+    from dotman.elevation import elevation_broker_session
+    from dotman.execution import INTERRUPTED_EXIT_CODE, run_command
+
+    admitted_inputs: list[PackagePlanningInput] = []
+    guard_skips: list[GuardSkip] = []
+    outcomes_by_identity: dict[tuple[str, str, str | None], GuardSkip | None] = {}
+    guard_name = f"guard_{operation}"
+
+    with elevation_broker_session():
+        for planning_input in planning_inputs:
+            if not _package_has_potential_work(
+                planning_input,
+                operation=operation,
+                run_noop=run_noop,
+            ):
+                admitted_inputs.append(planning_input)
+                continue
+
+            identity_key = resolved_package_identity_key(planning_input.selection.identity)
+            if identity_key in outcomes_by_identity:
+                if outcomes_by_identity[identity_key] is None:
+                    admitted_inputs.append(planning_input)
+                elif sink is not None:
+                    sink.update(1)
+                continue
+
+            package = _selected_package(planning_input)
+            guard_spec = (package.hooks or {}).get(guard_name)
+            if guard_spec is None or not guard_spec.commands:
+                outcomes_by_identity[identity_key] = None
+                admitted_inputs.append(planning_input)
+                continue
+
+            package_env = build_package_hook_env(
+                repo=planning_input.repo,
+                package=package,
+                selection=planning_input.selection,
+                operation=operation,
+                inferred_os=planning_input.package_context.inferred_os,
+                context=planning_input.package_context.context,
+            )
+            skip: GuardSkip | None = None
+            for command_spec in guard_spec.commands:
+                command = render_template_string(
+                    command_spec.run,
+                    planning_input.package_context.context,
+                    base_dir=guard_spec.declared_in,
+                    source_path=guard_spec.declared_in,
+                ).strip()
+                exit_code, stdout, stderr = run_command(
+                    command=command,
+                    cwd=guard_spec.declared_in,
+                    env=dict(package_env),
+                    stream_output=False,
+                    interactive=False,
+                    elevation=command_spec.elevation,
+                    excluded_env_keys=PLANNING_GUARD_EXCLUDED_ENV_KEYS,
+                )
+                if exit_code == 0:
+                    continue
+                if exit_code == INTERRUPTED_EXIT_CODE:
+                    raise KeyboardInterrupt
+                detail = _first_nonempty_output_line(stderr, stdout)
+                if exit_code == 100:
+                    skip = GuardSkip(
+                        scope_kind="package",
+                        repo_name=planning_input.repo.config.name,
+                        package_id=package.id,
+                        bound_profile=planning_input.selection.identity.bound_profile,
+                        reason=detail,
+                    )
+                    guard_skips.append(skip)
+                    break
+                raise GuardPlanningError(
+                    package_repo=planning_input.repo.config.name,
+                    package_id=package.id,
+                    hook_name=guard_name,
+                    exit_code=exit_code,
+                    detail=detail,
+                )
+
+            outcomes_by_identity[identity_key] = skip
+            if skip is None:
+                admitted_inputs.append(planning_input)
+            elif sink is not None:
+                sink.update(1)
+
+    return admitted_inputs, tuple(guard_skips)
+
+
 def build_tracked_plans(
     engine: Any,
     *,
     operation: str,
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
     sink: "ProgressSink | None" = None,
+    run_noop: bool = False,
 ) -> OperationPlan:
     selections = resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo)
-    plans = build_package_plans(
+    planning_result = build_package_plans(
         engine,
         selections,
         operation=operation,
         sink=sink,
+        run_noop=run_noop,
     )
     repo_by_name = {repo_config.name: engine.get_repo(repo_config.name) for repo_config in engine.config.ordered_repos}
     return build_operation_plan(
-        plans,
+        list(planning_result.package_plans),
         repo_by_name=repo_by_name,
         operation=operation,
+        allow_standalone_noop_hooks=run_noop,
+        guard_skips=planning_result.guard_skips,
+        considered_repo_names=planning_result.considered_repo_names,
     )
 
 
@@ -407,7 +589,8 @@ def build_package_plans(
     *,
     operation: str,
     sink: "ProgressSink | None" = None,
-) -> list[PackagePlan]:
+    run_noop: bool = False,
+) -> PackagePlanningResult:
     if sink is not None:
         sink.start(len(selections))
     try:
@@ -422,9 +605,18 @@ def build_package_plans(
             winner_indexes=winner_indexes,
         )
         _validate_preprojection_conflicts(selected_inputs, operation=operation)
+        considered_repo_names = tuple(
+            dict.fromkeys(planning_input.selection.identity.repo for planning_input in selected_inputs)
+        )
+        admitted_inputs, guard_skips = _evaluate_package_guards(
+            selected_inputs,
+            operation=operation,
+            run_noop=run_noop,
+            sink=sink,
+        )
         host_inputs = _build_host_package_planning_inputs(
             engine,
-            selected_inputs,
+            admitted_inputs,
             operation=operation,
         )
 
@@ -438,11 +630,16 @@ def build_package_plans(
                     operation=operation,
                     package_context=planning_input.package_context,
                     target_metadata=planning_input.target_metadata,
+                    run_noop=run_noop,
                 )
             )
             if sink is not None:
                 sink.update(1)
-        return plans
+        return PackagePlanningResult(
+            package_plans=tuple(plans),
+            guard_skips=guard_skips,
+            considered_repo_names=considered_repo_names,
+        )
     finally:
         if sink is not None:
             sink.close()
@@ -982,13 +1179,16 @@ def build_operation_plan(
     operation: str,
     allow_standalone_noop_hooks: bool = False,
     excluded_repo_names: set[str] | None = None,
+    guard_skips: tuple[GuardSkip, ...] = (),
+    considered_repo_names: tuple[str, ...] = (),
 ) -> OperationPlan:
     if operation in {"push", "pull"}:
         _validate_direct_package_plan_conflicts(package_plans, repo_by_name=repo_by_name)
+    active_repo_names = set(considered_repo_names) | {plan.repo_name for plan in package_plans}
     repo_order = tuple(
         repo_name
         for repo_name in repo_by_name
-        if any(plan.repo_name == repo_name for plan in package_plans)
+        if repo_name in active_repo_names
     )
     repo_hook_plans = {
         repo_name: plan_repo_hooks(repo_by_name[repo_name], operation=operation)
@@ -1010,6 +1210,7 @@ def build_operation_plan(
         repo_hooks=repo_hooks,
         repo_hook_plans=repo_hook_plans,
         repo_order=repo_order,
+        guard_skips=guard_skips,
     )
 
 

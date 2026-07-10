@@ -314,6 +314,35 @@ class HookPlan:
 
 
 @dataclass(frozen=True)
+class GuardSkip:
+    scope_kind: str
+    repo_name: str
+    package_id: str | None = None
+    bound_profile: str | None = None
+    reason: str | None = None
+
+    @property
+    def scope_label(self) -> str:
+        if self.scope_kind == "package" and self.package_id is not None:
+            package_ref = package_ref_text(
+                package_id=self.package_id,
+                bound_profile=self.bound_profile,
+            )
+            return f"{self.repo_name}:{package_ref}"
+        return self.repo_name
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope_kind": self.scope_kind,
+            "repo": self.repo_name,
+            "package_id": self.package_id,
+            "bound_profile": self.bound_profile,
+            "scope": self.scope_label,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
 class TrackedTargetSummary:
     target_name: str
     repo_path: Path | None
@@ -726,7 +755,13 @@ def finalize_hook_plans_for_targets(
             or (
                 hook_plan.scope_kind == "package"
                 and hook_plan.package_id not in excluded_package_ids
-                and (allow_standalone_noop_hooks or hook_plan.run_noop)
+                and (
+                    (
+                        allow_standalone_noop_hooks
+                        and not hook_name.startswith("guard_")
+                    )
+                    or hook_plan.run_noop
+                )
             )
             or (
                 hook_plan.scope_kind == "target"
@@ -844,6 +879,7 @@ class OperationPlan:
     repo_hooks: dict[str, dict[str, list[HookPlan]]] = field(default_factory=dict)
     repo_hook_plans: dict[str, dict[str, list[HookPlan]]] | None = field(default=None, repr=False)
     repo_order: tuple[str, ...] = ()
+    guard_skips: tuple[GuardSkip, ...] = ()
 
     def __iter__(self):
         return iter(self.package_plans)
@@ -854,6 +890,14 @@ class OperationPlan:
     def __getitem__(self, index: int) -> PackagePlan:
         return self.package_plans[index]
 
+    @property
+    def has_effective_work(self) -> bool:
+        return bool(self.repo_hooks) or any(
+            any(plan.hooks.values())
+            or any(target.action != "noop" for target in plan.target_plans)
+            for plan in self.package_plans
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "packages": [plan.to_dict() for plan in self.package_plans],
@@ -861,6 +905,7 @@ class OperationPlan:
                 repo_name: {hook_name: [item.to_dict() for item in items] for hook_name, items in hooks.items()}
                 for repo_name, hooks in self.repo_hooks.items()
             },
+            "guard_skips": [skip.to_dict() for skip in self.guard_skips],
         }
 
 

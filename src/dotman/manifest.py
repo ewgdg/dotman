@@ -159,15 +159,21 @@ def _build_hook_command_spec(
     hook_name: str,
     default_command_elevation: DefaultCommandElevationMode = "none",
 ) -> HookCommandSpec:
-    return _build_command_spec(
+    planning_package_guard = owner_label == "package" and hook_name.startswith("guard_")
+    command_spec = _build_command_spec(
         command_payload=command_payload,
         manifest_kind=manifest_kind,
         manifest_path=manifest_path,
         owner_label=owner_label,
         command_label=f"hook '{hook_name}' command object",
         default_command_elevation=default_command_elevation,
-        allow_run_noop=True,
+        allow_run_noop=not planning_package_guard,
     )
+    if planning_package_guard and command_spec.io != "pipe":
+        raise ValueError(
+            f"{manifest_kind} {manifest_path} {owner_label} hook '{hook_name}' command io must be 'pipe'"
+        )
+    return command_spec
 
 
 def _build_command_spec(
@@ -690,8 +696,12 @@ def build_hook_spec(
 ) -> HookSpec:
     commands_payload = hook_payload
     run_noop = False
-    if isinstance(hook_payload, dict):
-        unknown_keys = sorted(key for key in hook_payload if key not in {"commands", "run_noop"})
+    if isinstance(hook_payload, dict) and "run" in hook_payload:
+        commands_payload = [hook_payload]
+    elif isinstance(hook_payload, dict):
+        planning_package_guard = owner_label == "package" and hook_name.startswith("guard_")
+        supported_keys = {"commands"} if planning_package_guard else {"commands", "run_noop"}
+        unknown_keys = sorted(key for key in hook_payload if key not in supported_keys)
         if unknown_keys:
             unknown_text = ", ".join(unknown_keys)
             raise ValueError(

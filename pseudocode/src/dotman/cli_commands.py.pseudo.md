@@ -38,12 +38,18 @@ _handle_push_or_pull(args):
     use terminal planning progress sink
 
   if query provided:
-    plan operation for query
+    plan operation for query with run_noop input
   else:
-    plan operation from tracked state with progress sink
+    plan operation from tracked state with run_noop input and progress sink
 
-  apply interactive target selection when requested
+  emit human package guard-skip diagnostics before review or selection
+
+  if guard decisions leave no effective work:
+    emit structured JSON planning payload when requested
+    return success without review, selection, execution, or snapshots
+
   apply diff review when requested
+  apply interactive target selection when requested
 
   if run requested:
     execute plans

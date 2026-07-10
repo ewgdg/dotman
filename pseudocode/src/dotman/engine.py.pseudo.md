@@ -29,11 +29,12 @@ resolve_selector_text(query_text):
 
   return resolved selector
 
-plan_push_query(query_text) / plan_pull_query(query_text):
+plan_push_query(query_text, run_noop) / plan_pull_query(query_text, run_noop):
   resolve query to package selection(s)
   resolve static target ownership and collisions before host-state planning
-  build winner and probe package plans in dependency-before-dependent order
-  wrap them in operation plan with repo hooks and conflict validation
+  evaluate package guards before host-state planning
+  build admitted winner and probe package plans in dependency-before-dependent order
+  wrap them in operation plan with repo hooks, guard skips, and conflict validation
   return operation plan
 
 _resolve_package_ids(repo, selector, selector_kind):
@@ -44,11 +45,12 @@ _resolve_package_ids(repo, selector, selector_kind):
   append each package after its dependencies have been visited
   return each reachable package once in dependency-before-dependent order
 
-plan_push(optional progress sink) / plan_pull(optional progress sink):
+plan_push(run_noop, optional progress sink) / plan_pull(run_noop, optional progress sink):
   read effective tracked entries
   resolve static target ownership and collisions before host-state planning
-  build winner and probe tracked package plans, forwarding progress sink when provided
-  wrap them in operation plan
+  evaluate package guards before host-state planning
+  build admitted winner and probe tracked package plans, forwarding progress sink when provided
+  wrap them and guard-skip diagnostics in operation plan
   return operation plan
 
 record_tracked_package_entry(binding):

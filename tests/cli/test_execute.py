@@ -331,13 +331,12 @@ def test_push_cli_executes_tracked_binding_and_emits_json_results(
     assert payload["operation"] == "push"
     assert payload["packages"][0]["package_id"] == "app"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "guard_push",
         "pre_push",
         "create",
         "chmod",
         "post_push",
     ]
-    assert payload["packages"][0]["steps"][0]["stdout"] == "guard push\n"
+    assert payload["guard_skips"] == []
 
 
 def test_push_directory_target_create_preserves_repo_executable_bit(
@@ -834,13 +833,13 @@ def test_push_cli_human_execution_emits_package_timeline_and_nested_logs(
     output = capsys.readouterr().out
     assert "\n:: executing push\n" in output
     assert "packages: 1" in output
-    assert "steps: 5" in output
+    assert "steps: 4" in output
     assert ":: fixture:app@default" in output
-    assert "[1/5] guard_push" in output
-    assert "[4/5] chmod" in output
+    assert "[1/4] pre_push" in output
+    assert "[3/4] chmod" in output
     assert "600" in output
-    assert "[5/5] post_push" in output
-    assert "guard push" in output
+    assert "[4/4] post_push" in output
+    assert "guard push" not in output
     assert "post push" in output
     assert "\n    done\n" not in output
 
@@ -898,7 +897,6 @@ def test_pull_cli_creates_missing_repo_source_file_and_emits_json_results(
     assert payload["mode"] == "execute"
     assert payload["operation"] == "pull"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "guard_pull",
         "pre_pull",
         "create_repo",
         "post_pull",
@@ -951,7 +949,6 @@ def test_pull_cli_executes_directory_pull_when_repo_source_directory_is_missing(
     repo_path = repo_root / "packages" / "app" / "files" / "config" / "config.toml"
     assert repo_path.read_text(encoding="utf-8") == "live value\n"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "guard_pull",
         "create_repo",
         "post_pull",
     ]
@@ -1036,7 +1033,7 @@ def test_pull_cli_allows_symlinked_live_target_and_updates_repo(
     payload = json.loads(capsys.readouterr().out)
     repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
     assert repo_path.read_text(encoding="utf-8") == "live value\n"
-    assert payload["packages"][0]["steps"][2]["action"] == "update_repo"
+    assert payload["packages"][0]["steps"][1]["action"] == "update_repo"
 
 
 
@@ -1067,7 +1064,6 @@ def test_pull_cli_executes_direct_repo_update_and_emits_json_results(
     assert payload["mode"] == "execute"
     assert payload["operation"] == "pull"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "guard_pull",
         "pre_pull",
         "update_repo",
         "post_pull",
@@ -1100,11 +1096,10 @@ def test_pull_cli_uses_reconcile_for_selected_target_execution(
     repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
     assert repo_path.read_text(encoding="utf-8") == "live value\n"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "guard_pull",
         "reconcile",
         "post_pull",
     ]
-    assert payload["packages"][0]["steps"][1]["stdout"].startswith("reconcile:")
+    assert payload["packages"][0]["steps"][0]["stdout"].startswith("reconcile:")
 
 
 
@@ -1133,11 +1128,10 @@ def test_pull_cli_prefers_capture_over_reconcile_when_both_are_defined(
     repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
     assert repo_path.read_text(encoding="utf-8") == "captured live view\n"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "guard_pull",
         "update_repo",
         "post_pull",
     ]
-    assert payload["packages"][0]["steps"][1]["stdout"] == ""
+    assert payload["packages"][0]["steps"][0]["stdout"] == ""
 
 
 def test_pull_cli_falls_back_to_reconcile_when_capture_fails(
@@ -1165,12 +1159,11 @@ def test_pull_cli_falls_back_to_reconcile_when_capture_fails(
     repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
     assert repo_path.read_text(encoding="utf-8") == "raw live value\n"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "guard_pull",
         "update_repo",
         "post_pull",
     ]
-    assert payload["packages"][0]["steps"][1]["stdout"] == "review:rendered repo view|raw live value\n"
-    assert "capture failed; falling back to reconcile" in payload["packages"][0]["steps"][1]["stderr"]
+    assert payload["packages"][0]["steps"][0]["stdout"] == "review:rendered repo view|raw live value\n"
+    assert "capture failed; falling back to reconcile" in payload["packages"][0]["steps"][0]["stderr"]
 
 
 def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(
@@ -1197,15 +1190,14 @@ def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(
     output = capsys.readouterr().out
     assert ":: executing push" in output
     assert "packages: 1" in output
-    assert "steps: 3" in output
-    assert "[1/3] guard_push" in output
-    assert "[2/3] pre_push" in output
-    assert "[3/3] post_push" in output
-    assert "guard push" in output
+    assert "steps: 2" in output
+    assert "[1/2] pre_push" in output
+    assert "[2/2] post_push" in output
+    assert "guard push" not in output
     assert "pre push" in output
     assert "post push" in output
     assert "noop" not in output
-    assert "[1/3] create" not in output
+    assert "[1/2] create" not in output
 
 
 def test_push_cli_run_noop_dry_run_json_shows_hook_only_package(
@@ -1234,7 +1226,7 @@ def test_push_cli_run_noop_dry_run_json_shows_hook_only_package(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["package_entries"][0]["targets"] == []
-    assert set(payload["package_entries"][0]["hooks"]) == {"guard_push", "pre_push", "post_push"}
+    assert set(payload["package_entries"][0]["hooks"]) == {"pre_push", "post_push"}
 
 
 def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_and_does_not_create_snapshot(
@@ -1290,10 +1282,10 @@ def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_in_json(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["packages"][0]["status"] == "skipped"
-    assert payload["packages"][0]["skip_reason"] == "guard"
-    assert payload["packages"][0]["steps"][0]["skip_reason"] == "guard"
-    assert payload["packages"][0]["steps"][-1]["skip_reason"] == "guard"
+    assert payload["mode"] == "execute"
+    assert payload["package_entries"] == []
+    assert payload["guard_skips"][0]["scope"] == "fixture:app"
+    assert payload["guard_skips"][0]["reason"] == "guard push"
 
 
 def test_pull_cli_run_noop_executes_hooks_for_all_noop_pull_plan(
@@ -1320,15 +1312,14 @@ def test_pull_cli_run_noop_executes_hooks_for_all_noop_pull_plan(
     output = capsys.readouterr().out
     assert ":: executing pull" in output
     assert "packages: 1" in output
-    assert "steps: 3" in output
-    assert "[1/3] guard_pull" in output
-    assert "[2/3] pre_pull" in output
-    assert "[3/3] post_pull" in output
-    assert "guard pull" in output
+    assert "steps: 2" in output
+    assert "[1/2] pre_pull" in output
+    assert "[2/2] post_pull" in output
+    assert "guard pull" not in output
     assert "pre pull" in output
     assert "post pull" in output
     assert "noop" not in output
-    assert "[1/3] update_repo" not in output
+    assert "[1/2] update_repo" not in output
 
 
 def test_push_cli_fails_fast_and_skips_post_push_after_failed_guard(
@@ -1347,14 +1338,13 @@ def test_push_cli_fails_fast_and_skips_post_push_after_failed_guard(
 
     exit_code = main(["--config", str(config_path), "--json", "push"])
 
-    assert exit_code == 1
-    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    captured = capsys.readouterr()
     live_path = home / ".config" / "app" / "config.txt"
     assert not live_path.exists()
-    assert payload["packages"][0]["steps"][0]["action"] == "guard_push"
-    assert payload["packages"][0]["steps"][0]["status"] == "failed"
-    assert payload["packages"][0]["steps"][-1]["action"] == "post_push"
-    assert payload["packages"][0]["steps"][-1]["status"] == "skipped"
+    assert captured.out == ""
+    assert "GuardPlanningError" in captured.err
+    assert "guard_push failed with exit 1: guard push failed" in captured.err
 
 
 
@@ -1380,13 +1370,12 @@ def test_push_cli_human_execution_prints_package_skipped_only_for_skipped_packag
 
     exit_code = main(["--config", str(config_path), "push"])
 
-    assert exit_code == 1
-    output = capsys.readouterr().out
-    assert ":: fixture-a:app@default" in output
-    assert "guard push failed" in output
-    assert "\n    failed\n" not in output
-    assert ":: fixture-b:other@default" in output
-    assert "\n    skipped\n" in output
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "fixture-a:app" in captured.err
+    assert "guard_push failed with exit 1: guard push failed" in captured.err
+    assert "fixture-b:other" not in captured.err
 
 
 

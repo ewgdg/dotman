@@ -8,6 +8,7 @@ from dotman.config import load_manager_config
 from dotman.ignore import list_directory_files, matches_ignore_pattern
 from dotman.models import (
     FullSpecSelector,
+    GuardSkip,
     PackagePlan,
     ResolvedPackageIdentity,
     ResolvedSelector,
@@ -300,17 +301,45 @@ class DotmanEngine:
             for repo_name, entries in bindings_by_repo.items()
         }
 
-    def plan_push_query(self, query_text: str, *, profile: str | None = None) -> OperationPlan:
+    def _plan_query(
+        self,
+        query_text: str,
+        *,
+        operation: str,
+        profile: str | None,
+        run_noop: bool,
+    ) -> OperationPlan:
         _repo, query = self.resolve_full_spec_selector_text(query_text, profile=profile)
-        selections = self._planning_helpers().resolve_full_spec_selector(self, query, operation="push")
-        plans = self._planning_helpers().build_package_plans(self, selections, operation="push")
-        return self._build_operation_plan(plans, operation="push")
+        selections = self._planning_helpers().resolve_full_spec_selector(self, query, operation=operation)
+        result = self._planning_helpers().build_package_plans(
+            self,
+            selections,
+            operation=operation,
+            run_noop=run_noop,
+        )
+        return self._build_operation_plan(
+            list(result.package_plans),
+            operation=operation,
+            allow_standalone_noop_hooks=run_noop,
+            guard_skips=result.guard_skips,
+            considered_repo_names=result.considered_repo_names,
+        )
 
-    def plan_pull_query(self, query_text: str, *, profile: str | None = None) -> OperationPlan:
-        _repo, query = self.resolve_full_spec_selector_text(query_text, profile=profile)
-        selections = self._planning_helpers().resolve_full_spec_selector(self, query, operation="pull")
-        plans = self._planning_helpers().build_package_plans(self, selections, operation="pull")
-        return self._build_operation_plan(plans, operation="pull")
+    def plan_push_query(self, query_text: str, *, profile: str | None = None, run_noop: bool = False) -> OperationPlan:
+        return self._plan_query(
+            query_text,
+            operation="push",
+            profile=profile,
+            run_noop=run_noop,
+        )
+
+    def plan_pull_query(self, query_text: str, *, profile: str | None = None, run_noop: bool = False) -> OperationPlan:
+        return self._plan_query(
+            query_text,
+            operation="pull",
+            profile=profile,
+            run_noop=run_noop,
+        )
 
     def resolve_tracked_binding(
         self,
@@ -396,11 +425,11 @@ class DotmanEngine:
         }
         return selector, profile, exact_matches, list(unique_partials.values()), list(unique_owners.values())
 
-    def plan_push(self, *, sink: "ProgressSink | None" = None) -> OperationPlan:
-        return self._build_tracked_plans(operation="push", sink=sink)
+    def plan_push(self, *, sink: "ProgressSink | None" = None, run_noop: bool = False) -> OperationPlan:
+        return self._build_tracked_plans(operation="push", sink=sink, run_noop=run_noop)
 
-    def plan_pull(self, *, sink: "ProgressSink | None" = None) -> OperationPlan:
-        return self._build_tracked_plans(operation="pull", sink=sink)
+    def plan_pull(self, *, sink: "ProgressSink | None" = None, run_noop: bool = False) -> OperationPlan:
+        return self._build_tracked_plans(operation="pull", sink=sink, run_noop=run_noop)
 
     def _tracking_helpers(self):
         return tracking
@@ -770,21 +799,34 @@ class DotmanEngine:
         operation: str,
         bindings_by_repo: dict[str, list[FullSpecSelector]] | None = None,
         sink: "ProgressSink | None" = None,
+        run_noop: bool = False,
     ) -> OperationPlan:
         return self._planning_helpers().build_tracked_plans(
             self,
             operation=operation,
             entries_by_repo=self._tracked_entries_by_repo_from_bindings(bindings_by_repo),
             sink=sink,
+            run_noop=run_noop,
         )
 
-    def _build_operation_plan(self, plans: list[PackagePlan], *, operation: str, allow_standalone_noop_hooks: bool = False, excluded_repo_names: set[str] | None = None) -> OperationPlan:
+    def _build_operation_plan(
+        self,
+        plans: list[PackagePlan],
+        *,
+        operation: str,
+        allow_standalone_noop_hooks: bool = False,
+        excluded_repo_names: set[str] | None = None,
+        guard_skips: tuple[GuardSkip, ...] = (),
+        considered_repo_names: tuple[str, ...] = (),
+    ) -> OperationPlan:
         return self._planning_helpers().build_operation_plan(
             plans,
             repo_by_name={repo_config.name: self.get_repo(repo_config.name) for repo_config in self.config.ordered_repos},
             operation=operation,
             allow_standalone_noop_hooks=allow_standalone_noop_hooks,
             excluded_repo_names=excluded_repo_names,
+            guard_skips=guard_skips,
+            considered_repo_names=considered_repo_names,
         )
 
     def preview_package_selection_implicit_overrides(self, selection: ResolvedPackageSelection) -> list[TrackedTargetOverride]:

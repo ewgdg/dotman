@@ -502,7 +502,7 @@ def test_pull_cli_human_dry_run_output_includes_header_and_context(
     assert "preview only; no files or hooks will be changed" in output
     assert "packages: 1" in output
     assert "target actions: 1" in output
-    assert "hook commands: 1" in output
+    assert "hook commands: 0" in output
     assert ":: example:nvim@basic" in output
     assert "targets:" in output
     assert "nvim.init_lua -> update" in output

@@ -63,7 +63,7 @@ def test_tracked_push_plan_drops_hooks_for_packages_without_winning_targets(
 
     work_git_plan = plans_by_package_id["work/git"]
     assert {target.package_id for target in work_git_plan.target_plans} == {"work/git"}
-    assert set(work_git_plan.hooks) == {"guard_push", "pre_push", "post_push"}
+    assert set(work_git_plan.hooks) == {"pre_push", "post_push"}
     assert {hook.package_id for hook in work_git_plan.hooks["pre_push"]} == {"work/git"}
 
 def test_group_selected_package_is_marked_explicit_in_tracked_detail(

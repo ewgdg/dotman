@@ -28,7 +28,7 @@ from dotman.file_access import (
     sudo_prefix_command,
     write_bytes_atomic as sudo_write_bytes_atomic,
 )
-from dotman.models import DirectoryPlanItem, ElevationMode, HookPlan, OperationPlan, PackagePlan, TargetPlan, package_plans_for_operation_plan, repo_qualified_target_text
+from dotman.models import DirectoryPlanItem, ElevationMode, GuardSkip, HookPlan, OperationPlan, PackagePlan, TargetPlan, package_plans_for_operation_plan, repo_qualified_target_text
 from dotman.repo_access import restore_repo_path_access_for_invoking_user
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_string
@@ -209,6 +209,7 @@ class ExecutionResult:
     session: ExecutionSession
     status: str
     repos: tuple[RepoExecutionResult, ...]
+    guard_skips: tuple[GuardSkip, ...] = ()
 
     @property
     def packages(self) -> tuple[PackageExecutionResult, ...]:
@@ -228,6 +229,7 @@ class ExecutionResult:
             "requires_privilege": self.session.requires_privilege,
             "repos": [repo.to_dict() for repo in self.repos],
             "packages": [package.to_dict() for package in self.packages],
+            "guard_skips": [skip.to_dict() for skip in self.guard_skips],
         }
 
 
@@ -1536,7 +1538,7 @@ def _prepare_command_elevation(*, command: str, env: dict[str, str], elevation: 
     raise ValueError(f"unsupported elevation mode '{elevation}'")
 
 
-def _run_command(
+def run_command(
     *,
     command: str,
     cwd: Path | None,
@@ -1544,10 +1546,17 @@ def _run_command(
     stream_output: bool,
     interactive: bool,
     elevation: ElevationMode = "none",
+    excluded_env_keys: frozenset[str] = frozenset(),
 ) -> tuple[int, str, str]:
     command, env = _prepare_command_elevation(command=command, env=env, elevation=elevation)
     if interactive:
-        return _run_command_with_terminal(command=command, cwd=cwd, env=env, elevation="none")
+        return _run_command_with_terminal(
+            command=command,
+            cwd=cwd,
+            env=env,
+            elevation="none",
+            excluded_env_keys=excluded_env_keys,
+        )
 
     stdout_buffer: list[str] = []
     stderr_buffer: list[str] = []
@@ -1571,7 +1580,10 @@ def _run_command(
         owns_process_group = elevation == "none"
         popen_kwargs = dict(
             cwd=str(cwd) if cwd is not None else None,
-            env={**os.environ, **env},
+            env={
+                **{key: value for key, value in os.environ.items() if key not in excluded_env_keys},
+                **env,
+            },
             shell=True,
             executable="/bin/sh",
             # Pipe mode owns stdout/stderr but must not read dotman's stdin;
@@ -1603,7 +1615,17 @@ def _run_command(
     return _normalize_command_return_code(return_code), "".join(stdout_buffer), "".join(stderr_buffer)
 
 
-def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str, str], elevation: ElevationMode = "none") -> tuple[int, str, str]:
+_run_command = run_command
+
+
+def _run_command_with_terminal(
+    *,
+    command: str,
+    cwd: Path | None,
+    env: dict[str, str],
+    elevation: ElevationMode = "none",
+    excluded_env_keys: frozenset[str] = frozenset(),
+) -> tuple[int, str, str]:
     # TTY-backed commands may launch full-screen editors or other terminal-native
     # tools. Piping and prefixing their output corrupts control sequences and can
     # leave the shell looking broken after exit, so dotman must hand them tty.
@@ -1612,7 +1634,10 @@ def _run_command_with_terminal(*, command: str, cwd: Path | None, env: dict[str,
         process = subprocess.Popen(
             command,
             cwd=str(cwd) if cwd is not None else None,
-            env={**os.environ, **env},
+            env={
+                **{key: value for key, value in os.environ.items() if key not in excluded_env_keys},
+                **env,
+            },
             shell=True,
             executable="/bin/sh",
         )
