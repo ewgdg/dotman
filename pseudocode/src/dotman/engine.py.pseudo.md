@@ -32,7 +32,7 @@ resolve_selector_text(query_text):
 plan_push_query(query_text, run_noop) / plan_pull_query(query_text, run_noop):
   resolve query to package selection(s)
   resolve static target ownership and collisions before host-state planning
-  evaluate package guards before host-state planning
+  evaluate repo, package, and target guards hierarchically before host-state planning
   build admitted winner and probe package plans in dependency-before-dependent order
   wrap them in operation plan with repo hooks, guard skips, and conflict validation
   return operation plan
@@ -48,7 +48,7 @@ _resolve_package_ids(repo, selector, selector_kind):
 plan_push(run_noop, optional progress sink) / plan_pull(run_noop, optional progress sink):
   read effective tracked entries
   resolve static target ownership and collisions before host-state planning
-  evaluate package guards before host-state planning
+  evaluate repo, package, and target guards hierarchically before host-state planning
   build admitted winner and probe tracked package plans, forwarding progress sink when provided
   wrap them and guard-skip diagnostics in operation plan
   return operation plan

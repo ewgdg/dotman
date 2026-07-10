@@ -2309,9 +2309,11 @@ def test_execute_session_uses_explicit_privileged_reconcile_reason_and_runner(
 
 
 
+@pytest.mark.parametrize("capture_exit_code", [1, 100])
 def test_execute_session_falls_back_to_reconcile_when_capture_fails(
     tmp_path: Path,
     monkeypatch,
+    capture_exit_code: int,
 ) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"
@@ -2351,7 +2353,7 @@ def test_execute_session_falls_back_to_reconcile_when_capture_fails(
 
     def fake_run_command(*, command, cwd, env, stream_output, interactive, elevation="none"):
         if command == "capture-command":
-            return 1, "", "capture exploded"
+            return capture_exit_code, "", "capture exploded"
         if command == "reconcile-command":
             assert env is not None
             recorded["review_repo_text"] = Path(env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8")

@@ -105,7 +105,7 @@ def test_build_package_plans_reports_progress_after_package_build(monkeypatch: p
     monkeypatch.setattr(planning, "_validate_preprojection_conflicts", lambda inputs, *, operation: None)
     monkeypatch.setattr(
         planning,
-        "_evaluate_package_guards",
+        "evaluate_hierarchical_guards",
         lambda inputs, *, operation, run_noop, sink: (inputs, ()),
     )
     monkeypatch.setattr(
@@ -175,7 +175,7 @@ def test_build_package_plans_closes_progress_on_failure(monkeypatch: pytest.Monk
     monkeypatch.setattr(planning, "_validate_preprojection_conflicts", lambda inputs, *, operation: None)
     monkeypatch.setattr(
         planning,
-        "_evaluate_package_guards",
+        "evaluate_hierarchical_guards",
         lambda inputs, *, operation, run_noop, sink: (inputs, ()),
     )
     monkeypatch.setattr(

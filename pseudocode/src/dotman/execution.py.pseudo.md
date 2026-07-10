@@ -12,8 +12,8 @@ build_execution_session(plans):
     reject execution
 
   group package plans into repo execution units
-  build ordered steps for repo hooks, package pre/post hooks, target actions, target guards, and chmods
-  never emit package guard steps because package eligibility is already fixed by planning
+  build ordered steps for repo pre/post hooks, package pre/post hooks, target pre/post hooks, target actions, and chmods
+  never emit repo, package, or target guard steps because eligibility is already fixed by planning
   for active probe targets, build no target filesystem step but keep target hooks eligible around the probe slot
   return execution session
 
@@ -33,9 +33,6 @@ ExecutionResult serialization:
   include package planning guard skips supplied by CLI orchestration
 
 _execute_step(step):
-  if step is guard:
-    return guard status
-
   if step is hook command:
     build hook env
     require terminal when hook uses terminal passthrough

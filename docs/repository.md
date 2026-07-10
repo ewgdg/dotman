@@ -301,13 +301,13 @@ exit 0
 - Hook entries may be a single item, an ordered list, or a table with `commands` and optional metadata.
 - Repo, package, and target pre/post hook tables support `run_noop = true | false`.
 - Pre/post hook command objects support `run_noop = true | false` to make only that command noop-eligible.
-- Package guard hooks reject hook-level and command-level `run_noop`. Repo and target guards keep their existing execution-time schema until their planning slices land.
+- Repo, package, and target guard hooks reject hook-level and command-level `run_noop`.
 - `run_noop` defaults to `false`.
 - Repo, package, and target hook shorthand still work and normalize to `run_noop = false`.
 - Empty hook command lists are allowed and mean the hook is effectively disabled at that package layer.
 - Hook command lists may mix plain strings and command objects in either shorthand or table form.
 - Pre/post command objects use `{ run = "...", io = "pipe" | "tty", elevation = "none" | "root" | "lease" | "broker" | "intercept", run_noop = true | false }`.
-- Package guard command objects use `{ run = "...", io = "pipe", elevation = "none" | "root" | "lease" | "broker" | "intercept" }`. Repo and target guard command objects retain existing execution-time I/O metadata until their planning slices land.
+- Repo, package, and target guard command objects use `{ run = "...", io = "pipe", elevation = "none" | "root" | "lease" | "broker" | "intercept" }`.
 - `run` is required for command objects and must not be empty after trimming.
 - `io` defaults to `pipe`.
 - `elevation` defaults to the repo-level `default_command_elevation`, or `none` when the repo default is omitted.
@@ -384,19 +384,18 @@ commands = [
 ```
 
 - Hook and guard command lists run in declaration order and stop on first non-zero exit.
-- Package `guard_*` is a non-interactive planning eligibility rule. It runs once per resolved package instance with Potential Work after static ownership resolution and before host-state projection.
-- Package `guard_*` treats exit code `0` as pass, exit code `100` as a planning skip for that package, and any other non-zero exit as a planning failure.
-- A package guard skip omits that package's work from review, selection, and execution. Later packages continue planning normally.
-- Package guards use captured pipe I/O, never receive `DOTMAN_ASSUME_YES`, and may use configured elevation.
-- Package guards are not emitted as execution steps or rerun after review or selection.
+- Repo, package, and target `guard_*` hooks are non-interactive planning eligibility rules. They run after static ownership resolution and before host-state work for their scopes.
+- Guard order is repo, package, then target. A repo skip omits its lower scopes while sibling repos continue; package and target skips stay local while siblings and dependents continue.
+- Target guards run before file projection, directory scanning, and probe commands.
+- Exit code `0` admits the scope, `100` records a planning skip and omits that scope, and any other non-zero exit aborts planning.
+- Guards use captured pipe I/O, never receive `DOTMAN_ASSUME_YES`, and may use configured elevation.
+- Each repo, resolved package instance, and target guard runs once per plan build. Guards are not emitted as execution steps or rerun after review or selection.
+- Guard outcomes never change static ownership or hide malformed configuration and ownership conflicts.
 - `pre_*` runs immediately before the package's selected target steps.
 - `pre_*` stays hard-fail only: any non-zero exit, including `100`, fails the run.
 - `post_*` runs only when earlier steps for that package succeed.
 - `post_*` stays hard-fail only: any non-zero exit, including `100`, fails the run if it executes.
-- Repo hooks currently execute in repo scope order: repo `guard_*`, repo `pre_*`, retained package/target work, then repo `post_*`.
-- Target hooks currently execute around their own target only: target `guard_*`, target `pre_*`, target action steps, then target `post_*`.
-- Repo `guard_*` exit `100` soft-skips that repo subtree and continues with the next repo.
-- Target `guard_*` exit `100` soft-skips only that target subtree and continues with the next target.
+- Execution contains pre/post hooks only. Repo pre/post hooks wrap retained package/target work; target pre/post hooks wrap their target actions.
 - Package hooks normally run when the package still owns at least one non-noop effective target after tracked-target winner resolution and any interactive target exclusion.
 - Target hooks normally run when that target still owns at least one non-noop effective target action after winner resolution and any interactive target exclusion.
 - Repo hooks normally run when the finalized repo still has any retained package or target work.
@@ -412,7 +411,7 @@ commands = [
 - Package hook env includes repo hook vars plus `DOTMAN_PACKAGE_ID`, `DOTMAN_PACKAGE_ROOT`, `DOTMAN_PROFILE`, `DOTMAN_OS`, and flattened package vars as `DOTMAN_VAR_*`.
 - `DOTMAN_PACKAGE_ROOT` is the package directory containing that package's `package.toml`.
 - Target hook env includes package hook vars plus `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, `DOTMAN_TARGET_LIVE_PATH`, `DOTMAN_REPO_PATH`, `DOTMAN_SOURCE`, and `DOTMAN_LIVE_PATH`.
-- Execution-time pre/post and remaining repo/target hooks receive `DOTMAN_ASSUME_YES=1` when CLI `--yes` is active and `0` otherwise. Planning-time package guards do not receive it.
+- Execution-time pre/post hooks receive `DOTMAN_ASSUME_YES=1` when CLI `--yes` is active and `0` otherwise. Planning guards do not receive it.
 - Hooks never auto-escalate through target path permissions, even when adjacent target work touches protected paths. Elevation only comes from explicit command metadata or repo-level `default_command_elevation`.
 - If a hook really must run as root, use explicit command metadata such as `{ run = "systemctl restart sddm", elevation = "root" }`.
 - If a hook only sometimes needs elevation, prefer `elevation = "broker"` and call `dotman elevation request "reason"` after the script proves privileged work is required.
@@ -430,6 +429,7 @@ commands = [
 - A target with `render` is implicitly a transformed/template-like target; no separate template flag is needed.
 - `render` is the forward path used during `push`.
 - `capture` is the live-side planning projection used during `pull` when it is a capture command string.
+- Capture is strict: only exit `0` produces bytes. Every non-zero status, including `100`, is a capture failure; configured execution-time reconcile fallback handles it like any other capture failure.
 - The reserved value `capture = "patch"` selects the built-in reverse-capture helper and is not itself a planning projection.
 - If you use `capture = "patch"`, you must also set `pull_view_repo` and `pull_view_live` explicitly.
 - `capture = "patch"` reprojects the patched repo source through the forward render path and must match the reviewed live bytes exactly.

@@ -45,7 +45,10 @@ OperationPlan compatibility:
   to_dict serializes repo hooks, package plans, and structured guard skips
 
 GuardSkip:
-  records scope kind, repo/package identity, and optional reason
+  records scope kind, repo/package-instance/target identity, and optional reason
+  repo scope renders as repo
+  package scope renders as repo:package or repo:package<instance>
+  target scope renders as repo:package.target or repo:package<instance>.target
   serializes no command text
 ```
 

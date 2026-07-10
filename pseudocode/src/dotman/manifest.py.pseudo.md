@@ -29,7 +29,7 @@ normalize_* helpers(value):
     reject with validation error
   return normalized Python/domain value
 
-build package guard hook specs:
+build operation guard hook specs for repo, package, and target owners:
   accept string, command object, or ordered command list
   require command io = pipe
   permit configured elevation

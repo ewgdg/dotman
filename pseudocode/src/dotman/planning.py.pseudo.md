@@ -36,7 +36,7 @@ build_package_plan(engine, repo, selection, selected target metadata, run_noop):
   reuse package planning context from static candidate collection
   project only selected target metadata
   hook_plans = plan package hooks
-  remove package operation guards from executable hook plans
+  remove package and target operation guards from executable hook plans
   filter pre/post hooks to executable selected targets
   if run_noop:
     retain pre/post hooks for standalone noop work
@@ -57,21 +57,35 @@ build_package_plans(engine, selections, run_noop, optional progress sink):
   filter static metadata to ownership winners and probes
   validate winner collisions and reserved paths from static metadata
 
-  for each resolved package instance with Potential Work:
-    render its operation guard commands from static package context
-    run commands once in declaration order with closed stdin and captured output
-    if a command exits 0:
-      continue the guard list
-    if a command exits 100:
-      record one package guard skip with optional first stderr/stdout line
-      omit that package from later host-state planning
-    if a command is interrupted:
-      interrupt planning
-    otherwise:
-      reject planning with status and captured detail
+  for each repo with Potential Work, in repo order:
+    run its operation guard once from repo-static context
+    if skipped:
+      record one repo guard skip
+      omit every package and target in that repo from lower planning
 
-  for each admitted selection after collision validation and package guards:
-    build host-state target metadata only for ownership winners and probes
+  for each resolved package instance with Potential Work in admitted repos:
+    run its operation guard once from static package context
+    if skipped:
+      record one package guard skip
+      omit only that package instance; do not omit dependents
+
+  for each operation-eligible target in admitted packages:
+    run its operation guard once from static target context
+    if skipped:
+      record one target guard skip
+      omit only that target from host-state planning
+
+  for every repo, package, or target guard command list:
+    render commands from static context
+    run commands in declaration order with closed stdin and captured output
+    exit 0 continues the guard list
+    exit 100 records the scoped skip and stops the guard list
+    an interrupt interrupts planning
+    any other nonzero rejects planning with status and captured detail
+
+  for each admitted selection after collision validation and hierarchical guards:
+    build host-state target metadata only for admitted ownership winners and probes
+    target guards therefore run before probes, file projection, and directory scanning
 
   for each selection in original order:
     build package plan from winner and probe metadata
@@ -88,7 +102,8 @@ build_tracked_plans(engine, run_noop, optional progress sink):
 build_operation_plan(package_plans, guard skips, considered repos, run_noop):
   validate direct package conflicts
   validate reserved path conflicts
-  collect repo hook plans
+  collect repo pre/post hook plans without operation guards
+  omit all repo hooks for repos skipped by their planning guard
   finalize repo hooks against package plans
   treat an active probe target as lower-scope work for repo hook eligibility
   return OperationPlan(repo_hooks, package_plans, guard skips)

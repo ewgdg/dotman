@@ -316,11 +316,12 @@ def emit_planning_guard_skips(
     for skip in plans.guard_skips:
         status = cli_style.render_execution_status("skipped", use_color=use_color)
         annotation = cli_style.render_annotation_parentheses("guard", use_color=use_color)
-        if skip.scope_kind == "package" and skip.package_id is not None:
+        if skip.scope_kind in {"package", "target"} and skip.package_id is not None:
             scope_label = cli_style.render_package_label(
                 repo_name=skip.repo_name,
                 package_id=skip.package_id,
                 bound_profile=skip.bound_profile,
+                target_name=skip.target_name,
                 use_color=use_color,
             )
         else:
@@ -1668,19 +1669,39 @@ def _emit_error_block(*, header_text: str, fields: Sequence[tuple[str, str]], us
 
 def _structured_error_fields(error: Any, *, use_color: bool) -> list[tuple[str, str]]:
     fields: list[tuple[str, str]] = []
-    package_repo = getattr(error, "package_repo", None)
+    scope_kind = getattr(error, "scope_kind", None)
+    repo_name = getattr(error, "repo_name", None)
     package_id = getattr(error, "package_id", None)
-    if package_repo is not None and package_id is not None:
+    bound_profile = getattr(error, "bound_profile", None)
+    target_name = getattr(error, "target_name", None)
+    if scope_kind == "repo" and repo_name is not None:
+        fields.append(("repo:", str(repo_name)))
+    elif scope_kind in {"package", "target"} and repo_name is not None and package_id is not None:
         fields.append(
             (
-                "package:",
+                f"{scope_kind}:",
                 cli_style.render_package_label(
-                    repo_name=package_repo,
+                    repo_name=repo_name,
                     package_id=package_id,
+                    bound_profile=bound_profile,
+                    target_name=target_name,
                     use_color=use_color,
                 ),
             )
         )
+    else:
+        package_repo = getattr(error, "package_repo", None)
+        if package_repo is not None and package_id is not None:
+            fields.append(
+                (
+                    "package:",
+                    cli_style.render_package_label(
+                        repo_name=package_repo,
+                        package_id=package_id,
+                        use_color=use_color,
+                    ),
+                )
+            )
     path = getattr(error, "path", None)
     if path is not None:
         fields.append(("path:", str(path)))

@@ -32,10 +32,10 @@ This document captures the current command and selector direction for `dotman`.
 - `--run-noop` now feeds normal planning and selection instead of reviving hooks late in execution.
 - For the active operation, `--run-noop` temporarily treats pre/post hooks as noop-eligible, even if they do not declare `run_noop = true` in the manifest.
 - `--run-noop` still does not fabricate target writes or snapshots.
-- A package `guard_*` that exits `100` omits that package during planning and lets later packages continue.
+- A repo, package, or target `guard_*` that exits `100` omits that scope during planning. Lower work in a skipped repo is omitted; package and target skips stay local.
 - Human planning output shows the omission as `skipped (guard)` before review or selection.
 - JSON planning output exposes structured `guard_skips` without guard command text.
-- If every package is guard-skipped and no higher-scope pre/post work remains, the command succeeds without review, selection, execution, or snapshots.
+- If every selected scope is guard-skipped and no higher-scope pre/post work remains, the command succeeds without review, selection, execution, or snapshots.
 
 ## Selectors
 
@@ -153,7 +153,7 @@ This document captures the current command and selector direction for `dotman`.
 - Before the first live mutation of a real `push`, dotman should create one manager-level snapshot for the finalized selected plan.
 - That snapshot should record enough state to restore the mutated paths later.
 - If the finalized `push` work is hook-only, dotman should not create a snapshot.
-- If package guards soft-skip before the first live mutation, dotman should keep going and create the snapshot only when the first real mutation is about to begin.
+- If planning guards skip work before the first live mutation, dotman keeps going and creates the snapshot only when the first real mutation is about to begin.
 - `file_symlink_mode = prompt` means interactive replace is allowed; `follow` means dotman writes through to the resolved target.
 - `dir_symlink_mode = fail` rejects symlinked directory roots; `follow` means dotman manages the resolved tree.
 - `push --dry-run` should not create a snapshot.
@@ -201,7 +201,7 @@ This document captures the current command and selector direction for `dotman`.
 - Synthetic hook-only selection rows should stay owner-scoped, not per-hook command rows. Supported rows are repo (`[hooks] repo`), package (`[hooks] repo:package`), and target (`[hooks] repo:package.target`).
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `pull` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
-- A package `guard_pull` that exits `100` omits that package before pull review and selection, while later packages continue planning.
+- A repo, package, or target `guard_pull` that exits `100` omits that scope before pull review and selection while eligible sibling scopes continue planning.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
 - The interactive diff review stage should stay inspection-only in v1.
 - Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.

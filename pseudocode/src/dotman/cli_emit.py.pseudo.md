@@ -18,8 +18,8 @@ emit_payload(plans, format):
   render probe target actions without fake repo/live path lines
 
 emit_planning_guard_skips(plans):
-  for each package guard skip:
-    print `skipped (guard)` with package-instance label and optional reason
+  for each repo, package, or target guard skip:
+    print `skipped (guard)` with existing scoped identity rendering and optional reason
   never print guard command text
 
 run_execution(plans, args):

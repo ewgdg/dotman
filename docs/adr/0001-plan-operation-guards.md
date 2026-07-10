@@ -2,4 +2,4 @@
 
 Dotman evaluates `guard_push` and `guard_pull` as non-interactive eligibility rules while building an operation plan, after static ownership resolution and before host-state projection. Exit `0` admits the scope, exit `100` omits its work, and any other exit aborts planning; guards are not rerun during execution. Repo, package, and target guards gate their declared scopes, while directory path-rule guards run once per active rule and overlapping guards compose. This keeps selection and review faithful to executable work without making ownership depend on volatile guard state; state changes after planning remain execution failures.
 
-This ADR records the intended end state. Implementation lands by scope: package guards move first; repo, target, and path-rule guards remain on their existing execution/configuration paths until their planning slices land.
+Repo, package, and target guards now follow this planning contract. Directory path-rule guards remain on their existing configuration path until their dedicated planning slice lands.

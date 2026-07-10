@@ -12,6 +12,7 @@ Repository(config):
   load default command elevation
   load repo ignore defaults, including shared skip marker basenames
   load repo hooks
+  validate repo operation guards as non-interactive planning guards
   load packages, groups, profiles, and local vars
 
 compose_profile(profile_id):

@@ -259,52 +259,6 @@ def test_package_guard_manifest_rejects_interactive_io_and_run_noop(
         _engine(tmp_path, repo_root).get_repo("fixture").resolve_package("app")
 
 
-def test_repo_and_target_guard_schema_remains_unchanged_until_their_planning_slices(
-    tmp_path: Path,
-) -> None:
-    repo_root = tmp_path / "repo"
-    _write_profile(repo_root)
-    repo_root.joinpath("repo.toml").write_text(
-        "\n".join(
-            [
-                "[hooks.guard_push]",
-                'commands = [{ run = "printf repo", io = "tty" }]',
-                "run_noop = true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    package_root = repo_root / "packages" / "app"
-    (package_root / "files").mkdir(parents=True)
-    (package_root / "files" / "config.txt").write_text("value\n", encoding="utf-8")
-    package_root.joinpath("package.toml").write_text(
-        "\n".join(
-            [
-                'id = "app"',
-                "",
-                "[targets.config]",
-                'source = "files/config.txt"',
-                'path = "~/.config/app/config.txt"',
-                "",
-                "[targets.config.hooks.guard_push]",
-                'commands = [{ run = "printf target", io = "tty" }]',
-                "run_noop = true",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    repo = _engine(tmp_path, repo_root).get_repo("fixture")
-
-    assert repo.hooks["guard_push"].run_noop is True
-    assert repo.hooks["guard_push"].commands[0].io == "tty"
-    target_guard = repo.resolve_package("app").targets["config"].hooks["guard_push"]
-    assert target_guard.run_noop is True
-    assert target_guard.commands[0].io == "tty"
-
-
 def test_all_guard_skipped_cli_reports_before_ui_and_returns_without_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

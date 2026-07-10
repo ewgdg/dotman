@@ -319,10 +319,18 @@ class GuardSkip:
     repo_name: str
     package_id: str | None = None
     bound_profile: str | None = None
+    target_name: str | None = None
     reason: str | None = None
 
     @property
     def scope_label(self) -> str:
+        if self.scope_kind == "target" and self.package_id is not None and self.target_name is not None:
+            return repo_qualified_target_text(
+                repo_name=self.repo_name,
+                package_id=self.package_id,
+                target_name=self.target_name,
+                bound_profile=self.bound_profile,
+            )
         if self.scope_kind == "package" and self.package_id is not None:
             package_ref = package_ref_text(
                 package_id=self.package_id,
@@ -332,7 +340,7 @@ class GuardSkip:
         return self.repo_name
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "scope_kind": self.scope_kind,
             "repo": self.repo_name,
             "package_id": self.package_id,
@@ -340,6 +348,9 @@ class GuardSkip:
             "scope": self.scope_label,
             "reason": self.reason,
         }
+        if self.target_name is not None:
+            payload["target_name"] = self.target_name
+        return payload
 
 
 @dataclass(frozen=True)
