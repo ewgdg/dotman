@@ -1,0 +1,5 @@
+# Own structured transforms in dotman
+
+Dotman owns the reusable structured transform framework and bundled JSON, TOML, plist, and XML format transformers because their partition-and-recomposition semantics support dotman workflows across repositories rather than policy belonging to one repository. Dotman exposes them through the standalone public `dotman transform <format>` CLI, while target manifests continue to compose commands through `render` and `capture`; repository-specific preprocessing and application policy remain repository-owned.
+
+The transform subsystem stays isolated from repository loading and the sync engine. It does not introduce a plugin API or transform-specific manifest schema: repositories compose bundled format behavior and their own helpers through command templates. The coordinated cutover landed the public framework and bundled formats in dotman issues #7–#11, migrated repository consumers in dotfiles issues #12–#15, then removed dotfiles-owned generic implementations and duplicate tests in dotfiles issue #16.
