@@ -317,7 +317,7 @@ def test_run_diff_review_menu_shows_help_then_skips_review(monkeypatch, capsys) 
     )
     prompts = iter(["?", "s"])
 
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu([review_item], operation="push") is True
@@ -328,6 +328,7 @@ def test_run_diff_review_menu_shows_help_then_skips_review(monkeypatch, capsys) 
     assert "  a          inspect all diffs" in output
     assert "  l, list    list review items" in output
     assert "  s, skip    skip remaining review" in output
+    assert "  Esc        abort" in output
     assert '  "?"        show this help' in output
 
 
@@ -347,7 +348,7 @@ def test_run_diff_review_menu_uses_full_paths_when_requested(monkeypatch, capsys
     )
     prompts = iter(["s"])
 
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu([review_item], operation="push", full_paths=True) is True

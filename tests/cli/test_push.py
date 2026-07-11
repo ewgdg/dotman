@@ -537,7 +537,7 @@ def test_push_cli_combined_selection_menu_excludes_selected_targets_across_track
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     answers = iter(["s", "1"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(answers))
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
@@ -734,7 +734,7 @@ def test_push_cli_hides_noop_bindings_after_combined_selection_filter(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     answers = iter(["s", "1"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(answers))
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"

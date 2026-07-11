@@ -65,7 +65,9 @@ review_plans_for_interactive_diffs(plans):
   build review items from file/directory plans plus active probe plans
   for each review item:
     show diff header and diff output
-    ask inspect/next/all/list/skip-review/abort command
+    ask inspect/next/all/list/skip-review command
+    if user presses Escape at the review menu:
+      abort review
     if user requests list:
       reprint the review item menu without changing current review position
     apply command to pending plans

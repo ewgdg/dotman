@@ -957,7 +957,7 @@ def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(
     prompts = iter(["a", "s"])
     inspected: list[str] = []
 
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
@@ -991,7 +991,7 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
     )
     prompts = iter(["1", "s"])
 
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: None)
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
@@ -1022,7 +1022,7 @@ def test_run_diff_review_menu_list_command_reprints_menu(
     )
     prompts = iter(["list", "s"])
 
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu([review_item], operation="push") is True
@@ -1122,7 +1122,7 @@ def test_run_diff_review_menu_default_command_views_next_diff(
     prompts = iter(["", "", "s"])
     inspected: list[str] = []
 
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
@@ -1182,7 +1182,7 @@ def test_run_diff_review_menu_next_command_uses_last_viewed_file(
     prompts = iter(["2", "n", "s"])
     inspected: list[str] = []
 
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
+    monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
@@ -1212,7 +1212,7 @@ def test_run_diff_review_menu_next_command_at_end_prompts_for_continue(monkeypat
     prompts = iter(["", "", ""])
     inspected: list[str] = []
 
-    def fake_prompt(message: str) -> str:
+    def fake_prompt(message: str, **_options: object) -> str:
         prompt_messages.append(message)
         return next(prompts)
 
@@ -1224,8 +1224,8 @@ def test_run_diff_review_menu_next_command_at_end_prompts_for_continue(monkeypat
 
     assert inspected == ["gitconfig"]
     assert prompt_messages == [
-        '\nReview command ("?", number, "n", "a", "l", "s", "q"; default: next): ',
-        '\nReview command ("?", number, "n", "a", "l", "s", "q"; default: next): ',
+        '\nReview command ("?", number, "n", "a", "l", "s", Esc; default: next): ',
+        '\nReview command ("?", number, "n", "a", "l", "s", Esc; default: next): ',
         'Continue? [Y/n] ',
     ]
 
@@ -1240,7 +1240,16 @@ def test_print_selection_header_prepends_blank_line(monkeypatch, capsys) -> None
 def test_review_menu_prompt_prepends_blank_line(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
-    assert cli.review_menu_prompt() == '\nReview command ("?", number, "n", "a", "l", "s", "q"; default: next): '
+    assert cli.review_menu_prompt() == '\nReview command ("?", number, "n", "a", "l", "s", Esc; default: next): '
+
+
+def test_parse_review_command_aborts_on_escape() -> None:
+    assert cli.parse_review_command("\x1b", 1) == ("abort", None)
+
+
+def test_parse_review_command_rejects_q() -> None:
+    with pytest.raises(ValueError, match="unsupported review command: q"):
+        cli.parse_review_command("q", 1)
 
 
 @pytest.mark.parametrize("command", ["l", "list"])

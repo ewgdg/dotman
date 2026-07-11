@@ -43,7 +43,7 @@ from dotman.snapshot import (
     SnapshotRecord,
     find_snapshot_matches,
 )
-from dotman.terminal import read_prompt_line
+from dotman.terminal import ESCAPE_INPUT, read_prompt_line
 from dotman.resolver import (
     ResolverOption,
     build_full_spec_selector_field_kinds,
@@ -128,8 +128,13 @@ class _EditQueryCandidate:
             return f"{self.repo_name}:{package_ref}"
         return f"{self.repo_name}:{package_ref}.{self.target_name}"
 
-def prompt(message: str) -> str:
-    return read_prompt_line(message, input_stream=sys.stdin, output_stream=sys.stdout)
+def prompt(message: str, *, escape_result: str | None = None) -> str:
+    return read_prompt_line(
+        message,
+        input_stream=sys.stdin,
+        output_stream=sys.stdout,
+        escape_result=escape_result,
+    )
 
 
 def colors_enabled() -> bool:
@@ -581,7 +586,7 @@ def pending_selection_prompt() -> str:
 
 def review_menu_prompt() -> str:
     prompt_text = "Review command"
-    hint_text = '("?", number, "n", "a", "l", "s", "q"; default: next)'
+    hint_text = '("?", number, "n", "a", "l", "s", Esc; default: next)'
     if not colors_enabled():
         return f"\n{prompt_text} {hint_text}: "
     return (
@@ -688,7 +693,7 @@ def print_review_command_help() -> None:
     print("  a          inspect all diffs")
     print("  l, list    list review items")
     print("  s, skip    skip remaining review")
-    print("  q          abort")
+    print("  Esc        abort")
     print('  "?"        show this help')
 
 
@@ -1017,7 +1022,7 @@ def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | N
         return "help", None
     if answer == "a":
         return "all", None
-    if answer == "q":
+    if answer == ESCAPE_INPUT:
         return "abort", None
     if answer.isdigit():
         selected_index = parse_selection_index(answer, item_count)
@@ -2950,7 +2955,10 @@ def run_diff_review_menu(
     last_viewed_index: int | None = None
     while True:
         try:
-            command_name, selected_index = parse_review_command(prompt(review_menu_prompt()), len(review_items))
+            command_name, selected_index = parse_review_command(
+                prompt(review_menu_prompt(), escape_result=ESCAPE_INPUT),
+                len(review_items),
+            )
         except ValueError as exc:
             print(f"invalid selection: {exc}", file=sys.stderr)
             continue

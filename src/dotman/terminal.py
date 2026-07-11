@@ -6,6 +6,7 @@ from typing import Iterator, Sequence
 
 from prompt_toolkit import prompt as prompt_toolkit_prompt
 from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.key_binding import KeyBindings
 
 try:
     import termios
@@ -14,6 +15,7 @@ except ImportError:  # pragma: no cover - non-POSIX platforms do not expose term
 
 
 type TerminalStateSnapshot = tuple[int, list[int | bytes]]
+ESCAPE_INPUT = "\x1b"
 
 
 @contextmanager
@@ -30,13 +32,14 @@ def read_prompt_line(
     *,
     input_stream: object | None = None,
     output_stream: object | None = None,
+    escape_result: str | None = None,
 ) -> str:
     input_stream = sys.stdin if input_stream is None else input_stream
     output_stream = sys.stdout if output_stream is None else output_stream
 
     if _prompt_toolkit_supported(input_stream=input_stream, output_stream=output_stream):
         try:
-            return _prompt_with_toolkit(message).strip()
+            return _prompt_with_toolkit(message, escape_result=escape_result).strip()
         except EOFError:
             return ""
 
@@ -95,10 +98,20 @@ def _prompt_toolkit_supported(*, input_stream: object, output_stream: object) ->
     return input_stream is sys.stdin and output_stream is sys.stdout and _tty_file_descriptor(input_stream) is not None and _tty_file_descriptor(output_stream) is not None
 
 
-def _prompt_with_toolkit(message: str) -> str:
+def _prompt_with_toolkit(message: str, *, escape_result: str | None = None) -> str:
     prompt_message: str | ANSI
     if "\x1b[" in message:
         prompt_message = ANSI(message)
     else:
         prompt_message = message
-    return prompt_toolkit_prompt(prompt_message)
+    if escape_result is None:
+        return prompt_toolkit_prompt(prompt_message)
+
+    key_bindings = KeyBindings()
+
+    # Escape starts many terminal key sequences; eager handling makes a lone press abort immediately.
+    @key_bindings.add("escape", eager=True)
+    def exit_on_escape(event) -> None:
+        event.app.exit(result=escape_result)
+
+    return prompt_toolkit_prompt(prompt_message, key_bindings=key_bindings)

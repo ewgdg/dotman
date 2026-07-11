@@ -12,8 +12,10 @@ preserve_terminal_state():
   run caller body
   restore captured terminal states best-effort
 
-read_prompt_line(message):
+read_prompt_line(message, optional escape result):
   if prompt-toolkit is supported in current terminal:
+    if escape result is configured:
+      bind Escape to immediately finish input with that result
     read line using prompt-toolkit
   else:
     print prompt and read from standard input

@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from prompt_toolkit.keys import Keys
 
 import dotman.terminal as terminal
 from dotman.diff_review import DEFAULT_REVIEW_PAGER, ReviewItem, run_review_item_diff
@@ -121,15 +122,28 @@ def test_run_review_item_diff_preserves_terminal_state_when_interrupted(monkeypa
 
 def test_read_prompt_line_uses_prompt_toolkit_for_interactive_stdio(monkeypatch) -> None:
     prompt_messages: list[object] = []
+    prompt_options: list[dict[str, object]] = []
 
     monkeypatch.setattr(terminal.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(terminal.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(terminal.sys.stdin, "fileno", lambda: 0)
     monkeypatch.setattr(terminal.sys.stdout, "fileno", lambda: 1)
-    monkeypatch.setattr(terminal, "prompt_toolkit_prompt", lambda message: prompt_messages.append(message) or "  n  ")
+    def fake_prompt(message: object, **options: object) -> str:
+        prompt_messages.append(message)
+        prompt_options.append(options)
+        return "  n  "
 
-    assert terminal.read_prompt_line("Review command: ") == "n"
+    monkeypatch.setattr(terminal, "prompt_toolkit_prompt", fake_prompt)
+
+    assert terminal.read_prompt_line("Review command: ", escape_result="\x1b") == "n"
     assert len(prompt_messages) == 1
+    key_bindings = prompt_options[0]["key_bindings"]
+    escape_binding = next(binding for binding in key_bindings.bindings if binding.keys == (Keys.Escape,))
+    exit_results: list[str] = []
+    escape_binding.handler(SimpleNamespace(app=SimpleNamespace(exit=lambda *, result: exit_results.append(result))))
+
+    assert escape_binding.eager()
+    assert exit_results == ["\x1b"]
 
 
 def test_read_prompt_line_falls_back_to_plain_readline_for_non_tty_streams() -> None:
