@@ -479,6 +479,20 @@ dotman transform json live.json --mode merge --overlay-file managed.json --selec
 cat settings.json | dotman transform json - - --mode cleanup --selectors editor
 ```
 
+### `dotman transform toml`
+
+Transforms TOML documents without repository configuration. At least one selector is required. Unprefixed and `exact:` selectors match exact dotted TOML key paths. `re:` selectors use Python regex search against dotted table and key paths; a table match selects its whole subtree, while a key match selects only that key.
+
+Merge recursively overlays tables after partitioning the base. Scalar values, arrays, and arrays of tables are atomic values and are replaced as units. Comments, ordering, whitespace trivia, and formatting are retained where `tomlkit` can preserve them. `--compare-file PATH` reuses its exact text when parsed TOML values are equal.
+
+```sh
+dotman transform toml live.toml output.toml --mode merge \
+  --overlay-file repo.toml --selector-type retain \
+  --selectors model 're:^projects\.' --compare-file live.toml
+```
+
+Both operands accept `-` for stdin (at most one). Output path `-` and `--stdout` write to stdout. File output inherits base-file permissions.
+
 ### `dotman transform plist`
 
 Transforms plist dictionaries without repository configuration. It uses shared transform operands and flags documented above, plus `--output-format xml|binary` (default `xml`) and optional `--compare-file PATH` for semantic no-op raw-byte reuse.

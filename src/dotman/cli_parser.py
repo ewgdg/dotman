@@ -552,6 +552,14 @@ def build_parser() -> argparse.ArgumentParser:
     configure_parser(json_parser, JsonTransformEngine())
     json_parser.set_defaults(transform_parser=json_parser)
 
+    toml_parser = transform_subparsers.add_parser(
+        "toml", help="Transform TOML documents", description="Clean up or merge TOML documents"
+    )
+    from dotman.transforms.toml import TomlTransformEngine
+
+    configure_parser(toml_parser, TomlTransformEngine())
+    toml_parser.set_defaults(transform_parser=toml_parser)
+
     plist_parser = transform_subparsers.add_parser(
         "plist", help="Transform plist dictionaries", description="Clean up or merge plist dictionaries"
     )
