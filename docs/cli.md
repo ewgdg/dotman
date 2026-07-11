@@ -463,3 +463,18 @@ profile = "personal"
 
 - Host-level entrypoints should use host meta packages for convenience.
 - Groups still handle reusable composition beneath the host meta layer.
+
+## Structured JSON transforms
+
+`dotman transform json BASE [OUTPUT] --mode cleanup|merge` runs without a dotman repository or configuration.
+Selectors always match the base JSON object. Unprefixed selectors default to `exact:`. Exact selectors use dotted nested key paths; quote a segment when its key contains a dot, such as `"key.with.dots".value`. `re:` selectors match full JSON key paths. `--selector-type retain|remove` controls selection. Merge mode requires `--overlay-file`; cleanup mode rejects it. `--compare-file` reuses exact existing bytes, including line endings, when JSON values are semantically equal.
+
+Use `-` for base or overlay stdin, and for output stdout. At most one input may be `-`. `--stdout` takes precedence over an optional output operand. File output inherits base permissions; stdin base has no permissions to inherit.
+
+Examples:
+
+```console
+dotman transform json settings.json cleaned.json --mode cleanup --selector-type retain --selectors exact:editor re:'^terminal'
+dotman transform json live.json --mode merge --overlay-file managed.json --selectors settings --stdout
+cat settings.json | dotman transform json - - --mode cleanup --selectors editor
+```

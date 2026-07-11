@@ -534,4 +534,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the Jinja source file",
     )
     add_jinja_context_arguments(render_jinja_parser)
+
+    transform_parser = subparsers.add_parser(
+        "transform",
+        help="Run a standalone structured transform",
+        description="Run a standalone structured transform without repository configuration",
+    )
+    transform_subparsers = transform_parser.add_subparsers(
+        dest="transform_format", required=True, title="formats", metavar="<format>"
+    )
+    json_parser = transform_subparsers.add_parser(
+        "json", help="Transform JSON objects", description="Clean up or merge JSON objects"
+    )
+    from dotman.transforms.cli import configure_parser
+    from dotman.transforms.json import JsonTransformEngine
+
+    configure_parser(json_parser, JsonTransformEngine())
+    json_parser.set_defaults(transform_parser=json_parser)
     return parser

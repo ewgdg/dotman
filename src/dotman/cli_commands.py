@@ -88,6 +88,12 @@ EngineFactory = Callable[[str | None], Any]
 
 
 def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliCommandHandlers) -> int:
+    if args.command == "transform":
+        from dotman.transforms.cli import run_parsed_engine
+        from dotman.transforms.json import JsonTransformEngine
+
+        return run_parsed_engine(JsonTransformEngine(), args.transform_parser, args)
+
     pre_engine_result = _dispatch_pre_engine_command(args=args, handlers=handlers)
     if pre_engine_result is not None:
         return pre_engine_result
