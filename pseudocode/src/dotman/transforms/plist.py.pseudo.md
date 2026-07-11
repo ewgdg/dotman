@@ -1,9 +1,47 @@
-# Plist structured transform
+# Plist Structured Transform
 
-1. Read base operand as bytes; missing file means empty dictionary, and `-` means stdin.
-2. Parse plist and reject non-dictionary roots.
-3. Parse selectors: unprefixed/`exact:` dotted dictionary paths (quoted parts preserve literal dots); `re:` patterns search complete dotted paths. Arrays and scalars remain atomic.
-4. With no selectors, preserve entire base. Otherwise retain or remove selected paths, including whole subtree when dictionary path matches.
-5. For merge, recursively overlay second plist along selected nested ancestors; overlay values replace base values and omitted managed descendants stay deleted.
-6. Compare plist values recursively with exact runtime types: dictionaries compare matching keys and typed child values, lists compare ordered typed elements, and scalar values require identical types before value equality. This keeps plist booleans distinct from integers. Reuse raw compare bytes only when this typed semantic comparison succeeds; otherwise serialize sorted keys using requested `xml` or `binary` format.
-7. Emit bytes binary-safely to stdout or file. File output inherits base permissions when base is a file.
+## Intent
+
+Partition and merge plist dictionaries with typed semantic comparison and binary-safe output.
+
+## Behavior
+
+```pseudo
+load plist operand:
+  if missing base file: use empty dictionary
+  if operand is "-": read captured stdin bytes
+  parse plist bytes
+  if root is not dictionary: reject with parse/type context
+
+select dictionary paths:
+  parse unprefixed and exact selectors as dotted paths with quoted literal segments
+  compile regex selectors against complete dotted paths
+  treat arrays and scalars as atomic values
+  if selector syntax or regex is invalid: reject with selector context
+
+cleanup(base, action, selectors):
+  if selectors are empty: preserve entire base
+  if action is retain: keep matches, matched dictionary subtrees, and required ancestors
+  if action is remove: delete matches or whole matched dictionary subtrees
+
+merge(base, overlay, action, selectors):
+  filter base first
+  recursively overlay dictionaries through selected ancestors
+  replace overlay values atomically
+  keep selected base values according to action
+  do not restore managed descendants omitted by overlay
+
+values_are_equal(left, right):
+  require identical runtime types
+  dictionaries: require same keys and recursively equal typed values
+  lists: require same order and recursively equal typed elements
+  scalars: compare values only after type match
+  therefore boolean and integer values remain distinct
+
+compare and emit:
+  if compare plist is typed-semantically equal: reuse exact compare bytes
+  else: serialize sorted keys using requested xml or binary format
+  write stdout binary-safely or write file
+  when writing file from file base: inherit base permissions
+  surface parse, selector, and serialization failures as nonzero CLI errors
+```
