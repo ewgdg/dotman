@@ -551,4 +551,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     configure_parser(json_parser, JsonTransformEngine())
     json_parser.set_defaults(transform_parser=json_parser)
+
+    plist_parser = transform_subparsers.add_parser(
+        "plist", help="Transform plist dictionaries", description="Clean up or merge plist dictionaries"
+    )
+    from dotman.transforms.plist import PlistTransformEngine
+
+    configure_parser(plist_parser, PlistTransformEngine())
+    plist_parser.set_defaults(transform_parser=plist_parser)
     return parser

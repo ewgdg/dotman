@@ -144,7 +144,17 @@ def run_parsed_engine(engine: TransformEngine, parser: argparse.ArgumentParser, 
     if len(stdin_inputs) > 1:
         raise ValueError("at most one of BASE and --overlay-file may read from stdin ('-')")
 
-    parsed_args.stdin_text = __import__("sys").stdin.read() if stdin_inputs else None
+    parsed_args.stdin_bytes = None
+    parsed_args.stdin_text = None
+    if stdin_inputs:
+        stdin = __import__("sys").stdin
+        stdin_buffer = getattr(stdin, "buffer", None)
+        if stdin_buffer is not None:
+            parsed_args.stdin_bytes = stdin_buffer.read()
+            parsed_args.stdin_text = parsed_args.stdin_bytes.decode("utf-8", errors="surrogateescape")
+        else:
+            parsed_args.stdin_text = stdin.read()
+            parsed_args.stdin_bytes = parsed_args.stdin_text.encode("utf-8")
     if parsed_args.output_path == Path("-"):
         parsed_args.stdout = True
         parsed_args.output_path = None

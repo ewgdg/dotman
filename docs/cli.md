@@ -478,3 +478,17 @@ dotman transform json settings.json cleaned.json --mode cleanup --selector-type 
 dotman transform json live.json --mode merge --overlay-file managed.json --selectors settings --stdout
 cat settings.json | dotman transform json - - --mode cleanup --selectors editor
 ```
+
+### `dotman transform plist`
+
+Transforms plist dictionaries without repository configuration. It uses shared transform operands and flags documented above, plus `--output-format xml|binary` (default `xml`) and optional `--compare-file PATH` for semantic no-op raw-byte reuse.
+
+Selectors are exact dotted dictionary paths by default; quote a component containing a literal dot (`"settings.window".width`). `re:` selectors use Python regex search against complete dotted paths. Matching a dictionary selects its subtree; arrays remain atomic. No selectors means identity cleanup, or whole-base overlay merge.
+
+```sh
+dotman transform plist live.plist output.plist --mode merge \
+  --overlay-file repo.plist --selector-type remove \
+  --selectors settings.managed --output-format binary
+```
+
+Both operands accept `-` for stdin (at most one). Output path `-` and `--stdout` write XML or binary bytes safely to stdout. File output inherits base-file permissions.

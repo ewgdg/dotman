@@ -91,8 +91,13 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
     if args.command == "transform":
         from dotman.transforms.cli import run_parsed_engine
         from dotman.transforms.json import JsonTransformEngine
+        from dotman.transforms.plist import PlistTransformEngine
 
-        return run_parsed_engine(JsonTransformEngine(), args.transform_parser, args)
+        engines = {
+            "json": JsonTransformEngine,
+            "plist": PlistTransformEngine,
+        }
+        return run_parsed_engine(engines[args.transform_format](), args.transform_parser, args)
 
     pre_engine_result = _dispatch_pre_engine_command(args=args, handlers=handlers)
     if pre_engine_result is not None:
