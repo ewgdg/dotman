@@ -53,6 +53,15 @@ resolve_*_text(engine, query):
   if no match:
     reject query
 
+resolve_edit_repo_path(config_path, repo_query):
+  load configured repos from manager config only
+  if repo query exactly names one configured repo:
+    return that repo path
+  if query is partial or ambiguous and interactive mode is enabled:
+    prompt for one configured repo
+    return selected repo path
+  reject missing, non-exact, or ambiguous repo query
+
 selection/review plan items:
   include active probe targets as selectable install rows with a probe badge and no path payload
   include active probe targets in the review menu as probe rows so item numbers stay aligned with the later selection menu

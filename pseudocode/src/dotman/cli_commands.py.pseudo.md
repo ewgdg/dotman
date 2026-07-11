@@ -67,6 +67,12 @@ _handle_info(args):
   resolve requested tracked or trackable object
   emit detail in requested format
 
+edit repo:
+  load manager config without constructing the engine
+  resolve the requested configured repo name
+  open the configured repo root with the editor
+  if no editor is configured, print the repo root and succeed
+
 list repo:
   read configured repos from manager config in configured order
   emit repo list before engine construction

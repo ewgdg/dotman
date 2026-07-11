@@ -76,6 +76,7 @@ class CliCommandHandlers:
     emit_snapshot_detail: Callable[..., int]
     emit_doctor_summary: Callable[..., int] = field(default=lambda **kwargs: 0)
     resolve_edit_local_path: Callable[..., Path] = field(default=lambda **kwargs: Path())
+    resolve_edit_repo_path: Callable[..., Path] = field(default=lambda **kwargs: Path())
     resolve_trackable_selector_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
     emit_trackable_detail: Callable[..., int] = field(default=lambda **kwargs: 0)
     resolve_untrack_group_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
@@ -226,6 +227,15 @@ def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> 
                 json_output=args.json_output,
             ),
             handlers=handlers,
+        )
+    if args.command == "edit" and args.edit_command == "repo":
+        return handlers.open_editor_path(
+            path=handlers.resolve_edit_repo_path(
+                config_path=args.config,
+                repo_query=args.repo,
+                json_output=args.json_output,
+            ),
+            missing_editor_label="Repo path",
         )
     if args.command == "list" and args.list_command == "repo":
         return handlers.emit_repos(

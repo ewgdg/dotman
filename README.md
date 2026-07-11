@@ -112,6 +112,7 @@ Example:
 
 ```sh
 dotman add ~/.gitconfig example:git
+dotman edit repo example
 dotman edit package example:git
 dotman edit target example:git.gitconfig
 dotman edit local example

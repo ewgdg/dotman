@@ -27,6 +27,7 @@ from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_full_s
 from dotman.models import (
     FullSpecSelector,
     OperationPlan,
+    RepoConfig,
     ResolvedSelector,
     finalize_hook_plans_for_targets,
     package_ref_text,
@@ -2190,12 +2191,14 @@ def prompt_for_add_repo_name(engine: DotmanEngine, *, repo_query: str | None) ->
     return repo_names[selected_index]
 
 
-def resolve_edit_local_path(
+def _resolve_edit_repo_config(
     *,
     config_path: str | None,
     repo_query: str | None,
     json_output: bool,
-) -> Path:
+    command_label: str,
+    selection_header: str,
+) -> RepoConfig:
     config = load_manager_config(config_path)
     exact_repos = [
         repo_config
@@ -2208,7 +2211,7 @@ def resolve_edit_local_path(
         if repo_query is None or repo_query.lower() in repo_config.name.lower()
     ]
     if repo_query is None and len(matching_repos) == 1:
-        return matching_repos[0].local_override_path
+        return matching_repos[0]
 
     repo_names = ", ".join(repo_config.name for repo_config in config.ordered_repos)
     repo_options = matching_repos or (
@@ -2229,31 +2232,61 @@ def resolve_edit_local_path(
         partial_matches=repo_options if not exact_repos else [],
         query_text=repo_query or "",
         interactive=interactive_mode_enabled(json_output=json_output),
-        exact_header_text="Select a repo for local overrides:",
-        partial_header_text="Select a repo for local overrides:",
+        exact_header_text=selection_header,
+        partial_header_text=selection_header,
         option_resolver=repo_option,
-        exact_error_text=f"edit local repo '{repo_query}' is ambiguous: "
+        exact_error_text=f"{command_label} '{repo_query}' is ambiguous: "
         + ", ".join(repo_config.name for repo_config in exact_repos),
         partial_error_text=(
-            f"edit local repo is required in non-interactive mode: {repo_names}"
+            f"{command_label} is required in non-interactive mode: {repo_names}"
             if repo_query is None
-            else f"edit local repo '{repo_query}' is ambiguous: "
+            else f"{command_label} '{repo_query}' is ambiguous: "
             + ", ".join(repo_config.name for repo_config in matching_repos)
         ),
         not_found_text=(
-            f"edit local repo is required in non-interactive mode: {repo_names}"
+            f"{command_label} is required in non-interactive mode: {repo_names}"
             if repo_query is None
-            else f"edit local repo '{repo_query}' did not match any configured repo: {repo_names}"
+            else f"{command_label} '{repo_query}' did not match any configured repo: {repo_names}"
         ),
         single_partial_mode="menu",
         single_partial_error_text=(
-            f"edit local repo '{repo_query}' is not exact; use '{matching_repos[0].name}'"
+            f"{command_label} '{repo_query}' is not exact; use '{matching_repos[0].name}'"
             if repo_query is not None and len(matching_repos) == 1
             else None
         ),
         rank_matches=repo_query is not None and bool(matching_repos),
     )
-    return selected_repo.local_override_path
+    return selected_repo
+
+
+def resolve_edit_local_path(
+    *,
+    config_path: str | None,
+    repo_query: str | None,
+    json_output: bool,
+) -> Path:
+    return _resolve_edit_repo_config(
+        config_path=config_path,
+        repo_query=repo_query,
+        json_output=json_output,
+        command_label="edit local repo",
+        selection_header="Select a repo for local overrides:",
+    ).local_override_path
+
+
+def resolve_edit_repo_path(
+    *,
+    config_path: str | None,
+    repo_query: str,
+    json_output: bool,
+) -> Path:
+    return _resolve_edit_repo_config(
+        config_path=config_path,
+        repo_query=repo_query,
+        json_output=json_output,
+        command_label="edit repo",
+        selection_header="Select a repo to edit:",
+    ).path
 
 
 def resolve_add_package_text(
@@ -3630,6 +3663,7 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         open_editor_path=open_editor_path,
         resolve_edit_query_text=resolve_edit_query_text,
         resolve_edit_local_path=resolve_edit_local_path,
+        resolve_edit_repo_path=resolve_edit_repo_path,
         resolve_tracked_package_entry_text=resolve_tracked_package_entry_text,
         resolve_tracked_target_text=resolve_tracked_target_text,
         filter_plans_for_interactive_selection=filter_plans_for_interactive_selection,
@@ -3694,7 +3728,7 @@ def _rewrite_edit_query_argv(argv: Sequence[str]) -> list[str]:
     if command_index + 1 >= len(normalized_argv):
         return normalized_argv
     next_token = normalized_argv[command_index + 1]
-    if next_token in {"package", "target", "local", "config", "query"} or next_token.startswith("-"):
+    if next_token in {"package", "target", "local", "config", "repo", "query"} or next_token.startswith("-"):
         return normalized_argv
     return [*normalized_argv[: command_index + 1], "query", *normalized_argv[command_index + 1 :]]
 

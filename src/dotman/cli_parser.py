@@ -217,8 +217,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     edit_parser = subparsers.add_parser(
         "edit",
-        help="Open a tracked package, target, local override, or config path",
-        description="Open a tracked package, target, local override, or config path",
+        help="Open a tracked package, target, local override, config path, or repo path",
+        description="Open a tracked package, target, local override, config path, or repo path",
     )
     edit_subparsers = edit_parser.add_subparsers(
         dest="edit_command",
@@ -254,6 +254,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Open dotman manager config in an editor",
         description="Open dotman manager config in an editor",
     )
+    edit_repo_parser = edit_subparsers.add_parser(
+        "repo",
+        help="Open a configured repo root in an editor",
+        description="Open a configured repo root in an editor",
+    )
+    edit_repo_parser.add_argument(
+        "repo",
+        metavar="<repo>",
+        help="Configured repo name",
+    )
     edit_query_parser = edit_subparsers.add_parser(
         "query",
         help=argparse.SUPPRESS,
@@ -265,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     # Bare `dotman edit <query>` sugar is wired through this hidden subcommand so
-    # explicit `edit package` / `edit target` help stays canonical.
+    # explicit edit subcommand help stays canonical.
     hide_subparser_from_help(edit_subparsers, "query")
 
     push_parser = subparsers.add_parser(

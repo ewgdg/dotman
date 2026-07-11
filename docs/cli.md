@@ -361,6 +361,7 @@ Examples:
 
 - `edit package <package>` should open the tracked package directory in `$VISUAL` or `$EDITOR`.
 - `edit target <target>` should open the tracked target repo-side source path in `$VISUAL` or `$EDITOR`.
+- `edit repo <repo>` should open the configured repo root in `$VISUAL` or `$EDITOR`; non-exact repo names should use the interactive repo resolver when available.
 - `edit local [<repo>]` should open the per-repo local override path in `$VISUAL` or `$EDITOR`; missing, ambiguous, or non-exact `<repo>` should use the interactive repo resolver when available.
 - `edit local <repo>` should open directly only for exact repo-name matches; non-interactive mode should reject non-exact matches.
 - `edit local` should load the manager config to resolve repo names, but should not load or validate the local override file before opening it.
@@ -372,6 +373,7 @@ Examples:
 - `edit target` should open the repo-side source file for file targets and the repo-side source directory for directory targets.
 - If no editor is configured, `edit package` should print the package directory path and exit successfully.
 - If no editor is configured, `edit target` should print the resolved repo-side source path and exit successfully.
+- If no editor is configured, `edit repo` should print the resolved repo root path and exit successfully.
 - If no editor is configured, `edit local` should print the resolved local override path and exit successfully.
 - If no editor is configured, `edit config` should print the selected manager config path and exit successfully.
 - `edit package` should use the tracked-package selector flow, so bare and repo-qualified package queries follow the same ambiguity rules as `info tracked`.

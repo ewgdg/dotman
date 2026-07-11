@@ -19,6 +19,8 @@ build_parser():
 
   list supports configured repo discovery plus tracked state, trackables, variables, and snapshots
 
+  edit supports repository roots in addition to package, target, local override, and config paths
+
   hide internal aliases from help when requested
   return parser
 

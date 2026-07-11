@@ -165,6 +165,66 @@ def test_edit_config_cli_opens_selected_config_without_loading_it(
     assert recorded["command"] == ["nvim", str(config_path.resolve())]
 
 
+def test_edit_repo_cli_prints_selected_repo_path_when_no_editor_is_configured(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("VISUAL", raising=False)
+    monkeypatch.delenv("EDITOR", raising=False)
+
+    repo_root = tmp_path / "repo"
+    _write_edit_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+
+    exit_code = main(["--config", str(config_path), "edit", "repo", "fixture"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == f"No editor configured. Repo path: {repo_root.resolve()}\n"
+
+
+def test_edit_repo_cli_opens_selected_repo_without_loading_repo_contents(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "repo.toml").write_text("not valid toml = [", encoding="utf-8")
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+
+    monkeypatch.setenv("EDITOR", "nvim -d")
+    recorded: dict[str, object] = {}
+
+    def fake_run(command: list[str], check: bool):
+        recorded["command"] = command
+        recorded["check"] = check
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+
+    exit_code = main(["--config", str(config_path), "edit", "repo", "fixture"])
+
+    assert exit_code == 0
+    assert recorded["check"] is False
+    assert recorded["command"] == ["nvim", str(repo_root.resolve())]
+
+
+def test_edit_repo_cli_rejects_non_exact_repo_in_non_interactive_mode(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    alpha_root = tmp_path / "alpha"
+    beta_root = tmp_path / "beta"
+    _write_edit_repo(alpha_root)
+    _write_edit_repo(beta_root)
+    config_path = write_named_manager_config(tmp_path, {"alpha": alpha_root, "beta": beta_root})
+
+    exit_code = main(["--config", str(config_path), "edit", "repo", "bet"])
+
+    assert exit_code == 2
+    assert "edit repo 'bet' is not exact; use 'beta'" in capsys.readouterr().err
+
+
 def test_edit_local_cli_prints_repo_local_override_path_when_no_editor_is_configured(
     tmp_path: Path,
     monkeypatch,
