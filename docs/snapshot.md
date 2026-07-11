@@ -1,6 +1,6 @@
 # dotman Snapshot Model
 
-This document captures the planned snapshot lifecycle and rollback semantics for `dotman`.
+This document captures the current snapshot lifecycle and rollback semantics for `dotman`.
 
 ## Purpose
 
@@ -11,30 +11,30 @@ This document captures the planned snapshot lifecycle and rollback semantics for
 
 ## Scope
 
-- A snapshot should capture only live paths that the finalized push plan will mutate.
+- A snapshot captures only live paths that the finalized push plan will mutate.
 - That includes file-target create, update, and delete actions.
 - For directory targets, that includes each selected child-path create, update, and delete action.
-- Snapshots should record the pre-push state of those live paths, not the repo-side source state.
-- Rollback should restore only the live paths recorded by the snapshot.
+- Snapshots record the pre-push state of those live paths, not the repo-side source state.
+- Rollback restores only the live paths recorded by the snapshot.
 
 ## Lifecycle
 
-- Interactive target exclusion and diff review must finish before snapshot creation, so the snapshot matches the exact set of planned mutations.
-- Dotman should create the snapshot only when the first live mutation of a real `push` is about to begin.
+- Interactive target exclusion and diff review finish before snapshot creation, so the snapshot matches the exact set of planned mutations.
+- Dotman creates the snapshot only when the first live mutation of a real `push` is about to begin.
 - Guard-only prefixes may soft-skip without creating a snapshot.
-- If the finalized work is hook-only or every selected package soft-skips before any live mutation, dotman should not create a snapshot.
-- A new snapshot should start in status `prepared` while dotman is still executing the push.
-- If the push completes successfully, dotman should mark the snapshot as `applied`.
-- If the push fails after snapshot creation, dotman should keep the snapshot and mark it as `failed`.
-- If the user later restores a snapshot, dotman should keep its lifecycle status unchanged and instead update restore metadata such as restore count and last restore time.
+- If the finalized work is hook-only or every selected package soft-skips before any live mutation, dotman does not create a snapshot.
+- A new snapshot starts in status `prepared` while dotman is still executing the push.
+- If the push completes successfully, dotman marks the snapshot as `applied`.
+- If the push fails after snapshot creation, dotman keeps the snapshot and marks it as `failed`.
+- If the user later restores a snapshot, dotman keeps its lifecycle status unchanged and updates restore metadata such as restore count and last restore time.
 
 ## Storage
 
-- The default snapshot root should be `$XDG_DATA_HOME/dotman/snapshots/`.
-- If `XDG_DATA_HOME` is unset, dotman should fall back to `~/.local/share/dotman/snapshots/`.
-- Each snapshot should live in its own directory under that root.
-- Snapshot storage should be independent from repo tracked package state under `$XDG_STATE_HOME`.
-- Snapshot restore must not depend on the current repo contents or the current tracked package set.
+- The default snapshot root is `$XDG_DATA_HOME/dotman/snapshots/`.
+- If `XDG_DATA_HOME` is unset, dotman falls back to `~/.local/share/dotman/snapshots/`.
+- Each snapshot lives in its own directory under that root.
+- Snapshot storage is independent from repo tracked package state under `$XDG_STATE_HOME`.
+- Snapshot restore does not depend on the current repo contents or the current tracked package set.
 
 Example layout:
 
@@ -49,7 +49,7 @@ $XDG_DATA_HOME/dotman/snapshots/
 
 ## Manifest Expectations
 
-- Each snapshot should have a manifest that is sufficient to plan and execute rollback without consulting repo manifests.
+- Each snapshot has a manifest sufficient to plan and execute rollback without consulting repo manifests.
 - The manifest should record snapshot metadata such as:
   - snapshot ID
   - creation time
@@ -69,14 +69,14 @@ $XDG_DATA_HOME/dotman/snapshots/
 
 ## Rollback Semantics
 
-- `rollback` should restore the selected snapshot state against the current live filesystem.
+- `rollback` restores the selected snapshot state against the current live filesystem.
 - If a recorded path existed before the push, rollback should restore its recorded bytes and mode.
 - If a recorded path was a symlink before the push, rollback should either recreate the link target or restore the resolved target path, depending on the snapshot entry's recorded symlink handling mode.
 - If a recorded path did not exist before the push, rollback should remove it.
 - Rollback may prune empty parent directories left behind by deleting snapshot-created paths.
-- Rollback planning and diff review should compare current live content against the snapshot-recorded desired restore state.
-- Rollback should not run package hooks.
-- Rollback should fail fast if the snapshot manifest is invalid or required stored content is missing.
+- Rollback planning and diff review compare current live content against the snapshot-recorded desired restore state.
+- Rollback does not run package hooks.
+- Rollback fails fast if the snapshot manifest is invalid or required stored content is missing.
 
 ## Guarantees And Limits
 
@@ -91,14 +91,14 @@ $XDG_DATA_HOME/dotman/snapshots/
 
 ## Retention
 
-- Snapshot retention should be count-based through `snapshots.max_generations`.
-- The default retained snapshot count should be `10`.
-- Dotman should prune the oldest snapshots when the retained snapshot count exceeds that limit.
-- Retention should apply to snapshot directories after snapshot status has been finalized for the push run.
+- Snapshot retention is count-based through `snapshots.max_generations`.
+- The default retained snapshot count is `10`.
+- Dotman prunes the oldest snapshots when the retained snapshot count exceeds that limit.
+- Retention applies to snapshot directories after snapshot status has been finalized for the push run.
 
 ## CLI Surface
 
-- `push` creates a snapshot only for real execution.
+- A mutation-bearing real `push` may create a snapshot when snapshots are enabled.
 - `list snapshots` shows available snapshot history in a concise overview form.
-- `info snapshot <snapshot>` shows detailed metadata and recorded paths for one snapshot. `latest` should resolve to the newest available snapshot.
-- `rollback [<snapshot>]` restores the latest restorable snapshot by default, and should also accept `latest` explicitly as a snapshot reference alias.
+- `info snapshot <snapshot>` shows detailed metadata and recorded paths for one snapshot. `latest` resolves to the newest available snapshot.
+- `rollback [<snapshot>]` restores the latest restorable snapshot by default and accepts `latest` explicitly as a snapshot reference alias.

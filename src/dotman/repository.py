@@ -311,7 +311,12 @@ class Repository:
             merged = parent_spec if merged is None else merge_package_specs(merged, parent_spec)
         current = strip_package_extensions(loaded)
         merged = current if merged is None else merge_package_specs(merged, current)
-        merged = patch_remove_and_append(merged, loaded.remove or (), loaded.append or {})
+        merged = patch_remove_and_append(
+            merged,
+            loaded.remove or (),
+            loaded.append or {},
+            default_command_elevation=self.default_command_elevation,
+        )
         self._resolved_packages[package_id] = merged
         return merged
 

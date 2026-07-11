@@ -49,7 +49,7 @@ This document captures the current repository structure and configuration schema
 - Repos may define optional repo-wide defaults in `repo.toml`.
 - Machine-local or private overrides should not live in the repo.
 - Per-repo local overrides should be read from `$XDG_CONFIG_HOME/dotman/repos/<repo-name>/local.toml`, with fallback to `~/.config/dotman/repos/<repo-name>/local.toml`.
-- In v1, per-repo local overrides are limited to `[vars]` data.
+- Per-repo local overrides are limited to `[vars]` data.
 
 ## Resolution Model
 
@@ -427,7 +427,7 @@ commands = [
 - Prefer explicit runner commands such as `sh hooks/push.sh`, `python3 hooks/render.py`, or `uv run hooks/render.py` instead of relying on executable bits.
 - When a Python helper depends on repo-managed dependencies, prefer `uv run --project "$DOTMAN_REPO_ROOT" ...` so it uses the repo `pyproject.toml` and lockfile.
 - Bare script paths should be reserved for cases where the repository intentionally manages executability.
-- Reusable root-level action definitions are not needed in v1. Shared behavior should live in `scripts/` and be invoked from hooks or transform strings with template-expanded args.
+- Reusable root-level action definitions are not needed. Shared behavior should live in `scripts/` and be invoked from hooks or transform strings with template-expanded args.
 - Target-level command strings may be repo scripts, package-local scripts, or inline command strings.
 - Command strings may use the same template expansion rules as other string values.
 - Dotman may pass standard path and context values to target commands through both env vars and command args.
@@ -441,7 +441,7 @@ commands = [
 - If you use `capture = "patch"`, you must also set `pull_view_repo` and `pull_view_live` explicitly.
 - `capture = "patch"` reprojects the patched repo source through the forward render path and must match the reviewed live bytes exactly.
 - `reconcile` is the reverse action used during `pull`.
-- Directory targets should not support `render`, `capture`, or `reconcile` in v1.
+- Directory targets apply `render` and `capture` per child file. Target-level `reconcile` is for file targets; use child `capture` or path rules for directory targets.
 - During pull planning, dotman should compare:
   - repo-side view output against live-side view output
   - default repo-side view: `raw`
@@ -474,10 +474,10 @@ commands = [
 - When `pull` writes repo-side files while dotman is running under `sudo`, dotman should restore ownership of the written repo path back to the invoking user so the repo does not get stranded as root-owned.
 - Live file mode checks should compare against explicit target `chmod` where applicable. Directory-target child-file checks should compare only the Git-tracked executable bit.
 
-## V1 Bias
+## Current Boundaries
 
-- Copy-only install behavior for now.
-- No `var_schema` support in v1.
+- Install behavior is copy-only.
+- `var_schema` is currently not supported.
 - Prefer complete packages over hidden merging or cross-package coupling.
 
 ## Reference Paths

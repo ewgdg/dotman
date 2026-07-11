@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import replace
+from dataclasses import MISSING, fields, is_dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -61,44 +61,6 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
         else:
             merged[key] = override_value
     return merged
-
-
-def dotted_get(data: dict[str, Any], dotted_path: str) -> Any:
-    current: Any = data
-    for part in dotted_path.split("."):
-        if not isinstance(current, dict) or part not in current:
-            return None
-        current = current[part]
-    return current
-
-
-def dotted_delete(data: dict[str, Any], dotted_path: str) -> None:
-    parts = dotted_path.split(".")
-    current: Any = data
-    for part in parts[:-1]:
-        if not isinstance(current, dict) or part not in current:
-            return
-        current = current[part]
-    if isinstance(current, dict):
-        current.pop(parts[-1], None)
-
-
-def dotted_append(data: dict[str, Any], dotted_path: str, values: list[Any]) -> None:
-    parts = dotted_path.split(".")
-    current = data
-    for part in parts[:-1]:
-        next_value = current.get(part)
-        if not isinstance(next_value, dict):
-            next_value = {}
-            current[part] = next_value
-        current = next_value
-    existing = current.get(parts[-1])
-    if existing is None:
-        current[parts[-1]] = list(values)
-        return
-    if not isinstance(existing, list):
-        raise ValueError(f"append target '{dotted_path}' is not a list")
-    current[parts[-1]] = [*existing, *values]
 
 
 def normalize_string_list(value: Any) -> tuple[str, ...] | None:
@@ -883,18 +845,206 @@ def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec
     )
 
 
-def patch_remove_and_append(package: PackageSpec, remove_paths: tuple[str, ...], append_payload: dict[str, Any]) -> PackageSpec:
-    vars_payload = _copy_map(package.vars or {})
+def _split_structured_path(path: str) -> tuple[str, ...]:
+    parts = tuple(path.split("."))
+    if not parts or any(not part for part in parts):
+        raise ValueError(f"invalid package inheritance path '{path}'")
+    return parts
+
+
+def _replace_dataclass_field(value: Any, field_name: str, replacement: Any, *, path: str) -> Any:
+    if not is_dataclass(value) or not hasattr(value, field_name):
+        raise ValueError(f"package inheritance path '{path}' does not resolve to a structured field")
+    return replace(value, **{field_name: replacement})
+
+
+def _field_default(value: Any, field_name: str, *, path: str) -> Any:
+    for field_info in fields(value):
+        if field_info.name != field_name:
+            continue
+        if field_info.default is not MISSING:
+            return field_info.default
+        if field_info.default_factory is not MISSING:
+            return field_info.default_factory()
+        raise ValueError(f"cannot remove required package inheritance field '{path}'")
+    raise ValueError(f"package inheritance path '{path}' does not resolve to a structured field")
+
+
+def _remove_structured_path(value: Any, parts: tuple[str, ...], *, path: str) -> Any:
+    field_name = parts[0]
+    if isinstance(value, dict):
+        if field_name not in value:
+            return value
+        updated = dict(value)
+        if len(parts) == 1:
+            del updated[field_name]
+        else:
+            updated[field_name] = _remove_structured_path(value[field_name], parts[1:], path=path)
+        return updated
+
+    if not is_dataclass(value) or not hasattr(value, field_name):
+        raise ValueError(f"package inheritance path '{path}' does not resolve to a structured field")
+    if len(parts) == 1:
+        return _replace_dataclass_field(value, field_name, _field_default(value, field_name, path=path), path=path)
+
+    child = getattr(value, field_name)
+    if child is None:
+        return value
+    replacement = _remove_structured_path(child, parts[1:], path=path)
+    return _replace_dataclass_field(value, field_name, replacement, path=path)
+
+
+def _append_hook_commands(
+    hook: HookSpec,
+    values: Any,
+    *,
+    package: PackageSpec,
+    default_command_elevation: DefaultCommandElevationMode,
+) -> HookSpec:
+    # Manifest syntax treats a hook value as its command list, while the
+    # normalized model stores that list inside HookSpec.
+    manifest_path = package.package_root / "package.toml"
+    commands = normalize_hook_command_specs(
+        values,
+        manifest_kind="package manifest",
+        manifest_path=manifest_path,
+        owner_label=f"package hook '{hook.name}'",
+        hook_name=hook.name,
+        default_command_elevation=default_command_elevation,
+    )
+    return replace(
+        hook,
+        commands=(*hook.commands, *commands),
+        declared_in=package.package_root,
+    )
+
+
+def _normalize_append_values(
+    current: Any,
+    values: Any,
+    *,
+    package: PackageSpec,
+    default_command_elevation: DefaultCommandElevationMode,
+    path: str,
+) -> Any:
+    if isinstance(current, HookSpec):
+        return _append_hook_commands(
+            current,
+            values,
+            package=package,
+            default_command_elevation=default_command_elevation,
+        )
+    if not isinstance(values, list):
+        raise ValueError(f"append target '{path}' must receive a list")
+    if "hooks" in path.split(".") and path.endswith(".commands"):
+        hook_name = path.split(".")[-2]
+        commands = normalize_hook_command_specs(
+            values,
+            manifest_kind="package manifest",
+            manifest_path=package.package_root / "package.toml",
+            owner_label=f"package hook '{hook_name}'",
+            hook_name=hook_name,
+            default_command_elevation=default_command_elevation,
+        )
+        return (*current, *commands) if isinstance(current, tuple) else [*current, *commands]
+    if isinstance(current, tuple):
+        # TOML lists normalize to tuples in immutable domain models.
+        if path.endswith(".path_rules"):
+            target_name = path.split(".")[-2]
+            normalized = normalize_target_path_rules(
+                values,
+                manifest_path=package.package_root / "package.toml",
+                target_name=target_name,
+                default_command_elevation=default_command_elevation,
+            )
+            return (*current, *normalized)
+        if (current and isinstance(current[0], str)) or path.endswith(
+            (".depends", ".reserved_paths", ".push_ignore", ".pull_ignore", ".gitignore")
+        ):
+            if not all(isinstance(item, str) for item in values):
+                raise ValueError(f"append target '{path}' must contain only strings")
+            return (*current, *values)
+        raise ValueError(f"append target '{path}' has unsupported list element type")
+    if isinstance(current, list):
+        return [*current, *values]
+    raise ValueError(f"append target '{path}' is not a list")
+
+
+def _append_structured_path(
+    value: Any,
+    parts: tuple[str, ...],
+    values: Any,
+    *,
+    package: PackageSpec,
+    default_command_elevation: DefaultCommandElevationMode,
+    path: str,
+) -> Any:
+    if not parts:
+        return _normalize_append_values(
+            value,
+            values,
+            package=package,
+            default_command_elevation=default_command_elevation,
+            path=path,
+        )
+
+    field_name = parts[0]
+    if isinstance(value, dict):
+        if field_name not in value:
+            raise ValueError(f"append target '{path}' does not exist")
+        updated = dict(value)
+        updated[field_name] = _append_structured_path(
+            value[field_name],
+            parts[1:],
+            values,
+            package=package,
+            default_command_elevation=default_command_elevation,
+            path=path,
+        )
+        return updated
+
+    if not is_dataclass(value) or not hasattr(value, field_name):
+        raise ValueError(f"append target '{path}' does not resolve to a structured field")
+    child = getattr(value, field_name)
+    replacement = _append_structured_path(
+        child,
+        parts[1:],
+        values,
+        package=package,
+        default_command_elevation=default_command_elevation,
+        path=path,
+    )
+    return _replace_dataclass_field(value, field_name, replacement, path=path)
+
+
+def _iter_append_paths(payload: dict[str, Any], prefix: tuple[str, ...] = ()):
+    for key, value in payload.items():
+        current_path = (*prefix, key)
+        if isinstance(value, dict):
+            yield from _iter_append_paths(value, current_path)
+        else:
+            yield ".".join(current_path), value
+
+
+def patch_remove_and_append(
+    package: PackageSpec,
+    remove_paths: tuple[str, ...],
+    append_payload: dict[str, Any],
+    *,
+    default_command_elevation: DefaultCommandElevationMode = "none",
+) -> PackageSpec:
+    patched = package
     for dotted_path in remove_paths:
-        if dotted_path.startswith("vars."):
-            dotted_delete(vars_payload, dotted_path.removeprefix("vars."))
+        path = _split_structured_path(dotted_path)
+        patched = _remove_structured_path(patched, path, path=dotted_path)
 
-    if append_payload:
-        for top_key, value in append_payload.items():
-            if isinstance(value, dict):
-                for nested_key, nested_value in value.items():
-                    dotted_append(vars_payload, f"{top_key}.{nested_key}", list(nested_value))
-            else:
-                dotted_append(vars_payload, top_key, list(value))
-
-    return replace(package, vars=vars_payload)
+    for dotted_path, values in _iter_append_paths(append_payload):
+        patched = _append_structured_path(
+            patched,
+            _split_structured_path(dotted_path),
+            values,
+            package=patched,
+            default_command_elevation=default_command_elevation,
+            path=dotted_path,
+        )
+    return patched

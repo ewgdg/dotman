@@ -212,9 +212,9 @@ Bias: if implementation cost is low and behavior is clear, support it. It is a n
 
 ### 3. `.gitignore` interaction
 
-Current docs claim `.gitignore` inside package source trees should be respected during push, but current code search does not show implementation.
+At planning time, docs claimed `.gitignore` inside package source trees should be respected during push, but implementation had not landed yet.
 
-Do not blur this with the matcher change.
+Do not blur this with the matcher change. The feature is now implemented separately.
 
 Handle it one of two ways:
 

@@ -212,7 +212,7 @@ Bare sugar should not accept profile binding syntax as a third mixed mode.
 
 If user wants profile-sensitive package identity, explicit package subcommand remains clearer.
 
-This keeps v1 sugar narrow.
+This keeps sugar narrow.
 
 ## Selection and error UX
 

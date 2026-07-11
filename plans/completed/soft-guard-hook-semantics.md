@@ -77,7 +77,7 @@ Human output should render this as `skipped (guard)`.
 
 ### Snapshot timing
 
-Current `push` creates snapshots before execution starts. That is too early once guards can soft-skip.
+Historical baseline: `push` created snapshots before execution started. That was too early once guards could soft-skip.
 
 New rule:
 

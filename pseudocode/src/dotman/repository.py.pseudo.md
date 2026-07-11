@@ -33,7 +33,9 @@ resolve_package(package_id):
     merge override into package spec
 
   if package declares extensions:
-    apply extension merge/remove/append rules
+    merge parent and child package specs
+    apply child remove paths and append values across the full package payload
+    reject append paths that do not resolve to list-valued fields
 
   return resolved package spec
 

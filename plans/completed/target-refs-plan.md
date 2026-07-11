@@ -97,7 +97,7 @@ Example:
 ### Same-repo only
 
 - refs may only point to targets in same repo
-- no repo-qualified ref syntax in v1
+- no repo-qualified ref syntax
 
 ### No overrides on refs
 
@@ -237,7 +237,7 @@ Add coverage for:
 
 - Use `target_refs`, not `foreign_targets` or `target_links`.
 - Allow daisy-chain refs; resolve to canonical/root real target.
-- Same-repo only in v1.
+- Same-repo only.
 - Operational selection/review/execution labels stay canonical-only; no inline provenance annotation in primary UI.
 - No overrides on refs.
 - No target hooks on refs.

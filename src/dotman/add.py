@@ -74,7 +74,7 @@ def resolve_live_path_spec(live_path_text: str, *, cwd: Path | None = None, home
     if not candidate_path.exists() and not candidate_path.is_symlink():
         raise ValueError(f"live path does not exist: {candidate_path.resolve(strict=False)}")
     if candidate_path.is_symlink():
-        raise ValueError(f"live path symlinks are not supported in v1: {candidate_path.resolve(strict=False)}")
+        raise ValueError(f"live path symlinks are not supported: {candidate_path.resolve(strict=False)}")
     resolved_path = candidate_path.resolve()
     file_mode = stat.S_IMODE(resolved_path.stat().st_mode)
     if resolved_path.is_file():

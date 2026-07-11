@@ -52,7 +52,7 @@ Strict subcommands resolve only within their own object kind.
 
 This keeps help, completion, scripting, and future expansion sane.
 
-## Locked v1 behavior
+## Locked behavior
 
 ### `edit package <package>`
 
@@ -134,8 +134,6 @@ If implementation finds `.` too ambiguous with real package ids or target ids in
 - no diff-review edit reintroduction
 - no automatic multi-file editor layouts beyond what the editor itself already does
 - no bare mixed-kind `dotman edit <query>` as primary contract
-
-Future review-mode edit work stays in `docs/edit-mode-v2.md`.
 
 ## Implementation phases
 
@@ -247,7 +245,7 @@ This should likely be implemented as a thin resolver wrapper over the explicit `
 - help text is clear
 - package edit behavior remains unchanged
 - ambiguity handling matches existing selector UX quality
-- docs updated for the strict v1 surface
+- docs updated for the strict surface
 - no mixed-kind magic required for scripts
 
 ## Risk

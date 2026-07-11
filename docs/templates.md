@@ -12,7 +12,7 @@ Use `shell_args` when a command template expands a TOML array into command argum
 
 ```toml
 selectors = ["application settings", "re:^projects\\.", "$literal"]
-command = "dotman transform json base.json output.json --selectors {{ selectors|shell_args }}"
+command = "dotman transform json base.json output.json --mode cleanup --selectors {{ selectors|shell_args }}"
 ```
 
 `{{ selectors|shell_args }}` quotes every array element with POSIX shell quoting. Each element reaches the command as exactly one literal argument, including whitespace, quotes, backslashes, regex syntax, newlines, and shell metacharacters. An empty string remains one empty argument. An empty array renders an empty fragment.

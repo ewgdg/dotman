@@ -11,7 +11,7 @@ That was a miss. The agent instruction says plans should be stored in `./plans/`
 
 ## Goal
 
-Implement `dotman add` for unmanaged-to-managed adoption with a strict v1 scope:
+Implement `dotman add` for unmanaged-to-managed adoption with a strict scope:
 
 - create or update only the target package manifest
 - edit only `packages/.../package.toml`
@@ -47,7 +47,7 @@ dotman add ~/.config/foo.conf
 - accept relative, `~`-prefixed, or absolute paths
 - resolve relative paths against the current working directory
 - fail if the path does not exist
-- fail on symlinks in v1
+- fail on symlinks
 - detect whether the target is a file or directory
 - read actual mode bits from the live filesystem
 
@@ -254,7 +254,7 @@ Update at least:
 
 Replace the current "add is reserved" wording with the implemented behavior.
 
-## Non-goals for v1
+## Non-goals
 
 - no source file copy into `files/`
 - no tracked binding updates

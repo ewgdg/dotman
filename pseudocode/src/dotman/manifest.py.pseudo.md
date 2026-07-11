@@ -60,8 +60,10 @@ merge_package_specs(base, override):
   return merged PackageSpec
 
 patch_remove_and_append(package, remove_paths, append_payload):
-  remove requested dotted paths from package payload
-  append payload values at requested dotted paths
+  treat package metadata, vars, targets, and hooks as one structured payload
+  remove requested dotted paths from that full payload
+  require every append path to resolve to an existing list-valued field
+  normalize appended hook commands and directory path rules before storing them
   return patched package payload
 ```
 

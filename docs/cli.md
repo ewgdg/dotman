@@ -26,6 +26,7 @@ This document captures the current command and selector direction for `dotman`.
 
 ## Confirmation and execution flags
 
+- `--json` switches command output to machine-readable JSON. It is a global option and must appear before the subcommand.
 - `--yes` skips yes/no confirmation prompts, but it does not auto-resolve ambiguous selector/profile menus.
 - Dotman also exports `DOTMAN_ASSUME_YES=1` to hooks during execution when `--yes` is active, otherwise `DOTMAN_ASSUME_YES=0`.
 - `--run-noop` is only meaningful for `push` and `pull`.
@@ -76,6 +77,20 @@ This document captures the current command and selector direction for `dotman`.
 - JSON output should include the operation name, original query, and the ordered `matches` list.
 - An empty query should fail fast.
 
+## Diagnostics And Catalog Inspection
+
+- `dotman doctor` checks manager configuration, configured repo paths, tracked state, and required external tools.
+- `dotman list repo` lists configured repos in configured order.
+- `dotman list trackables` lists every package and group available across configured repos.
+- `dotman info trackable <query>` shows one package or group definition with its tracked status.
+- Use `--json` with these commands when another tool needs structured output.
+
+Examples:
+
+- `dotman doctor`
+- `dotman list repo`
+- `dotman info trackable main:git`
+
 ## Profiles
 
 - Profiles are separate from selection.
@@ -121,7 +136,7 @@ This document captures the current command and selector direction for `dotman`.
 - In non-interactive mode, `track` should fail instead of silently overriding implicit tracked targets.
 - `track` should validate the future expanded tracked graph before writing. A singleton dependency cannot be implicitly required by different tracked roots under different profiles unless one explicit singleton dependency profile owns that package identity.
 - To fix an implicit dependency profile ambiguity, use the same profile for the roots, make the dependency `multi_instance`, explicitly track the desired singleton dependency profile, or move the overlapping target/config into the shared dependency package.
-- `track` is state-only in v1. It should not run repo-to-live work by itself.
+- `track` is state-only. It should not run repo-to-live work by itself.
 - Tracked target ownership is metadata-first: one live path may have one winning package instance. Same-precedence package instances that declare the same live path conflict even if their current rendered bytes would match.
 - If multiple packages need the same live path, move that target into a shared dependency package instead of duplicating the target declaration.
 - Examples:
@@ -161,8 +176,7 @@ This document captures the current command and selector direction for `dotman`.
 - Default symlink policy should be `file_symlink_mode = prompt` and `dir_symlink_mode = fail`; CLI flags can override either one for a single run.
 - `push` should fail fast when the active mode does not allow the live symlink shape.
 - If a real `push` fails after snapshot creation, dotman should keep that snapshot so the user can inspect it or roll back manually.
-- The interactive diff review stage should stay inspection-only in v1.
-- Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.
+- The interactive diff review stage should stay inspection-only.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `live/...` and `repo/...` paths instead of opaque `before-*` or `after-*` temp names.
 - Diff review headers should compact long compared paths for readability, and should additionally collapse the current home directory to `~` instead of a machine-specific absolute prefix.
@@ -170,7 +184,7 @@ This document captures the current command and selector direction for `dotman`.
 - Each reviewed diff should print the destination path under the banner so directory-target child diffs are identifiable even when the target label names the directory root.
 - Mode-only diff review should follow Git semantics: show executable-bit changes through `git diff` mode lines, but do not show or plan non-Git permission drift such as `600` vs `644` for directory-target child files.
 - In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
-- Review commands should support inspecting one item, inspecting all items, opening an editor for supported items, continuing, or aborting.
+- Review commands should support inspecting one item, inspecting all items, listing items, skipping remaining review, or aborting.
 - If the requested selector is not currently tracked, `push` should fail instead of implicitly creating or retargeting state. The user should use `track` for that.
 - Group composition should let a user keep a stable entrypoint such as `host/arch-niri` without manually listing every lower-level group.
 - Examples:
@@ -204,14 +218,13 @@ This document captures the current command and selector direction for `dotman`.
 - After diff review accepts, `pull` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
 - A repo, package, target, or active directory path-rule `guard_pull` that exits `100` omits its scope before pull review and selection while eligible sibling scopes continue planning.
 - The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
-- The interactive diff review stage should stay inspection-only in v1.
-- Future edit-mode work belongs in [`docs/edit-mode-v2.md`](./edit-mode-v2.md), not in the v1 review contract.
+- The interactive diff review stage should stay inspection-only.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `repo/...` and `live/...` paths instead of opaque `before-*` or `after-*` temp names.
 - Use the same diff-review path compaction rule described in the `push` section above.
 - Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
 - In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
-- Review commands should support inspecting one item, inspecting all items, opening target reconcile or an editor for supported items, continuing, or aborting.
+- Review commands should support inspecting one item, inspecting all items, listing items, skipping remaining review, or aborting.
 - For plain copied files, pull planning can compare the package source directly against the live file.
 - For transformed targets, pull planning should compare repo-side and live-side views.
 - Default pull planning should compare:
@@ -302,7 +315,7 @@ This document captures the current command and selector direction for `dotman`.
 - `live-path` may be relative, `~`-prefixed, or absolute.
 - Relative `live-path` input should resolve against the current working directory.
 - `add` should fail fast if the resolved live path does not exist.
-- `add` should fail fast on symlinks in v1.
+- `add` should fail fast on symlinks.
 - `add` should auto-detect whether the live path is a file or directory.
 - If the optional package query is provided, dotman should resolve it against package IDs across configured repos using the same repo-aware exact and partial lookup model used elsewhere.
 - Package queries may be package-only such as `git`, repo-qualified such as `main:git`, or partial forms such as `ma:gi` for interactive resolution.
@@ -315,7 +328,7 @@ This document captures the current command and selector direction for `dotman`.
 - If the selected package already exists, `add` should update only that package's `package.toml`.
 - `add` should not modify tracked package state.
 - `add` should not run `push`, `pull`, hooks, or any repo-to-live or live-to-repo execution.
-- `add` should not copy the live file or directory into the repo in v1; this phase is manifest-only.
+- `add` should not copy the live file or directory into the repo; this phase is manifest-only.
 - `add` should derive a deterministic target key from the live destination path.
 - Generated target keys should use `f_` for file targets and `d_` for directory targets.
 - The rest of the generated key should be lowercase path-derived snake_case text with punctuation normalized to underscores.
@@ -331,7 +344,7 @@ This document captures the current command and selector direction for `dotman`.
   - `~/.config/nvim/init.lua` -> `files/config/nvim/init.lua`
   - `/etc/.ssh/ssh_config` -> `files/etc/ssh/ssh_config`
 - `add` should inspect the actual live file mode and include `chmod` only when the mode is unusual.
-- For v1, the usual default modes are:
+- The usual default modes are:
   - regular file: `644`
   - directory: `755`
 - If the live mode differs from the usual default for that target kind, `add` should write the actual mode into `chmod`, for example `600` or `700`.
@@ -344,8 +357,6 @@ This document captures the current command and selector direction for `dotman`.
   - `dotman add .config/nvim/init.lua main:nvim`
   - `dotman add ~/.config/gtk-3.0/settings.ini desktop/gtk`
   - `dotman add ~/.config/foo.conf`
-- `import` should stay unused as a top-level command.
-
 ## Edit
 
 - `edit package <package>` should open the tracked package directory in `$VISUAL` or `$EDITOR`.
@@ -367,11 +378,12 @@ This document captures the current command and selector direction for `dotman`.
 - `edit target` should accept explicit target queries in the form `[<repo>:]<package>.<target>`.
 - `edit target` may also accept bare target-name queries when they resolve uniquely among tracked targets.
 - `edit target` should treat target identity as package-scoped, so ambiguous target-name queries must prompt interactively and fail in non-interactive or JSON mode.
+- Bare `dotman edit <query>` is a convenience form that resolves across tracked packages and targets. Ambiguous or partial matches use the same interactive selector flow and fail without guessing in non-interactive or JSON mode.
 
 ## Untrack
 
 - `untrack <selector[@profile]>` should remove one persisted explicit package entry from state.
-- `untrack` should be state-only in v1.
+- `untrack` should be state-only.
 - `untrack` should not delete live files, run hooks, or build push/pull execution plans; ownership validation should use rendered target metadata only.
 - `untrack` should match persisted explicit package entries, not current repo manifests, so stale entries can still be removed after repo changes.
 - `untrack` should accept either `selector` or `selector@profile`.
@@ -430,7 +442,7 @@ This document captures the current command and selector direction for `dotman`.
 
 The CLI model implies persistent state.
 
-For v1, dotman should persist explicit package entries only.
+Dotman should persist explicit package entries only.
 
 - persisted explicit package entries only; group selectors must already be expanded
 - no persisted target ownership yet
@@ -467,6 +479,7 @@ profile = "personal"
 ## Structured JSON transforms
 
 `dotman transform json BASE [OUTPUT] --mode cleanup|merge` runs without a dotman repository or configuration.
+`--merge-file` is accepted as an alias for `--overlay-file` for every structured transform.
 Selectors always match the base JSON object. Unprefixed selectors default to `exact:`. Exact selectors use dotted nested key paths; quote a segment when its key contains a dot, such as `"key.with.dots".value`. `re:` selectors match full JSON key paths. `--selector-type retain|remove` controls selection. Merge mode requires `--overlay-file`; cleanup mode rejects it. `--compare-file` reuses exact existing bytes, including line endings, when JSON values are semantically equal.
 
 Use `-` for base or overlay stdin, and for output stdout. At most one input may be `-`. `--stdout` takes precedence over an optional output operand. File output inherits base permissions; stdin base has no permissions to inherit.

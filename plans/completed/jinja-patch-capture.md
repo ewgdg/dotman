@@ -34,7 +34,7 @@ The primary intended workflow is:
 - `pull_view_repo = "render"`
 - `pull_view_live = "raw"`
 
-The helper itself should stay projection-based rather than Jinja-specific in name or API, but v1 only needs to work for this Jinja workflow.
+The helper itself should stay projection-based rather than Jinja-specific in name or API, but the supported scope is this Jinja workflow.
 
 ### Hard restrictions
 
@@ -66,7 +66,7 @@ If step 7 fails, abort without writing repo content.
 
 ### Non-goals
 
-Do not try to support these in v1:
+Do not try to support these:
 
 - directory targets
 - ambiguous or heuristic multi-strategy fallback
@@ -78,7 +78,7 @@ Do not try to support these in v1:
 
 Current pull execution can write repo-side bytes from `_pull_desired_bytes()`, but that path only receives normal target env. Review scratch paths are currently materialized only for reconcile execution. `patch` needs those review paths during normal pull target execution, so the execution contract must change.
 
-Also, current target spec resolution keeps only resolved `pull_view_*` values. That is fine for v1 if we validate the resolved values rather than trying to detect whether the user wrote the keys directly or inherited them from a preset.
+Also, current target spec resolution keeps only resolved `pull_view_*` values. That is fine if we validate the resolved values rather than trying to detect whether the user wrote the keys directly or inherited them from a preset.
 
 ## Proposed user-facing behavior
 

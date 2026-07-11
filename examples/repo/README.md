@@ -9,7 +9,7 @@ This example shows one possible repository layout for the new `dotman` design.
 - `profiles/`: variable sets used during resolution
 - `scripts/`: repo-wide helper scripts shared by packages
 - `local.example.toml`: example machine-local vars; real machine-local overrides live under XDG config, not in the repo
-- package source trees can use `.gitignore` to exclude files from install
+- package source trees can opt into repo-source `.gitignore` rules to exclude files from selected operations
 
 ## Example Packages
 
@@ -47,7 +47,7 @@ For a configured repo named `example`, the real machine-local override path is:
 - `$XDG_CONFIG_HOME/dotman/repos/example/local.toml`
 - fallback: `~/.config/dotman/repos/example/local.toml`
 
-In v1, that local file is limited to `[vars]` overrides.
+That local file is limited to `[vars]` overrides.
 
 Design rules and current semantics live in:
 

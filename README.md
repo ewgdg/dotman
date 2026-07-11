@@ -136,7 +136,7 @@ Support partial selector matching, interactive disambiguation, combined selectio
 
 ### Snapshots and rollback
 
-Create snapshots before real `push` runs and restore managed paths with `rollback`.
+Mutation-bearing real `push` runs may create snapshots; restore managed paths with `rollback`.
 
 Example:
 

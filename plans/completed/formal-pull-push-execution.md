@@ -277,7 +277,7 @@ Start with direct per-step privileged execution.
 
 ### Recommendation
 
-Spinner is optional and should **not** be v1-critical.
+Spinner is optional and should **not** be critical.
 
 Justification:
 
@@ -286,7 +286,7 @@ Justification:
 - the repo’s current UX is line-oriented, not animated/TUI-oriented
 - tests stay simpler without terminal animation concerns
 
-Recommended v1 behavior:
+Recommended behavior:
 
 - no spinner by default
 - print step start immediately

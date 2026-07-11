@@ -45,7 +45,7 @@ dotman search main:git
 
 ## Scope
 
-### In scope for v1
+### In scope
 
 - search packages across configured repos
 - search groups across configured repos
@@ -56,7 +56,7 @@ dotman search main:git
 - deterministic result ranking
 - zero mutation
 
-### Out of scope for v1
+### Out of scope
 
 - tracking or installing as part of search
 - filesystem scanning for unmanaged paths
@@ -136,7 +136,7 @@ Tie-break order:
 
 `<query>` should be treated as user text, not as a strict selector parser.
 
-v1 interpretation rules:
+Interpretation rules:
 
 - if query contains `:` then try repo-qualified matching against `repo:selector`
 - always also compare against bare selector text
@@ -301,7 +301,7 @@ Suggested fields:
 
 ## Open questions
 
-### Should search include target names in v1?
+### Should search include target names?
 
 Recommendation: no.
 
@@ -313,7 +313,7 @@ Reason:
 
 ### Should search be interactive?
 
-Recommendation: no for v1.
+Recommendation: no.
 
 Reason:
 
@@ -358,7 +358,7 @@ Reason:
 
 ## Progress
 
-- [x] v1 command direction drafted
+- [x] command direction drafted
 - [ ] implementation started
 
 ## Decisions

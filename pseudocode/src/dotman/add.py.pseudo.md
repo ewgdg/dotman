@@ -17,6 +17,9 @@ resolve_live_path_spec(live_path_text):
   if live path does not exist:
     reject invalid live path
 
+  if live path is a symlink:
+    reject unsupported live path
+
   return live path plus optional config path
 
 prepare_add_to_package(engine, package_query, live_path_spec, target_name, source_path):

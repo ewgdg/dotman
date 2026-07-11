@@ -1039,6 +1039,71 @@ def test_package_hook_empty_override_disables_inherited_hook(
     assert hook.run_noop is False
 
 
+def test_package_inheritance_remove_and_append_patch_full_package_payload(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_sync_policy_repo_with_extends(
+        tmp_path,
+        base_manifest=[
+            'description = "Base package"',
+            'depends = ["base-dependency"]',
+            'reserved_paths = ["~/.base"]',
+            "[vars]",
+            'remove_me = "base"',
+            'keep_me = "base"',
+            'extra = ["base"]',
+            "[hooks.pre_push]",
+            'commands = ["echo base"]',
+        ],
+        child_manifest=[
+            'remove = ["description", "vars.remove_me", "targets.config"]',
+            "[append]",
+            'depends = ["child-dependency"]',
+            'reserved_paths = ["~/.child"]',
+            "[append.vars]",
+            'extra = ["child"]',
+            "[append.hooks]",
+            'pre_push = ["echo child"]',
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    package = engine.get_repo("fixture").resolve_package("child")
+
+    assert package.description is None
+    assert package.depends == ("base-dependency", "child-dependency")
+    assert package.reserved_paths == ("~/.base", "~/.child")
+    assert package.vars == {"keep_me": "base", "extra": ["base", "child"]}
+    assert package.targets == {}
+    assert package.hooks["pre_push"].commands == (
+        HookCommandSpec(run="echo base"),
+        HookCommandSpec(run="echo child"),
+    )
+
+
+def test_package_inheritance_append_rejects_non_list_targets(
+    tmp_path: Path,
+) -> None:
+    repo_root = write_sync_policy_repo_with_extends(
+        tmp_path,
+        base_manifest=['description = "Base package"'],
+        child_manifest=[
+            "[append]",
+            'description = ["not a list field"]',
+        ],
+    )
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    with pytest.raises(ValueError, match=r"append target 'description' is not a list"):
+        engine.get_repo("fixture").resolve_package("child")
+
+
 def test_package_hook_override_replaces_metadata_when_merging_extends(
     tmp_path: Path,
 ) -> None:

@@ -28,7 +28,7 @@ This document captures the user-level dotman manager configuration.
 - Dotman should read optional per-repo local overrides from `$XDG_CONFIG_HOME/dotman/repos/<repo-name>/local.toml`.
 - If `XDG_CONFIG_HOME` is unset, dotman should fall back to `~/.config/dotman/repos/<repo-name>/local.toml`.
 - Local override files are scoped to one configured repo.
-- In v1, per-repo local overrides are limited to `[vars]` data.
+- Per-repo local overrides are limited to `[vars]` data.
 - Local overrides should not redefine package structure or behavior such as targets, hooks, dependencies, groups, or profiles.
 - Unknown top-level keys in a local override file should fail validation.
 - A missing local override file means that repo has no machine-local overrides.
