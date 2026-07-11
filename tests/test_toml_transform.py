@@ -425,6 +425,45 @@ command = "npx"
     )
 
 
+def test_merge_does_not_restore_omitted_live_table_when_overlay_keeps_a_comment(tmp_path: Path) -> None:
+    live_path = tmp_path / "live.toml"
+    repo_path = tmp_path / "repo.toml"
+    output_path = tmp_path / "output.toml"
+
+    live_path.write_text(
+        """[mcp_servers.context7]
+command = "npx"
+
+[mcp_servers.node_repl]
+command = "node_repl"
+""",
+        encoding="utf-8",
+    )
+    repo_path.write_text(
+        """# [mcp_servers.context7]
+# command = "npx"
+
+[features]
+hooks = true
+""",
+        encoding="utf-8",
+    )
+
+    MODULE.merge_keys(
+        live_path,
+        output_path,
+        repo_path,
+        {("mcp_servers", "node_repl")},
+        [],
+    )
+
+    merged_doc = MODULE.load_document(output_path)
+
+    assert "context7" not in merged_doc["mcp_servers"]
+    assert merged_doc["mcp_servers"]["node_repl"]["command"] == "node_repl"
+    assert "# [mcp_servers.context7]" in output_path.read_text(encoding="utf-8")
+
+
 def test_merge_restores_regex_selected_tables(tmp_path: Path) -> None:
     live_path = tmp_path / "live.toml"
     repo_path = tmp_path / "repo.toml"

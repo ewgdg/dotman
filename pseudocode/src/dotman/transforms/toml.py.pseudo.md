@@ -40,7 +40,7 @@ merge(base, overlay, action):
   treat scalars, arrays, and arrays of tables as atomic overlay values
   preserve selected base according to action
   do not restore managed items omitted by overlay
-  restore leading/trailing comments, ordering, and section separators
+  restore leading/trailing comments, ordering, and section separators without restoring source items
 
 compare and emit:
   if compare bytes decode and parse to same unwrapped TOML value:

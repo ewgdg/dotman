@@ -535,9 +535,8 @@ def restore_top_level_leading_trivia(
             item_region = merged_region
         elif overlay_region is not None:
             item_region = overlay_region
-        elif base_region is not None:
-            item_region = base_region
         else:
+            # Base regions supply trivia only: their items can contain tables the merge removed.
             item_region = merged_region
 
         attached_entries, independent_entries = split_independent_leading_trivia(
