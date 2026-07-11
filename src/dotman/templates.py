@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +27,25 @@ class JinjaRenderError(ValueError):
         return format_jinja_render_error(self)
 
 
+def _shell_args(value: Any) -> str:
+    if not isinstance(value, list) or any(not isinstance(element, str) for element in value):
+        raise ValueError("shell_args requires a flat list of strings")
+    return " ".join(shlex.quote(element) for element in value)
+
+
+def _register_filters(environment: Environment) -> Environment:
+    environment.filters["shell_args"] = _shell_args
+    return environment
+
+
 def _base_environment(base_dir: Path) -> Environment:
-    return Environment(
-        autoescape=False,
-        loader=FileSystemLoader(str(base_dir)),
-        undefined=DotmanUndefined,
-        keep_trailing_newline=True,
+    return _register_filters(
+        Environment(
+            autoescape=False,
+            loader=FileSystemLoader(str(base_dir)),
+            undefined=DotmanUndefined,
+            keep_trailing_newline=True,
+        )
     )
 
 
@@ -40,15 +54,17 @@ def _string_environment(base_dir: Path) -> Environment:
 
 
 def _file_environment(base_dir: Path) -> Environment:
-    return Environment(
-        autoescape=False,
-        loader=FileSystemLoader(str(base_dir)),
-        undefined=DotmanUndefined,
-        keep_trailing_newline=True,
-        # File templates are line-oriented config text, so standalone control
-        # lines should not leave extra blank lines in rendered output.
-        trim_blocks=True,
-        lstrip_blocks=True,
+    return _register_filters(
+        Environment(
+            autoescape=False,
+            loader=FileSystemLoader(str(base_dir)),
+            undefined=DotmanUndefined,
+            keep_trailing_newline=True,
+            # File templates are line-oriented config text, so standalone control
+            # lines should not leave extra blank lines in rendered output.
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
     )
 
 
@@ -56,7 +72,7 @@ def _resolve_node(value: Any, context: dict[str, Any]) -> Any:
     """Recursively resolve Jinja2 references in a var value using the given context."""
     if isinstance(value, str) and ("{{" in value or "{%" in value):
         env = _string_environment(Path("."))
-        return env.from_string(value).render(context)
+        return _render_template(env, value, context)
     if isinstance(value, dict):
         return {k: _resolve_node(v, context) for k, v in value.items()}
     return value

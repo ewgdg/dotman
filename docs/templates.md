@@ -6,6 +6,19 @@ Use this when the repo stores a Jinja source file, but the live file is the rend
 
 For template targets, `push` is easy. `pull` is the tricky part.
 
+## Safe Shell Argument Arrays
+
+Use `shell_args` when a command template expands a TOML array into command arguments:
+
+```toml
+selectors = ["application settings", "re:^projects\\.", "$literal"]
+command = "dotman transform json base.json output.json --selectors {{ selectors|shell_args }}"
+```
+
+`{{ selectors|shell_args }}` quotes every array element with POSIX shell quoting. Each element reaches the command as exactly one literal argument, including whitespace, quotes, backslashes, regex syntax, newlines, and shell metacharacters. An empty string remains one empty argument. An empty array renders an empty fragment.
+
+Input must be a flat list of strings. Bare strings, mappings, tuples, nested lists, `null`, booleans, numbers, and lists containing non-strings fail with a Jinja render error instead of being coerced. Filter is available in command/string templates, file templates, and templated variable values.
+
 If you do not configure pull correctly, dotman cannot infer how to update the repo template from the rendered live file. It will fall back to writing or diffing against the rendered output, which can overwrite the template source with the wrong content.
 
 For a Jinja target, make the forward render explicit:

@@ -16,8 +16,16 @@ build_template_context(variables):
 
   return render context
 
+shell_args(value):
+  require value to be a Python list
+  require every list element to be a string
+  quote each element as one POSIX shell argument with shlex.quote
+  join quoted arguments with one space
+  return an empty string for an empty list
+  reject every other shape or element type with a clear error
+
 render_template_string(value, context):
-  render string with dotman Jinja environment
+  render string with dotman Jinja environment containing shell_args
 
   if rendering fails:
     raise JinjaRenderError with path/detail context
@@ -25,7 +33,7 @@ render_template_string(value, context):
   return rendered string
 
 render_template_file(path, context):
-  create file-aware Jinja environment rooted at template directory
+  create file-aware Jinja environment rooted at template directory containing shell_args
   load template file
   render with context
   return rendered content
