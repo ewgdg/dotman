@@ -492,3 +492,20 @@ dotman transform plist live.plist output.plist --mode merge \
 ```
 
 Both operands accept `-` for stdin (at most one). Output path `-` and `--stdout` write XML or binary bytes safely to stdout. File output inherits base-file permissions.
+
+### `dotman transform xml`
+
+Transforms XML trees without repository configuration. At least one selector is required. Unprefixed and `exact:` selectors are `fnmatch`-style, root-inclusive element paths; `re:` selectors use Python regex search against those paths. Retain keeps matched subtrees and ancestor chains. Remove deletes matched subtrees.
+
+Merge matches repeated siblings by tag and available `id`, `name`, `key`, `uuid`, or non-empty text identity, then applies overlay attributes, text, children, and deletions. `--sort-attributes` sorts emitted attributes. Repeated or comma-separated `--sort-children PATH` flags sort immediate children only under matching parents.
+
+`--compare-file PATH` normalizes whitespace-only text, attributes, and explicitly selected child lists for semantic comparison. Equal XML reuses compare file's exact bytes. This compare normalization does not otherwise canonicalize emitted XML.
+
+```sh
+dotman transform xml live.xml output.xml --mode merge \
+  --overlay-file repo.xml --selector-type retain \
+  --selectors 'config/WindowGeometry' \
+  --sort-children 'config/mutedDictionaries'
+```
+
+Base or overlay accepts `-` for stdin (at most one). Output `-` or `--stdout` writes stdout. File output inherits base-file permissions.

@@ -559,4 +559,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     configure_parser(plist_parser, PlistTransformEngine())
     plist_parser.set_defaults(transform_parser=plist_parser)
+
+    xml_parser = transform_subparsers.add_parser(
+        "xml", help="Transform XML trees", description="Clean up or merge XML trees"
+    )
+    from dotman.transforms.xml import XmlTransformEngine
+
+    configure_parser(xml_parser, XmlTransformEngine())
+    xml_parser.set_defaults(transform_parser=xml_parser)
     return parser

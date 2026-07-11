@@ -92,10 +92,12 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
         from dotman.transforms.cli import run_parsed_engine
         from dotman.transforms.json import JsonTransformEngine
         from dotman.transforms.plist import PlistTransformEngine
+        from dotman.transforms.xml import XmlTransformEngine
 
         engines = {
             "json": JsonTransformEngine,
             "plist": PlistTransformEngine,
+            "xml": XmlTransformEngine,
         }
         return run_parsed_engine(engines[args.transform_format](), args.transform_parser, args)
 
