@@ -12,7 +12,7 @@ from dotman.file_access import sudo_session
 from dotman.models import FullSpecSelector, package_ref_text
 from dotman.ui_context import ui_config_scope
 from dotman.snapshot import (
-    build_rollback_actions,
+    build_restore_actions,
     list_snapshots,
     record_snapshot_restore,
 )
@@ -60,9 +60,9 @@ class CliCommandHandlers:
     emit_execution_result: Callable[..., int]
     run_execution: Callable[..., int]
     resolve_snapshot_record: Callable[..., Any]
-    review_rollback_actions_for_interactive_diffs: Callable[..., bool]
-    emit_rollback_payload: Callable[..., int]
-    run_rollback_execution: Callable[..., int]
+    review_restore_actions_for_interactive_diffs: Callable[..., bool]
+    emit_restore_payload: Callable[..., int]
+    run_restore_execution: Callable[..., int]
     emit_untracked_package_entry: Callable[..., int]
     find_remaining_tracked_package_after_untrack: Callable[..., Any]
     emit_tracked_packages: Callable[..., int]
@@ -134,8 +134,8 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
             return _handle_push(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
         if args.command == "pull":
             return _handle_pull(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
-        if args.command == "rollback":
-            return _handle_rollback(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
+        if args.command == "restore":
+            return _handle_restore(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
         if args.command == "untrack":
             return _handle_untrack(args=args, engine=engine, handlers=handlers)
         if args.command == "list" and args.list_command == "tracked":
@@ -550,16 +550,16 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
 
 
 
-def _handle_rollback(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
+def _handle_restore(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
     snapshot = handlers.resolve_snapshot_record(
         engine.config.snapshots.path,
         args.snapshot,
         json_output=args.json_output,
     )
-    rollback_actions = build_rollback_actions(snapshot)
-    if not handlers.review_rollback_actions_for_interactive_diffs(
+    restore_actions = build_restore_actions(snapshot)
+    if not handlers.review_restore_actions_for_interactive_diffs(
         snapshot=snapshot,
-        actions=rollback_actions,
+        actions=restore_actions,
         json_output=args.json_output,
         full_paths=full_paths,
         assume_yes=getattr(args, "assume_yes", False),
@@ -567,16 +567,16 @@ def _handle_rollback(*, args: Any, engine: Any, handlers: CliCommandHandlers, fu
         handlers.emit_interrupt_notice()
         return handlers.interrupted_exit_code
     if args.dry_run:
-        return handlers.emit_rollback_payload(
+        return handlers.emit_restore_payload(
             snapshot=snapshot,
-            actions=rollback_actions,
+            actions=restore_actions,
             json_output=args.json_output,
             mode=handlers.effective_execution_mode(dry_run_requested=True),
             full_paths=full_paths,
         )
-    exit_code = handlers.run_rollback_execution(
+    exit_code = handlers.run_restore_execution(
         snapshot=snapshot,
-        actions=rollback_actions,
+        actions=restore_actions,
         json_output=args.json_output,
         full_paths=full_paths,
     )

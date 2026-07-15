@@ -175,7 +175,7 @@ Examples:
 - `push --dry-run` should not create a snapshot.
 - Default symlink policy should be `file_symlink_mode = prompt` and `dir_symlink_mode = fail`; CLI flags can override either one for a single run.
 - `push` should fail fast when the active mode does not allow the live symlink shape.
-- If a real `push` fails after snapshot creation, dotman should keep that snapshot so the user can inspect it or roll back manually.
+- If a real `push` fails after snapshot creation, dotman should keep that snapshot so the user can inspect it or restore it manually.
 - The interactive diff review stage should stay inspection-only.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `live/...` and `repo/...` paths instead of opaque `before-*` or `after-*` temp names.
@@ -269,26 +269,26 @@ Examples:
 - The built-in target helper should reuse the same implementation as `dotman capture patch`.
 - Use `capture = "patch"` for automatic template-style reverse capture when dotman can patch source deterministically and verify the result; use `reconcile` when a human needs to inspect or edit source reconciliation manually.
 
-## Rollback
+## Restore
 
-- `rollback` should restore managed live paths from a previously recorded snapshot.
-- `rollback` should not resolve current repo manifests, current tracked package entries, or profile state.
-- `rollback` with no snapshot reference should target the latest restorable snapshot.
-- `rollback <snapshot>` should accept either `latest`, an exact snapshot ID, or a unique leading prefix such as a date or timestamp fragment.
+- `restore` should restore managed live paths from a previously recorded snapshot.
+- `restore` should not resolve current repo manifests, current tracked package entries, or profile state.
+- `restore` with no snapshot reference should target the latest restorable snapshot.
+- `restore <snapshot>` should accept either `latest`, an exact snapshot ID, or a unique leading prefix such as a date or timestamp fragment.
 - If a snapshot reference matches multiple snapshots, interactive mode should prompt for one snapshot and non-interactive mode should fail with the candidates.
-- `rollback` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
-- `rollback` should accept `--full-path` to disable human-output path compaction for preview, review menus, and human execution output.
-- Plain `rollback` should perform real execution after planning and inspection-only diff review.
-- `rollback` should compare the current live state against the selected snapshot state without consulting the current repo contents.
-- `rollback` should restore only the live paths recorded by the selected snapshot.
-- `rollback` should not run package hooks.
-- `rollback` should fail fast if the selected snapshot is missing required stored content or has an invalid manifest.
+- `restore` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
+- `restore` should accept `--full-path` to disable human-output path compaction for preview, review menus, and human execution output.
+- Plain `restore` should perform real execution after planning and inspection-only diff review.
+- `restore` should compare the current live state against the selected snapshot state without consulting the current repo contents.
+- `restore` should restore only the live paths recorded by the selected snapshot.
+- `restore` should not run package hooks.
+- `restore` should fail fast if the selected snapshot is missing required stored content or has an invalid manifest.
 - Examples:
-  - `dotman rollback`
-  - `dotman rollback latest`
-  - `dotman rollback 2026-04-09`
-  - `dotman rollback 2026-04-09T14-22`
-  - `dotman rollback --dry-run`
+  - `dotman restore`
+  - `dotman restore latest`
+  - `dotman restore 2026-04-09`
+  - `dotman restore 2026-04-09T14-22`
+  - `dotman restore --dry-run`
 
 ## Snapshot History
 
@@ -297,7 +297,7 @@ Examples:
 - `list snapshots` should stay overview-oriented by default. It should show summary metadata, not dump every recorded path.
 - Each listed snapshot should include a human-readable creation time, a copyable snapshot ref, status, and a compact count of recorded path entries.
 - If a snapshot has been restored before, list output should also surface restore metadata such as restore count and most recent restore time.
-- Snapshot list output should make it easy to copy a date or timestamp prefix into `rollback <snapshot>`.
+- Snapshot list output should make it easy to copy a date or timestamp prefix into `restore <snapshot>`.
 - `info snapshot <snapshot>` should show detailed information for one snapshot, including recorded path entries.
 - `info snapshot` should accept `latest` as a snapshot reference alias for the newest available snapshot.
 - `info snapshot` should accept `--full-path` to disable path compaction in human-readable path output.
@@ -410,7 +410,7 @@ Examples:
 - Snapshot history is separate from tracked package state.
 - `list repo` should list configured repos in configured order.
 - Human `list repo` output should show repo name, order, and repo path; JSON output should also include config/state metadata.
-- `list snapshots` and `rollback` should operate from snapshot manifests under the snapshot storage root, not from tracked package state.
+- `list snapshots` and `restore` should operate from snapshot manifests under the snapshot storage root, not from tracked package state.
 
 - `list tracked` should report the packages currently tracked by persisted explicit package entries.
 - `list tracked` should resolve the current tracked package state against the current repo manifests.

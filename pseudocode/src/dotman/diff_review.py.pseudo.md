@@ -49,6 +49,10 @@ display_review_path(path):
   if compact path can preserve useful identity:
     return compact path
   return full display path
+
+restore review items:
+  compare snapshot desired content to current live content
+  preserve snapshot and live side labels and snapshot-to-live direction
 ```
 
 ## Review Needed

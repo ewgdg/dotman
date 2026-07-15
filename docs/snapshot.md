@@ -1,11 +1,11 @@
 # dotman Snapshot Model
 
-This document captures the current snapshot lifecycle and rollback semantics for `dotman`.
+This document captures the current snapshot lifecycle and restore semantics for `dotman`.
 
 ## Purpose
 
 - A snapshot is a restore point created from the finalized selected plan of a real `push`.
-- Snapshots exist to let the user roll managed live paths back to their pre-push state.
+- Snapshots exist to let the user restore managed live paths to their pre-push state.
 - Snapshots are manager-level, not repo-level. One `push` run produces at most one snapshot even when it spans multiple repos.
 - `push --dry-run` does not create a snapshot.
 
@@ -15,7 +15,7 @@ This document captures the current snapshot lifecycle and rollback semantics for
 - That includes file-target create, update, and delete actions.
 - For directory targets, that includes each selected child-path create, update, and delete action.
 - Snapshots record the pre-push state of those live paths, not the repo-side source state.
-- Rollback restores only the live paths recorded by the snapshot.
+- Restore restores only the live paths recorded by the snapshot.
 
 ## Lifecycle
 
@@ -49,7 +49,7 @@ $XDG_DATA_HOME/dotman/snapshots/
 
 ## Manifest Expectations
 
-- Each snapshot has a manifest sufficient to plan and execute rollback without consulting repo manifests.
+- Each snapshot has a manifest sufficient to plan and execute restore without consulting repo manifests.
 - The manifest should record snapshot metadata such as:
   - snapshot ID
   - creation time
@@ -63,20 +63,20 @@ $XDG_DATA_HOME/dotman/snapshots/
   - the pre-push file content blob reference when the path existed
   - the pre-push file mode when relevant to restore
   - the original symlink target when the live path itself was a symlink
-  - the symlink handling mode needed for rollback
+  - the symlink handling mode needed for restore
   - the push action that triggered snapshot capture, for example `create`, `update`, or `delete`
-- Provenance such as repo, selection label, package, and target labels may be recorded for human inspection, but rollback correctness must not depend on them.
+- Provenance such as repo, selection label, package, and target labels may be recorded for human inspection, but restore correctness must not depend on them.
 
-## Rollback Semantics
+## Restore Semantics
 
-- `rollback` restores the selected snapshot state against the current live filesystem.
-- If a recorded path existed before the push, rollback should restore its recorded bytes and mode.
-- If a recorded path was a symlink before the push, rollback should either recreate the link target or restore the resolved target path, depending on the snapshot entry's recorded symlink handling mode.
-- If a recorded path did not exist before the push, rollback should remove it.
-- Rollback may prune empty parent directories left behind by deleting snapshot-created paths.
-- Rollback planning and diff review compare current live content against the snapshot-recorded desired restore state.
-- Rollback does not run package hooks.
-- Rollback fails fast if the snapshot manifest is invalid or required stored content is missing.
+- `restore` restores the selected snapshot state against the current live filesystem.
+- If a recorded path existed before the push, restore should restore its recorded bytes and mode.
+- If a recorded path was a symlink before the push, restore should either recreate the link target or restore the resolved target path, depending on the snapshot entry's recorded symlink handling mode.
+- If a recorded path did not exist before the push, restore should remove it.
+- Restore may prune empty parent directories left behind by deleting snapshot-created paths.
+- Restore planning and diff review compare current live content against the snapshot-recorded desired restore state.
+- Restore does not run package hooks.
+- Restore fails fast if the snapshot manifest is invalid or required stored content is missing.
 
 ## Guarantees And Limits
 
@@ -87,7 +87,7 @@ $XDG_DATA_HOME/dotman/snapshots/
   - package-manager operations triggered by hooks
   - external commands that changed unrelated files
   - manual user changes outside the recorded path set
-- Snapshot behavior is generation-like UX for managed files, not a full Nix-style environment rollback.
+- Snapshot behavior is generation-like UX for managed files, not a full Nix-style environment restore.
 
 ## Retention
 
@@ -101,4 +101,4 @@ $XDG_DATA_HOME/dotman/snapshots/
 - A mutation-bearing real `push` may create a snapshot when snapshots are enabled.
 - `list snapshots` shows available snapshot history in a concise overview form.
 - `info snapshot <snapshot>` shows detailed metadata and recorded paths for one snapshot. `latest` resolves to the newest available snapshot.
-- `rollback [<snapshot>]` restores the latest restorable snapshot by default and accepts `latest` explicitly as a snapshot reference alias.
+- `restore [<snapshot>]` restores the latest restorable snapshot by default and accepts `latest` explicitly as a snapshot reference alias.

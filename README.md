@@ -135,14 +135,14 @@ dotman pull
 
 Support partial selector matching, interactive disambiguation, combined selection flows, and diff review before execution, with a workflow inspired by `yay` for a more familiar terminal experience.
 
-### Snapshots and rollback
+### Snapshots and restore
 
-Mutation-bearing real `push` runs may create snapshots; restore managed paths with `rollback`.
+Mutation-bearing real `push` runs may create snapshots; restore managed paths with `restore`.
 
 Example:
 
 ```sh
-dotman rollback latest
+dotman restore latest
 ```
 
 ### Flexible template support

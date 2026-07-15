@@ -1,8 +1,8 @@
-# Push Snapshots and Rollback
+# Push Snapshots and Restore
 
 ## Intent
 
-Capture live state before push and restore that state through rollback actions.
+Capture live state before push and restore that state through restore actions.
 
 ## Behavior
 
@@ -39,7 +39,7 @@ resolve_snapshot(snapshot_root, reference):
 
   return matching snapshot
 
-build_rollback_actions(snapshot):
+build_restore_actions(snapshot):
   for each snapshot entry:
     if entry recorded missing live path:
       create delete action
@@ -47,15 +47,15 @@ build_rollback_actions(snapshot):
       create restore file action and mode action when needed
     else if entry recorded symlink:
       create restore symlink action
-  return rollback actions
+  return restore actions
 
-execute_rollback(snapshot, actions):
+execute_restore(snapshot, actions):
   execute actions in order
   record per-action result
   update snapshot restore metadata
-  return rollback result
+  return restore result
 ```
 
 ## Review Needed
 
-Snapshot schema, empty-snapshot behavior, retention pruning, and rollback ordering need implementation review before changes.
+Snapshot schema, empty-snapshot behavior, retention pruning, and restore ordering need implementation review before changes.

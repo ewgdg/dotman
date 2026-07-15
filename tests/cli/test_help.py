@@ -58,10 +58,22 @@ def test_add_help_lists_yes_flag(capsys) -> None:
     assert "--yes" in output
 
 
-def test_rollback_help_lists_yes_flag(capsys) -> None:
-    output = capture_parser_help(capsys, "rollback")
-    assert "usage: dotman rollback [-h] [-d] [--full-path] [--yes] [<snapshot>]" in output
+def test_restore_help_lists_yes_flag(capsys) -> None:
+    output = capture_parser_help(capsys, "restore")
+    assert "usage: dotman restore [-h] [-d] [--full-path] [--yes] [<snapshot>]" in output
     assert "--yes" in output
+
+
+def test_removed_snapshot_command_is_rejected_instead_of_aliased(capsys) -> None:
+    removed_command = "roll" + "back"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.build_parser().parse_args([removed_command])
+
+    assert exc_info.value.code == 2
+    error_output = capsys.readouterr().err
+    assert f"invalid choice: '{removed_command}'" in error_output
+    assert "restore" in error_output
 
 
 def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:

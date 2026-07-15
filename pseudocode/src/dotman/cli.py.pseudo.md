@@ -93,6 +93,12 @@ run_execution(plans, args):
   execute plans
   emit execution result
   return execution exit code
+
+review_restore_actions_for_interactive_diffs(actions):
+  build restore review items and run review with operation restore
+
+restore wrappers:
+  delegate payload emission and execution through restore-named interfaces
 ```
 
 ## Review Needed

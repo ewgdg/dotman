@@ -11,7 +11,7 @@ from dotman.diff_review import ReviewItem, display_review_path
 from dotman.execution import build_execution_session, execute_session, _preflight_execution_session_sudo
 from dotman.file_access import sudo_session
 from dotman.models import OperationPlan, package_plans_for_operation_plan
-from dotman.snapshot import create_push_snapshot, execute_rollback, mark_snapshot_status, prune_snapshots
+from dotman.snapshot import create_push_snapshot, execute_restore, mark_snapshot_status, prune_snapshots
 
 
 @dataclass
@@ -1474,11 +1474,11 @@ def emit_tracked_package_detail(*, package_detail: Any, json_output: bool, use_c
     return 0
 
 
-def visible_rollback_actions(actions: Sequence[Any]) -> list[Any]:
+def visible_restore_actions(actions: Sequence[Any]) -> list[Any]:
     return [action for action in actions if action.action != "noop"]
 
 
-def build_rollback_review_items(snapshot: Any, actions: Sequence[Any]) -> list[ReviewItem]:
+def build_restore_review_items(snapshot: Any, actions: Sequence[Any]) -> list[ReviewItem]:
     review_items: list[ReviewItem] = []
     for action in actions:
         if action.action == "noop":
@@ -1489,7 +1489,7 @@ def build_rollback_review_items(snapshot: Any, actions: Sequence[Any]) -> list[R
                 package_id="snapshot",
                 target_name=str(action.live_path),
                 action=action.action,
-                operation="rollback",
+                operation="restore",
                 repo_path=action.snapshot_path,
                 live_path=action.live_path,
                 source_path=str(action.snapshot_path),
@@ -1604,7 +1604,7 @@ def emit_snapshot_detail(*, snapshot: Any, json_output: bool, full_paths: bool =
     return 0
 
 
-def emit_rollback_payload(
+def emit_restore_payload(
     *,
     snapshot: Any,
     actions: Sequence[Any],
@@ -1613,10 +1613,10 @@ def emit_rollback_payload(
     full_paths: bool = False,
     use_color: bool,
 ) -> int:
-    visible_actions = visible_rollback_actions(actions)
+    visible_actions = visible_restore_actions(actions)
     payload = {
         "mode": mode,
-        "operation": "rollback",
+        "operation": "restore",
         "snapshot": snapshot.to_dict(),
         "actions": [action.to_dict() for action in visible_actions],
     }
@@ -1624,7 +1624,7 @@ def emit_rollback_payload(
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    _print_payload_header(f"{mode} rollback", use_color=use_color)
+    _print_payload_header(f"{mode} restore", use_color=use_color)
     print(f"  snapshot: {snapshot.snapshot_id}")
     print(f"  created:  {snapshot.created_at}")
     print(f"  status:   {snapshot.status}")
@@ -1642,8 +1642,8 @@ def emit_rollback_payload(
     return 0
 
 
-def _print_rollback_execution_header(*, snapshot: Any, action_count: int, use_color: bool) -> None:
-    _print_payload_header("executing rollback", use_color=use_color)
+def _print_restore_execution_header(*, snapshot: Any, action_count: int, use_color: bool) -> None:
+    _print_payload_header("executing restore", use_color=use_color)
     print(f"  snapshot: {snapshot.snapshot_id}")
     print(f"  created:  {snapshot.created_at}")
     print(f"  status:   {snapshot.status}")
@@ -1653,7 +1653,7 @@ def _print_rollback_execution_header(*, snapshot: Any, action_count: int, use_co
         print(f"  {cli_style.render_payload_section_label('no pending target actions', use_color=use_color)}")
 
 
-def _print_rollback_execution_step(index: int, total: int, action: Any, *, full_paths: bool, use_color: bool) -> None:
+def _print_restore_execution_step(index: int, total: int, action: Any, *, full_paths: bool, use_color: bool) -> None:
     print(
         f"    [{index}/{total}] "
         f"{cli_style.render_execution_action(action.action, use_color=use_color):<11} "
@@ -1661,7 +1661,7 @@ def _print_rollback_execution_step(index: int, total: int, action: Any, *, full_
     )
 
 
-def emit_rollback_result(*, result: Any, json_output: bool) -> int:
+def emit_restore_result(*, result: Any, json_output: bool) -> int:
     if json_output:
         print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return result.exit_code
@@ -1735,7 +1735,7 @@ def emit_error(error: Exception, *, use_color: bool) -> None:
     )
 
 
-def run_rollback_execution(
+def run_restore_execution(
     *,
     snapshot: Any,
     actions: Sequence[Any],
@@ -1743,9 +1743,9 @@ def run_rollback_execution(
     full_paths: bool = False,
     use_color: bool,
 ) -> int:
-    visible_actions = visible_rollback_actions(actions)
+    visible_actions = visible_restore_actions(actions)
     if not json_output:
-        _print_rollback_execution_header(
+        _print_restore_execution_header(
             snapshot=snapshot,
             action_count=len(visible_actions),
             use_color=use_color,
@@ -1754,14 +1754,14 @@ def run_rollback_execution(
         return 0
     for index, action in enumerate(visible_actions, start=1):
         if not json_output:
-            _print_rollback_execution_step(
+            _print_restore_execution_step(
                 index,
                 len(visible_actions),
                 action,
                 full_paths=full_paths,
                 use_color=use_color,
             )
-    result = execute_rollback(snapshot, visible_actions)
+    result = execute_restore(snapshot, visible_actions)
     if not json_output:
         for action_result in result.actions:
             if action_result.status == "ok":
@@ -1770,4 +1770,4 @@ def run_rollback_execution(
             if action_result.error:
                 print(f"      {action_result.error}")
             print(f"      {cli_style.render_execution_status(action_result.status, use_color=use_color)}")
-    return emit_rollback_result(result=result, json_output=json_output)
+    return emit_restore_result(result=result, json_output=json_output)

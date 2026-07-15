@@ -306,15 +306,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="Diagnose manager config and tracked package state",
     )
 
-    rollback_parser = subparsers.add_parser(
-        "rollback",
+    restore_parser = subparsers.add_parser(
+        "restore",
         help="Restore managed live paths from a recorded snapshot",
         description="Restore managed live paths from a recorded snapshot",
     )
-    add_dry_run_argument(rollback_parser)
-    add_full_path_argument(rollback_parser)
-    add_snapshot_argument(rollback_parser, required=False)
-    add_assume_yes_argument(rollback_parser)
+    add_dry_run_argument(restore_parser)
+    add_full_path_argument(restore_parser)
+    add_snapshot_argument(restore_parser, required=False)
+    add_assume_yes_argument(restore_parser)
 
     untrack_parser = subparsers.add_parser(
         "untrack",

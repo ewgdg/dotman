@@ -40,7 +40,7 @@ from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
 from dotman.templates import JinjaRenderError, build_template_context, render_template_file, render_template_string
 from dotman.snapshot import (
-    RollbackAction,
+    RestoreAction,
     SnapshotRecord,
     find_snapshot_matches,
 )
@@ -3546,15 +3546,15 @@ def resolve_snapshot_record(snapshot_root: Path, snapshot_ref: str | None, *, js
     return matches[selected_index]
 
 
-visible_rollback_actions = cli_emit.visible_rollback_actions
-build_rollback_review_items = cli_emit.build_rollback_review_items
+visible_restore_actions = cli_emit.visible_restore_actions
+build_restore_review_items = cli_emit.build_restore_review_items
 
 
 
-def review_rollback_actions_for_interactive_diffs(
+def review_restore_actions_for_interactive_diffs(
     *,
     snapshot: SnapshotRecord,
-    actions: Sequence[RollbackAction],
+    actions: Sequence[RestoreAction],
     json_output: bool,
     full_paths: bool | None = None,
     assume_yes: bool = False,
@@ -3562,10 +3562,10 @@ def review_rollback_actions_for_interactive_diffs(
     full_paths = _effective_full_paths(full_paths)
     if not interactive_mode_enabled(json_output=json_output):
         return True
-    review_items = build_rollback_review_items(snapshot, actions)
+    review_items = build_restore_review_items(snapshot, actions)
     if not review_items:
         return True
-    return run_diff_review_menu(review_items, operation="rollback", full_paths=full_paths, assume_yes=assume_yes)
+    return run_diff_review_menu(review_items, operation="restore", full_paths=full_paths, assume_yes=assume_yes)
 
 
 
@@ -3595,16 +3595,16 @@ def emit_snapshot_detail(*, snapshot: SnapshotRecord, json_output: bool, full_pa
 
 
 
-def emit_rollback_payload(
+def emit_restore_payload(
     *,
     snapshot: SnapshotRecord,
-    actions: Sequence[RollbackAction],
+    actions: Sequence[RestoreAction],
     json_output: bool,
     mode: str,
     full_paths: bool | None = None,
 ) -> int:
     full_paths = _effective_full_paths(full_paths)
-    return cli_emit.emit_rollback_payload(
+    return cli_emit.emit_restore_payload(
         snapshot=snapshot,
         actions=actions,
         json_output=json_output,
@@ -3614,19 +3614,19 @@ def emit_rollback_payload(
     )
 
 
-emit_rollback_result = cli_emit.emit_rollback_result
+emit_restore_result = cli_emit.emit_restore_result
 
 
 
-def run_rollback_execution(
+def run_restore_execution(
     *,
     snapshot: SnapshotRecord,
-    actions: Sequence[RollbackAction],
+    actions: Sequence[RestoreAction],
     json_output: bool,
     full_paths: bool | None = None,
 ) -> int:
     full_paths = _effective_full_paths(full_paths)
-    return cli_emit.run_rollback_execution(
+    return cli_emit.run_restore_execution(
         snapshot=snapshot,
         actions=actions,
         json_output=json_output,
@@ -3678,9 +3678,9 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_execution_result=emit_execution_result,
         run_execution=run_execution,
         resolve_snapshot_record=resolve_snapshot_record,
-        review_rollback_actions_for_interactive_diffs=review_rollback_actions_for_interactive_diffs,
-        emit_rollback_payload=emit_rollback_payload,
-        run_rollback_execution=run_rollback_execution,
+        review_restore_actions_for_interactive_diffs=review_restore_actions_for_interactive_diffs,
+        emit_restore_payload=emit_restore_payload,
+        run_restore_execution=run_restore_execution,
         emit_untracked_package_entry=emit_untracked_package_entry,
         find_remaining_tracked_package_after_untrack=find_remaining_tracked_package_after_untrack,
         emit_tracked_packages=emit_tracked_packages,

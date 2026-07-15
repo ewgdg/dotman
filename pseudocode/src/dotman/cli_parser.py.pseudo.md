@@ -27,4 +27,6 @@ build_parser():
 argument helper functions:
   add one shared concept consistently across commands
   set metavar, default, action, and help text for that concept
+  expose top-level restore [<snapshot>] with dry-run, full-path, and assume-yes options
+  expose restore as the sole command for this operation, with no aliases
 ```

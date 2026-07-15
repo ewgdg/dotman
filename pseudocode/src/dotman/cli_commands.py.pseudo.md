@@ -77,6 +77,11 @@ list repo:
   read configured repos from manager config in configured order
   emit repo list before engine construction
   do not load repo manifests, tracked package state, or package catalogs
+
+_handle_restore(args):
+  resolve args.snapshot; when omitted, resolver selects latest restorable snapshot
+  build restore actions and run snapshot-to-live diff review
+  if dry-run, emit restore plan; otherwise execute restore and record successful restore metadata
 ```
 
 ## Review Needed

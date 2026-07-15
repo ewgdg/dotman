@@ -545,7 +545,7 @@ def _selection_item_paths(*, operation: str, repo_path: Path | str, live_path: P
     live_text = str(live_path)
     if operation == "pull":
         return live_text, repo_text
-    if operation == "rollback":
+    if operation == "restore":
         return repo_text, live_text
     return repo_text, live_text
 
@@ -553,7 +553,7 @@ def _selection_item_paths(*, operation: str, repo_path: Path | str, live_path: P
 def _review_diff_side_names(*, operation: str) -> tuple[str, str]:
     if operation == "pull":
         return "repo", "live"
-    if operation == "rollback":
+    if operation == "restore":
         return "live", "snapshot"
     return "live", "repo"
 

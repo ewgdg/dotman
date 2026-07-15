@@ -57,6 +57,10 @@ emit_error(error):
     render path-rule target identity and pattern as separate fields
   else:
     render readable message and metadata labels
+
+emit_restore_payload / run_restore_execution:
+  identify the operation as restore in human and JSON output
+  preserve restore action values delete, noop, create, and update
 ```
 
 ## Review Needed

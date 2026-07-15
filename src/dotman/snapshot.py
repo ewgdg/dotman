@@ -84,7 +84,7 @@ class SnapshotRecord:
 
 
 @dataclass(frozen=True)
-class RollbackAction:
+class RestoreAction:
     live_path: Path
     snapshot_path: Path
     action: str
@@ -109,8 +109,8 @@ class RollbackAction:
 
 
 @dataclass(frozen=True)
-class RollbackActionResult:
-    action: RollbackAction
+class RestoreActionResult:
+    action: RestoreAction
     status: str
     error: str | None = None
 
@@ -123,9 +123,9 @@ class RollbackActionResult:
 
 
 @dataclass(frozen=True)
-class RollbackResult:
+class RestoreResult:
     snapshot: SnapshotRecord
-    actions: tuple[RollbackActionResult, ...]
+    actions: tuple[RestoreActionResult, ...]
     status: str
 
     @property
@@ -135,7 +135,7 @@ class RollbackResult:
     def to_dict(self) -> dict[str, object]:
         return {
             "mode": "execute",
-            "operation": "rollback",
+            "operation": "restore",
             "status": self.status,
             "snapshot": self.snapshot.to_dict(),
             "actions": [action.to_dict() for action in self.actions],
@@ -352,14 +352,14 @@ def prune_snapshots(snapshot_root: Path, *, max_generations: int) -> list[str]:
     return pruned_ids
 
 
-def build_rollback_actions(snapshot: SnapshotRecord) -> list[RollbackAction]:
-    actions: list[RollbackAction] = []
+def build_restore_actions(snapshot: SnapshotRecord) -> list[RestoreAction]:
+    actions: list[RestoreAction] = []
     for entry in snapshot.entries:
         restore_path = entry.restore_path or entry.live_path
         current_exists = restore_path.exists()
         current_is_symlink = restore_path.is_symlink()
         if current_exists and restore_path.is_dir() and not current_is_symlink:
-            raise ValueError(f"rollback expects file path, got directory: {restore_path}")
+            raise ValueError(f"restore expects file path, got directory: {restore_path}")
         snapshot_path = _snapshot_restore_display_path(snapshot, entry.live_path)
 
         if entry.preserve_symlink_identity and entry.path_kind == "symlink":
@@ -370,7 +370,7 @@ def build_rollback_actions(snapshot: SnapshotRecord) -> list[RollbackAction]:
             else:
                 action = "update" if current_present else "create"
             actions.append(
-                RollbackAction(
+                RestoreAction(
                     live_path=entry.live_path,
                     snapshot_path=snapshot_path,
                     action=action,
@@ -398,7 +398,7 @@ def build_rollback_actions(snapshot: SnapshotRecord) -> list[RollbackAction]:
             else:
                 action = "update" if current_exists else "create"
             actions.append(
-                RollbackAction(
+                RestoreAction(
                     live_path=entry.live_path,
                     snapshot_path=snapshot_path,
                     action=action,
@@ -412,7 +412,7 @@ def build_rollback_actions(snapshot: SnapshotRecord) -> list[RollbackAction]:
 
         action = "delete" if current_exists else "noop"
         actions.append(
-            RollbackAction(
+            RestoreAction(
                 live_path=entry.live_path,
                 snapshot_path=snapshot_path,
                 action=action,
@@ -425,8 +425,8 @@ def build_rollback_actions(snapshot: SnapshotRecord) -> list[RollbackAction]:
     return actions
 
 
-def execute_rollback(snapshot: SnapshotRecord, actions: Sequence[RollbackAction]) -> RollbackResult:
-    results: list[RollbackActionResult] = []
+def execute_restore(snapshot: SnapshotRecord, actions: Sequence[RestoreAction]) -> RestoreResult:
+    results: list[RestoreActionResult] = []
     failed = False
     for action in actions:
         if action.action == "noop":
@@ -439,7 +439,7 @@ def execute_rollback(snapshot: SnapshotRecord, actions: Sequence[RollbackAction]
                 elif action.action == "delete":
                     delete_path_and_prune_empty_parents(target_path, root=target_path.parent)
                 else:
-                    raise ValueError(f"unsupported rollback action '{action.action}'")
+                    raise ValueError(f"unsupported restore action '{action.action}'")
             elif action.action in {"create", "update"}:
                 write_bytes_atomic(target_path, action.after_bytes)
                 if action.desired_mode is not None:
@@ -447,13 +447,13 @@ def execute_rollback(snapshot: SnapshotRecord, actions: Sequence[RollbackAction]
             elif action.action == "delete":
                 delete_path_and_prune_empty_parents(target_path, root=target_path.parent)
             else:
-                raise ValueError(f"unsupported rollback action '{action.action}'")
-            results.append(RollbackActionResult(action=action, status="ok"))
-        except Exception as exc:  # noqa: BLE001 - rollback should report the original failure text.
-            results.append(RollbackActionResult(action=action, status="failed", error=str(exc)))
+                raise ValueError(f"unsupported restore action '{action.action}'")
+            results.append(RestoreActionResult(action=action, status="ok"))
+        except Exception as exc:  # noqa: BLE001 - restore should report the original failure text.
+            results.append(RestoreActionResult(action=action, status="failed", error=str(exc)))
             failed = True
             break
-    return RollbackResult(
+    return RestoreResult(
         snapshot=snapshot,
         actions=tuple(results),
         status="failed" if failed else "ok",

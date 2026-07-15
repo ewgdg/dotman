@@ -111,9 +111,9 @@ def _write_snapshot_config(tmp_path: Path, repo_root: Path, *, max_generations: 
     return config_path
 
 
-def test_rollback_help_lists_dry_run_and_full_path_flags(capsys) -> None:
-    output = capture_parser_help(capsys, "rollback")
-    assert "usage: dotman rollback [-h] [-d] [--full-path] [--yes] [<snapshot>]" in output
+def test_restore_help_lists_dry_run_and_full_path_flags(capsys) -> None:
+    output = capture_parser_help(capsys, "restore")
+    assert "usage: dotman restore [-h] [-d] [--full-path] [--yes] [<snapshot>]" in output
     assert "-d, --dry-run" in output
     assert "--full-path" in output
 
@@ -134,7 +134,7 @@ def test_info_snapshot_help_lists_full_path_flag(capsys) -> None:
     assert "--full-path" in output
 
 
-def test_push_execute_creates_snapshot_and_rollback_restores_latest_snapshot(
+def test_push_execute_creates_snapshot_and_restore_restores_latest_snapshot(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -167,15 +167,25 @@ def test_push_execute_creates_snapshot_and_rollback_restores_latest_snapshot(
 
     live_path.write_text("mutated after push\n", encoding="utf-8")
 
-    rollback_exit_code = main(["--config", str(config_path), "rollback"])
+    capsys.readouterr()
+    dry_run_exit_code = main(["--config", str(config_path), "--json", "restore", "--dry-run"])
 
-    assert rollback_exit_code == 0
+    assert dry_run_exit_code == 0
+    dry_run_output = capsys.readouterr().out
+    dry_run_payload = json.loads(dry_run_output)
+    assert dry_run_payload["operation"] == "restore"
+    assert ("roll" + "back") not in dry_run_output
+    assert live_path.read_text(encoding="utf-8") == "mutated after push\n"
+
+    restore_exit_code = main(["--config", str(config_path), "restore"])
+
+    assert restore_exit_code == 0
     assert live_path.read_text(encoding="utf-8") == "before push\n"
     restored_snapshots = list_snapshots(tmp_path / "snapshots")
     assert restored_snapshots[0].status == "applied"
     assert restored_snapshots[0].restore_count == 1
     assert restored_snapshots[0].last_restored_at is not None
-    assert "executing rollback" in capsys.readouterr().out
+    assert "executing restore" in capsys.readouterr().out
 
 
 def test_push_execute_creates_snapshot_only_when_first_live_mutation_begins(
@@ -215,7 +225,7 @@ def test_push_execute_creates_snapshot_only_when_first_live_mutation_begins(
     assert snapshots[0].status == "applied"
 
 
-def test_push_execute_replaces_symlinked_target_and_rollback_restores_link(
+def test_push_execute_replaces_symlinked_target_and_restore_restores_link(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -256,16 +266,20 @@ def test_push_execute_replaces_symlinked_target_and_rollback_restores_link(
     assert snapshots[0].entries[0].path_kind == "symlink"
     assert snapshots[0].entries[0].symlink_target == str(real_live_path)
 
-    rollback_exit_code = main(["--config", str(config_path), "--json", "rollback"])
+    capsys.readouterr()
+    restore_exit_code = main(["--config", str(config_path), "--json", "restore"])
 
-    assert rollback_exit_code == 0
+    assert restore_exit_code == 0
     assert live_path.is_symlink()
     assert live_path.read_text(encoding="utf-8") == "before push\n"
-    capsys.readouterr()
+    restore_output = capsys.readouterr().out
+    restore_payload = json.loads(restore_output)
+    assert restore_payload["operation"] == "restore"
+    assert ("roll" + "back") not in restore_output
 
 
 
-def test_push_execute_follows_symlinked_target_and_rollback_restores_target_file(
+def test_push_execute_follows_symlinked_target_and_restore_restores_target_file(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -295,16 +309,16 @@ def test_push_execute_follows_symlinked_target_and_rollback_restores_target_file
     assert snapshots[0].entries[0].preserve_symlink_identity is False
     assert snapshots[0].entries[0].restore_path == real_live_path.resolve()
 
-    rollback_exit_code = main(["--config", str(config_path), "rollback"])
+    restore_exit_code = main(["--config", str(config_path), "restore"])
 
-    assert rollback_exit_code == 0
+    assert restore_exit_code == 0
     assert live_path.is_symlink()
     assert real_live_path.read_text(encoding="utf-8") == "before push\n"
     assert live_path.read_text(encoding="utf-8") == "before push\n"
 
 
 
-def test_push_execute_replaces_broken_symlink_and_rollback_restores_link(
+def test_push_execute_replaces_broken_symlink_and_restore_restores_link(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -346,16 +360,16 @@ def test_push_execute_replaces_broken_symlink_and_rollback_restores_link(
     assert entry.content_path is None
     assert entry.preserve_symlink_identity is True
 
-    rollback_exit_code = main(["--config", str(config_path), "--json", "rollback"])
+    restore_exit_code = main(["--config", str(config_path), "--json", "restore"])
 
-    assert rollback_exit_code == 0
+    assert restore_exit_code == 0
     assert live_path.is_symlink()
     assert live_path.resolve(strict=False) == broken_target
     capsys.readouterr()
 
 
 
-def test_push_execute_creates_missing_file_and_rollback_deletes_it(tmp_path: Path, monkeypatch) -> None:
+def test_push_execute_creates_missing_file_and_restore_deletes_it(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -379,9 +393,9 @@ def test_push_execute_creates_missing_file_and_rollback_deletes_it(tmp_path: Pat
     assert snapshots[0].entries[0].push_action == "create"
     assert snapshots[0].entries[0].content_path is None
 
-    rollback_exit_code = main(["--config", str(config_path), "rollback"])
+    restore_exit_code = main(["--config", str(config_path), "restore"])
 
-    assert rollback_exit_code == 0
+    assert restore_exit_code == 0
     assert not live_path.exists()
 
 
@@ -430,7 +444,7 @@ def test_push_snapshot_retention_prunes_oldest_generations(tmp_path: Path, monke
     assert snapshots[0].snapshot_id != first_snapshot
 
 
-def test_rollback_without_snapshot_argument_restores_latest_snapshot(tmp_path: Path, monkeypatch) -> None:
+def test_restore_without_snapshot_argument_restores_latest_snapshot(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -451,13 +465,13 @@ def test_rollback_without_snapshot_argument_restores_latest_snapshot(tmp_path: P
 
     live_path.write_text("mutated after push\n", encoding="utf-8")
 
-    rollback_exit_code = main(["--config", str(config_path), "rollback"])
+    restore_exit_code = main(["--config", str(config_path), "restore"])
 
-    assert rollback_exit_code == 0
+    assert restore_exit_code == 0
     assert live_path.read_text(encoding="utf-8") == "second\n"
 
 
-def test_rollback_latest_argument_restores_latest_snapshot(tmp_path: Path, monkeypatch) -> None:
+def test_restore_latest_argument_restores_latest_snapshot(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -478,9 +492,9 @@ def test_rollback_latest_argument_restores_latest_snapshot(tmp_path: Path, monke
 
     live_path.write_text("mutated after push\n", encoding="utf-8")
 
-    rollback_exit_code = main(["--config", str(config_path), "rollback", "latest"])
+    restore_exit_code = main(["--config", str(config_path), "restore", "latest"])
 
-    assert rollback_exit_code == 0
+    assert restore_exit_code == 0
     assert live_path.read_text(encoding="utf-8") == "second\n"
 
 
