@@ -233,7 +233,7 @@ def _print_payload_target_item(item: Any, *, full_paths: bool, use_color: bool) 
         use_color=use_color,
     )
     print(f"      {target_label} -> {_render_payload_action(item.action, use_color=use_color)}")
-    if item.action == "probe":
+    if item.source_path is None and item.destination_path is None:
         return
     source_path = display_cli_path(item.source_path, full_paths=full_paths)
     destination_path = display_cli_path(item.destination_path, full_paths=full_paths)

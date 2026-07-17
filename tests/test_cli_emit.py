@@ -53,14 +53,16 @@ def test_emit_payload_renders_probe_targets_without_fake_paths(capsys) -> None:
                 package_id="app",
                 target_name="version",
                 bound_profile=None,
-                action="probe",
+                action="install",
+                source_path=None,
+                destination_path=None,
             )
         ],
     )
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert "sandbox:app.version -> probe" in output
+    assert "sandbox:app.version -> install" in output
     assert "None" not in output
 
 
