@@ -1,7 +1,6 @@
 ## Project structure
 
 - Core package code lives in `src/dotman/`.
-- Source behavior changes are described in `pseudocode/`.
 - CLI and engine coverage lives in `tests/`.
 - Example repo layouts and sample config live in `examples/repo/`.
 
