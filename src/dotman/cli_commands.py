@@ -89,6 +89,10 @@ EngineFactory = Callable[[str | None], Any]
 
 
 def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliCommandHandlers) -> int:
+    if args.command == "rewrite" and args.rewrite_name == "home":
+        from dotman.rewrites.cli import run_home_rewrite
+
+        return run_home_rewrite(action=args.rewrite_action, input_path=args.input_path)
     if args.command == "transform":
         from dotman.transforms.cli import run_parsed_engine
         from dotman.transforms.json import JsonTransformEngine

@@ -1,0 +1,1 @@
+"""Structure-agnostic textual rewrites."""

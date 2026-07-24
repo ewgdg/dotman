@@ -545,6 +545,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_jinja_context_arguments(render_jinja_parser)
 
+    rewrite_parser = subparsers.add_parser(
+        "rewrite",
+        help="Run a standalone structure-agnostic text rewrite",
+        description="Run a standalone structure-agnostic text rewrite without repository configuration",
+    )
+    rewrite_subparsers = rewrite_parser.add_subparsers(
+        dest="rewrite_name", required=True, title="rewrites", metavar="<rewrite>"
+    )
+    rewrite_home_parser = rewrite_subparsers.add_parser(
+        "home",
+        help="Rewrite active home path fragments",
+        description="Rewrite between active home path fragments and '~'",
+    )
+    rewrite_home_subparsers = rewrite_home_parser.add_subparsers(
+        dest="rewrite_action", required=True, title="actions", metavar="<action>"
+    )
+    for action, help_text in (
+        ("expand", "Expand standalone '~' fragments to the active $HOME"),
+        ("collapse", "Collapse active $HOME fragments to '~'"),
+    ):
+        action_parser = rewrite_home_subparsers.add_parser(
+            action,
+            help=help_text,
+            description=f"{help_text}; read strict UTF-8 from INPUT or stdin and write to stdout",
+        )
+        action_parser.add_argument(
+            "input_path",
+            nargs="?",
+            metavar="<input>",
+            help="UTF-8 input file; omit or use '-' to read stdin",
+        )
+
     transform_parser = subparsers.add_parser(
         "transform",
         help="Run a standalone structured transform",

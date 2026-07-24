@@ -90,6 +90,8 @@ def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     assert "repo path" in output
     assert "Re-run a reconcile helper subcommand" in output
     assert "Render built-in template helpers" in output
+    assert "Run a standalone structure-agnostic text rewrite" in output
+    assert "Run a standalone structured transform" in output
 
 
 def test_edit_help_lists_package_and_target_subcommands(capsys) -> None:
@@ -250,6 +252,31 @@ def test_render_jinja_help_uses_explicit_placeholders(capsys) -> None:
     assert "--profile <profile>" in output
     assert "--os <os>" in output
     assert "--var <key=value>" in output
+
+
+def test_rewrite_help_lists_home_rewrite(capsys) -> None:
+    output = capture_parser_help(capsys, "rewrite")
+    assert "usage: dotman rewrite [-h] <rewrite> ..." in output
+    assert "rewrites:" in output
+    assert "Rewrite active home path fragments" in output
+
+
+def test_rewrite_home_help_lists_expand_and_collapse(capsys) -> None:
+    output = capture_parser_help(capsys, "rewrite", "home")
+    assert "usage: dotman rewrite home [-h] <action> ..." in output
+    assert "actions:" in output
+    assert "Expand standalone '~' fragments to the active $HOME" in output
+    assert "Collapse active $HOME fragments to '~'" in output
+
+
+@pytest.mark.parametrize("action", ["expand", "collapse"])
+def test_rewrite_home_action_help_is_stdout_only(capsys, action: str) -> None:
+    output = capture_parser_help(capsys, "rewrite", "home", action)
+    assert f"usage: dotman rewrite home {action} [-h] [<input>]" in output
+    assert "omit or use '-' to read stdin" in output
+    assert "write to stdout" in output
+    assert "--stdout" not in output
+    assert "output" not in output.lower()
 
 def test_selection_prompt_mentions_help(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)

@@ -478,6 +478,21 @@ profile = "personal"
 - Host-level entrypoints should use host meta packages for convenience.
 - Groups still handle reusable composition beneath the host meta layer.
 
+## Home Path Rewrites
+
+`dotman rewrite home expand [INPUT|-]` replaces standalone `~` and `~/...` fragments with the active `$HOME`. `dotman rewrite home collapse [INPUT|-]` replaces the exact active home path and its descendants with `~`.
+
+The optional input is a UTF-8 file. Omit it or use `-` to read stdin. Rewritten content is written only to stdout; the command has no output operand, in-place mode, or `--stdout` flag. Dotman reads and strictly decodes the complete input before emitting anything, so invalid UTF-8 and input errors cannot produce partial output. Unmatched bytes, including a UTF-8 BOM, line endings, whitespace, final-newline state, ordering, and Unicode normalization, remain unchanged.
+
+`$HOME` is the only home source. It must contain a non-root absolute POSIX path; trailing slashes are ignored. Matching is lexical and does not inspect the filesystem, resolve symlinks, normalize path components, or expand other home shorthands. Attached names, URLs, escaped fragments, `~user`, `~+`, `~-`, `$HOME`, and `${HOME}` remain unchanged.
+
+Home Path Rewrites run without repository discovery, configuration, profile resolution, or sync-engine construction.
+
+```console
+dotman rewrite home collapse settings.conf
+cat portable.conf | dotman rewrite home expand > settings.conf
+```
+
 ## Structured JSON transforms
 
 `dotman transform json BASE [OUTPUT] --mode cleanup|merge` runs without a dotman repository or configuration.
