@@ -498,7 +498,7 @@ cat settings.json | dotman transform json - - --mode cleanup --selectors editor
 
 Transforms TOML documents without repository configuration. At least one selector is required. Unprefixed and `exact:` selectors match exact dotted TOML key paths. `re:` selectors use Python regex search against dotted table and key paths; a table match selects its whole subtree, while a key match selects only that key.
 
-Merge recursively overlays tables after partitioning the base. Scalar values, arrays, and arrays of tables are atomic values and are replaced as units. Comments, ordering, whitespace trivia, and formatting are retained where `tomlkit` can preserve them. `--compare-file PATH` reuses its exact text when parsed TOML values are equal.
+Merge recursively overlays tables after partitioning the base. Scalar values, arrays, and arrays of tables are atomic values and are replaced as units. Comments, ordering, whitespace trivia, and formatting are retained where `tomlkit` can preserve them. `--compare-file PATH` reuses its exact text when parsed TOML values and comment attachments are equal.
 
 ```sh
 dotman transform toml live.toml output.toml --mode merge \

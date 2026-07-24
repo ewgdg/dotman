@@ -65,6 +65,229 @@ command = "npx"
     )
 
 
+def test_cleanup_does_not_reuse_compare_file_with_stale_comments(tmp_path: Path) -> None:
+    live_path = tmp_path / "live.toml"
+    repo_path = tmp_path / "repo.toml"
+    output_path = tmp_path / "output.toml"
+
+    live_path.write_text(
+        'model = "local-only"\n\n[features]\nhooks = true\n',
+        encoding="utf-8",
+    )
+    repo_path.write_text(
+        '# model = "old-local-value"\n\n[features]\nhooks = true\n',
+        encoding="utf-8",
+    )
+
+    exit_code = MODULE.main(
+        [
+            str(live_path),
+            str(output_path),
+            "--mode",
+            "cleanup",
+            "--compare-file",
+            str(repo_path),
+            "--selector-type",
+            "remove",
+            "--selectors",
+            "model",
+        ]
+    )
+
+    assert exit_code == 0
+    assert '# model = "old-local-value"' not in output_path.read_text(encoding="utf-8")
+    assert MODULE.load_document(output_path).unwrap() == {"features": {"hooks": True}}
+
+
+def test_cleanup_does_not_reuse_stale_array_of_table_header_comment(
+    tmp_path: Path,
+) -> None:
+    live_path = tmp_path / "live.toml"
+    repo_path = tmp_path / "repo.toml"
+    output_path = tmp_path / "output.toml"
+
+    live_path.write_text(
+        '[[services]] # current\nname = "api"\n',
+        encoding="utf-8",
+    )
+    repo_path.write_text(
+        '[[services]] # stale\nname = "api"\n',
+        encoding="utf-8",
+    )
+
+    exit_code = MODULE.main(
+        [
+            str(live_path),
+            str(output_path),
+            "--mode",
+            "cleanup",
+            "--compare-file",
+            str(repo_path),
+            "--selectors",
+            "services",
+        ]
+    )
+
+    assert exit_code == 0
+    assert "# current" in output_path.read_text(encoding="utf-8")
+    assert "# stale" not in output_path.read_text(encoding="utf-8")
+
+
+def test_cleanup_does_not_reuse_comment_attached_to_different_key(
+    tmp_path: Path,
+) -> None:
+    live_path = tmp_path / "live.toml"
+    repo_path = tmp_path / "repo.toml"
+    output_path = tmp_path / "output.toml"
+    live_text = "a = 1\nb = 2 # note\n"
+
+    live_path.write_text(live_text, encoding="utf-8")
+    repo_path.write_text("a = 1 # note\nb = 2\n", encoding="utf-8")
+
+    exit_code = MODULE.main(
+        [
+            str(live_path),
+            str(output_path),
+            "--mode",
+            "cleanup",
+            "--compare-file",
+            str(repo_path),
+            "--selectors",
+            "a",
+            "b",
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.read_text(encoding="utf-8") == live_text
+
+
+def test_cleanup_does_not_reuse_stale_multiline_array_comment(
+    tmp_path: Path,
+) -> None:
+    live_path = tmp_path / "live.toml"
+    repo_path = tmp_path / "repo.toml"
+    output_path = tmp_path / "output.toml"
+    live_text = "values = [\n  1, # current\n  2,\n]\n"
+
+    live_path.write_text(live_text, encoding="utf-8")
+    repo_path.write_text(
+        "values = [\n  1, # stale\n  2,\n]\n",
+        encoding="utf-8",
+    )
+
+    exit_code = MODULE.main(
+        [
+            str(live_path),
+            str(output_path),
+            "--mode",
+            "cleanup",
+            "--compare-file",
+            str(repo_path),
+            "--selectors",
+            "values",
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.read_text(encoding="utf-8") == live_text
+
+
+def test_cleanup_compare_treats_hash_inside_string_as_value_content(
+    tmp_path: Path,
+) -> None:
+    live_path = tmp_path / "live.toml"
+    compare_path = tmp_path / "compare.toml"
+    output_path = tmp_path / "output.toml"
+    compare_text = "fragment = 'section#details'\n"
+
+    live_path.write_text('fragment = "section#details"\n', encoding="utf-8")
+    compare_path.write_text(compare_text, encoding="utf-8")
+
+    exit_code = MODULE.main(
+        [
+            str(live_path),
+            str(output_path),
+            "--mode",
+            "cleanup",
+            "--compare-file",
+            str(compare_path),
+            "--selectors",
+            "fragment",
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.read_text(encoding="utf-8") == compare_text
+
+
+def test_merge_does_not_reuse_stale_live_comment(tmp_path: Path) -> None:
+    live_path = tmp_path / "live.toml"
+    repo_path = tmp_path / "repo.toml"
+    output_path = tmp_path / "output.toml"
+
+    live_path.write_text(
+        'model = "local-only"\n\n# stale\nmanaged = true\n',
+        encoding="utf-8",
+    )
+    repo_path.write_text("# current\nmanaged = true\n", encoding="utf-8")
+
+    exit_code = MODULE.main(
+        [
+            str(live_path),
+            str(output_path),
+            "--mode",
+            "merge",
+            "--overlay-file",
+            str(repo_path),
+            "--compare-file",
+            str(live_path),
+            "--selectors",
+            "model",
+        ]
+    )
+
+    assert exit_code == 0
+    output = output_path.read_text(encoding="utf-8")
+    assert "# current" in output
+    assert "# stale" not in output
+
+
+def test_merge_does_not_drop_leading_comment_from_overlay_table(
+    tmp_path: Path,
+) -> None:
+    live_path = tmp_path / "live.toml"
+    repo_path = tmp_path / "repo.toml"
+    output_path = tmp_path / "output.toml"
+
+    live_path.write_text(
+        'local = "yes"\n\n[managed]\nenabled = true\n',
+        encoding="utf-8",
+    )
+    repo_path.write_text(
+        "# current\n[managed]\nenabled = true\n",
+        encoding="utf-8",
+    )
+
+    exit_code = MODULE.main(
+        [
+            str(live_path),
+            str(output_path),
+            "--mode",
+            "merge",
+            "--overlay-file",
+            str(repo_path),
+            "--compare-file",
+            str(live_path),
+            "--selectors",
+            "local",
+        ]
+    )
+
+    assert exit_code == 0
+    assert "# current\n[managed]" in output_path.read_text(encoding="utf-8")
+
+
 def test_parse_key_paths_and_table_regexes() -> None:
     key_paths = MODULE.parse_key_paths(["model", "model_reasoning_effort"])
     table_regexes = MODULE.compile_table_regexes(
@@ -328,7 +551,10 @@ def test_write_document_with_compare_file_reuses_existing_text_in_stdout_mode(
     repo_path = tmp_path / "repo.toml"
     compare_path = tmp_path / "compare.toml"
 
-    repo_path.write_text('model_provider = "openai_http"\n', encoding="utf-8")
+    repo_path.write_text(
+        '# keep me\nmodel_provider = "openai_http"\n',
+        encoding="utf-8",
+    )
     compare_path.write_text(
         'model = "gpt-5.4"\n# keep me\nmodel_provider = "openai_http"\n',
         encoding="utf-8",

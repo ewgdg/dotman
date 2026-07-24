@@ -23,7 +23,7 @@ def test_root_toml_merge_compare_text_and_permissions(tmp_path: Path) -> None:
     compare = tmp_path / "compare.toml"
     output = tmp_path / "output.toml"
     base.write_text('local = "yes"\nmanaged = "old"\n', encoding="utf-8")
-    overlay.write_text('managed = "repo"\n', encoding="utf-8")
+    overlay.write_text('# exact bytes survive\nmanaged = "repo"\n', encoding="utf-8")
     expected = '# exact bytes survive\nmanaged = "repo"\nlocal = "yes"\n'
     compare.write_text(expected, encoding="utf-8")
     base.chmod(0o640)
@@ -56,8 +56,8 @@ def test_root_toml_compare_reuses_crlf_bytes_for_file_and_stdout(
     base = tmp_path / "base.toml"
     compare = tmp_path / "compare.toml"
     output = tmp_path / "output.toml"
-    base.write_bytes(b'items = ["a"]\n')
-    expected = b'# preserve CRLF\r\nitems = ["a"]\r\n'
+    base.write_bytes(b'items = ["a"] # preserve CRLF\n')
+    expected = b'items = ["a"] # preserve CRLF\r\n'
     compare.write_bytes(expected)
     args = ["transform", "toml", str(base), str(output), "--mode", "cleanup", "--selectors", "items", "--compare-file", str(compare)]
     assert cli.main(args) == 0
@@ -66,6 +66,40 @@ def test_root_toml_compare_reuses_crlf_bytes_for_file_and_stdout(
     args[3] = "-"
     assert cli.main(args) == 0
     assert capsysbinary.readouterr().out == expected
+
+
+def test_root_toml_compare_reuses_crlf_with_blank_separated_table_comment(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "base.toml"
+    compare = tmp_path / "compare.toml"
+    output = tmp_path / "output.toml"
+    content = b"[first]\nvalue = 1\n\n# section note\n\n[second]\nvalue = 2\n"
+    expected = content.replace(b"\n", b"\r\n")
+    base.write_bytes(content)
+    compare.write_bytes(expected)
+
+    assert (
+        cli.main(
+            [
+                "transform",
+                "toml",
+                str(base),
+                str(output),
+                "--mode",
+                "cleanup",
+                "--compare-file",
+                str(compare),
+                "--selector-type",
+                "remove",
+                "--selectors",
+                "missing",
+            ]
+        )
+        == 0
+    )
+
+    assert output.read_bytes() == expected
 
 
 def test_root_toml_remove_keeps_independent_tail_comment_only(tmp_path: Path) -> None:

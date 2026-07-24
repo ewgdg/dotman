@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from typing import Any
 from pathlib import Path
 import tomlkit
-from tomlkit.items import AoT, Null, Table
+from tomlkit.items import AoT, Array, Null, Table
 from tomlkit.toml_document import TOMLDocument
 
 from dotman.transforms.cli import run_engine_cli
@@ -58,7 +58,12 @@ def get_existing_text_if_unchanged(compare_path: Path, doc: TOMLDocument) -> byt
     except Exception:
         existing_doc = None
 
-    if existing_doc is not None and existing_doc.unwrap() == doc.unwrap():
+    if (
+        existing_doc is not None
+        and existing_doc.unwrap() == doc.unwrap()
+        and normalized_document_comment_signature(existing_doc)
+        == normalized_document_comment_signature(doc)
+    ):
         return existing_bytes
 
     if existing_content != doc.as_string():
@@ -215,6 +220,126 @@ def item_text(item: object) -> str:
     if hasattr(item, "as_string"):
         return item.as_string()
     return str(item)
+
+
+def parsed_item_comment(item: object) -> str:
+    try:
+        return item.trivia.comment
+    except (AttributeError, RuntimeError):
+        return ""
+
+
+def table_indent_comments(table: Table) -> tuple[str, ...]:
+    return tuple(
+        stripped_line
+        for line in table.trivia.indent.splitlines()
+        if (stripped_line := line.lstrip()).startswith("#")
+    )
+
+
+def next_key_name(
+    body_entries: list[tuple[object, object]],
+    start_index: int,
+) -> str | None:
+    for key, item in body_entries[start_index:]:
+        if key is not None and not isinstance(item, Null):
+            return str(key.key)
+    return None
+
+
+def array_comment_signature(
+    array: Array,
+    path: tuple[str, ...],
+) -> list[tuple[tuple[str, ...], str, int, str]]:
+    """Identify comments held in tomlkit's lossless array item groups."""
+    comments: list[tuple[tuple[str, ...], str, int, str]] = []
+    attachment_counts: dict[tuple[tuple[str, ...], str], int] = {}
+    value_index = 0
+
+    # Public Array iteration omits standalone comments, so lossless comparison
+    # must inspect the item groups tomlkit uses to retain multiline trivia.
+    for group in array._value:
+        value = group.value
+        comment = parsed_item_comment(group.comment)
+        value_exists = value is not None and not isinstance(value, Null)
+        item_path = path + (f"[{value_index}]",)
+
+        if comment:
+            attachment_kind = "element-inline" if value_exists else "before-element"
+            attachment = (item_path, attachment_kind)
+            attachment_index = attachment_counts.get(attachment, 0)
+            attachment_counts[attachment] = attachment_index + 1
+            comments.append((*attachment, attachment_index, comment))
+
+        if value_exists:
+            if isinstance(value, Array):
+                comments.extend(array_comment_signature(value, item_path))
+            value_index += 1
+
+    return comments
+
+
+def document_comment_signature(
+    container: TomlContainer,
+    path: tuple[str, ...] = (),
+) -> tuple[tuple[tuple[str, ...], str, int, str], ...]:
+    """Identify parsed comments by semantic attachment, independent of key order."""
+    comments: list[tuple[tuple[str, ...], str, int, str]] = []
+    attachment_counts: dict[tuple[tuple[str, ...], str], int] = {}
+    body_entries = container_body_entries(container)
+
+    for index, (key, item) in enumerate(body_entries):
+        comment = parsed_item_comment(item)
+        if key is None:
+            if not comment:
+                continue
+            following_key_name = next_key_name(body_entries, index + 1)
+            if following_key_name is None:
+                attachment_path = path
+                attachment_kind = "container-tail"
+            else:
+                attachment_path = path + (following_key_name,)
+                attachment_kind = "before-item"
+            attachment = (attachment_path, attachment_kind)
+            attachment_index = attachment_counts.get(attachment, 0)
+            attachment_counts[attachment] = attachment_index + 1
+            comments.append((*attachment, attachment_index, comment))
+            continue
+
+        if isinstance(item, Null):
+            continue
+
+        item_path = path + (str(key.key),)
+        if isinstance(item, Table):
+            attachment = (item_path, "before-item")
+            for indent_comment in table_indent_comments(item):
+                attachment_index = attachment_counts.get(attachment, 0)
+                attachment_counts[attachment] = attachment_index + 1
+                comments.append((*attachment, attachment_index, indent_comment))
+
+        if comment:
+            attachment_kind = "table-header" if isinstance(item, Table) else "item-inline"
+            comments.append((item_path, attachment_kind, 0, comment))
+
+        if isinstance(item, Table):
+            comments.extend(document_comment_signature(item, item_path))
+        elif isinstance(item, AoT):
+            for table_index, table in enumerate(item):
+                table_path = item_path + (f"[{table_index}]",)
+                if table.trivia.comment:
+                    comments.append((table_path, "table-header", 0, table.trivia.comment))
+                comments.extend(document_comment_signature(table, table_path))
+        elif isinstance(item, Array):
+            comments.extend(array_comment_signature(item, item_path))
+
+    return tuple(sorted(comments))
+
+
+def normalized_document_comment_signature(
+    doc: TOMLDocument,
+) -> tuple[tuple[tuple[str, ...], str, int, str], ...]:
+    normalized_doc = detach_table_tail_trivia(copy.deepcopy(doc))
+    return document_comment_signature(normalized_doc)
 
 
 def is_comment_entry(entry: tuple[object, object]) -> bool:
