@@ -36,6 +36,14 @@ _Avoid_: Transform framework, repository transform
 Repository-owned transformation policy or behavior tied to one package, application, or repository convention.
 _Avoid_: Format transformer
 
+**Rewrite**:
+Order-preserving substitution of textual content without interpreting document structure.
+_Avoid_: Text transform, structured transform
+
+**Home Path Rewrite**:
+Reversible rewriting between the active home directory's absolute path and `~` when either appears as a complete path fragment in text.
+_Avoid_: Home normalization, home path transform
+
 **Render**:
 Forward projection from repository representation toward live representation.
 _Avoid_: Push, transform
