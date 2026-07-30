@@ -75,6 +75,7 @@ def test_render_jinja_cli_reports_invalid_input(
     monkeypatch: pytest.MonkeyPatch,
     capsys,
 ) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
 
     exit_code = main(args)
@@ -110,6 +111,7 @@ def test_main_formats_toml_load_error_with_package_path_and_error_fields(
         encoding="utf-8",
     )
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
 
     exit_code = main(["--config", str(config_path), "list", "tracked"])

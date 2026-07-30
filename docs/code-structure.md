@@ -15,15 +15,22 @@ It is guidance, not a promise that every internal module name or boundary is per
 `src/dotman/cli.py` should stay thin and mostly coordinate:
 
 - parser construction
-- command dispatch
-- compatibility wrappers used by tests and callers
+- command-runner composition and selection
+- configuration and engine construction
 - top-level error handling
 
 Focused CLI responsibilities live in dedicated modules:
 
 - `cli_parser.py` — argparse construction
 - `cli_emit.py` — text/JSON output formatting
-- `cli_commands.py` — per-command handlers
+- `standalone_commands.py` — configuration-independent rewrite, transform,
+  elevation, capture, reconcile, and render workflows
+- `inspection_commands.py` — configuration-aware list, info, search, and doctor
+  workflows
+- `state_commands.py` — track, untrack, add, and edit workflows composed with
+  command-specific resolution and editor interfaces
+- `cli_commands.py` — push, pull, and restore dispatch through the remaining
+  sync-only runtime interface
 - `cli_style.py` — labels, colors, and display helpers
 - `interaction.py` — typed terminal choices, confirmations, and text input, with
   production and deterministic scripted adapters

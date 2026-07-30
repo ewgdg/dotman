@@ -1,52 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from dotman import cli_style
-from dotman.add import prepare_add_to_package, write_add_result
-from dotman.add_resolution import AddResolver
-from dotman.config import default_config_path, load_manager_config
-from dotman.edit_resolution import EditResolver
-from dotman.elevation import request_elevation_from_env
-from dotman.models import package_ref_text
 from dotman.progress import make_planning_sink
-from dotman.track_resolution import TrackResolver
 from dotman.ui_context import ui_config_scope
-from dotman.untrack_resolution import (
-    UntrackEntryRequest,
-    UntrackGroupRequest,
-    UntrackResolver,
-)
 
 if TYPE_CHECKING:
-    from dotman.interaction import Interaction
     from dotman.progress import ProgressSink
 
-from dotman.snapshot import (
-    build_restore_actions,
-    list_snapshots,
-)
+from dotman.snapshot import build_restore_actions
 
 
 @dataclass(frozen=True)
-class CliCommandHandlers:
-    run_basic_reconcile: Callable[..., int]
-    run_jinja_reconcile: Callable[..., int]
-    run_jinja_render: Callable[..., int]
-    run_patch_capture: Callable[..., int]
-    emit_kept_package_entry: Callable[..., int]
-    emit_skipped_tracking: Callable[..., int]
-    emit_tracked_package_entry: Callable[..., int]
-    emit_search_matches: Callable[..., int]
-    add_editor_available: Callable[[], bool]
-    review_add_manifest: Callable[..., Any]
-    emit_add_result: Callable[..., int]
-    emit_noop_add_result: Callable[..., int]
-    emit_kept_add_result: Callable[..., int]
-    open_editor_path: Callable[..., int]
+class SyncCommandRuntime:
     resolve_tracked_package_entry_text: Callable[..., Any]
     filter_plans_for_interactive_selection: Callable[..., Any]
     review_plans_for_interactive_diffs: Callable[..., bool]
@@ -60,322 +28,33 @@ class CliCommandHandlers:
     review_restore_actions_for_interactive_diffs: Callable[..., bool]
     emit_restore_payload: Callable[..., int]
     run_restore_execution: Callable[..., int]
-    emit_untracked_package_entry: Callable[..., int]
-    emit_tracked_packages: Callable[..., int]
-    emit_trackables: Callable[..., int]
-    resolve_tracked_package_text: Callable[..., Any]
-    emit_tracked_package_detail: Callable[..., int]
-    resolve_variable_text: Callable[..., Any]
-    emit_variables: Callable[..., int]
-    emit_variable_detail: Callable[..., int]
-    emit_snapshot_list: Callable[..., int]
-    emit_snapshot_detail: Callable[..., int]
-    emit_doctor_summary: Callable[..., int] = field(default=lambda **kwargs: 0)
-    resolve_trackable_selector_text: Callable[..., Any] = field(default=lambda *args, **kwargs: None)
-    emit_trackable_detail: Callable[..., int] = field(default=lambda **kwargs: 0)
-    emit_untracked_package_entries: Callable[..., int] = field(default=lambda **kwargs: 0)
-    emit_repos: Callable[..., int] = field(default=lambda **kwargs: 0)
-    emit_planning_guard_skips: Callable[..., None] = field(default=lambda **kwargs: None)
-    interaction: Interaction | None = None
-    emit_resolution_error: Callable[[ValueError], None] = field(default=lambda _error: None)
-    emit_resolution_message: Callable[[str], None] = field(default=lambda _message: None)
+    emit_planning_guard_skips: Callable[..., None]
 
 
 EngineFactory = Callable[[str | None], Any]
+SYNC_COMMAND_NAMES = frozenset({"push", "pull", "restore"})
 
 
-def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliCommandHandlers) -> int:
-    if args.command == "rewrite" and args.rewrite_name == "home":
-        from dotman.rewrites.cli import run_home_rewrite
-
-        return run_home_rewrite(action=args.rewrite_action, input_path=args.input_path)
-    if args.command == "transform":
-        from dotman.transforms.cli import run_parsed_engine
-        from dotman.transforms.json import JsonTransformEngine
-        from dotman.transforms.plist import PlistTransformEngine
-        from dotman.transforms.toml import TomlTransformEngine
-        from dotman.transforms.xml import XmlTransformEngine
-
-        engines = {
-            "json": JsonTransformEngine,
-            "plist": PlistTransformEngine,
-            "toml": TomlTransformEngine,
-            "xml": XmlTransformEngine,
-        }
-        return run_parsed_engine(engines[args.transform_format](), args.transform_parser, args)
-
-    pre_engine_result = _dispatch_pre_engine_command(args=args, handlers=handlers)
-    if pre_engine_result is not None:
-        return pre_engine_result
-
+def run_sync_command(
+    *,
+    args: Any,
+    engine_factory: EngineFactory,
+    sync_runtime: SyncCommandRuntime,
+) -> int:
+    if args.command not in SYNC_COMMAND_NAMES:
+        raise ValueError(f"unsupported sync command '{args.command}'")
     engine = engine_factory(args.config)
     full_paths = args.full_path if args.full_path is not None else engine.config.ui.full_paths
     with ui_config_scope(engine.config.ui):
-        if args.command == "doctor":
-            return handlers.emit_doctor_summary(
-                engine=engine,
-                summary=engine.doctor(),
-                json_output=args.json_output,
-            )
-        if args.command == "search":
-            query = args.query.strip()
-            return handlers.emit_search_matches(
-                matches=engine.search_selectors(query),
-                query=query,
-                json_output=args.json_output,
-            )
-        if args.command == "track":
-            return _handle_track(args=args, engine=engine, handlers=handlers)
-        if args.command == "add":
-            return _handle_add(args=args, engine=engine, handlers=handlers)
-        if args.command == "edit" and args.edit_command in {"package", "target", "query"}:
-            return _handle_edit(args=args, engine=engine, handlers=handlers)
         if args.command == "push":
-            return _handle_push(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
+            return _handle_push(args=args, engine=engine, handlers=sync_runtime, full_paths=full_paths)
         if args.command == "pull":
-            return _handle_pull(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
-        if args.command == "restore":
-            return _handle_restore(args=args, engine=engine, handlers=handlers, full_paths=full_paths)
-        if args.command == "untrack":
-            return _handle_untrack(args=args, engine=engine, handlers=handlers)
-        if args.command == "list" and args.list_command == "tracked":
-            tracked_state = engine.list_tracked_state()
-            return handlers.emit_tracked_packages(
-                engine=engine,
-                packages=tracked_state.packages,
-                invalid_package_entries=tracked_state.invalid_package_entries,
-                json_output=args.json_output,
-            )
-        if args.command == "list" and args.list_command == "trackables":
-            return handlers.emit_trackables(
-                trackables=engine.list_trackables(),
-                json_output=args.json_output,
-            )
-        if args.command == "list" and args.list_command == "vars":
-            return handlers.emit_variables(
-                variables=engine.list_variables(),
-                json_output=args.json_output,
-            )
-        if args.command == "list" and args.list_command == "snapshots":
-            return handlers.emit_snapshot_list(
-                snapshots=list_snapshots(engine.config.snapshots.path),
-                json_output=args.json_output,
-                max_generations=engine.config.snapshots.max_generations,
-            )
-        if args.command == "info" and args.info_command == "tracked":
-            return _handle_info_tracked(args=args, engine=engine, handlers=handlers)
-        if args.command == "info" and args.info_command == "trackable":
-            return _handle_info_trackable(args=args, engine=engine, handlers=handlers)
-        if args.command == "info" and args.info_command == "var":
-            resolved_variable = handlers.resolve_variable_text(
-                engine,
-                args.variable,
-                json_output=args.json_output,
-            )
-            return handlers.emit_variable_detail(
-                variable_detail=engine.describe_variable(resolved_variable),
-                json_output=args.json_output,
-            )
-        if args.command == "info" and args.info_command == "snapshot":
-            return handlers.emit_snapshot_detail(
-                snapshot=handlers.resolve_snapshot_record(
-                    engine.config.snapshots.path,
-                    args.snapshot,
-                    json_output=args.json_output,
-                ),
-                json_output=args.json_output,
-                full_paths=full_paths,
-            )
-        return 0
+            return _handle_pull(args=args, engine=engine, handlers=sync_runtime, full_paths=full_paths)
+        return _handle_restore(args=args, engine=engine, handlers=sync_runtime, full_paths=full_paths)
 
 
 
-def _resolve_edit_config_path(config_path: str | None) -> Path:
-    selected_path = Path(config_path).expanduser() if config_path is not None else default_config_path()
-    return selected_path.resolve()
-
-
-def _open_edit_local_path(*, path: Path, handlers: CliCommandHandlers) -> int:
-    if handlers.add_editor_available():
-        path.parent.mkdir(parents=True, exist_ok=True)
-    return handlers.open_editor_path(path=path, missing_editor_label="Local override path")
-
-
-def _dispatch_pre_engine_command(*, args: Any, handlers: CliCommandHandlers) -> int | None:
-    if args.command == "elevation" and args.elevation_command == "request":
-        return request_elevation_from_env(args.reason)
-    if args.command == "capture" and args.capture_command == "patch":
-        return handlers.run_patch_capture(
-            repo_path=args.repo_path,
-            render_command=args.render,
-            review_repo_path=args.review_repo_path,
-            review_live_path=args.review_live_path,
-            profile=args.profile,
-            inferred_os=args.template_os,
-            var_assignments=args.var,
-        )
-    if args.command == "edit" and args.edit_command == "config":
-        return handlers.open_editor_path(
-            path=_resolve_edit_config_path(args.config),
-            missing_editor_label="Config path",
-        )
-    if args.command == "edit" and args.edit_command == "local":
-        resolver = EditResolver(
-            load_manager_config(args.config),
-            interaction=None if args.json_output else handlers.interaction,
-            use_color=cli_style.colors_enabled(),
-        )
-        return _open_edit_local_path(
-            path=resolver.resolve_local_path(args.repo),
-            handlers=handlers,
-        )
-    if args.command == "edit" and args.edit_command == "repo":
-        resolver = EditResolver(
-            load_manager_config(args.config),
-            interaction=None if args.json_output else handlers.interaction,
-            use_color=cli_style.colors_enabled(),
-        )
-        return handlers.open_editor_path(
-            path=resolver.resolve_repo_path(args.repo),
-            missing_editor_label="Repo path",
-        )
-    if args.command == "list" and args.list_command == "repo":
-        return handlers.emit_repos(
-            repos=load_manager_config(args.config).ordered_repos,
-            json_output=args.json_output,
-        )
-    if args.command == "reconcile" and args.reconcile_helper == "editor":
-        return handlers.run_basic_reconcile(
-            repo_path=args.repo_path,
-            live_path=args.live_path,
-            additional_sources=args.additional_source,
-            review_repo_path=args.review_repo_path,
-            review_live_path=args.review_live_path,
-            editor=args.editor,
-            assume_yes=getattr(args, "assume_yes", False),
-        )
-    if args.command == "reconcile" and args.reconcile_helper == "jinja":
-        return handlers.run_jinja_reconcile(
-            repo_path=args.repo_path,
-            live_path=args.live_path,
-            review_repo_path=args.review_repo_path,
-            review_live_path=args.review_live_path,
-            editor=args.editor,
-            assume_yes=getattr(args, "assume_yes", False),
-        )
-    if args.command == "render" and args.render_command == "jinja":
-        return handlers.run_jinja_render(
-            source_path=args.source_path,
-            profile=args.profile,
-            inferred_os=args.template_os,
-            var_assignments=args.var,
-        )
-    return None
-
-
-
-def _handle_track(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
-    assume_yes = getattr(args, "assume_yes", False)
-    resolution = TrackResolver(
-        engine,
-        interaction=None if args.json_output else handlers.interaction,
-        message_sink=None if args.json_output else handlers.emit_resolution_message,
-        use_color=cli_style.colors_enabled(),
-    ).resolve(
-        args.binding,
-        assume_yes=assume_yes,
-    )
-    if resolution.disposition == "kept":
-        return handlers.emit_kept_package_entry(
-            binding=resolution.binding,
-            json_output=args.json_output,
-        )
-    if resolution.disposition == "skipped":
-        return handlers.emit_skipped_tracking(
-            binding=resolution.binding,
-            json_output=args.json_output,
-        )
-    engine.record_tracked_package_entry(resolution.binding, validate=False)
-    return handlers.emit_tracked_package_entry(
-        binding=resolution.binding,
-        json_output=args.json_output,
-    )
-
-
-
-def _handle_add(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
-    resolver = AddResolver(
-        engine,
-        interaction=None if args.json_output else handlers.interaction,
-        error_sink=handlers.emit_resolution_error,
-        use_color=cli_style.colors_enabled(),
-    )
-    destination = resolver.resolve(args.package_query)
-    repo_name = destination.repo_name
-    package_id = destination.package_id
-    assume_yes = getattr(args, "assume_yes", False)
-    result = prepare_add_to_package(
-        repo_root=engine.get_repo(repo_name).root,
-        repo_name=repo_name,
-        package_id=package_id,
-        live_path_text=args.live_path,
-    )
-    if args.json_output or handlers.interaction is None:
-        return handlers.emit_add_result(
-            result=write_add_result(result),
-            json_output=args.json_output,
-        )
-    if handlers.add_editor_available():
-        review_result = handlers.review_add_manifest(result)
-        if review_result is None:
-            raise ValueError("add review expected an editor, but none is configured")
-        if review_result.exit_code != 0:
-            return review_result.exit_code
-        if review_result.manifest_text == result.before_text:
-            return handlers.emit_noop_add_result(json_output=args.json_output)
-        if not resolver.confirm_manifest_write(
-            repo_name=repo_name,
-            package_id=package_id,
-            assume_yes=assume_yes,
-        ):
-            return handlers.emit_kept_add_result(
-                repo_name=repo_name,
-                package_id=package_id,
-                json_output=args.json_output,
-            )
-        result = write_add_result(result, manifest_text=review_result.manifest_text)
-        return handlers.emit_add_result(result=result, json_output=args.json_output)
-    return handlers.emit_add_result(result=write_add_result(result), json_output=args.json_output)
-
-
-
-def _handle_edit(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
-    resolver = EditResolver(
-        engine.config,
-        engine=engine,
-        interaction=None if args.json_output else handlers.interaction,
-        use_color=cli_style.colors_enabled(),
-    )
-    if args.edit_command == "package":
-        return handlers.open_editor_path(
-            path=resolver.resolve_package_path(args.package),
-            missing_editor_label="Source path",
-        )
-
-    if args.edit_command == "query":
-        return handlers.open_editor_path(
-            path=resolver.resolve_query_path(args.query),
-            missing_editor_label="Source path",
-        )
-
-    return handlers.open_editor_path(
-        path=resolver.resolve_target_path(args.target),
-        missing_editor_label="Source path",
-    )
-
-
-
-def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, operation: str, sink: ProgressSink | None = None) -> Any:
+def _plan_operation(*, args: Any, engine: Any, handlers: SyncCommandRuntime, operation: str, sink: ProgressSink | None = None) -> Any:
     run_noop = getattr(args, "run_noop", False)
     if args.binding:
         _repo, binding = handlers.resolve_tracked_package_entry_text(
@@ -399,7 +78,7 @@ def _plan_operation(*, args: Any, engine: Any, handlers: CliCommandHandlers, ope
 def _finish_all_guard_skipped_operation(
     *,
     args: Any,
-    handlers: CliCommandHandlers,
+    handlers: SyncCommandRuntime,
     plans: Any,
     operation: str,
     full_paths: bool,
@@ -419,7 +98,7 @@ def _finish_all_guard_skipped_operation(
 
 
 
-def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
+def _handle_push(*, args: Any, engine: Any, handlers: SyncCommandRuntime, full_paths: bool) -> int:
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
     sink = make_planning_sink(json_output=args.json_output)
@@ -480,7 +159,7 @@ def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
 
 
 
-def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
+def _handle_pull(*, args: Any, engine: Any, handlers: SyncCommandRuntime, full_paths: bool) -> int:
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
     sink = make_planning_sink(json_output=args.json_output)
@@ -531,7 +210,7 @@ def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_p
 
 
 
-def _handle_restore(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
+def _handle_restore(*, args: Any, engine: Any, handlers: SyncCommandRuntime, full_paths: bool) -> int:
     snapshot = handlers.resolve_snapshot_record(
         engine.config.snapshots.path,
         args.snapshot,
@@ -560,71 +239,4 @@ def _handle_restore(*, args: Any, engine: Any, handlers: CliCommandHandlers, ful
         actions=restore_actions,
         json_output=args.json_output,
         full_paths=full_paths,
-    )
-
-
-
-def _handle_untrack(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
-    resolver = UntrackResolver(
-        engine,
-        interaction=None if args.json_output else handlers.interaction,
-        use_color=cli_style.colors_enabled(),
-    )
-    request = resolver.resolve(args.binding)
-    if isinstance(request, UntrackGroupRequest):
-        removed_bindings = engine.remove_tracked_package_entries(
-            list(request.removal_bindings),
-            operation="untrack",
-            operation_label=request.label,
-        )
-        return handlers.emit_untracked_package_entries(
-            request_binding=request,
-            bindings=removed_bindings,
-            still_tracked_packages=[
-                resolver.remaining_tracked_package(removed_binding)
-                for removed_binding in removed_bindings
-            ],
-            json_output=args.json_output,
-        )
-    if not isinstance(request, UntrackEntryRequest):
-        raise TypeError(f"unsupported untrack request: {type(request).__name__}")
-    binding = request.binding
-    removed_binding = engine.remove_tracked_package_entry(
-        f"{binding.repo}:{binding.selector}@{binding.profile}",
-        operation="untrack",
-    )
-    return handlers.emit_untracked_package_entry(
-        binding=removed_binding,
-        still_tracked_package=resolver.remaining_tracked_package(removed_binding),
-        json_output=args.json_output,
-    )
-
-
-
-def _handle_info_tracked(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
-    repo, package_id, bound_profile = handlers.resolve_tracked_package_text(
-        engine,
-        args.package,
-        json_output=args.json_output,
-    )
-    package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
-    return handlers.emit_tracked_package_detail(
-        package_detail=engine.describe_tracked_package(f"{repo.config.name}:{package_ref}"),
-        json_output=args.json_output,
-    )
-
-
-def _handle_info_trackable(*, args: Any, engine: Any, handlers: CliCommandHandlers) -> int:
-    repo, selector, selector_kind = handlers.resolve_trackable_selector_text(
-        engine,
-        args.query,
-        json_output=args.json_output,
-    )
-    return handlers.emit_trackable_detail(
-        trackable_detail=engine.describe_trackable(
-            repo_name=repo.config.name,
-            selector=selector,
-            selector_kind=selector_kind,
-        ),
-        json_output=args.json_output,
     )

@@ -4,7 +4,6 @@ import os
 import shlex
 import shutil
 import sys
-import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -12,30 +11,29 @@ from typing import Literal, TypeVar
 
 from dotman import cli_commands, cli_emit, cli_style
 from dotman.add import (
+    AddOperationResult,
+    AddReviewResult,
     add_editor_available,
     review_add_manifest,
 )
-from dotman.capture import capture_patch
 from dotman.cli_parser import build_parser as build_cli_parser
 from dotman.command_runtime import (
     ArgvCommand,
     CommandRequest,
-    ShellCommand,
     current_command_runtime,
-    raise_for_command_interruption,
 )
 from dotman.diff_review import (
     ReviewItem,
     build_review_items,
     run_review_item_diff,
 )
-from dotman.doctor import DoctorSummary
 from dotman.engine import DotmanEngine
+from dotman.inspection_commands import InspectionCommandRunner
 from dotman.interaction import Interaction, TerminalInteraction
-from dotman.manifest import flatten_vars
 from dotman.models import (
     FullSpecSelector,
     OperationPlan,
+    SelectorKind,
     finalize_hook_plans_for_targets,
     package_plans_for_operation_plan,
     package_ref_text,
@@ -48,8 +46,6 @@ from dotman.package_resolution import (
     parse_package_ref_text,
 )
 from dotman.planning import finalize_repo_hook_plans, standalone_repo_hook_summary
-from dotman.reconcile import run_basic_reconcile
-from dotman.reconcile_helpers import run_jinja_reconcile
 from dotman.resolver import (
     ResolverOption,
     build_full_spec_selector_field_kinds,
@@ -61,17 +57,14 @@ from dotman.resolver import (
     parse_slash_qualified_query,
     rank_resolver_option,
 )
+from dotman.repository import Repository
 from dotman.snapshot import (
     RestoreAction,
     SnapshotRecord,
     find_snapshot_matches,
 )
-from dotman.templates import (
-    JinjaRenderError,
-    build_template_context,
-    render_template_file,
-    render_template_string,
-)
+from dotman.standalone_commands import StandaloneCommandRunner
+from dotman.state_commands import StateCommandRunner
 from dotman.terminal import ESCAPE_INPUT, read_prompt_line
 from dotman.ui_context import current_ui_config
 
@@ -1147,7 +1140,7 @@ def resolve_tracked_package_text(
     package_text: str,
     *,
     json_output: bool,
-) -> tuple[object, str, str | None]:
+) -> tuple[Repository, str, str | None]:
     explicit_repo, selector, bound_profile = parse_package_ref_text(package_text)
     package_query = package_ref_text(package_id=selector, bound_profile=bound_profile)
     repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
@@ -1206,7 +1199,7 @@ def resolve_trackable_selector_text(
     query_text: str,
     *,
     json_output: bool,
-):
+) -> tuple[Repository, str, SelectorKind]:
     explicit_repo, selector, selector_profile = parse_full_spec_selector_text(query_text)
     if selector_profile is not None:
         raise ValueError("trackable lookup does not accept selector@profile syntax")
@@ -1952,180 +1945,6 @@ def emit_interrupt_notice() -> None:
     sys.stderr.write("\ninterrupted\n")
 
 
-def _assign_nested_value(target: dict[str, object], key_parts: Sequence[str], value: str) -> None:
-    current = target
-    for key in key_parts[:-1]:
-        nested = current.get(key)
-        if not isinstance(nested, dict):
-            nested = {}
-            current[key] = nested
-        current = nested
-    current[key_parts[-1]] = value
-
-
-
-def _template_vars_from_dotman_env(environ: dict[str, str]) -> dict[str, object]:
-    variables: dict[str, object] = {}
-    for key, value in environ.items():
-        if not key.startswith("DOTMAN_VAR_"):
-            continue
-        path_parts = [part for part in key.removeprefix("DOTMAN_VAR_").split("__") if part]
-        if not path_parts:
-            continue
-        _assign_nested_value(variables, path_parts, value)
-    return variables
-
-
-
-def _apply_template_var_assignments(variables: dict[str, object], assignments: Sequence[str]) -> dict[str, object]:
-    for assignment in assignments:
-        if "=" not in assignment:
-            raise ValueError(f"invalid --var assignment '{assignment}'; expected <key=value>")
-        dotted_key, value = assignment.split("=", 1)
-        key_parts = [part for part in dotted_key.split(".") if part]
-        if not key_parts:
-            raise ValueError(f"invalid --var assignment '{assignment}'; expected <key=value>")
-        _assign_nested_value(variables, key_parts, value)
-    return variables
-
-
-
-def run_jinja_render(*, source_path: str, profile: str | None, inferred_os: str | None, var_assignments: Sequence[str]) -> int:
-    path = Path(source_path)
-    variables = _template_vars_from_dotman_env(dict(os.environ))
-    _apply_template_var_assignments(variables, var_assignments)
-    if not path.exists():
-        raise JinjaRenderError(path=path, detail="source path does not exist")
-    context = build_template_context(
-        variables,
-        profile=profile or os.environ.get("DOTMAN_PROFILE") or "default",
-        inferred_os=inferred_os or os.environ.get("DOTMAN_OS") or sys.platform,
-    )
-    rendered, _projection_kind = render_template_file(path, context)
-    sys.stdout.write(rendered.decode("utf-8"))
-    return 0
-
-
-
-def _build_patch_capture_cli_env(
-    *,
-    repo_path: Path,
-    variables: dict[str, object],
-    profile: str,
-    inferred_os: str,
-) -> dict[str, str]:
-    env = {
-        "DOTMAN_REPO_PATH": str(repo_path),
-        "DOTMAN_SOURCE": str(repo_path),
-        "DOTMAN_PROFILE": profile,
-        "DOTMAN_OS": inferred_os,
-    }
-    for flat_key, value in flatten_vars(variables).items():
-        env[f"DOTMAN_VAR_{flat_key}"] = value
-    return env
-
-
-
-def _build_cli_patch_capture_projector(
-    *,
-    repo_path: Path,
-    render_command: str,
-    variables: dict[str, object],
-    profile: str,
-    inferred_os: str,
-):
-    if render_command == "jinja":
-        context = build_template_context(
-            variables,
-            profile=profile,
-            inferred_os=inferred_os,
-        )
-
-        def project(candidate_bytes: bytes) -> bytes:
-            return render_template_string(
-                candidate_bytes.decode("utf-8"),
-                context,
-                base_dir=repo_path.parent,
-                source_path=repo_path,
-            ).encode("utf-8")
-
-        return project
-
-    base_env = _build_patch_capture_cli_env(
-        repo_path=repo_path,
-        variables=variables,
-        profile=profile,
-        inferred_os=inferred_os,
-    )
-
-    def project(candidate_bytes: bytes) -> bytes:
-        # Keep temp source beside real source so command renderers that resolve
-        # sibling files relative to $DOTMAN_SOURCE still see same local layout.
-        with tempfile.NamedTemporaryFile(
-            prefix=f".dotman-patch-{repo_path.stem}-",
-            suffix=repo_path.suffix,
-            dir=repo_path.parent,
-            delete=False,
-        ) as temp_source:
-            temp_source.write(candidate_bytes)
-            temp_source_path = Path(temp_source.name)
-        try:
-            temp_source_text = str(temp_source_path)
-            result = current_command_runtime().run(
-                CommandRequest(
-                    command=ShellCommand(render_command),
-                    cwd=repo_path.parent,
-                    env={
-                        **base_env,
-                        "DOTMAN_REPO_PATH": temp_source_text,
-                        "DOTMAN_SOURCE": temp_source_text,
-                    },
-                )
-            )
-            raise_for_command_interruption(result)
-            if result.exit_code != 0:
-                stderr = result.stderr.decode("utf-8", errors="replace")
-                raise ValueError(stderr.strip() or f"render command exited with status {result.exit_code}")
-            return result.stdout
-        finally:
-            temp_source_path.unlink(missing_ok=True)
-
-    return project
-
-
-
-def run_patch_capture(
-    *,
-    repo_path: str,
-    render_command: str,
-    review_repo_path: str | None,
-    review_live_path: str | None,
-    profile: str | None,
-    inferred_os: str | None,
-    var_assignments: Sequence[str],
-) -> int:
-    resolved_repo_path = Path(repo_path).expanduser().resolve()
-    variables = _template_vars_from_dotman_env(dict(os.environ))
-    _apply_template_var_assignments(variables, var_assignments)
-    resolved_profile = profile or os.environ.get("DOTMAN_PROFILE") or "default"
-    resolved_os = inferred_os or os.environ.get("DOTMAN_OS") or sys.platform
-    captured = capture_patch(
-        repo_path=resolved_repo_path,
-        review_repo_path=review_repo_path,
-        review_live_path=review_live_path,
-        project_repo_bytes=_build_cli_patch_capture_projector(
-            repo_path=resolved_repo_path,
-            render_command=render_command,
-            variables=variables,
-            profile=resolved_profile,
-            inferred_os=resolved_os,
-        ),
-    )
-    sys.stdout.buffer.write(captured)
-    return 0
-
-
-
 def build_parser():
     return build_cli_parser()
 
@@ -2187,155 +2006,6 @@ def run_execution(
 
 
 
-def emit_tracked_packages(*, engine: DotmanEngine, packages: Sequence, invalid_package_entries: Sequence, json_output: bool) -> int:
-    return cli_emit.emit_tracked_packages(
-        engine=engine,
-        packages=packages,
-        invalid_package_entries=invalid_package_entries,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-def emit_trackables(*, trackables: Sequence, json_output: bool) -> int:
-    return cli_emit.emit_trackables(
-        trackables=trackables,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-def emit_repos(*, repos: Sequence, json_output: bool) -> int:
-    return cli_emit.emit_repos(
-        repos=repos,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-def emit_doctor_summary(*, engine: DotmanEngine, summary: DoctorSummary, json_output: bool) -> int:
-    return cli_emit.emit_doctor_summary(
-        engine=engine,
-        summary=summary,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-def emit_search_matches(*, matches, query: str, json_output: bool) -> int:
-    return cli_emit.emit_search_matches(
-        matches=matches,
-        query=query,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-def emit_variables(*, variables: Sequence, json_output: bool) -> int:
-    return cli_emit.emit_variables(
-        variables=variables,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-def emit_variable_detail(*, variable_detail, json_output: bool) -> int:
-    return cli_emit.emit_variable_detail(
-        variable_detail=variable_detail,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-
-def emit_untracked_package_entry(*, binding, still_tracked_package, json_output: bool) -> int:
-    return cli_emit.emit_untracked_package_entry(
-        binding=binding,
-        still_tracked_package=still_tracked_package,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-def emit_untracked_package_entries(*, request_binding, bindings, still_tracked_packages, json_output: bool) -> int:
-    return cli_emit.emit_untracked_package_entries(
-        request_binding=request_binding,
-        bindings=bindings,
-        still_tracked_packages=still_tracked_packages,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-
-def emit_tracked_package_entry(*, binding, json_output: bool) -> int:
-    return cli_emit.emit_tracked_package_entry(
-        binding=binding,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-
-def emit_add_result(*, result, json_output: bool) -> int:
-    return cli_emit.emit_add_result(
-        result=result,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-
-def emit_kept_add_result(*, repo_name: str, package_id: str, json_output: bool) -> int:
-    return cli_emit.emit_kept_add_result(
-        repo_name=repo_name,
-        package_id=package_id,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-emit_noop_add_result = cli_emit.emit_noop_add_result
-
-
-
-def emit_kept_package_entry(*, binding, json_output: bool) -> int:
-    return cli_emit.emit_kept_package_entry(
-        binding=binding,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-
-def emit_skipped_tracking(*, binding, json_output: bool) -> int:
-    return cli_emit.emit_skipped_tracking(
-        binding=binding,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-render_hook_command_lines = cli_emit.render_hook_command_lines
-
-
-
-def emit_tracked_package_detail(*, package_detail, json_output: bool) -> int:
-    return cli_emit.emit_tracked_package_detail(
-        package_detail=package_detail,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
-def emit_trackable_detail(*, trackable_detail, json_output: bool) -> int:
-    return cli_emit.emit_trackable_detail(
-        trackable_detail=trackable_detail,
-        json_output=json_output,
-        use_color=colors_enabled(),
-    )
-
-
 def resolve_snapshot_record(snapshot_root: Path, snapshot_ref: str | None, *, json_output: bool) -> SnapshotRecord:
     matches = find_snapshot_matches(snapshot_root, snapshot_ref)
     if not matches:
@@ -2381,32 +2051,6 @@ def review_restore_actions_for_interactive_diffs(
 
 
 
-def emit_snapshot_list(
-    *,
-    snapshots: Sequence[SnapshotRecord],
-    json_output: bool,
-    max_generations: int | None = None,
-) -> int:
-    return cli_emit.emit_snapshot_list(
-        snapshots=snapshots,
-        json_output=json_output,
-        max_generations=max_generations,
-        use_color=colors_enabled(),
-    )
-
-
-
-def emit_snapshot_detail(*, snapshot: SnapshotRecord, json_output: bool, full_paths: bool | None = None) -> int:
-    full_paths = _effective_full_paths(full_paths)
-    return cli_emit.emit_snapshot_detail(
-        snapshot=snapshot,
-        json_output=json_output,
-        full_paths=full_paths,
-        use_color=colors_enabled(),
-    )
-
-
-
 def emit_restore_payload(
     *,
     snapshot: SnapshotRecord,
@@ -2447,25 +2091,70 @@ def run_restore_execution(
     return renderer.render_restore_result(result)
 
 
-def _build_command_handlers(*, interaction: Interaction | None) -> cli_commands.CliCommandHandlers:
-    def emit_resolution_message(message: str) -> None:
+@dataclass(frozen=True)
+class _InspectionRuntime:
+    def resolve_tracked_package_text(
+        self,
+        engine: DotmanEngine,
+        package_text: str,
+        *,
+        json_output: bool,
+    ) -> tuple[Repository, str, str | None]:
+        return resolve_tracked_package_text(engine, package_text, json_output=json_output)
+
+    def resolve_trackable_selector_text(
+        self,
+        engine: DotmanEngine,
+        query_text: str,
+        *,
+        json_output: bool,
+    ) -> tuple[Repository, str, SelectorKind]:
+        return resolve_trackable_selector_text(engine, query_text, json_output=json_output)
+
+    def resolve_variable_text(
+        self,
+        engine: DotmanEngine,
+        variable_text: str,
+        *,
+        json_output: bool,
+    ) -> str:
+        return resolve_variable_text(engine, variable_text, json_output=json_output)
+
+    def resolve_snapshot_record(
+        self,
+        snapshot_root: Path,
+        snapshot_ref: str | None,
+        *,
+        json_output: bool,
+    ) -> SnapshotRecord:
+        return resolve_snapshot_record(snapshot_root, snapshot_ref, json_output=json_output)
+
+
+@dataclass(frozen=True)
+class _StateRuntime:
+    interaction: Interaction | None
+
+    def add_editor_available(self) -> bool:
+        return add_editor_available()
+
+    def review_add_manifest(self, result: AddOperationResult) -> AddReviewResult | None:
+        return review_add_manifest(result)
+
+    def open_editor_path(self, *, path: Path, missing_editor_label: str) -> int:
+        return open_editor_path(path, missing_editor_label=missing_editor_label)
+
+    def emit_resolution_error(self, error: ValueError) -> None:
+        cli_emit.emit_error(
+            error,
+            use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None,
+        )
+
+    def emit_resolution_message(self, message: str) -> None:
         sys.stdout.write(message)
 
-    return cli_commands.CliCommandHandlers(
-        run_basic_reconcile=run_basic_reconcile,
-        run_jinja_reconcile=run_jinja_reconcile,
-        run_jinja_render=run_jinja_render,
-        run_patch_capture=run_patch_capture,
-        emit_kept_package_entry=emit_kept_package_entry,
-        emit_skipped_tracking=emit_skipped_tracking,
-        emit_tracked_package_entry=emit_tracked_package_entry,
-        emit_search_matches=emit_search_matches,
-        add_editor_available=add_editor_available,
-        review_add_manifest=review_add_manifest,
-        emit_add_result=emit_add_result,
-        emit_noop_add_result=emit_noop_add_result,
-        emit_kept_add_result=emit_kept_add_result,
-        open_editor_path=open_editor_path,
+
+def _build_sync_runtime() -> cli_commands.SyncCommandRuntime:
+    return cli_commands.SyncCommandRuntime(
         resolve_tracked_package_entry_text=resolve_tracked_package_entry_text,
         filter_plans_for_interactive_selection=filter_plans_for_interactive_selection,
         review_plans_for_interactive_diffs=review_plans_for_interactive_diffs,
@@ -2480,27 +2169,6 @@ def _build_command_handlers(*, interaction: Interaction | None) -> cli_commands.
         review_restore_actions_for_interactive_diffs=review_restore_actions_for_interactive_diffs,
         emit_restore_payload=emit_restore_payload,
         run_restore_execution=run_restore_execution,
-        emit_untracked_package_entry=emit_untracked_package_entry,
-        emit_tracked_packages=emit_tracked_packages,
-        emit_trackables=emit_trackables,
-        emit_repos=emit_repos,
-        resolve_tracked_package_text=resolve_tracked_package_text,
-        emit_tracked_package_detail=emit_tracked_package_detail,
-        resolve_trackable_selector_text=resolve_trackable_selector_text,
-        emit_trackable_detail=emit_trackable_detail,
-        emit_untracked_package_entries=emit_untracked_package_entries,
-        resolve_variable_text=resolve_variable_text,
-        emit_variables=emit_variables,
-        emit_variable_detail=emit_variable_detail,
-        emit_snapshot_list=emit_snapshot_list,
-        emit_snapshot_detail=emit_snapshot_detail,
-        emit_doctor_summary=emit_doctor_summary,
-        interaction=interaction,
-        emit_resolution_error=lambda error: cli_emit.emit_error(
-            error,
-            use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None,
-        ),
-        emit_resolution_message=emit_resolution_message,
     )
 
 
@@ -2549,14 +2217,39 @@ def main(
         stdin_isatty = getattr(sys.stdin, "isatty", None)
         if active_interaction is None and stdin_isatty is not None and stdin_isatty():
             active_interaction = TerminalInteraction()
-        return cli_commands.dispatch_command(
-            args=args,
-            engine_factory=lambda config_path: DotmanEngine.from_config_path(
-                config_path,
-                file_symlink_mode=args.file_symlink_mode,
-                dir_symlink_mode=args.dir_symlink_mode,
+        engine_factory = lambda config_path: DotmanEngine.from_config_path(
+            config_path,
+            file_symlink_mode=args.file_symlink_mode,
+            dir_symlink_mode=args.dir_symlink_mode,
+        )
+        use_color = colors_enabled()
+        command_runners = (
+            StandaloneCommandRunner(),
+            InspectionCommandRunner(
+                engine_factory=engine_factory,
+                runtime=_InspectionRuntime(),
+                use_color=use_color,
             ),
-            handlers=_build_command_handlers(interaction=active_interaction),
+            StateCommandRunner(
+                engine_factory=engine_factory,
+                runtime=_StateRuntime(active_interaction),
+                use_color=use_color,
+            ),
+        )
+        runner_by_command = {
+            command_name: runner
+            for runner in command_runners
+            for command_name in runner.command_names
+        }
+        selected_runner = runner_by_command.get(args.command)
+        if selected_runner is not None:
+            return selected_runner.run(args)
+        if args.command not in cli_commands.SYNC_COMMAND_NAMES:
+            raise ValueError(f"unsupported command '{args.command}'")
+        return cli_commands.run_sync_command(
+            args=args,
+            engine_factory=engine_factory,
+            sync_runtime=_build_sync_runtime(),
         )
     except KeyboardInterrupt:
         emit_interrupt_notice()
