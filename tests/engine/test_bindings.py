@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -435,7 +436,8 @@ def test_record_binding_replaces_existing_selector_binding_with_new_profile(
     engine = DotmanEngine.from_config_path(config_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
+    state_path = state_dir / "tracked-packages.toml"
+    state_path.write_text(
         "\n".join(
             [
                 "schema_version = 1",
@@ -454,6 +456,7 @@ def test_record_binding_replaces_existing_selector_binding_with_new_profile(
         ),
         encoding="utf-8",
     )
+    state_path.chmod(0o600)
 
     plan = single_package_plan(engine, "example:git@work", operation="push")
 
@@ -466,6 +469,7 @@ def test_record_binding_replaces_existing_selector_binding_with_new_profile(
         ("git", "work"),
         ("nvim", "basic"),
     ]
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
     assert not (state_dir / "tracked-packages.toml").with_suffix(".tmp").exists()
 
 def test_record_binding_keeps_distinct_profiles_for_multi_instance_package(

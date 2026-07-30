@@ -152,6 +152,30 @@ def test_emit_transform_output_skips_rewrite_when_reusing_same_compare_path(
     assert output_path.stat().st_mode & 0o777 == reference_path.stat().st_mode & 0o777
 
 
+@pytest.mark.parametrize("content", ["after\n", b"after\n"])
+def test_transform_file_output_failure_preserves_existing_destination(
+    tmp_path: Path,
+    monkeypatch,
+    content: str | bytes,
+) -> None:
+    output_path = tmp_path / "output"
+    output_path.write_bytes(b"before\n")
+
+    def fail_replacement(temp_path: Path, target_path: Path) -> Path:
+        raise RuntimeError("replacement failed")
+
+    monkeypatch.setattr(Path, "replace", fail_replacement)
+
+    with pytest.raises(RuntimeError, match="replacement failed"):
+        MODULE.write_output_to_path(
+            output_path,
+            MODULE.TransformOutput(content=content, mode_reference_path=None),
+        )
+
+    assert output_path.read_bytes() == b"before\n"
+    assert list(tmp_path.glob(".dotman-*.tmp")) == []
+
+
 def test_root_cli_json_transform_is_standalone(tmp_path, monkeypatch, capsys) -> None:
     from dotman import cli
 

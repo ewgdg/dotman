@@ -12,6 +12,8 @@ import re
 import sys
 from typing import Any, ClassVar, Iterable, Protocol, runtime_checkable
 
+from dotman.atomic_files import write_bytes_atomic, write_text_atomic
+
 
 class TransformMode(StrEnum):
     CLEANUP = "cleanup"
@@ -140,9 +142,9 @@ def write_output_to_path(output_path: Path, output: TransformOutput) -> None:
         return
 
     if isinstance(output.content, bytes):
-        output_path.write_bytes(output.content)
+        write_bytes_atomic(output_path, output.content)
     else:
-        output_path.write_text(output.content, encoding="utf-8")
+        write_text_atomic(output_path, output.content)
     sync_output_mode(output.mode_reference_path, output_path)
 
 

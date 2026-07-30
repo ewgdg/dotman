@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def test_privileged_ops_write_bytes_atomic_cleans_stale_temp_files(tmp_path: Path) -> None:
-    stale_temp_file = tmp_path / ".dotman-999999-deadbeef.tmp"
+    stale_temp_file = tmp_path / f".dotman-999999-{'deadbeef' * 4}.tmp"
     stale_temp_file.write_text("stale\n", encoding="utf-8")
     target_path = tmp_path / "config.txt"
 

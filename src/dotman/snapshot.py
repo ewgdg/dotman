@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Sequence
 
+from dotman.atomic_files import write_text_atomic
 from dotman.config import default_snapshot_root
 from dotman.toml_utils import load_toml_file
 from dotman.execution import delete_path_and_prune_empty_parents, write_bytes_atomic, write_symlink_atomic
@@ -178,7 +179,7 @@ def create_push_snapshot(plans: Sequence[PackagePlan], snapshot_config: Snapshot
         symlink_target = os.readlink(live_path) if live_path_is_symlink else None
         if existed_before and not preserve_symlink_identity:
             content_path = Path("entries") / f"{index:04d}.bin"
-            (snapshot_root / content_path).write_bytes(managed_path.read_bytes())
+            write_bytes_atomic(snapshot_root / content_path, managed_path.read_bytes())
             mode = stat.S_IMODE(managed_path.stat().st_mode)
         entries.append(
             SnapshotEntry(
@@ -536,7 +537,7 @@ def _write_snapshot_manifest(snapshot: SnapshotRecord) -> None:
         if entry.target_name is not None:
             lines.append(f"target_name = {json.dumps(entry.target_name)}")
         lines.append("")
-    manifest_path.write_text("\n".join(lines), encoding="utf-8")
+    write_text_atomic(manifest_path, "\n".join(lines))
 
 
 def _new_snapshot_id() -> str:

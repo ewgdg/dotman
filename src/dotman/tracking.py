@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from dotman.atomic_files import write_text_atomic
 from dotman.config import default_state_root
 from dotman.toml_utils import load_toml_file
 from dotman.models import (
@@ -585,7 +586,6 @@ def write_tracked_package_entries(engine: Any, repo: Repository, bindings: list[
 def write_tracked_package_entries_file(state_dir: Path, bindings: list[FullSpecSelector]) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = tracked_packages_file_path(state_dir)
-    temp_path = state_path.with_suffix(".tmp")
     lines = [f"schema_version = {TRACKED_PACKAGES_SCHEMA_VERSION}", ""]
     tracked_packages = sorted(
         [
@@ -604,8 +604,7 @@ def write_tracked_package_entries_file(state_dir: Path, bindings: list[FullSpecS
                 "",
             ]
         )
-    temp_path.write_text("\n".join(lines), encoding="utf-8")
-    temp_path.replace(state_path)
+    write_text_atomic(state_path, "\n".join(lines))
 
 
 

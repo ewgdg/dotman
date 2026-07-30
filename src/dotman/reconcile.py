@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotman.atomic_files import write_text_atomic
 from dotman.file_access import read_bytes
 from dotman.terminal import preserve_terminal_state, read_prompt_line
 
@@ -199,9 +200,9 @@ def _confirm_reconcile_write(*, changed_sources: list[EditableSourceCopy], assum
 
 def _write_confirmed_sources(changed_sources: list[EditableSourceCopy]) -> None:
     for changed_source in changed_sources:
-        changed_source.destination_path.write_text(
+        write_text_atomic(
+            changed_source.destination_path,
             _read_text(changed_source.editable_copy_path),
-            encoding="utf-8",
         )
 
 

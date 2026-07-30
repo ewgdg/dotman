@@ -10,6 +10,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from dotman.atomic_files import write_text_atomic
 from dotman.manifest import validate_package_id, validate_target_name
 from dotman.toml_utils import load_toml_text
 
@@ -189,10 +190,7 @@ def write_add_result(result: AddOperationResult, *, manifest_text: str | None = 
         manifest_path=result.manifest_path,
         repo_name=result.repo_name,
     )
-    result.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = result.manifest_path.with_suffix(".tmp")
-    temp_path.write_text(final_manifest_text, encoding="utf-8")
-    temp_path.replace(result.manifest_path)
+    write_text_atomic(result.manifest_path, final_manifest_text)
     return replace(result, after_text=final_manifest_text)
 
 

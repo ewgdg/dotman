@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 
 from types import SimpleNamespace
@@ -43,6 +44,8 @@ def test_add_cli_updates_existing_package_manifest_in_json_mode(
 
     repo_root = tmp_path / "repo"
     _write_repo(repo_root, {"git": 'id = "git"\n'})
+    manifest_path = repo_root / "packages" / "git" / "package.toml"
+    manifest_path.chmod(0o600)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
 
     exit_code = main([
@@ -65,11 +68,12 @@ def test_add_cli_updates_existing_package_manifest_in_json_mode(
     assert payload["target"]["path"] == "~/.gitconfig"
     assert payload["target"]["chmod"] == "600"
 
-    manifest_text = (repo_root / "packages" / "git" / "package.toml").read_text(encoding="utf-8")
+    manifest_text = manifest_path.read_text(encoding="utf-8")
     assert '[targets.f_gitconfig]' in manifest_text
     assert 'source = "files/gitconfig"' in manifest_text
     assert 'path = "~/.gitconfig"' in manifest_text
     assert 'chmod = "600"' in manifest_text
+    assert stat.S_IMODE(manifest_path.stat().st_mode) == 0o600
 
 
 def test_add_cli_creates_new_package_manifest_from_relative_live_path(

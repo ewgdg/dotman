@@ -2007,7 +2007,7 @@ def test_write_bytes_atomic_cleans_up_temp_file_after_failed_replace(
 
 
 def test_write_bytes_atomic_removes_stale_dotman_temp_files_before_write(tmp_path: Path) -> None:
-    stale_temp_file = tmp_path / ".dotman-999999-deadbeef.tmp"
+    stale_temp_file = tmp_path / f".dotman-999999-{'deadbeef' * 4}.tmp"
     stale_temp_file.write_text("stale\n", encoding="utf-8")
 
     target_path = tmp_path / "config.txt"

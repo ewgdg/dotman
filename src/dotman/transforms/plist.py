@@ -8,6 +8,7 @@ import plistlib
 import re
 from typing import Any
 
+from dotman.atomic_files import write_bytes_atomic
 from dotman.transforms.cli import run_engine_cli
 from dotman.transforms.framework import (
     BaseTransformEngine,
@@ -328,9 +329,7 @@ def plist_format_from_name(format_name: str) -> int:
 
 
 def write_plist(path: Path, data: PlistDict, fmt: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as handle:
-        plistlib.dump(data, handle, fmt=plist_format_from_name(fmt), sort_keys=True)
+    write_bytes_atomic(path, plist_bytes(data, fmt))
 
 
 def plist_bytes(data: PlistDict, fmt: str) -> bytes:
