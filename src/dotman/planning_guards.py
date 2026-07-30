@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 from dotman.command_runtime import (
     CommandRequest,
+    CommandRuntime,
     ShellCommand,
-    current_command_runtime,
     raise_for_command_interruption,
 )
 from dotman.models import (
@@ -96,6 +96,7 @@ def _first_nonempty_output_line(stderr: str, stdout: str) -> str | None:
 
 def _run_planning_guard(
     *,
+    command_runtime: CommandRuntime,
     guard_spec: HookSpec,
     guard_name: str,
     context: dict[str, Any],
@@ -114,7 +115,7 @@ def _run_planning_guard(
             base_dir=guard_spec.declared_in,
             source_path=guard_spec.declared_in,
         ).strip()
-        result = current_command_runtime().run(
+        result = command_runtime.run(
             CommandRequest(
                 command=ShellCommand(command),
                 cwd=guard_spec.declared_in,
@@ -182,6 +183,7 @@ def _repo_has_potential_work(
 def _evaluate_repo_guards(
     planning_inputs: list["PackagePlanningInput"],
     *,
+    command_runtime: CommandRuntime,
     operation: str,
     run_noop: bool,
     sink: "ProgressSink | None" = None,
@@ -204,6 +206,7 @@ def _evaluate_repo_guards(
             continue
         context = {"vars": repo.local_vars, "repo_name": repo_name, "operation": operation}
         skip = _run_planning_guard(
+            command_runtime=command_runtime,
             guard_spec=guard_spec,
             guard_name=guard_name,
             context=context,
@@ -223,6 +226,7 @@ def _evaluate_repo_guards(
 def _evaluate_package_guards(
     planning_inputs: list["PackagePlanningInput"],
     *,
+    command_runtime: CommandRuntime,
     operation: str,
     run_noop: bool,
     sink: "ProgressSink | None" = None,
@@ -261,6 +265,7 @@ def _evaluate_package_guards(
             context=planning_input.package_context.context,
         )
         skip = _run_planning_guard(
+            command_runtime=command_runtime,
             guard_spec=guard_spec,
             guard_name=guard_name,
             context=planning_input.package_context.context,
@@ -284,6 +289,7 @@ def _evaluate_package_guards(
 def _evaluate_target_guards(
     planning_inputs: list["PackagePlanningInput"],
     *,
+    command_runtime: CommandRuntime,
     operation: str,
 ) -> tuple[list["PackagePlanningInput"], tuple[GuardSkip, ...]]:
     admitted_inputs: list["PackagePlanningInput"] = []
@@ -309,6 +315,7 @@ def _evaluate_target_guards(
                 admitted_metadata.append(metadata)
                 continue
             skip = _run_planning_guard(
+                command_runtime=command_runtime,
                 guard_spec=guard_spec,
                 guard_name=guard_name,
                 context=planning_input.package_context.context,
@@ -330,6 +337,7 @@ def _evaluate_target_guards(
 
 def evaluate_directory_path_rule_guards(
     *,
+    command_runtime: CommandRuntime,
     path_rules: tuple[TargetPathRule, ...],
     candidate_paths: set[str],
     operation: str,
@@ -357,6 +365,7 @@ def evaluate_directory_path_rule_guards(
         rule_env = dict(target_env)
         rule_env["DOTMAN_PATH_RULE_PATTERN"] = rule.pattern
         skip = _run_planning_guard(
+            command_runtime=command_runtime,
             guard_spec=guard_spec,
             guard_name=guard_name,
             context=context,
@@ -378,21 +387,28 @@ def evaluate_directory_path_rule_guards(
 def evaluate_hierarchical_guards(
     planning_inputs: list["PackagePlanningInput"],
     *,
+    command_runtime: CommandRuntime,
     operation: str,
     run_noop: bool,
     sink: "ProgressSink | None" = None,
 ) -> tuple[list["PackagePlanningInput"], tuple[GuardSkip, ...]]:
     repo_inputs, repo_skips = _evaluate_repo_guards(
         planning_inputs,
+        command_runtime=command_runtime,
         operation=operation,
         run_noop=run_noop,
         sink=sink,
     )
     package_inputs, package_skips = _evaluate_package_guards(
         repo_inputs,
+        command_runtime=command_runtime,
         operation=operation,
         run_noop=run_noop,
         sink=sink,
     )
-    target_inputs, target_skips = _evaluate_target_guards(package_inputs, operation=operation)
+    target_inputs, target_skips = _evaluate_target_guards(
+        package_inputs,
+        command_runtime=command_runtime,
+        operation=operation,
+    )
     return target_inputs, (*repo_skips, *package_skips, *target_skips)

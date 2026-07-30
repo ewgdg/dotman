@@ -2,21 +2,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from dotman.add import prepare_add_to_package, write_add_result
 from dotman.config import default_config_path, load_manager_config
-from dotman.engine import TrackedTargetConflictError
+from dotman.collisions import TrackedTargetConflictError
 from dotman.elevation import request_elevation_from_env
 from dotman.file_access import sudo_session
-from dotman.models import FullSpecSelector, package_ref_text
+from dotman.models import package_ref_text
 from dotman.ui_context import ui_config_scope
+
+if TYPE_CHECKING:
+    from dotman.progress import ProgressSink
 from dotman.snapshot import (
     build_restore_actions,
     list_snapshots,
     record_snapshot_restore,
 )
-from dotman.doctor import doctor_engine
 from dotman.progress import make_planning_sink
 
 
@@ -118,7 +120,7 @@ def dispatch_command(*, args: Any, engine_factory: EngineFactory, handlers: CliC
         if args.command == "doctor":
             return handlers.emit_doctor_summary(
                 engine=engine,
-                summary=doctor_engine(engine),
+                summary=engine.doctor(),
                 json_output=args.json_output,
             )
         if args.command == "search":

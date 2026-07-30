@@ -1,28 +1,17 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import dotman.cli as cli
 import pytest
-from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.cli import PendingSelectionItem, prompt_for_excluded_items
 from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, OperationPlan, UiConfig, UiMenusConfig, TargetPlan
 from dotman.ui_context import ui_config_scope
 
 from tests.helpers import (
-    EXAMPLE_REPO,
-    REFERENCE_REPO,
-    capture_parser_help,
     make_package_plan,
-    write_implicit_conflict_repo,
-    write_manager_config,
-    write_multi_instance_repo,
-    write_named_manager_config,
-    write_package_override_preview_repo,
-    write_profile_switch_repo,
-    write_untrack_conflict_repo,
 )
 
 
@@ -1333,14 +1322,7 @@ def test_ensure_track_package_entry_replacement_confirmed_skips_prompt_when_assu
 def test_ensure_track_package_entry_implicit_overrides_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
     binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="group", profile="current")
     engine = SimpleNamespace(
-        get_repo=lambda _repo_name: SimpleNamespace(),
-        _planning_helpers=lambda: SimpleNamespace(
-            resolve_full_spec_selector=lambda *_args, **_kwargs: [
-                SimpleNamespace(explicit=True, identity=SimpleNamespace(repo="fixture", package_id="stack"))
-            ]
-        ),
-        _resolved_package_selection=lambda **kwargs: SimpleNamespace(**kwargs),
-        preview_package_selections_implicit_overrides=lambda _selections: [
+        preview_tracked_package_entry_implicit_overrides=lambda _binding: [
             SimpleNamespace(
                 winner=SimpleNamespace(
                     selection_label="fixture:stack@current",
@@ -1410,9 +1392,7 @@ def test_ensure_track_package_entry_implicit_overrides_confirmed_skips_same_prof
         ),
     )
     engine = SimpleNamespace(
-        get_repo=lambda _repo_name: SimpleNamespace(),
-        _resolved_package_selection=lambda **kwargs: SimpleNamespace(**kwargs),
-        preview_package_selection_implicit_overrides=lambda _selection: [override],
+        preview_tracked_package_entry_implicit_overrides=lambda _binding: [override],
     )
     monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
 

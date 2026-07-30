@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 
 import pytest
 
-from dotman import planning
-from dotman.command_runtime import current_command_runtime
+from dotman.command_runtime import CommandResult, MemoryCommandRuntime, ShellCommand
+from dotman.engine import DotmanEngine
 from dotman.progress import _TqdmSink, make_planning_sink
-from tests.helpers import make_package_plan, make_resolved_package_selection
+from tests.helpers import write_single_repo_config, write_tracked_packages_state
 
 
 class FakeSink:
@@ -24,6 +25,31 @@ class FakeSink:
 
     def close(self) -> None:
         self.events.append(("close", None))
+
+
+def _write_progress_fixture(tmp_path: Path, *, render_command: str | None = None) -> Path:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    package_root = repo_root / "packages" / "app"
+    (package_root / "files").mkdir(parents=True)
+    (package_root / "files" / "config.txt").write_text("source\n", encoding="utf-8")
+    package_lines = [
+        'id = "app"',
+        "",
+        "[targets.config]",
+        'source = "files/config.txt"',
+        'path = "~/.config/app/config.txt"',
+    ]
+    if render_command is not None:
+        package_lines.append(f'render = "{render_command}"')
+    (package_root / "package.toml").write_text("\n".join(package_lines) + "\n", encoding="utf-8")
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="fixture",
+        entries=[("app", "default")],
+    )
+    return write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
 
 
 def test_make_planning_sink_skips_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,119 +109,59 @@ def test_tqdm_sink_redraws_elapsed_without_progress_update(
     assert sink._refresh_thread is None
 
 
-def test_build_package_plans_reports_progress_after_package_build(monkeypatch: pytest.MonkeyPatch) -> None:
-    selection = make_resolved_package_selection(repo_name="example", package_id="git", requested_profile="basic")
-    planning_input = SimpleNamespace(
-        repo=SimpleNamespace(name="example"),
-        selection=selection,
-        package_context=SimpleNamespace(),
-        target_metadata=[],
+def test_engine_planning_reports_progress_after_package_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    runtime = MemoryCommandRuntime(
+        [CommandResult(exit_code=0, stdout=b"rendered\n")]
     )
-    events: list[str] = []
+    engine = DotmanEngine.from_config_path(
+        _write_progress_fixture(tmp_path, render_command="render-command"),
+        command_runtime=runtime,
+    )
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("live\n", encoding="utf-8")
 
-    monkeypatch.setattr(
-        planning,
-        "collect_static_target_candidates",
-        lambda _engine, selections, *, operation: ([planning_input], {}),
-    )
-    monkeypatch.setattr(
-        planning,
-        "_select_static_package_planning_inputs",
-        lambda inputs, *, winner_indexes: inputs,
-    )
-    monkeypatch.setattr(planning, "_validate_preprojection_conflicts", lambda inputs, *, operation: None)
-    monkeypatch.setattr(
-        planning,
-        "evaluate_hierarchical_guards",
-        lambda inputs, *, operation, run_noop, sink: (inputs, ()),
-    )
-    monkeypatch.setattr(
-        planning,
-        "_build_host_package_planning_inputs",
-        lambda _engine, inputs, *, operation: inputs,
-    )
-
-    def build_package_plan(_engine, _repo, built_selection, *, operation: str, **_kwargs):
-        assert built_selection is selection
-        events.append("built")
-        return make_package_plan(
-            operation=operation,
-            repo_name="example",
-            package_id="git",
-            requested_profile="basic",
-        )
-
-    class OrderingSink(FakeSink):
-        def start(self, total: int) -> None:
-            events.append(f"start:{total}")
-            super().start(total)
-
+    class PackageBuildOrderingSink(FakeSink):
         def update(self, n: int = 1) -> None:
-            events.append("update")
+            assert [request.command for request in runtime.requests] == [
+                ShellCommand("render-command")
+            ]
             super().update(n)
 
-        def close(self) -> None:
-            events.append("close")
-            super().close()
+    sink = PackageBuildOrderingSink()
 
-    monkeypatch.setattr(planning, "build_package_plan", build_package_plan)
-    sink = OrderingSink()
+    plan = engine.plan_push(sink=sink)
 
-    plans = planning.build_package_plans(
-        SimpleNamespace(command_runtime=current_command_runtime()),
-        [selection],
-        operation="push",
-        sink=sink,
-    )
-
-    assert len(plans.package_plans) == 1
-    assert events == ["start:1", "built", "update", "close"]
+    assert len(plan.package_plans) == 1
     assert sink.events == [("start", 1), ("update", 1), ("close", None)]
 
 
-def test_build_package_plans_closes_progress_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    selection = make_resolved_package_selection(repo_name="example", package_id="git", requested_profile="basic")
-    planning_input = SimpleNamespace(
-        repo=SimpleNamespace(name="example"),
-        selection=selection,
-        package_context=SimpleNamespace(),
-        target_metadata=[],
+def test_engine_planning_closes_progress_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    runtime = MemoryCommandRuntime(
+        [CommandResult(exit_code=1, stderr=b"projection failed\n")]
     )
+    engine = DotmanEngine.from_config_path(
+        _write_progress_fixture(tmp_path, render_command="render-command"),
+        command_runtime=runtime,
+    )
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("live\n", encoding="utf-8")
     sink = FakeSink()
 
-    monkeypatch.setattr(
-        planning,
-        "collect_static_target_candidates",
-        lambda _engine, selections, *, operation: ([planning_input], {}),
-    )
-    monkeypatch.setattr(
-        planning,
-        "_select_static_package_planning_inputs",
-        lambda inputs, *, winner_indexes: inputs,
-    )
-    monkeypatch.setattr(planning, "_validate_preprojection_conflicts", lambda inputs, *, operation: None)
-    monkeypatch.setattr(
-        planning,
-        "evaluate_hierarchical_guards",
-        lambda inputs, *, operation, run_noop, sink: (inputs, ()),
-    )
-    monkeypatch.setattr(
-        planning,
-        "_build_host_package_planning_inputs",
-        lambda _engine, inputs, *, operation: inputs,
-    )
-
-    def fail_build_package_plan(*_args, **_kwargs):
-        raise RuntimeError("planning failed")
-
-    monkeypatch.setattr(planning, "build_package_plan", fail_build_package_plan)
-
-    with pytest.raises(RuntimeError, match="planning failed"):
-        planning.build_package_plans(
-            SimpleNamespace(command_runtime=current_command_runtime()),
-            [selection],
-            operation="push",
-            sink=sink,
-        )
+    with pytest.raises(ValueError, match="command projection failed.*projection failed"):
+        engine.plan_push(sink=sink)
 
     assert sink.events == [("start", 1), ("close", None)]

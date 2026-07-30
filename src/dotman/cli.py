@@ -29,7 +29,9 @@ from dotman.diff_review import (
     run_review_item_diff,
 )
 from dotman.config import load_manager_config
-from dotman.engine import DotmanEngine, TrackedTargetConflictError, parse_full_spec_selector_text, parse_package_ref_text
+from dotman.collisions import TrackedTargetConflictError
+from dotman.engine import DotmanEngine
+from dotman.package_resolution import parse_full_spec_selector_text, parse_package_ref_text
 from dotman.models import (
     FullSpecSelector,
     OperationPlan,
@@ -899,39 +901,7 @@ def ensure_track_package_entry_implicit_overrides_confirmed(
     json_output: bool,
     assume_yes: bool = False,
 ) -> bool:
-    if binding.selector_kind == "group":
-        selections = [
-            selection
-            for selection in engine._planning_helpers().resolve_full_spec_selector(engine, binding, operation="push")
-            if selection.explicit
-        ]
-        overrides = []
-        seen_override_keys: set[tuple[str, str, str | None, str]] = set()
-        # Build one candidate plan for the whole group. Per-package previews were O(group_size * tracked_plan_cost)
-        # and made large host groups feel hung after profile selection.
-        for override in engine.preview_package_selections_implicit_overrides(selections):
-            key = (
-                override.winner.selection.identity.repo,
-                override.winner.package_id,
-                override.winner.selection.identity.bound_profile,
-                override.winner.selection.requested_profile,
-            )
-            if key in seen_override_keys:
-                continue
-            seen_override_keys.add(key)
-            overrides.append(override)
-    else:
-        repo = engine.get_repo(binding.repo)
-        overrides = engine.preview_package_selection_implicit_overrides(
-            engine._resolved_package_selection(
-                repo=repo,
-                package_id=binding.selector,
-                requested_profile=binding.profile,
-                explicit=True,
-                source_kind="selector_query",
-                source_selector=binding.selector,
-            )
-        )
+    overrides = engine.preview_tracked_package_entry_implicit_overrides(binding)
     overrides = [override for override in overrides if _explicit_override_needs_confirmation(override)]
     if not overrides:
         return True
@@ -1239,7 +1209,7 @@ def resolve_tracked_package_entry_text(
 
     if operation == "untrack":
         resolved_selector, _resolved_profile, exact_matches, partial_matches = engine.find_persisted_tracked_package_entry_matches(binding_text)
-        package_matches, owner_package_entries = engine._tracked_package_matches_for_untrack(
+        package_matches, owner_package_entries = engine.find_tracked_package_matches_for_untrack(
             selector=resolved_selector,
             profile=profile,
             repo_name=explicit_repo,
@@ -1423,7 +1393,7 @@ def resolve_tracked_package_entry_text(
         field_kinds=build_full_spec_selector_field_kinds(),
     )
 
-    package_matches, _package_owner_package_entries = engine._tracked_package_matches_for_untrack(
+    package_matches, _package_owner_package_entries = engine.find_tracked_package_matches_for_untrack(
         selector=resolved_selector,
         profile=resolved_profile,
         repo_name=lookup_repo,

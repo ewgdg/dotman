@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from dotman.engine import DotmanEngine, list_directory_files, matches_ignore_pattern
+from dotman.engine import DotmanEngine
+from dotman.ignore import list_directory_files, matches_ignore_pattern
 from tests.helpers import single_package_plan, write_single_repo_config
 
 

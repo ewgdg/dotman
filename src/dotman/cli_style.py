@@ -5,7 +5,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Sequence
 
-from dotman.engine import parse_full_spec_selector_text
+from dotman.package_resolution import parse_full_spec_selector_text
 from dotman.models import FullSpecSelector, ResolvedPackageIdentity, package_ref_text, repo_qualified_target_text, target_ref_text
 
 

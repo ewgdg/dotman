@@ -4,27 +4,32 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 from dotman.collisions import (
     TrackedTargetCandidate,
-    TrackedTargetConflictError,
     TrackedTargetOverride,
     operation_write_path,
     resolve_tracked_target_winners,
     validate_reserved_path_claims,
     validate_target_collisions,
 )
-from dotman.command_runtime import command_runtime_session
+from dotman.command_runtime import CommandRuntime, command_runtime_session
 from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os
+from dotman.package_resolution import (
+    resolve_package_ids,
+    resolved_package_selection,
+    selected_package_ids,
+)
 from dotman.models import (
     FullSpecSelector,
     GuardSkip,
+    ManagerConfig,
     executable_package_ids_for_targets,
-    filter_hook_plans_for_targets,
     HookPlan,
     OperationPlan,
+    PackageSelectionSourceKind,
     PackagePlan,
     PackageSpec,
     package_ref_text,
@@ -38,31 +43,44 @@ from dotman.models import (
 )
 from dotman.planning_guards import evaluate_hierarchical_guards
 from dotman.projection import (
+    ProjectionContext,
     TargetMetadata,
     build_target_metadata,
     build_package_hook_env,
     build_repo_hook_env,
-    build_file_review_bytes,
-    build_target_command_env,
     resolve_target_kind,
-    plan_directory_action,
-    plan_file_action,
     plan_targets,
-    project_repo_file,
-    pull_view_bytes,
-    run_command_projection,
     target_claims_path,
 )
 from dotman.repository import Repository, VALID_HOOK_NAMES
 from dotman.templates import build_template_context, render_template_string
+from dotman import tracking
 
 if TYPE_CHECKING:
     from dotman.progress import ProgressSink
+    from dotman.tracking import TrackedStateContext
 
 HOOK_NAMES_BY_OPERATION = {
     "push": ("guard_push", "pre_push", "post_push"),
     "pull": ("guard_pull", "pre_pull", "post_pull"),
 }
+
+
+@dataclass(frozen=True)
+class PlanningContext:
+    config: ManagerConfig
+    tracked_state: "TrackedStateContext"
+    projection: ProjectionContext
+
+    @property
+    def repositories(self) -> Mapping[str, Repository]:
+        return self.tracked_state.repositories
+
+    @property
+    def command_runtime(self) -> CommandRuntime:
+        return self.projection.command_runtime
+
+
 class TrackedPackageProfileConflictError(ValueError):
     def __init__(
         self,
@@ -88,6 +106,13 @@ def _package_identity_label(identity: ResolvedPackageIdentity) -> str:
     return f"{identity.repo}:{package_ref_text(package_id=identity.package_id, bound_profile=identity.bound_profile)}"
 
 
+def get_repository(context: PlanningContext, repo_name: str) -> Repository:
+    try:
+        return context.repositories[repo_name]
+    except KeyError as exc:
+        raise ValueError(f"unknown repo '{repo_name}'") from exc
+
+
 def _merge_selection(
     selections: list[ResolvedPackageSelection],
     selection_indexes: dict[tuple[str, str, str | None, str], int],
@@ -105,18 +130,17 @@ def _merge_selection(
 
 
 def _resolved_package_selections_from_roots(
-    engine: Any,
     repo: Repository,
     *,
     root_package_ids: list[str],
     requested_profile: str,
-    source_kind: str,
+    source_kind: PackageSelectionSourceKind,
     source_selector: str | None,
 ) -> list[ResolvedPackageSelection]:
     selections: list[ResolvedPackageSelection] = []
     selection_indexes: dict[tuple[str, str, str | None, str], int] = {}
     for root_package_id in root_package_ids:
-        root_selection = engine._resolved_package_selection(
+        root_selection = resolved_package_selection(
             repo=repo,
             package_id=root_package_id,
             requested_profile=requested_profile,
@@ -124,7 +148,7 @@ def _resolved_package_selections_from_roots(
             source_kind=source_kind,
             source_selector=source_selector,
         )
-        related_package_ids = engine._resolve_package_ids(repo, root_package_id, "package")
+        related_package_ids = resolve_package_ids(repo, root_package_id, "package")
         for related_package_id in related_package_ids:
             if related_package_id == root_package_id:
                 _merge_selection(selections, selection_indexes, root_selection)
@@ -132,7 +156,7 @@ def _resolved_package_selections_from_roots(
             _merge_selection(
                 selections,
                 selection_indexes,
-                engine._resolved_package_selection(
+                resolved_package_selection(
                     repo=repo,
                     package_id=related_package_id,
                     requested_profile=requested_profile,
@@ -146,19 +170,21 @@ def _resolved_package_selections_from_roots(
 
 
 def resolve_tracked_package_selections(
-    engine: Any,
+    planning_context: PlanningContext,
     *,
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
 ) -> list[ResolvedPackageSelection]:
     current_entries = (
         entries_by_repo
         if entries_by_repo is not None
-        else engine._tracked_entries_by_repo_from_bindings(engine._effective_tracked_package_entries_by_repo())
+        else tracking.tracked_entries_by_repo_from_bindings(
+            tracking.effective_tracked_package_entries_by_repo(planning_context.tracked_state)
+        )
     )
     selections: list[ResolvedPackageSelection] = []
-    for repo_config in engine.config.ordered_repos:
+    for repo_config in planning_context.config.ordered_repos:
         for entry in (current_entries or {}).get(repo_config.name, []):
-            selections.extend(resolve_tracked_package_entry(engine, entry))
+            selections.extend(resolve_tracked_package_entry(planning_context, entry))
     return _resolve_package_profile_claims(selections)
 
 
@@ -238,12 +264,11 @@ class PackagePlanningResult:
 
 
 def build_package_planning_context(
-    engine: Any,
     repo: Repository,
     selection: ResolvedPackageSelection,
 ) -> PackagePlanningContext:
     root_identity = selection.owner_identity or selection.identity
-    related_package_ids = engine._resolve_package_ids(repo, root_identity.package_id, "package")
+    related_package_ids = resolve_package_ids(repo, root_identity.package_id, "package")
     resolved_packages = [repo.resolve_package(package_id) for package_id in related_package_ids]
     profile_vars, lineage = repo.compose_profile(selection.requested_profile)
     package_vars: dict[str, Any] = {}
@@ -262,12 +287,16 @@ def build_package_planning_context(
     )
 
 
-def resolve_full_spec_selector(engine: Any, query: FullSpecSelector, *, operation: str) -> list[ResolvedPackageSelection]:
+def resolve_full_spec_selector(
+    planning_context: PlanningContext,
+    query: FullSpecSelector,
+    *,
+    operation: str,
+) -> list[ResolvedPackageSelection]:
     del operation
-    repo = engine.get_repo(query.repo)
-    root_package_ids = engine._selected_package_ids(repo, query.selector, query.selector_kind)
+    repo = get_repository(planning_context, query.repo)
+    root_package_ids = selected_package_ids(repo, query.selector, query.selector_kind)
     return _resolved_package_selections_from_roots(
-        engine,
         repo,
         root_package_ids=root_package_ids,
         requested_profile=query.profile,
@@ -276,12 +305,14 @@ def resolve_full_spec_selector(engine: Any, query: FullSpecSelector, *, operatio
     )
 
 
-def resolve_tracked_package_entry(engine: Any, entry: TrackedPackageEntry) -> list[ResolvedPackageSelection]:
-    repo = engine.get_repo(entry.repo)
+def resolve_tracked_package_entry(
+    planning_context: PlanningContext,
+    entry: TrackedPackageEntry,
+) -> list[ResolvedPackageSelection]:
+    repo = get_repository(planning_context, entry.repo)
     if entry.package_id not in repo.packages:
         raise ValueError(f"unknown package '{entry.package_id}' in repo '{repo.config.name}'")
     return _resolved_package_selections_from_roots(
-        engine,
         repo,
         root_package_ids=[entry.package_id],
         requested_profile=entry.profile,
@@ -324,7 +355,7 @@ def _filter_package_hook_plans(
 
 
 def build_package_plan(
-    engine: Any,
+    planning_context: PlanningContext,
     repo: Repository,
     selection: ResolvedPackageSelection,
     *,
@@ -334,8 +365,9 @@ def build_package_plan(
     run_noop: bool = False,
     guard_skips: list[GuardSkip] | None = None,
 ) -> PackagePlan:
-    package_context = package_context or build_package_planning_context(engine, repo, selection)
-    target_plans = engine._plan_targets(
+    package_context = package_context or build_package_planning_context(repo, selection)
+    target_plans = plan_targets(
+        planning_context.projection,
         repo=repo,
         packages=package_context.resolved_packages,
         context=package_context.context,
@@ -346,7 +378,7 @@ def build_package_plan(
         metadata_targets=target_metadata,
         guard_skips=guard_skips,
     )
-    hook_plans = engine._plan_hooks(
+    hook_plans = plan_hooks(
         repo,
         package_context.resolved_packages,
         package_context.context,
@@ -400,22 +432,25 @@ def _merge_package_plans(plans: list[PackagePlan]) -> list[PackagePlan]:
 
 
 def build_tracked_plans(
-    engine: Any,
+    planning_context: PlanningContext,
     *,
     operation: str,
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
     sink: "ProgressSink | None" = None,
     run_noop: bool = False,
 ) -> OperationPlan:
-    selections = resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo)
+    selections = resolve_tracked_package_selections(planning_context, entries_by_repo=entries_by_repo)
     planning_result = build_package_plans(
-        engine,
+        planning_context,
         selections,
         operation=operation,
         sink=sink,
         run_noop=run_noop,
     )
-    repo_by_name = {repo_config.name: engine.get_repo(repo_config.name) for repo_config in engine.config.ordered_repos}
+    repo_by_name = {
+        repo_config.name: get_repository(planning_context, repo_config.name)
+        for repo_config in planning_context.config.ordered_repos
+    }
     return build_operation_plan(
         list(planning_result.package_plans),
         repo_by_name=repo_by_name,
@@ -427,7 +462,7 @@ def build_tracked_plans(
 
 
 def build_package_plans(
-    engine: Any,
+    planning_context: PlanningContext,
     selections: list[ResolvedPackageSelection],
     *,
     operation: str,
@@ -438,7 +473,7 @@ def build_package_plans(
         sink.start(len(selections))
     try:
         planning_inputs, candidates_by_path = collect_static_target_candidates(
-            engine,
+            planning_context,
             selections,
             operation=operation,
         )
@@ -453,16 +488,19 @@ def build_package_plans(
         )
         from dotman.elevation import elevation_broker_session
 
-        with elevation_broker_session(), command_runtime_session(engine.command_runtime):
+        # Privileged file helpers and the elevation broker still read the active runtime;
+        # bind the same explicit dependency that guards and projections receive directly.
+        with command_runtime_session(planning_context.command_runtime), elevation_broker_session():
             admitted_inputs, hierarchical_guard_skips = evaluate_hierarchical_guards(
                 selected_inputs,
+                command_runtime=planning_context.command_runtime,
                 operation=operation,
                 run_noop=run_noop,
                 sink=sink,
             )
             all_guard_skips = list(hierarchical_guard_skips)
             host_inputs = _build_host_package_planning_inputs(
-                engine,
+                planning_context,
                 admitted_inputs,
                 operation=operation,
             )
@@ -471,7 +509,7 @@ def build_package_plans(
             for planning_input in host_inputs:
                 plans.append(
                     build_package_plan(
-                        engine,
+                        planning_context,
                         planning_input.repo,
                         planning_input.selection,
                         operation=operation,
@@ -494,7 +532,7 @@ def build_package_plans(
 
 
 def collect_static_target_candidates(
-    engine: Any,
+    planning_context: PlanningContext,
     selections: list[ResolvedPackageSelection],
     *,
     operation: str,
@@ -502,10 +540,9 @@ def collect_static_target_candidates(
     planning_inputs: list[PackagePlanningInput] = []
     candidates_by_path: dict[Path, list[TrackedTargetCandidate]] = defaultdict(list)
     for plan_index, selection in enumerate(selections):
-        repo = engine.get_repo(selection.identity.repo)
-        package_context = build_package_planning_context(engine, repo, selection)
+        repo = get_repository(planning_context, selection.identity.repo)
+        package_context = build_package_planning_context(repo, selection)
         target_metadata = build_target_metadata(
-            engine,
             repo=repo,
             packages=package_context.resolved_packages,
             context=package_context.context,
@@ -572,7 +609,7 @@ def _select_static_package_planning_inputs(
 
 
 def _build_host_package_planning_inputs(
-    engine: Any,
+    planning_context: PlanningContext,
     planning_inputs: list[PackagePlanningInput],
     *,
     operation: str,
@@ -580,7 +617,6 @@ def _build_host_package_planning_inputs(
     host_inputs: list[PackagePlanningInput] = []
     for planning_input in planning_inputs:
         target_metadata = build_target_metadata(
-            engine,
             repo=planning_input.repo,
             packages=planning_input.package_context.resolved_packages,
             context=planning_input.package_context.context,
@@ -652,7 +688,7 @@ def _validate_preprojection_reserved_path_conflicts(
 
 
 def collect_tracked_ownership_candidates(
-    engine: Any,
+    planning_context: PlanningContext,
     *,
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
     include_target_summary: bool = False,
@@ -665,13 +701,12 @@ def collect_tracked_ownership_candidates(
     resolved_selections = (
         selections
         if selections is not None
-        else resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo)
+        else resolve_tracked_package_selections(planning_context, entries_by_repo=entries_by_repo)
     )
     for selection in resolved_selections:
-        repo = engine.get_repo(selection.identity.repo)
-        package_context = build_package_planning_context(engine, repo, selection)
+        repo = get_repository(planning_context, selection.identity.repo)
+        package_context = build_package_planning_context(repo, selection)
         metadata_targets = build_target_metadata(
-            engine,
             repo=repo,
             packages=package_context.resolved_packages,
             context=package_context.context,
@@ -697,8 +732,8 @@ def collect_tracked_ownership_candidates(
                         repo_path=metadata.repo_path,
                         live_path=metadata.live_path,
                         target_label=f"{metadata.package_id}:{metadata.target_name}",
-                        file_symlink_mode=engine.config.file_symlink_mode,
-                        dir_symlink_mode=engine.config.dir_symlink_mode,
+                        file_symlink_mode=planning_context.config.file_symlink_mode,
+                        dir_symlink_mode=planning_context.config.dir_symlink_mode,
                     ),
                     render_command=metadata.render_command,
                     capture_command=metadata.capture_command,
@@ -739,37 +774,37 @@ def collect_tracked_ownership_candidates(
 
 
 def validate_tracked_package_ownership(
-    engine: Any,
+    planning_context: PlanningContext,
     *,
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
 ) -> None:
-    selections = resolve_tracked_package_selections(engine, entries_by_repo=entries_by_repo)
+    selections = resolve_tracked_package_selections(planning_context, entries_by_repo=entries_by_repo)
     for operation in ("push", "pull"):
         candidates_by_path = collect_tracked_ownership_candidates(
-            engine,
+            planning_context,
             entries_by_repo=entries_by_repo,
             selections=selections,
             operation=operation,
         )
-        engine._resolve_tracked_target_winners(candidates_by_path)
+        resolve_tracked_target_winners(candidates_by_path)
 
 
 def preview_package_selection_implicit_overrides(
-    engine: Any,
+    planning_context: PlanningContext,
     selection: ResolvedPackageSelection,
 ) -> list[TrackedTargetOverride]:
-    return preview_package_selections_implicit_overrides(engine, [selection])
+    return preview_package_selections_implicit_overrides(planning_context, [selection])
 
 
 def preview_package_selections_implicit_overrides(
-    engine: Any,
+    planning_context: PlanningContext,
     selections: list[ResolvedPackageSelection],
 ) -> list[TrackedTargetOverride]:
     explicit_selections = [selection for selection in selections if selection.explicit]
     if not explicit_selections:
         return []
 
-    raw_bindings_by_repo = engine._raw_tracked_package_entries_by_repo()
+    raw_bindings_by_repo = tracking.raw_tracked_package_entries_by_repo(planning_context.tracked_state)
     additions_by_repo: dict[str, list[FullSpecSelector]] = defaultdict(list)
     requested_selection_keys = {
         resolved_package_selection_key(selection)
@@ -786,9 +821,10 @@ def preview_package_selections_implicit_overrides(
         )
 
     for repo_name, additions in additions_by_repo.items():
-        repo = engine.get_repo(repo_name)
-        raw_bindings_by_repo[repo.config.name] = engine._normalize_tracked_package_entry_set(
-            engine._effective_tracked_package_entries_for_repo(
+        repo = get_repository(planning_context, repo_name)
+        raw_bindings_by_repo[repo.config.name] = tracking.normalize_tracked_package_entry_set(
+            planning_context.tracked_state,
+            tracking.effective_tracked_package_entries_for_repo(
                 repo,
                 raw_bindings_by_repo.get(repo.config.name, []),
             ),
@@ -796,9 +832,12 @@ def preview_package_selections_implicit_overrides(
         )
 
     candidates_by_live_path = collect_tracked_ownership_candidates(
-        engine,
-        entries_by_repo=engine._tracked_entries_by_repo_from_bindings(
-            engine._effective_tracked_package_entries_by_repo(raw_bindings_by_repo)
+        planning_context,
+        entries_by_repo=tracking.tracked_entries_by_repo_from_bindings(
+            tracking.effective_tracked_package_entries_by_repo(
+                planning_context.tracked_state,
+                raw_bindings_by_repo,
+            )
         ),
     )
 
@@ -884,7 +923,7 @@ def plan_hooks(
     declaration_package_ids: set[str] | None = None,
 ) -> dict[str, list[HookPlan]]:
     del variables
-    hook_names = HOOK_NAMES_BY_OPERATION.get(operation, VALID_HOOK_NAMES)
+    hook_names = VALID_HOOK_NAMES if operation is None else HOOK_NAMES_BY_OPERATION.get(operation, VALID_HOOK_NAMES)
     hooks: dict[str, list[HookPlan]] = defaultdict(list)
     targets_by_owner = {
         (target.package_id, target.target_name): target
@@ -1086,7 +1125,7 @@ def _validate_direct_package_plan_conflicts(
                 if target.target_kind == "probe":
                     continue
                 package = repo.resolve_package(target.package_id)
-                target_spec = package.targets[target.target_name]
+                target_spec = (package.targets or {})[target.target_name]
                 rendered_targets.append(
                     (
                         package,

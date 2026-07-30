@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from dotman.manifest import deep_merge, infer_profile_os
+from dotman.models import FullSpecSelector
+from dotman.repository import Repository
 from dotman.templates import build_template_context
+from dotman.tracking import TrackedStateContext, iter_tracked_package_entries
 
 
 @dataclass(frozen=True)
@@ -79,7 +82,7 @@ def _normalize_variable_query(variable_text: str) -> str:
 
 def _binding_variable_layers(
     *,
-    repo: Any,
+    repo: Repository,
     package_ids: list[str],
     binding_profile: str,
 ) -> tuple[list[tuple[str, str, Path, dict[str, Any]]], dict[str, Any], list[str]]:
@@ -105,9 +108,8 @@ def _binding_variable_layers(
 
 
 def _build_resolved_variable_occurrences_for_binding(
-    _engine: Any,
-    repo: Any,
-    binding: Any,
+    repo: Repository,
+    binding: FullSpecSelector,
     selector_kind: str,
     package_ids: list[str],
 ) -> list[ResolvedVariableOccurrence]:
@@ -146,12 +148,11 @@ def _build_resolved_variable_occurrences_for_binding(
 
 
 
-def list_resolved_variables(engine: Any) -> list[ResolvedVariableOccurrence]:
+def list_resolved_variables(context: TrackedStateContext) -> list[ResolvedVariableOccurrence]:
     occurrences: list[ResolvedVariableOccurrence] = []
-    for repo, binding, selector_kind, package_ids in engine._iter_tracked_package_entries():
+    for repo, binding, selector_kind, package_ids in iter_tracked_package_entries(context):
         occurrences.extend(
             _build_resolved_variable_occurrences_for_binding(
-                engine,
                 repo,
                 binding,
                 selector_kind,
@@ -161,12 +162,11 @@ def list_resolved_variables(engine: Any) -> list[ResolvedVariableOccurrence]:
     return sorted(occurrences, key=lambda item: (item.variable, item.repo, item.selector, item.profile))
 
 
-def list_winning_variables(engine: Any) -> list[ResolvedVariableOccurrence]:
+def list_winning_variables(context: TrackedStateContext) -> list[ResolvedVariableOccurrence]:
     winning_by_key: dict[tuple[str, str], ResolvedVariableOccurrence] = {}
     seen_keys: set[tuple[str, str]] = set()
-    for repo, binding, selector_kind, package_ids in engine._iter_tracked_package_entries():
+    for repo, binding, selector_kind, package_ids in iter_tracked_package_entries(context):
         for occurrence in _build_resolved_variable_occurrences_for_binding(
-            engine,
             repo,
             binding,
             selector_kind,
@@ -181,18 +181,18 @@ def list_winning_variables(engine: Any) -> list[ResolvedVariableOccurrence]:
 
 
 
-def find_variable_matches(engine: Any, variable_text: str) -> tuple[list[str], list[str]]:
+def find_variable_matches(context: TrackedStateContext, variable_text: str) -> tuple[list[str], list[str]]:
     query = _normalize_variable_query(variable_text)
-    variable_names = sorted({occurrence.variable for occurrence in list_resolved_variables(engine)})
+    variable_names = sorted({occurrence.variable for occurrence in list_resolved_variables(context)})
     exact_matches = [name for name in variable_names if name == query]
     partial_matches = [name for name in variable_names if query in name and name not in exact_matches]
     return exact_matches, partial_matches
 
 
 
-def describe_resolved_variable(engine: Any, variable_text: str) -> ResolvedVariableDetail:
+def describe_resolved_variable(context: TrackedStateContext, variable_text: str) -> ResolvedVariableDetail:
     query = _normalize_variable_query(variable_text)
-    occurrences = [occurrence for occurrence in list_resolved_variables(engine) if occurrence.variable == query]
+    occurrences = [occurrence for occurrence in list_resolved_variables(context) if occurrence.variable == query]
     if not occurrences:
         raise ValueError(f"variable '{query}' did not match any resolved variable")
     return ResolvedVariableDetail(variable=query, occurrences=occurrences)

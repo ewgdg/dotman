@@ -7,9 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from dotman.config import default_state_root
-from dotman.models import TrackedPackageEntryIssue
+from dotman.models import FullSpecSelector, TrackedPackageEntryIssue
+from dotman.repository import Repository
 from dotman.toml_utils import TomlLoadError
+from dotman.tracking import (
+    TrackedStateContext,
+    get_repository,
+    list_invalid_explicit_package_entries,
+    read_tracked_package_entries_file,
+    sorted_tracked_package_entry_issues,
+)
 
 
 @dataclass(frozen=True)
@@ -61,29 +68,32 @@ class DoctorSummary:
         }
 
 
-def doctor_engine(engine: Any) -> DoctorSummary:
+def doctor_context(context: TrackedStateContext) -> DoctorSummary:
     checks: list[DoctorCheck] = [*_doctor_dependency_checks()]
     raw_tracked_package_entries_by_repo: dict[str, list[Any]] = {}
 
-    for repo_config in engine.config.ordered_repos:
-        repo = engine.get_repo(repo_config.name)
+    for repo_config in context.config.ordered_repos:
+        repo = get_repository(context, repo_config.name)
         checks.extend(_doctor_repo_checks(repo))
-        raw_bindings, binding_checks = _read_configured_package_entries_for_doctor(engine, repo)
+        raw_bindings, binding_checks = _read_configured_package_entries_for_doctor(repo)
         checks.extend(binding_checks)
         if raw_bindings is not None:
             raw_tracked_package_entries_by_repo[repo.config.name] = raw_bindings
 
-    invalid_package_entries = engine.list_invalid_explicit_package_entries(bindings_by_repo=raw_tracked_package_entries_by_repo)
-    orphan_issues, orphan_checks = _collect_orphan_package_entry_issues(engine)
+    invalid_package_entries = list_invalid_explicit_package_entries(
+        context,
+        bindings_by_repo=raw_tracked_package_entries_by_repo,
+    )
+    orphan_issues, orphan_checks = _collect_orphan_package_entry_issues(context)
     checks.extend(orphan_checks)
 
-    checks.extend(_doctor_snapshot_checks(engine))
+    checks.extend(_doctor_snapshot_checks(context))
 
     return DoctorSummary(
-        config_path=engine.config.config_path,
-        repo_count=len(engine.config.repos),
+        config_path=context.config.config_path,
+        repo_count=len(context.config.repos),
         checks=checks,
-        invalid_package_entries=engine._sorted_tracked_package_entry_issues([*invalid_package_entries, *orphan_issues]),
+        invalid_package_entries=sorted_tracked_package_entry_issues([*invalid_package_entries, *orphan_issues]),
     )
 
 
@@ -276,10 +286,12 @@ def _doctor_repo_checks(repo: Any) -> list[DoctorCheck]:
     return checks
 
 
-def _read_configured_package_entries_for_doctor(engine: Any, repo: Any) -> tuple[list[Any] | None, list[DoctorCheck]]:
+def _read_configured_package_entries_for_doctor(
+    repo: Repository,
+) -> tuple[list[FullSpecSelector] | None, list[DoctorCheck]]:
     state_path = repo.config.state_path / "tracked-packages.toml"
     try:
-        bindings = engine._read_tracked_package_entries_file(state_path)
+        bindings = read_tracked_package_entries_file(state_path)
     except TomlLoadError as exc:
         return None, [
             DoctorCheck(
@@ -318,12 +330,14 @@ def _read_configured_package_entries_for_doctor(engine: Any, repo: Any) -> tuple
     ]
 
 
-def _collect_orphan_package_entry_issues(engine: Any) -> tuple[list[TrackedPackageEntryIssue], list[DoctorCheck]]:
-    state_root = default_state_root() / "repos"
+def _collect_orphan_package_entry_issues(
+    context: TrackedStateContext,
+) -> tuple[list[TrackedPackageEntryIssue], list[DoctorCheck]]:
+    state_root = context.state_root / "repos"
     if not state_root.exists():
         return [], []
 
-    configured_state_keys = {repo_config.state_key for repo_config in engine.config.ordered_repos}
+    configured_state_keys = {repo_config.state_key for repo_config in context.config.ordered_repos}
     orphan_issues: list[TrackedPackageEntryIssue] = []
     checks: list[DoctorCheck] = []
     for state_dir in sorted(path for path in state_root.iterdir() if path.is_dir()):
@@ -333,7 +347,7 @@ def _collect_orphan_package_entry_issues(engine: Any) -> tuple[list[TrackedPacka
         if not state_path.exists():
             continue
         try:
-            bindings = engine._read_tracked_package_entries_file(state_path)
+            bindings = read_tracked_package_entries_file(state_path)
         except TomlLoadError as exc:
             checks.append(
                 DoctorCheck(
@@ -375,9 +389,9 @@ def _collect_orphan_package_entry_issues(engine: Any) -> tuple[list[TrackedPacka
     return orphan_issues, checks
 
 
-def _doctor_snapshot_checks(engine: Any) -> list[DoctorCheck]:
-    snapshot_path = engine.config.snapshots.path
-    if not engine.config.snapshots.enabled:
+def _doctor_snapshot_checks(context: TrackedStateContext) -> list[DoctorCheck]:
+    snapshot_path = context.config.snapshots.path
+    if not context.config.snapshots.enabled:
         return [
             DoctorCheck(
                 key="snapshots",

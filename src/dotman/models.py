@@ -566,7 +566,7 @@ class TrackableGroupDetail:
 
 @dataclass(frozen=True)
 class TrackableCatalogEntry:
-    kind: str
+    kind: SelectorKind
     repo: str
     selector: str
     description: str | None

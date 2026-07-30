@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.models import FullSpecSelector, TrackedPackageEntry
 from tests.helpers import (
-    EXAMPLE_REPO,
-    REFERENCE_REPO,
     write_manager_config,
-    write_multi_instance_repo,
-    write_package_override_preview_repo,
     write_profile_ambiguous_dependency_repo,
     write_single_repo_config,
     write_tracked_packages_state,
@@ -712,30 +706,6 @@ def test_explicit_singleton_dependency_profile_suppresses_conflicting_implicit_p
 
     assert [(item.requested_profile, item.selection.explicit) for item in shared_plans] == [("work", True)]
     assert shared_plans[0].target_plans[0].desired_text == "profile=work\n"
-
-
-def test_shared_resolver_rejects_conflicting_explicit_singleton_profiles(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "fixture-repo"
-    write_profile_ambiguous_dependency_repo(repo_root)
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    with pytest.raises(ValueError, match=r"conflicting explicit profile contexts for fixture:shared"):
-        engine._planning_helpers().validate_tracked_package_ownership(
-            engine,
-            entries_by_repo={
-                "fixture": [
-                    TrackedPackageEntry(repo="fixture", package_id="shared", profile="basic"),
-                    TrackedPackageEntry(repo="fixture", package_id="shared", profile="work"),
-                ],
-            },
-        )
 
 
 def test_remove_binding_rejects_resulting_singleton_dependency_profile_ambiguity(

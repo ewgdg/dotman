@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
+from dotman.collisions import resolve_tracked_target_winners
 from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
 from dotman.projection import default_pull_view_live, resolve_target_kind, validate_probe_target_config
@@ -14,6 +15,7 @@ from dotman.models import (
     TrackedPackageEntrySummary,
     TrackedOwnedTargetDetail,
     TrackedPackageEntryDetail,
+    TrackedPackageDetail,
     TrackedTargetSummary,
     PackageSpec,
     TargetPlan,
@@ -21,7 +23,25 @@ from dotman.models import (
 )
 from dotman.repository import Repository
 from dotman.resolver import build_target_match_fields
+from dotman.package_resolution import (
+    bound_profile_for_package,
+    parse_full_spec_selector_text,
+    parse_package_ref_text,
+    resolved_package_selection,
+    selected_package_ids,
+)
 from dotman.templates import build_template_context, render_template_string
+from dotman.tracking import (
+    TrackedStateContext,
+    candidate_repositories,
+    get_repository,
+    iter_tracked_package_entries,
+    read_effective_tracked_package_entries,
+    tracked_entries_by_repo_from_bindings,
+)
+
+if TYPE_CHECKING:
+    from dotman.planning import PlanningContext
 
 
 @dataclass(frozen=True)
@@ -41,10 +61,13 @@ class _TrackedPackageOwnershipDetail:
 
 
 def resolve_tracked_package(
-    engine: Any,
+    context: TrackedStateContext,
     package_text: str,
 ) -> tuple[Repository, str, str | None]:
-    selector, bound_profile, exact_matches, partial_matches = engine.find_tracked_package_matches(package_text)
+    selector, bound_profile, exact_matches, partial_matches = find_tracked_package_matches(
+        context,
+        package_text,
+    )
     if len(exact_matches) == 1:
         return exact_matches[0]
     if len(exact_matches) > 1:
@@ -71,12 +94,63 @@ def resolve_tracked_package(
     raise ValueError(f"tracked package '{selector}' did not match any tracked package")
 
 
+def describe_tracked_package(context: "PlanningContext", package_text: str) -> TrackedPackageDetail:
+    repo, package_id, bound_profile = resolve_tracked_package(
+        context.tracked_state,
+        package_text,
+    )
+    ownership = describe_tracked_package_target_ownership(
+        context,
+        repo.config.name,
+        package_id,
+        bound_profile,
+    )
+    details: list[TrackedPackageEntryDetail] = []
+    description = repo.resolve_package(package_id).description
+
+    for candidate_repo, binding, selector_kind, package_ids in iter_tracked_package_entries(
+        context.tracked_state
+    ):
+        if candidate_repo.config.name != repo.config.name or package_id not in package_ids:
+            continue
+        if bound_profile_for_package(candidate_repo, package_id, binding.profile) != bound_profile:
+            continue
+        details.append(
+            describe_tracked_package_entry(
+                context,
+                candidate_repo,
+                binding,
+                selector_kind,
+                package_id,
+                package_ids,
+                executable=(binding.repo, binding.selector, binding.profile) in ownership.effective_binding_keys,
+            )
+        )
+
+    if not details:
+        package_ref = package_ref_text(package_id=package_id, bound_profile=bound_profile)
+        raise ValueError(f"package '{repo.config.name}:{package_ref}' is not currently tracked")
+
+    return TrackedPackageDetail(
+        repo=repo.config.name,
+        package_id=package_id,
+        description=description,
+        package_entries=sorted(
+            details,
+            key=lambda item: (
+                item.package_entry.selector,
+                item.package_entry.profile,
+                item.package_entry.repo,
+            ),
+        ),
+        owned_targets=ownership.owned_targets,
+        bound_profile=bound_profile,
+    )
+
+
 def find_tracked_target_matches(
-    engine: Any,
+    context: "PlanningContext",
     target_text: str,
-    *,
-    parse_full_spec_selector_text: Any,
-    parse_package_ref_text: Any,
 ) -> tuple[str, list[TrackedTargetMatch], list[TrackedTargetMatch]]:
     _explicit_repo, selector, profile = parse_full_spec_selector_text(target_text)
     if profile is not None:
@@ -89,7 +163,7 @@ def find_tracked_target_matches(
             )
         parse_package_ref_text(package_query)
 
-    tracked_targets = list_tracked_targets(engine)
+    tracked_targets = list_tracked_targets(context)
     exact_matches: list[TrackedTargetMatch] = []
     partial_matches: list[TrackedTargetMatch] = []
     for candidate in tracked_targets:
@@ -107,19 +181,23 @@ def find_tracked_target_matches(
     return target_text, exact_matches, partial_matches
 
 
-def list_tracked_targets(engine: Any) -> list[TrackedTargetMatch]:
+def list_tracked_targets(context: "PlanningContext") -> list[TrackedTargetMatch]:
+    from dotman import planning
+
     tracked_targets: dict[tuple[str, str, str | None, str], TrackedTargetMatch] = {}
-    candidates_by_live_path = engine._planning_helpers().collect_tracked_ownership_candidates(
-        engine,
+    candidates_by_live_path = planning.collect_tracked_ownership_candidates(
+        context,
         include_target_summary=True,
     )
-    winner_indexes = engine._resolve_tracked_target_winners(candidates_by_live_path)
+    winner_indexes = resolve_tracked_target_winners(candidates_by_live_path)
     for candidates in candidates_by_live_path.values():
         for candidate in candidates:
             if (candidate.plan_index, candidate.target_index) not in winner_indexes:
                 continue
             if candidate.target_summary is None:
                 continue
+            if candidate.target_summary.repo_path is None:
+                raise RuntimeError("tracked ownership target unexpectedly lacks a repository path")
             key = (
                 candidate.selection.identity.repo,
                 candidate.package_id,
@@ -149,20 +227,18 @@ def list_tracked_targets(engine: Any) -> list[TrackedTargetMatch]:
 
 
 def find_tracked_package_matches(
-    engine: Any,
+    context: TrackedStateContext,
     package_text: str,
-    *,
-    parse_package_ref_text: Any,
 ) -> tuple[str, str | None, list[tuple[Repository, str, str | None]], list[tuple[Repository, str, str | None]]]:
     explicit_repo, selector, bound_profile = parse_package_ref_text(package_text)
-    candidate_repos = engine.candidate_repos(explicit_repo)
+    candidate_repos = candidate_repositories(context, explicit_repo)
     tracked_package_ids = {
         (
             repo.config.name,
             package_id,
-            engine._bound_profile_for_package(repo, package_id, binding.profile),
+            bound_profile_for_package(repo, package_id, binding.profile),
         ): repo
-        for repo, binding, _selector_kind, package_ids in engine._iter_tracked_package_entries()
+        for repo, binding, _selector_kind, package_ids in iter_tracked_package_entries(context)
         if repo in candidate_repos
         for package_id in package_ids
     }
@@ -187,7 +263,7 @@ def find_tracked_package_matches(
 
 
 def describe_tracked_package_entry(
-    engine: Any,
+    planning_context: "PlanningContext",
     repo: Repository,
     binding: FullSpecSelector,
     selector_kind: SelectorKind,
@@ -198,16 +274,18 @@ def describe_tracked_package_entry(
 ) -> TrackedPackageEntryDetail:
     context = _tracked_package_entry_template_context(repo, binding, package_ids)
     package = repo.resolve_package(package_id)
-    selection = engine._resolved_package_selection(
+    from dotman import planning
+
+    selection = resolved_package_selection(
         repo=repo,
         package_id=package_id,
         requested_profile=binding.profile,
-        explicit=package_id in engine._selected_package_ids(repo, binding.selector, selector_kind),
+        explicit=package_id in selected_package_ids(repo, binding.selector, selector_kind),
         source_kind="tracked_entry",
         source_selector=binding.selector,
     )
     hooks = (
-        engine._plan_hooks(
+        planning.plan_hooks(
             repo,
             [package],
             context.context,
@@ -224,8 +302,8 @@ def describe_tracked_package_entry(
         repo,
         package,
         context.context,
-        file_symlink_mode=engine.config.file_symlink_mode,
-        dir_symlink_mode=engine.config.dir_symlink_mode,
+        file_symlink_mode=planning_context.config.file_symlink_mode,
+        dir_symlink_mode=planning_context.config.dir_symlink_mode,
     )
     tracked_reason = "explicit" if selection.explicit else "implicit"
 
@@ -365,24 +443,26 @@ def tracked_target_summary_from_plan(target: TargetPlan) -> TrackedTargetSummary
 
 
 def describe_tracked_package_target_ownership(
-    engine: Any,
+    context: "PlanningContext",
     repo_name: str,
     package_id: str,
     bound_profile: str | None,
 ) -> _TrackedPackageOwnershipDetail:
+    from dotman import planning
+
     effective_binding_keys: set[tuple[str, str, str]] = set()
     owned_targets: list[TrackedOwnedTargetDetail] = []
     # `info tracked <repo:pkg>` reports ownership within the selected repo. Full tracked-state
     # validation still checks cross-repo live-path ownership globally.
-    repo = engine.get_repo(repo_name)
-    candidates_by_live_path = engine._planning_helpers().collect_tracked_ownership_candidates(
-        engine,
-        entries_by_repo=engine._tracked_entries_by_repo_from_bindings(
-            {repo_name: engine.read_effective_tracked_package_entries(repo)}
+    repo = get_repository(context.tracked_state, repo_name)
+    candidates_by_live_path = planning.collect_tracked_ownership_candidates(
+        context,
+        entries_by_repo=tracked_entries_by_repo_from_bindings(
+            {repo_name: read_effective_tracked_package_entries(repo)}
         ),
         include_target_summary=True,
     )
-    winner_indexes = engine._resolve_tracked_target_winners(candidates_by_live_path)
+    winner_indexes = resolve_tracked_target_winners(candidates_by_live_path)
     for candidates in candidates_by_live_path.values():
         for winner in candidates:
             if (winner.plan_index, winner.target_index) not in winner_indexes:
@@ -426,19 +506,29 @@ def describe_tracked_package_target_ownership(
 
 
 def describe_owned_package_targets(
-    engine: Any,
+    context: "PlanningContext",
     repo_name: str,
     package_id: str,
     bound_profile: str | None,
 ) -> list[TrackedOwnedTargetDetail]:
-    return describe_tracked_package_target_ownership(engine, repo_name, package_id, bound_profile).owned_targets
+    return describe_tracked_package_target_ownership(
+        context,
+        repo_name,
+        package_id,
+        bound_profile,
+    ).owned_targets
 
 
 
 def effective_tracked_package_entry_keys(
-    engine: Any,
+    context: "PlanningContext",
     repo_name: str,
     package_id: str,
     bound_profile: str | None,
 ) -> set[tuple[str, str, str]]:
-    return describe_tracked_package_target_ownership(engine, repo_name, package_id, bound_profile).effective_binding_keys
+    return describe_tracked_package_target_ownership(
+        context,
+        repo_name,
+        package_id,
+        bound_profile,
+    ).effective_binding_keys

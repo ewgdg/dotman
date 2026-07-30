@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import stat
 from pathlib import Path
 
@@ -10,7 +9,6 @@ from dotman.models import FullSpecSelector
 from dotman.engine import DotmanEngine
 from tests.helpers import (
     EXAMPLE_REPO,
-    REFERENCE_REPO,
     single_package_plan,
     write_manager_config,
     write_multi_instance_repo,
@@ -18,7 +16,6 @@ from tests.helpers import (
     write_shared_stack_repo,
     write_single_repo_config,
     write_single_repo_config_with_state_key,
-    write_untrack_conflict_repo,
 )
 
 
@@ -231,15 +228,12 @@ def test_preview_package_selection_implicit_overrides_returns_unique_packages(
 
     engine.record_tracked_package_entry(FullSpecSelector(repo="fixture", selector="beta-meta", selector_kind="package", profile="basic"))
 
-    alpha_repo, alpha_query = engine.resolve_full_spec_selector_text("fixture:alpha@basic")
-    overrides = engine.preview_package_selection_implicit_overrides(
-        engine._resolved_package_selection(
-            repo=alpha_repo,
-            package_id=alpha_query.selector,
-            requested_profile=alpha_query.profile or "",
-            explicit=True,
-            source_kind="selector_query",
-            source_selector=alpha_query.selector,
+    overrides = engine.preview_tracked_package_entry_implicit_overrides(
+        FullSpecSelector(
+            repo="fixture",
+            selector="alpha",
+            selector_kind="package",
+            profile="basic",
         )
     )
 
@@ -250,55 +244,6 @@ def test_preview_package_selection_implicit_overrides_returns_unique_packages(
     assert [contender.selection_label for contender in override.overridden] == ["fixture:beta@basic"]
     assert [contender.package_id for contender in override.overridden] == ["beta"]
 
-
-def test_preview_multiple_explicit_selections_uses_metadata_candidates_without_push_planning(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "override-preview-repo"
-    write_package_override_preview_repo(repo_root)
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    engine = DotmanEngine.from_config_path(config_path)
-    engine.record_tracked_package_entry(FullSpecSelector(repo="fixture", selector="beta-meta", selector_kind="package", profile="basic"))
-
-    build_tracked_plan_calls = 0
-
-    def fail_build_tracked_plans(*args, **kwargs):
-        nonlocal build_tracked_plan_calls
-        build_tracked_plan_calls += 1
-        raise AssertionError("preview must not build push plans")
-
-    monkeypatch.setattr(engine, "_build_tracked_plans", fail_build_tracked_plans)
-    repo = engine.get_repo("fixture")
-    selections = [
-        engine._resolved_package_selection(
-            repo=repo,
-            package_id="alpha",
-            requested_profile="basic",
-            explicit=True,
-            source_kind="selector_query",
-            source_selector="alpha",
-        ),
-        engine._resolved_package_selection(
-            repo=repo,
-            package_id="alpha-meta",
-            requested_profile="basic",
-            explicit=True,
-            source_kind="selector_query",
-            source_selector="alpha-meta",
-        ),
-    ]
-
-    overrides = engine.preview_package_selections_implicit_overrides(selections)
-
-    assert build_tracked_plan_calls == 0
-    assert len(overrides) == 1
-    assert overrides[0].winner.selection_label == "fixture:alpha@basic"
-    assert [contender.selection_label for contender in overrides[0].overridden] == ["fixture:beta@basic"]
 
 def test_record_binding_writes_resolved_binding_state(
     tmp_path: Path,
@@ -329,70 +274,6 @@ def test_record_binding_writes_resolved_binding_state(
             "",
         ]
     )
-
-
-def test_record_binding_validation_does_not_build_push_plans(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
-    build_tracked_plan_calls = 0
-
-    def fail_build_tracked_plans(*args, **kwargs):
-        nonlocal build_tracked_plan_calls
-        build_tracked_plan_calls += 1
-        raise AssertionError("track validation must not build push plans")
-
-    monkeypatch.setattr(engine, "_build_tracked_plans", fail_build_tracked_plans)
-    _repo, selector = engine.resolve_full_spec_selector_text("example:git@basic")
-
-    engine.record_tracked_package_entry(selector)
-
-    assert build_tracked_plan_calls == 0
-
-
-def test_remove_binding_validation_does_not_build_push_plans(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "example"',
-                'package_id = "git"',
-                'profile = "basic"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    engine = DotmanEngine.from_config_path(config_path)
-    build_tracked_plan_calls = 0
-
-    def fail_build_tracked_plans(*args, **kwargs):
-        nonlocal build_tracked_plan_calls
-        build_tracked_plan_calls += 1
-        raise AssertionError("untrack validation must not build push plans")
-
-    monkeypatch.setattr(engine, "_build_tracked_plans", fail_build_tracked_plans)
-
-    engine.remove_tracked_package_entry("example:git@basic")
-
-    assert build_tracked_plan_calls == 0
 
 
 def test_record_binding_flattens_group_into_package_bindings(

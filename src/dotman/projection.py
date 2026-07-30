@@ -9,8 +9,8 @@ from typing import Any
 from dotman.capture import BUILTIN_PATCH_CAPTURE
 from dotman.command_runtime import (
     CommandRequest,
+    CommandRuntime,
     ShellCommand,
-    current_command_runtime,
     raise_for_command_interruption,
 )
 from dotman.collisions import validate_reserved_path_conflicts, validate_target_collisions
@@ -28,6 +28,7 @@ from dotman.models import (
     DirectoryPlanItem,
     GuardSkip,
     HookCommandSpec,
+    ManagerConfig,
     PackageSpec,
     ResolvedPackageSelection,
     TargetPathRule,
@@ -37,6 +38,12 @@ from dotman.models import (
 )
 from dotman.repository import Repository
 from dotman.templates import render_template_file, render_template_string
+
+
+@dataclass(frozen=True)
+class ProjectionContext:
+    config: ManagerConfig
+    command_runtime: CommandRuntime
 
 
 @dataclass(frozen=True)
@@ -112,7 +119,6 @@ def validate_probe_target_config(*, package: PackageSpec, target: TargetSpec) ->
 
 
 def build_target_metadata(
-    engine: Any,
     *,
     repo: Repository,
     packages: list[PackageSpec],
@@ -287,7 +293,7 @@ def build_target_metadata(
 
 
 def plan_targets(
-    engine: Any,
+    projection_context: ProjectionContext,
     *,
     repo: Repository,
     packages: list[PackageSpec],
@@ -302,7 +308,6 @@ def plan_targets(
 ) -> list[TargetPlan]:
     if metadata_targets is None:
         metadata_targets = build_target_metadata(
-            engine,
             repo=repo,
             packages=packages,
             context=context,
@@ -320,7 +325,7 @@ def plan_targets(
         repo_path = metadata.repo_path
         live_path = metadata.live_path
         if target.probe is not None:
-            probe_active = run_probe_command(metadata)
+            probe_active = run_probe_command(projection_context.command_runtime, metadata)
             plans.append(
                 TargetPlan(
                     package_id=package.id,
@@ -342,8 +347,8 @@ def plan_targets(
             repo_path=repo_path,
             live_path=live_path,
             target_label=f"{package.id}:{target.name}",
-            file_symlink_mode=engine.config.file_symlink_mode,
-            dir_symlink_mode=engine.config.dir_symlink_mode,
+            file_symlink_mode=projection_context.config.file_symlink_mode,
+            dir_symlink_mode=projection_context.config.dir_symlink_mode,
         )
         if metadata.path_rules and target_kind == "file":
             raise ValueError(
@@ -358,8 +363,8 @@ def plan_targets(
                 repo_path=repo_path,
                 live_path=live_path,
                 target_label=f"{package.id}:{target.name}",
-                file_symlink_mode=engine.config.file_symlink_mode,
-                dir_symlink_mode=engine.config.dir_symlink_mode,
+                file_symlink_mode=projection_context.config.file_symlink_mode,
+                dir_symlink_mode=projection_context.config.dir_symlink_mode,
             )
             if target_kind == "directory":
                 action, directory_items = plan_live_delete_directory_action(
@@ -368,7 +373,8 @@ def plan_targets(
                     push_ignore=metadata.push_ignore,
                     skip_markers=metadata.skip_markers,
                     force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if operation in metadata.gitignore_control_ops else (),
-                    follow_dir_symlinks=engine.config.dir_symlink_mode == "follow",
+                    follow_dir_symlinks=projection_context.config.dir_symlink_mode == "follow",
+                    command_runtime=projection_context.command_runtime,
                     path_rules=metadata.path_rules,
                     context=context,
                     target_env=metadata.command_env,
@@ -392,8 +398,8 @@ def plan_targets(
                         reconcile=reconcile,
                         live_path_is_symlink=metadata.live_path_is_symlink,
                         live_path_symlink_target=metadata.live_path_symlink_target,
-                        file_symlink_mode=engine.config.file_symlink_mode,
-                        dir_symlink_mode=engine.config.dir_symlink_mode,
+                        file_symlink_mode=projection_context.config.file_symlink_mode,
+                        dir_symlink_mode=projection_context.config.dir_symlink_mode,
                         pull_view_repo=metadata.pull_view_repo,
                         pull_view_live=metadata.pull_view_live,
                         push_ignore=metadata.push_ignore,
@@ -409,7 +415,7 @@ def plan_targets(
 
             action = "delete" if target_kind == "file" and (live_path.exists() or live_path.is_symlink()) else "noop"
             review_before_bytes, review_after_bytes = build_file_review_bytes(
-                engine,
+                projection_context.command_runtime,
                 repo=repo,
                 package=package,
                 target=target,
@@ -439,8 +445,8 @@ def plan_targets(
                     reconcile=reconcile,
                     live_path_is_symlink=metadata.live_path_is_symlink,
                     live_path_symlink_target=metadata.live_path_symlink_target,
-                    file_symlink_mode=engine.config.file_symlink_mode,
-                    dir_symlink_mode=engine.config.dir_symlink_mode,
+                    file_symlink_mode=projection_context.config.file_symlink_mode,
+                    dir_symlink_mode=projection_context.config.dir_symlink_mode,
                     pull_view_repo=metadata.pull_view_repo,
                     pull_view_live=metadata.pull_view_live,
                     push_ignore=metadata.push_ignore,
@@ -469,8 +475,8 @@ def plan_targets(
                     reconcile=reconcile,
                     live_path_is_symlink=metadata.live_path_is_symlink,
                     live_path_symlink_target=metadata.live_path_symlink_target,
-                    file_symlink_mode=engine.config.file_symlink_mode,
-                    dir_symlink_mode=engine.config.dir_symlink_mode,
+                    file_symlink_mode=projection_context.config.file_symlink_mode,
+                    dir_symlink_mode=projection_context.config.dir_symlink_mode,
                     pull_view_repo=metadata.pull_view_repo,
                     pull_view_live=metadata.pull_view_live,
                     push_ignore=metadata.push_ignore,
@@ -495,7 +501,7 @@ def plan_targets(
         )
         if target_kind == "directory":
             action, directory_items = plan_directory_action(
-                engine,
+                projection_context,
                 repo=repo,
                 package=package,
                 target=target,
@@ -531,8 +537,8 @@ def plan_targets(
                     reconcile=reconcile,
                     live_path_is_symlink=metadata.live_path_is_symlink,
                     live_path_symlink_target=metadata.live_path_symlink_target,
-                    file_symlink_mode=engine.config.file_symlink_mode,
-                    dir_symlink_mode=engine.config.dir_symlink_mode,
+                    file_symlink_mode=projection_context.config.file_symlink_mode,
+                    dir_symlink_mode=projection_context.config.dir_symlink_mode,
                     pull_view_repo=metadata.pull_view_repo,
                     pull_view_live=metadata.pull_view_live,
                     push_ignore=metadata.push_ignore,
@@ -552,7 +558,7 @@ def plan_targets(
         try:
             if operation == "push":
                 desired_bytes, projection_kind = project_repo_file(
-                    engine,
+                    projection_context.command_runtime,
                     repo=repo,
                     package=package,
                     target=target,
@@ -575,7 +581,7 @@ def plan_targets(
         pull_view_repo = metadata.pull_view_repo
         pull_view_live = metadata.pull_view_live
         review_before_bytes, review_after_bytes = build_file_review_bytes(
-            engine,
+            projection_context.command_runtime,
             repo=repo,
             package=package,
             target=target,
@@ -621,8 +627,8 @@ def plan_targets(
                 projection_error=projection_error,
                 live_path_is_symlink=metadata.live_path_is_symlink,
                 live_path_symlink_target=metadata.live_path_symlink_target,
-                file_symlink_mode=engine.config.file_symlink_mode,
-                dir_symlink_mode=engine.config.dir_symlink_mode,
+                file_symlink_mode=projection_context.config.file_symlink_mode,
+                dir_symlink_mode=projection_context.config.dir_symlink_mode,
                 pull_view_repo=pull_view_repo,
                 pull_view_live=pull_view_live,
                 push_ignore=metadata.push_ignore,
@@ -838,7 +844,7 @@ def validate_patch_capture_unit(
 
 
 def project_repo_file(
-    engine: Any,
+    command_runtime: CommandRuntime,
     *,
     repo: Repository,
     package: PackageSpec,
@@ -857,7 +863,7 @@ def project_repo_file(
         if render_command:
             return (
                 run_command_projection(
-                    engine,
+                    command_runtime,
                     repo=repo,
                     package=package,
                     target=target,
@@ -880,6 +886,7 @@ def project_repo_file(
 
 def filter_directory_candidates_by_path_rule_guards(
     *,
+    command_runtime: CommandRuntime,
     desired_files: dict[str, Path],
     live_files: dict[str, Path],
     path_rules: tuple[TargetPathRule, ...],
@@ -898,6 +905,7 @@ def filter_directory_candidates_by_path_rule_guards(
     if not candidate_paths or not path_rules:
         return desired_files, live_files
     remaining_paths, path_rule_skips = evaluate_directory_path_rule_guards(
+        command_runtime=command_runtime,
         path_rules=path_rules,
         candidate_paths=candidate_paths,
         operation=operation,
@@ -917,7 +925,7 @@ def filter_directory_candidates_by_path_rule_guards(
 
 
 def plan_directory_action(
-    engine: Any,
+    projection_context: ProjectionContext,
     *,
     repo: Repository,
     package: PackageSpec,
@@ -943,7 +951,7 @@ def plan_directory_action(
     # Ignore lists are operation-scoped: an ignored child should disappear from
     # both repo and live scans so planning does not create, update, or delete it.
     operation_ignore = push_ignore if operation == "push" else pull_ignore
-    follow_dir_symlinks = engine.config.dir_symlink_mode == "follow"
+    follow_dir_symlinks = projection_context.config.dir_symlink_mode == "follow"
     desired_files = list_directory_files(
         repo_path,
         operation_ignore,
@@ -964,6 +972,7 @@ def plan_directory_action(
         else {}
     )
     desired_files, live_files = filter_directory_candidates_by_path_rule_guards(
+        command_runtime=projection_context.command_runtime,
         desired_files=desired_files,
         live_files=live_files,
         path_rules=path_rules,
@@ -1008,7 +1017,7 @@ def plan_directory_action(
                 repo_path=source_path,
             )
             desired_bytes, _projection_kind = project_repo_file(
-                engine,
+                projection_context.command_runtime,
                 repo=repo,
                 package=package,
                 target=target,
@@ -1073,7 +1082,7 @@ def plan_directory_action(
                 repo_path=source_path,
             )
             desired_bytes, _projection_kind = project_repo_file(
-                engine,
+                projection_context.command_runtime,
                 repo=repo,
                 package=package,
                 target=target,
@@ -1221,7 +1230,7 @@ def plan_directory_action(
             repo_path=source_path,
         )
         repo_bytes = pull_view_bytes(
-            engine,
+            projection_context.command_runtime,
             repo=repo,
             package=package,
             target=target,
@@ -1237,7 +1246,7 @@ def plan_directory_action(
             inferred_os=inferred_os,
         )
         live_bytes = pull_view_bytes(
-            engine,
+            projection_context.command_runtime,
             repo=repo,
             package=package,
             target=target,
@@ -1367,6 +1376,7 @@ def file_permission_mode(path: Path) -> int | None:
 
 def plan_live_delete_directory_action(
     *,
+    command_runtime: CommandRuntime,
     repo_path: Path,
     live_path: Path,
     push_ignore: tuple[str, ...],
@@ -1394,6 +1404,7 @@ def plan_live_delete_directory_action(
         else {}
     )
     _, live_files = filter_directory_candidates_by_path_rule_guards(
+        command_runtime=command_runtime,
         desired_files={},
         live_files=live_files,
         path_rules=path_rules,
@@ -1454,7 +1465,7 @@ def plan_file_action_from_review_bytes(
 
 
 def plan_file_action(
-    engine: Any,
+    command_runtime: CommandRuntime,
     *,
     repo: Repository,
     package: PackageSpec,
@@ -1487,7 +1498,7 @@ def plan_file_action(
     if not repo_exists:
         return "create"
     repo_bytes = pull_view_bytes(
-        engine,
+        command_runtime,
         repo=repo,
         package=package,
         target=target,
@@ -1503,7 +1514,7 @@ def plan_file_action(
         inferred_os=inferred_os,
     )
     live_bytes = pull_view_bytes(
-        engine,
+        command_runtime,
         repo=repo,
         package=package,
         target=target,
@@ -1522,7 +1533,7 @@ def plan_file_action(
 
 
 def build_file_review_bytes(
-    engine: Any,
+    command_runtime: CommandRuntime,
     *,
     repo: Repository,
     package: PackageSpec,
@@ -1547,7 +1558,7 @@ def build_file_review_bytes(
         return live_bytes, desired_bytes
 
     repo_bytes = pull_view_bytes(
-        engine,
+        command_runtime,
         repo=repo,
         package=package,
         target=target,
@@ -1565,7 +1576,7 @@ def build_file_review_bytes(
     if not live_path.exists():
         return repo_bytes, b""
     live_bytes = pull_view_bytes(
-        engine,
+        command_runtime,
         repo=repo,
         package=package,
         target=target,
@@ -1584,7 +1595,7 @@ def build_file_review_bytes(
 
 
 def pull_view_bytes(
-    engine: Any,
+    command_runtime: CommandRuntime,
     *,
     repo: Repository,
     package: PackageSpec,
@@ -1607,7 +1618,7 @@ def pull_view_bytes(
         return read_bytes(repo_path) if repo_side else read_bytes(live_path)
     if view == "render":
         desired_bytes, _projection = project_repo_file(
-            engine,
+            command_runtime,
             repo=repo,
             package=package,
             target=target,
@@ -1628,7 +1639,7 @@ def pull_view_bytes(
         if capture_command is None:
             raise ValueError(f"target '{package.id}:{target.name}' does not define capture")
         return run_command_projection(
-            engine,
+            command_runtime,
             repo=repo,
             package=package,
             target=target,
@@ -1642,7 +1653,7 @@ def pull_view_bytes(
         )
     command = render_template_string(view, context, base_dir=target.declared_in, source_path=target.declared_in)
     return run_command_projection(
-        engine,
+        command_runtime,
         repo=repo,
         package=package,
         target=target,
@@ -1656,10 +1667,10 @@ def pull_view_bytes(
     )
 
 
-def run_probe_command(metadata: TargetMetadata) -> bool:
+def run_probe_command(command_runtime: CommandRuntime, metadata: TargetMetadata) -> bool:
     if metadata.probe_command is None:
         raise ValueError(f"missing probe command for {metadata.package_id}:{metadata.target_name}")
-    result = current_command_runtime().run(
+    result = command_runtime.run(
         CommandRequest(
             command=ShellCommand(metadata.probe_command),
             cwd=metadata.command_cwd,
@@ -1681,7 +1692,7 @@ def run_probe_command(metadata: TargetMetadata) -> bool:
 
 
 def run_command_projection(
-    engine: Any,
+    command_runtime: CommandRuntime,
     *,
     repo: Repository,
     package: PackageSpec,
@@ -1694,7 +1705,7 @@ def run_command_projection(
     inferred_os: str,
     context: dict[str, Any],
 ) -> bytes:
-    env = engine._build_target_command_env(
+    env = build_target_command_env(
         repo=repo,
         package=package,
         target=target,
@@ -1705,7 +1716,7 @@ def run_command_projection(
         inferred_os=inferred_os,
         context=context,
     )
-    result = current_command_runtime().run(
+    result = command_runtime.run(
         CommandRequest(
             command=ShellCommand(command),
             cwd=target.declared_in,

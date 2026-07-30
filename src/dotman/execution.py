@@ -6,7 +6,7 @@ import stat
 import sys
 import tempfile
 from contextlib import contextmanager
-from dataclasses import InitVar, dataclass, field
+from dataclasses import InitVar, dataclass
 from pathlib import Path
 from typing import Iterator, Sequence
 
@@ -23,7 +23,6 @@ from dotman.command_runtime import (
     current_command_runtime,
 )
 from dotman.elevation import elevation_broker_session
-from dotman.engine import HOOK_NAMES_BY_OPERATION
 from dotman.file_access import (
     chmod as sudo_chmod,
     delete_path_and_prune_empty_parents as sudo_delete_path_and_prune_empty_parents,

@@ -36,12 +36,15 @@ Current responsibility split:
 
 - `repository.py` — repository loading and profile/group/package composition
 - `manifest.py` — manifest merge and schema helpers
-- `tracking.py` — persisted tracked-package state flows
+- `package_resolution.py` — selector parsing, package dependency closure, and resolved package selection construction
+- `tracking.py` — persisted tracked-package state flows through `TrackedStateContext`
 - `tracked_packages.py` — tracked package lookup and detail helpers
-- `planning.py` — high-level plan orchestration, including the top-level operation-plan wrapper used for repo-scoped hooks
+- `planning.py` — high-level plan orchestration through `PlanningContext`, including the top-level operation-plan wrapper used for repo-scoped hooks
 - `planning_guards.py` — repo/package-instance/target/path-rule planning eligibility and guard diagnostics
 - `collisions.py` — tracked-target winner resolution and conflict checks
-- `projection.py` — target projection and file/directory action planning
+- `projection.py` — target projection and file/directory action planning through `ProjectionContext`
+
+The engine composes those immutable contexts once. Internal modules receive configuration, repositories, tracked state, and command execution directly; they do not receive `DotmanEngine` or call back through private facade methods.
 
 Current execution shape is intentionally nested:
 
@@ -61,7 +64,7 @@ That structure keeps repo/package/target hook ordering explicit instead of hidin
 - Callers interpret `CommandResult.exit_code` in their own domain. The runtime does not decide whether a status means guard exclusion, probe absence, diff presence, or execution failure.
 - `MemoryCommandRuntime` supplies deterministic queued outcomes and records requests for behavior tests.
 
-Planning binds the engine's runtime while evaluating guards, probes, and projections. Execution binds one runtime for the complete session. Editor, review, and privileged-helper commands use the same active runtime.
+Planning passes the engine's runtime explicitly while evaluating guards, probes, and projections, and binds that same runtime for shared privileged file helpers. Execution binds one runtime for the complete session. Editor, review, and privileged-helper commands use the same active runtime.
 
 Planning is package-centric now:
 
