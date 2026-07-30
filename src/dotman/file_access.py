@@ -3,7 +3,6 @@ from __future__ import annotations
 import atexit
 import os
 import shlex
-import subprocess
 import sys
 import threading
 from contextlib import contextmanager
@@ -12,13 +11,22 @@ from typing import Iterator
 
 from dotman.atomic_files import write_bytes_atomic as atomic_write_bytes_atomic
 from dotman.atomic_files import write_symlink_atomic as atomic_write_symlink_atomic
+from dotman.command_runtime import (
+    ArgvCommand,
+    CommandRequest,
+    CommandResult,
+    CommandRuntime,
+    current_command_runtime,
+    raise_for_command_interruption,
+)
 
 _SUDO_KEEPALIVE_INTERVAL_SECONDS = 30
 _PRIVILEGED_HELPER_MODULE = "dotman.privileged_ops"
 
 
 class _SudoLease:
-    def __init__(self) -> None:
+    def __init__(self, runtime: CommandRuntime | None = None) -> None:
+        self._runtime = runtime if runtime is not None else current_command_runtime()
         self._stop_event = threading.Event()
         self._keepalive_thread: threading.Thread | None = None
         self._acquired = False
@@ -27,30 +35,32 @@ class _SudoLease:
         if os.geteuid() == 0:
             return
         if self._acquired:
-            completed = subprocess.run(
-                ["sudo", "-n", "true"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
+            result = self._runtime.run(
+                CommandRequest(command=ArgvCommand(("sudo", "-n", "true")))
             )
-            if completed.returncode == 0:
+            raise_for_command_interruption(result)
+            if result.exit_code == 0:
                 if self._keepalive_thread is None or not self._keepalive_thread.is_alive():
                     self._keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True)
                     self._keepalive_thread.start()
                 return
             self.close()
         _emit_sudo_notice(reason)
-        try:
-            subprocess.run(["sudo", "-v"], check=True)
-        except subprocess.CalledProcessError as exc:
-            raise PermissionError("sudo authentication failed") from exc
+        result = self._runtime.run(
+            CommandRequest(command=ArgvCommand(("sudo", "-v")), io="tty")
+        )
+        raise_for_command_interruption(result)
+        if result.exit_code != 0:
+            raise PermissionError("sudo authentication failed")
         self._acquired = True
         self._keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True)
         self._keepalive_thread.start()
 
     def _keepalive_loop(self) -> None:
         while not self._stop_event.wait(_SUDO_KEEPALIVE_INTERVAL_SECONDS):
-            subprocess.run(["sudo", "-n", "true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            self._runtime.run(
+                CommandRequest(command=ArgvCommand(("sudo", "-n", "true")))
+            )
 
     def close(self) -> None:
         if not self._acquired:
@@ -158,14 +168,17 @@ def sudo_prefix_command(command: str) -> str:
     return f"sudo -n -E /bin/sh -c {shlex.quote(command)}"
 
 
-
-def _run_privileged_operation(*args: str, input: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(
-        ["sudo", "-n", sys.executable, "-m", _PRIVILEGED_HELPER_MODULE, *args],
-        input=input,
-        capture_output=True,
-        check=False,
+def _run_privileged_operation(*args: str, input: bytes | None = None) -> CommandResult:
+    result = current_command_runtime().run(
+        CommandRequest(
+            command=ArgvCommand(
+                ("sudo", "-n", sys.executable, "-m", _PRIVILEGED_HELPER_MODULE, *args)
+            ),
+            input=input,
+        )
     )
+    raise_for_command_interruption(result)
+    return result
 
 
 
@@ -174,10 +187,13 @@ def read_bytes(path: Path) -> bytes:
         return path.read_bytes()
     except PermissionError:
         request_sudo(f"read protected path: {path}")
-        completed = subprocess.run(["sudo", "-n", "/bin/cat", str(path)], capture_output=True, check=False)
-        if completed.returncode == 0:
-            return completed.stdout
-        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        result = current_command_runtime().run(
+            CommandRequest(command=ArgvCommand(("sudo", "-n", "/bin/cat", str(path))))
+        )
+        raise_for_command_interruption(result)
+        if result.exit_code == 0:
+            return result.stdout
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
         raise PermissionError(stderr or f"permission denied for {path}")
 
 
@@ -199,9 +215,9 @@ def write_bytes_atomic(path: Path, content: bytes, *, restore_root: Path | None 
         optional_args.append(str(restore_root) if restore_root is not None else "-")
     if mode is not None:
         optional_args.append(str(mode))
-    completed = _run_privileged_operation("write-bytes-atomic", str(path), *optional_args, input=content)
-    if completed.returncode != 0:
-        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+    result = _run_privileged_operation("write-bytes-atomic", str(path), *optional_args, input=content)
+    if result.exit_code != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
         raise PermissionError(stderr or f"permission denied for {path}")
 
 
@@ -216,9 +232,9 @@ def write_symlink_atomic(path: Path, target: str | Path) -> None:
             pass
 
     request_sudo(f"write protected path: {path}")
-    completed = _run_privileged_operation("write-symlink-atomic", str(path), str(target))
-    if completed.returncode != 0:
-        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+    result = _run_privileged_operation("write-symlink-atomic", str(path), str(target))
+    if result.exit_code != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
         raise PermissionError(stderr or f"permission denied for {path}")
 
 
@@ -229,9 +245,9 @@ def delete_path_and_prune_empty_parents(path: Path, *, root: Path) -> None:
             path.unlink()
     except PermissionError:
         request_sudo(f"delete protected path: {path}")
-        completed = _run_privileged_operation("delete-path-and-prune-empty-parents", str(path), str(root))
-        if completed.returncode != 0:
-            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        result = _run_privileged_operation("delete-path-and-prune-empty-parents", str(path), str(root))
+        if result.exit_code != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
             raise PermissionError(stderr or f"permission denied for {path}")
         return
 
@@ -253,9 +269,9 @@ def chmod(path: Path, mode: int) -> None:
         os.chmod(path, mode)
     except PermissionError:
         request_sudo(f"change mode on protected path: {path}")
-        completed = _run_privileged_operation("chmod", str(path), str(mode))
-        if completed.returncode != 0:
-            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        result = _run_privileged_operation("chmod", str(path), str(mode))
+        if result.exit_code != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
             raise PermissionError(stderr or f"permission denied for {path}")
 
 

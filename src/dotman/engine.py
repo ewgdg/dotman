@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from dotman.command_runtime import CommandRuntime, current_command_runtime
 from dotman.config import load_manager_config
 from dotman.ignore import list_directory_files, matches_ignore_pattern
 from dotman.models import (
@@ -99,8 +100,9 @@ def _search_match_reason(
 
 
 class DotmanEngine:
-    def __init__(self, config: ManagerConfig) -> None:
+    def __init__(self, config: ManagerConfig, *, command_runtime: CommandRuntime | None = None) -> None:
         self.config = config
+        self.command_runtime = command_runtime or current_command_runtime()
         self.repos = {repo.name: Repository(repo) for repo in config.ordered_repos}
 
     @classmethod
@@ -110,6 +112,7 @@ class DotmanEngine:
         *,
         file_symlink_mode: str | None = None,
         dir_symlink_mode: str | None = None,
+        command_runtime: CommandRuntime | None = None,
     ) -> "DotmanEngine":
         config = load_manager_config(config_path)
         if file_symlink_mode is not None or dir_symlink_mode is not None:
@@ -118,7 +121,7 @@ class DotmanEngine:
                 file_symlink_mode=file_symlink_mode or config.file_symlink_mode,
                 dir_symlink_mode=dir_symlink_mode or config.dir_symlink_mode,
             )
-        return cls(config)
+        return cls(config, command_runtime=command_runtime)
 
     def get_repo(self, repo_name: str) -> Repository:
         try:

@@ -4,7 +4,19 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import dotman.reconcile as reconcile_module
+from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
 from dotman.reconcile import _reconcile_write_confirmation_prompt, run_basic_reconcile
+
+
+def _patch_editor_runtime(monkeypatch, fake_run) -> MemoryCommandRuntime:
+    def run_editor(request):
+        assert isinstance(request.command, ArgvCommand)
+        completed = fake_run(list(request.command.arguments), False)
+        return CommandResult(exit_code=completed.returncode)
+
+    runtime = MemoryCommandRuntime([run_editor])
+    monkeypatch.setattr(reconcile_module, "current_command_runtime", lambda: runtime)
+    return runtime
 
 
 def test_reconcile_write_confirmation_prompt_uses_bracket_style() -> None:
@@ -28,7 +40,7 @@ def test_run_basic_reconcile_pins_vim_like_editor_to_review_header(
         recorded["editable_text"] = Path(command[2]).read_text(encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    _patch_editor_runtime(monkeypatch, fake_run)
 
     exit_code = run_basic_reconcile(
         repo_path=str(repo_path),
@@ -108,7 +120,7 @@ def test_run_basic_reconcile_opens_review_file_then_transactional_source_copies(
         editable_include_path.write_text("edited include\n", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    _patch_editor_runtime(monkeypatch, fake_run)
     monkeypatch.setattr(reconcile_module, "prompt", lambda _message: "y")
 
     exit_code = run_basic_reconcile(
@@ -151,7 +163,7 @@ def test_run_basic_reconcile_reads_live_diff_through_sudo_aware_reader(
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("dotman.reconcile.read_bytes", fake_read_bytes)
-    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    _patch_editor_runtime(monkeypatch, fake_run)
 
     try:
         exit_code = run_basic_reconcile(
@@ -220,7 +232,7 @@ def test_run_basic_reconcile_builds_review_file_from_provided_review_paths(
         )
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    _patch_editor_runtime(monkeypatch, fake_run)
 
     exit_code = run_basic_reconcile(
         repo_path=str(repo_path),
@@ -246,8 +258,8 @@ def test_run_basic_reconcile_reports_no_changes_when_editor_makes_no_edits(
     repo_path.write_text("repo\n", encoding="utf-8")
     live_path.write_text("live\n", encoding="utf-8")
 
-    monkeypatch.setattr(
-        "dotman.reconcile.subprocess.run",
+    _patch_editor_runtime(
+        monkeypatch,
         lambda command, check: SimpleNamespace(returncode=0),
     )
     monkeypatch.setattr(
@@ -282,7 +294,7 @@ def test_run_basic_reconcile_accepts_assume_yes_without_prompting(
         Path(command[2]).write_text("edited repo\n", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    _patch_editor_runtime(monkeypatch, fake_run)
     monkeypatch.setattr(
         reconcile_module,
         "prompt",
@@ -317,7 +329,7 @@ def test_run_basic_reconcile_lists_only_changed_repo_sources_before_prompt(
         Path(command[2]).write_text("edited repo\n", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    _patch_editor_runtime(monkeypatch, fake_run)
     monkeypatch.setattr(reconcile_module, "prompt", lambda _message: "n")
 
     exit_code = run_basic_reconcile(
@@ -348,7 +360,7 @@ def test_run_basic_reconcile_discards_temp_edits_when_write_is_not_confirmed(
         Path(command[2]).write_text("edited repo\n", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    _patch_editor_runtime(monkeypatch, fake_run)
     monkeypatch.setattr(reconcile_module, "prompt", lambda _message: "n")
 
     exit_code = run_basic_reconcile(
@@ -377,7 +389,7 @@ def test_run_basic_reconcile_requires_explicit_confirmation_answer(
         return SimpleNamespace(returncode=0)
 
     answers = iter(["", "maybe", "y"])
-    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    _patch_editor_runtime(monkeypatch, fake_run)
     monkeypatch.setattr(reconcile_module, "prompt", lambda _message: next(answers))
 
     exit_code = run_basic_reconcile(

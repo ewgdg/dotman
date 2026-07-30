@@ -52,6 +52,17 @@ Current execution shape is intentionally nested:
 
 That structure keeps repo/package/target hook ordering explicit instead of hiding it in ad hoc sorting.
 
+## Command runtime
+
+`src/dotman/command_runtime.py` is the only process-creation boundary.
+
+- Callers submit `CommandRequest` values containing a shell command or argument vector, environment overlay, working directory, pipe/TTY mode, streaming policy, and elevation mode.
+- `ProductionCommandRuntime` constructs the ambient environment, applies elevation, launches the process, owns terminal or pipe behavior, streams and captures output, and normalizes interruption.
+- Callers interpret `CommandResult.exit_code` in their own domain. The runtime does not decide whether a status means guard exclusion, probe absence, diff presence, or execution failure.
+- `MemoryCommandRuntime` supplies deterministic queued outcomes and records requests for behavior tests.
+
+Planning binds the engine's runtime while evaluating guards, probes, and projections. Execution binds one runtime for the complete session. Editor, review, and privileged-helper commands use the same active runtime.
+
 Planning is package-centric now:
 
 - selector queries and tracked package entries resolve into `ResolvedPackageSelection`

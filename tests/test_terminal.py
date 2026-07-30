@@ -108,9 +108,9 @@ def test_run_review_item_diff_preserves_terminal_state_when_interrupted(monkeypa
 
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.setattr("dotman.diff_review._select_review_pager_command", lambda: DEFAULT_REVIEW_PAGER)
-    monkeypatch.setattr("dotman.diff_review.preserve_terminal_state", fake_preserve_terminal_state)
+    monkeypatch.setattr("dotman.command_runtime.preserve_terminal_state", fake_preserve_terminal_state)
     monkeypatch.setattr(
-        "dotman.diff_review.subprocess.run",
+        "dotman.command_runtime.subprocess.Popen",
         lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
 

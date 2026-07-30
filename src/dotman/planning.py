@@ -15,6 +15,7 @@ from dotman.collisions import (
     validate_reserved_path_claims,
     validate_target_collisions,
 )
+from dotman.command_runtime import command_runtime_session
 from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os
 from dotman.models import (
@@ -452,7 +453,7 @@ def build_package_plans(
         )
         from dotman.elevation import elevation_broker_session
 
-        with elevation_broker_session():
+        with elevation_broker_session(), command_runtime_session(engine.command_runtime):
             admitted_inputs, hierarchical_guard_skips = evaluate_hierarchical_guards(
                 selected_inputs,
                 operation=operation,

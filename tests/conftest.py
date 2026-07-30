@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
-import subprocess
 import sys
+from typing import Iterator
 
 import pytest
+
+from dotman.command_runtime import (
+    ArgvCommand,
+    CommandRequest,
+    CommandResult,
+    ProductionCommandRuntime,
+    command_runtime_session,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -23,22 +31,23 @@ def isolate_xdg_state_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.fixture(autouse=True)
-def mock_sudo_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
-    import dotman.file_access as file_access
+def mock_sudo_for_tests() -> Iterator[None]:
+    production = ProductionCommandRuntime()
 
-    original_run = subprocess.run
+    class TestCommandRuntime:
+        def run(self, request: CommandRequest) -> CommandResult:
+            command = request.command
+            if not isinstance(command, ArgvCommand) or not command.arguments or command.arguments[0] != "sudo":
+                return production.run(request)
+            arguments = command.arguments
+            if arguments[1:] == ("-v",) or arguments[1:3] == ("-n", "true"):
+                return CommandResult(exit_code=0)
+            if arguments[1:3] == ("-n", "/bin/cat") and len(arguments) >= 4:
+                return CommandResult(exit_code=0, stdout=Path(arguments[3]).read_bytes())
+            if len(arguments) >= 4 and arguments[1] == "-n" and arguments[2] == sys.executable:
+                return production.run(replace(request, command=ArgvCommand(arguments[2:])))
+            prefix_length = 2 if len(arguments) > 1 and arguments[1] == "-n" else 1
+            return production.run(replace(request, command=ArgvCommand(arguments[prefix_length:])))
 
-    def fake_run(command, *args, **kwargs):
-        if isinstance(command, (list, tuple)) and command and command[0] == "sudo":
-            if command[1:] == ["-v"]:
-                return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
-            if command[1:3] == ["-n", "true"]:
-                return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
-            if command[1:3] == ["-n", "/bin/cat"] and len(command) >= 4:
-                return SimpleNamespace(returncode=0, stdout=Path(command[3]).read_bytes(), stderr=b"")
-            if len(command) >= 4 and command[1] == "-n" and command[2] == sys.executable:
-                return original_run(command[2:], *args, **kwargs)
-            return original_run(command[1:], *args, **kwargs)
-        return original_run(command, *args, **kwargs)
-
-    monkeypatch.setattr(file_access.subprocess, "run", fake_run)
+    with command_runtime_session(TestCommandRuntime()):
+        yield

@@ -3,15 +3,15 @@ from __future__ import annotations
 import difflib
 import os
 import shlex
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotman.atomic_files import write_text_atomic
+from dotman.command_runtime import ArgvCommand, CommandRequest, current_command_runtime
 from dotman.file_access import read_bytes
-from dotman.terminal import preserve_terminal_state, read_prompt_line
+from dotman.terminal import read_prompt_line
 
 
 ANSI_RESET = "\033[0m"
@@ -245,17 +245,20 @@ def run_basic_reconcile(
             editable_sources=editable_sources,
             live_path_sudo_aware=resolved_review_live_path == resolved_live_path,
         )
-        with preserve_terminal_state():
-            completed = subprocess.run(
-                [
-                    *editor_command,
-                    str(review_file_path),
-                    *(str(editable_source.editable_copy_path) for editable_source in editable_sources),
-                ],
-                check=False,
+        result = current_command_runtime().run(
+            CommandRequest(
+                command=ArgvCommand(
+                    (
+                        *editor_command,
+                        str(review_file_path),
+                        *(str(editable_source.editable_copy_path) for editable_source in editable_sources),
+                    )
+                ),
+                io="tty",
             )
-        if completed.returncode != 0:
-            return completed.returncode
+        )
+        if result.exit_code != 0:
+            return result.exit_code
 
         changed_sources = _changed_editable_sources(editable_sources)
         if not changed_sources:

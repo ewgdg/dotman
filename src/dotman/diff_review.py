@@ -4,7 +4,6 @@ import os
 import shlex
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -13,14 +12,19 @@ from typing import Callable, Sequence
 
 from dotman import cli_style
 from dotman.capture import BUILTIN_PATCH_CAPTURE
-from dotman.elevation import current_elevation_broker
-from dotman.file_access import needs_sudo_for_read, read_bytes, request_sudo, sudo_prefix_command
+from dotman.command_runtime import (
+    ArgvCommand,
+    CommandRequest,
+    ShellCommand,
+    current_command_runtime,
+    raise_for_command_interruption,
+)
+from dotman.file_access import needs_sudo_for_read, read_bytes
 from dotman.models import HookCommandSpec, HookPlan, PackagePlan
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_file, render_template_string
 from dotman.ui_context import current_ui_config
-from dotman.terminal import preserve_terminal_state
 
 
 DEFAULT_REVIEW_PAGER = "less -FRX"
@@ -248,19 +252,21 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
                 right_path=right_path,
                 paginate=pager_command is not None,
             )
-            diff_env = None
+            diff_env: dict[str, str] = {}
             if pager_command is not None:
-                diff_env = {**os.environ, "GIT_PAGER": pager_command}
-            with preserve_terminal_state():
-                completed = subprocess.run(
-                    diff_command,
-                    check=False,
+                diff_env["GIT_PAGER"] = pager_command
+            result = current_command_runtime().run(
+                CommandRequest(
+                    command=ArgvCommand(tuple(diff_command)),
                     env=diff_env,
                     cwd=temp_root,
+                    io="tty",
                 )
+            )
         except FileNotFoundError as exc:
             raise ValueError("git is required for diff review") from exc
-    if completed.returncode not in {0, 1}:
+    raise_for_command_interruption(result)
+    if result.exit_code not in {0, 1}:
         raise ValueError("git diff failed during review")
 
 
@@ -284,28 +290,17 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
                     review_repo_path=review_env.get("DOTMAN_REVIEW_REPO_PATH"),
                     review_live_path=review_env.get("DOTMAN_REVIEW_LIVE_PATH"),
                 )
-            command = review_item.reconcile.run
-            if review_item.reconcile.elevation == "root" and os.geteuid() != 0:
-                request_sudo("run privileged reconcile command")
-                command = sudo_prefix_command(command)
-            elif review_item.reconcile.elevation == "lease" and os.geteuid() != 0:
-                request_sudo("run privileged reconcile command")
-            elif review_item.reconcile.elevation in {"broker", "intercept"}:
-                review_env.update(
-                    current_elevation_broker().env(
-                        reason="run privileged reconcile command",
-                        intercept=review_item.reconcile.elevation == "intercept",
-                    )
-                )
-            with preserve_terminal_state():
-                completed = subprocess.run(
-                    command,
-                    check=False,
-                    shell=True,
+            result = current_command_runtime().run(
+                CommandRequest(
+                    command=ShellCommand(review_item.reconcile.run),
                     cwd=review_item.command_cwd,
-                    env={**os.environ, **review_env},
+                    env=review_env,
+                    io="tty",
+                    elevation=review_item.reconcile.elevation,
+                    elevation_reason="run privileged reconcile command",
                 )
-            return completed.returncode
+            )
+            return result.exit_code
 
     if not review_item.repo_path.exists() or not review_item.live_path.exists():
         raise ValueError("edit requires both repo and live paths to exist")
@@ -443,21 +438,19 @@ def _directory_item_rendered_repo_bytes(item, *, target, context: dict) -> bytes
 
 
 def _run_directory_item_view_command(item, *, target, command: str) -> bytes:
-    if needs_sudo_for_read(item.live_path):
-        command = sudo_prefix_command(command)
-    completed = subprocess.run(
-        command,
-        cwd=target.command_cwd,
-        env={**os.environ, **_directory_item_command_env(item, target=target)},
-        shell=True,
-        executable="/bin/sh",
-        capture_output=True,
-        check=False,
+    result = current_command_runtime().run(
+        CommandRequest(
+            command=ShellCommand(command),
+            cwd=target.command_cwd,
+            env=_directory_item_command_env(item, target=target),
+            elevation="root" if needs_sudo_for_read(item.live_path) else "none",
+        )
     )
-    if completed.returncode != 0:
-        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
-        raise ValueError(stderr or f"review projection command exited with status {completed.returncode}")
-    return completed.stdout
+    raise_for_command_interruption(result)
+    if result.exit_code != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(stderr or f"review projection command exited with status {result.exit_code}")
+    return result.stdout
 
 
 def _directory_item_command_env(item, *, target) -> dict[str, str]:
@@ -712,16 +705,16 @@ def _select_review_pager_command() -> str | None:
 def _git_configured_pager_command() -> str | None:
     for key in ("pager.diff", "core.pager"):
         try:
-            completed = subprocess.run(
-                ["git", "config", "--get", key],
-                check=False,
-                capture_output=True,
-                text=True,
+            result = current_command_runtime().run(
+                CommandRequest(
+                    command=ArgvCommand(("git", "config", "--get", key)),
+                )
             )
         except FileNotFoundError:
             return None
-        if completed.returncode == 0:
-            pager = completed.stdout.strip()
+        raise_for_command_interruption(result)
+        if result.exit_code == 0:
+            pager = result.stdout_text.strip()
             if pager:
                 return pager
     return None

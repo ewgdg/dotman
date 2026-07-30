@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 from contextlib import contextmanager
+from contextvars import copy_context
 from pathlib import Path
 from typing import Iterator
 
@@ -46,7 +47,14 @@ class ElevationBroker:
             server.close()
             raise
         self._server = server
-        self._thread = threading.Thread(target=self._serve, daemon=True)
+        # ContextVars do not cross thread boundaries; broker authentication
+        # must retain the command runtime active when this broker starts.
+        request_context = copy_context()
+        self._thread = threading.Thread(
+            target=request_context.run,
+            args=(self._serve,),
+            daemon=True,
+        )
         self._thread.start()
 
     def close(self) -> None:
@@ -85,7 +93,10 @@ class ElevationBroker:
         self._shim_dir.mkdir(exist_ok=True)
         shim_path = self._shim_dir / "sudo"
         if not shim_path.exists():
-            shim_path.write_text(_SUDO_SHIM_SOURCE, encoding="utf-8")
+            shim_path.write_text(
+                f"#!{sys.executable}\n{_SUDO_SHIM_BODY}",
+                encoding="utf-8",
+            )
             shim_path.chmod(shim_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         current_path = os.environ.get("PATH", "")
         return {
@@ -102,7 +113,14 @@ class ElevationBroker:
                 continue
             except OSError:
                 break
-            threading.Thread(target=self._handle_connection, args=(connection,), daemon=True).start()
+            # Each connection adds another thread boundary, so propagate the
+            # broker thread's captured runtime context into its handler too.
+            connection_context = copy_context()
+            threading.Thread(
+                target=connection_context.run,
+                args=(self._handle_connection, connection),
+                daemon=True,
+            ).start()
 
     def _handle_connection(self, connection: socket.socket) -> None:
         with connection:
@@ -128,13 +146,14 @@ class ElevationBroker:
             raise PermissionError("elevation broker rejected request from unexpected uid")
 
 
-_SUDO_SHIM_SOURCE = """#!/usr/bin/env python3
-from __future__ import annotations
+_SUDO_SHIM_BODY = """from __future__ import annotations
 
 import json
 import os
 import socket
 import sys
+
+from dotman.command_runtime import ArgvCommand, CommandRequest, ProductionCommandRuntime
 
 broker = os.environ.get("DOTMAN_ELEVATION_BROKER")
 real_sudo = os.environ.get("DOTMAN_REAL_SUDO")
@@ -166,7 +185,13 @@ if not payload.get("ok"):
     print(f"dotman sudo shim: elevation broker denied request: {payload.get('error', 'unknown error')}", file=sys.stderr)
     raise SystemExit(1)
 
-os.execv(real_sudo, [real_sudo, "-n", *sys.argv[1:]])
+result = ProductionCommandRuntime().run(
+    CommandRequest(
+        command=ArgvCommand((real_sudo, "-n", *sys.argv[1:])),
+        io="tty",
+    )
+)
+raise SystemExit(result.exit_code)
 """
 
 

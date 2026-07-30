@@ -51,3 +51,7 @@ _Avoid_: Push, transform
 **Capture**:
 Reverse projection from live representation toward repository representation.
 _Avoid_: Pull, transform
+
+**Command Runtime**:
+The internal typed boundary that launches commands and owns environment construction, pipe or terminal I/O, elevation, streaming, and interruption normalization. Callers retain the meaning of command exit statuses.
+_Avoid_: Hook runner, subprocess helper

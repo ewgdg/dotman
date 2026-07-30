@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import io
-import contextlib
-import signal
 import stat
 from dataclasses import replace
 from pathlib import Path
+from threading import Thread
 from types import SimpleNamespace
 
 import pytest
 
 import dotman.execution as execution
-from dotman import file_access
+from dotman import command_runtime as command_runtime_module, file_access
+from dotman.command_runtime import CommandResult, MemoryCommandRuntime, ShellCommand, command_runtime_session
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
 from dotman.models import DirectoryPlanItem, HookCommandSpec, HookPlan, OperationPlan, TargetPlan
@@ -436,18 +435,21 @@ def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
     )
     session = build_execution_session(operation_plan, operation="push")
 
-    recorded_envs: dict[str, dict[str, str]] = {}
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=0)] * 3)
 
-    def fake_run_command(*, command, cwd, env, stream_output, interactive, elevation="none"):
-        assert env is not None
-        recorded_envs[command] = dict(env)
-        return 0, "", ""
-
-    monkeypatch.setattr("dotman.execution._run_command", fake_run_command)
-
-    result = execute_session(session, stream_output=False, assume_yes=assume_yes)
+    result = execute_session(
+        session,
+        stream_output=False,
+        assume_yes=assume_yes,
+        command_runtime=runtime,
+    )
 
     assert result.status == "ok"
+    recorded_envs = {
+        request.command.source: dict(request.env)
+        for request in runtime.requests
+        if isinstance(request.command, ShellCommand)
+    }
     assert recorded_envs["echo repo guard"]["DOTMAN_ASSUME_YES"] == expected_value
     assert recorded_envs["echo repo guard"]["EXISTING_REPO_ENV"] == "repo"
     assert recorded_envs["echo package guard"]["DOTMAN_ASSUME_YES"] == expected_value
@@ -465,15 +467,12 @@ def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
 
 
 def test_execute_session_target_guard_skip_continues_next_target(monkeypatch, tmp_path: Path) -> None:
-    recorded: list[str] = []
+    def fake_run(request):
+        if request.command == ShellCommand("exit 100"):
+            return CommandResult(exit_code=100)
+        return CommandResult(exit_code=0)
 
-    def fake_run_command(**kwargs):
-        recorded.append(kwargs["command"])
-        if kwargs["command"] == "exit 100":
-            return 100, "", ""
-        return 0, "", ""
-
-    monkeypatch.setattr(execution, "_run_command", fake_run_command)
+    runtime = MemoryCommandRuntime([fake_run] * 3)
     monkeypatch.setattr(execution, "_execute_target_step", lambda step: None)
 
     plan = make_package_plan(
@@ -516,20 +515,22 @@ def test_execute_session_target_guard_skip_continues_next_target(monkeypatch, tm
         ],
     )
 
-    result = execute_session(build_execution_session([plan], operation="push"), stream_output=False)
+    result = execute_session(
+        build_execution_session([plan], operation="push"),
+        stream_output=False,
+        command_runtime=runtime,
+    )
 
     assert result.status == "ok"
-    assert recorded == ["exit 100", "echo beta guard", "echo beta pre"]
+    assert [request.command.source for request in runtime.requests] == [
+        "exit 100",
+        "echo beta guard",
+        "echo beta pre",
+    ]
 
 
 def test_execute_session_marks_only_tty_hook_commands_interactive(monkeypatch) -> None:
-    recorded: list[tuple[str, bool]] = []
-
-    def fake_run_command(*, command, cwd, env, stream_output, interactive, elevation="none"):
-        recorded.append((command, interactive))
-        return 0, "", ""
-
-    monkeypatch.setattr(execution, "_run_command", fake_run_command)
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=0)] * 2)
     monkeypatch.setattr(execution, "_execute_target_step", lambda step: None)
     monkeypatch.setattr(execution, "_require_interactive_terminal_for_hook", lambda: None)
 
@@ -548,10 +549,17 @@ def test_execute_session_marks_only_tty_hook_commands_interactive(monkeypatch) -
         target_plans=[],
     )
 
-    result = execute_session(build_execution_session([plan], operation="push"), stream_output=False)
+    result = execute_session(
+        build_execution_session([plan], operation="push"),
+        stream_output=False,
+        command_runtime=runtime,
+    )
 
     assert result.status == "ok"
-    assert recorded == [("echo pipe", False), ("echo tty", True)]
+    assert [(request.command.source, request.io) for request in runtime.requests] == [
+        ("echo pipe", "pipe"),
+        ("echo tty", "tty"),
+    ]
 
 
 
@@ -885,24 +893,22 @@ def test_execute_session_soft_skips_push_package_on_guard_exit_100_and_continues
     )
     session = build_execution_session([alpha_plan, beta_plan], operation="push")
 
-    recorded_commands: list[str] = []
-
-    def fake_run_command(*, command, cwd, env, stream_output, interactive, elevation="none"):
-        recorded_commands.append(command)
+    def fake_run(request):
+        command = request.command.source
         stdout_by_command = {
-            "echo alpha guard 1": (100, "alpha guard 1\n", ""),
-            "echo alpha guard 2": (0, "alpha guard 2\n", ""),
-            "echo beta guard": (0, "beta guard\n", ""),
-            "echo beta pre": (0, "beta pre\n", ""),
-            "echo beta post": (0, "beta post\n", ""),
+            "echo alpha guard 1": CommandResult(exit_code=100, stdout=b"alpha guard 1\n"),
+            "echo alpha guard 2": CommandResult(exit_code=0, stdout=b"alpha guard 2\n"),
+            "echo beta guard": CommandResult(exit_code=0, stdout=b"beta guard\n"),
+            "echo beta pre": CommandResult(exit_code=0, stdout=b"beta pre\n"),
+            "echo beta post": CommandResult(exit_code=0, stdout=b"beta post\n"),
         }
         if command not in stdout_by_command:
             raise AssertionError(f"unexpected command: {command}")
         return stdout_by_command[command]
 
-    monkeypatch.setattr("dotman.execution._run_command", fake_run_command)
+    runtime = MemoryCommandRuntime([fake_run] * 4)
 
-    result = execute_session(session, stream_output=False)
+    result = execute_session(session, stream_output=False, command_runtime=runtime)
 
     assert result.status == "ok"
     alpha_result, beta_result = result.packages
@@ -911,6 +917,7 @@ def test_execute_session_soft_skips_push_package_on_guard_exit_100_and_continues
     assert [step.status for step in alpha_result.steps] == ["skipped", "skipped", "skipped", "skipped", "skipped"]
     assert alpha_result.steps[0].skip_reason == "guard"
     assert alpha_result.steps[1].skip_reason == "guard"
+    recorded_commands = [request.command.source for request in runtime.requests]
     assert "echo alpha guard 2" not in recorded_commands
     assert "echo alpha pre" not in recorded_commands
     assert "echo alpha post" not in recorded_commands
@@ -996,24 +1003,22 @@ def test_execute_session_soft_skips_pull_package_on_guard_exit_100_and_continues
     )
     session = build_execution_session([alpha_plan, beta_plan], operation="pull")
 
-    recorded_commands: list[str] = []
-
-    def fake_run_command(*, command, cwd, env, stream_output, interactive, elevation="none"):
-        recorded_commands.append(command)
+    def fake_run(request):
+        command = request.command.source
         stdout_by_command = {
-            "echo alpha guard 1": (100, "alpha guard 1\n", ""),
-            "echo alpha guard 2": (0, "alpha guard 2\n", ""),
-            "echo beta guard": (0, "beta guard\n", ""),
-            "echo beta pre": (0, "beta pre\n", ""),
-            "echo beta post": (0, "beta post\n", ""),
+            "echo alpha guard 1": CommandResult(exit_code=100, stdout=b"alpha guard 1\n"),
+            "echo alpha guard 2": CommandResult(exit_code=0, stdout=b"alpha guard 2\n"),
+            "echo beta guard": CommandResult(exit_code=0, stdout=b"beta guard\n"),
+            "echo beta pre": CommandResult(exit_code=0, stdout=b"beta pre\n"),
+            "echo beta post": CommandResult(exit_code=0, stdout=b"beta post\n"),
         }
         if command not in stdout_by_command:
             raise AssertionError(f"unexpected command: {command}")
         return stdout_by_command[command]
 
-    monkeypatch.setattr("dotman.execution._run_command", fake_run_command)
+    runtime = MemoryCommandRuntime([fake_run] * 4)
 
-    result = execute_session(session, stream_output=False)
+    result = execute_session(session, stream_output=False, command_runtime=runtime)
 
     assert result.status == "ok"
     alpha_result, beta_result = result.packages
@@ -1022,6 +1027,7 @@ def test_execute_session_soft_skips_pull_package_on_guard_exit_100_and_continues
     assert [step.status for step in alpha_result.steps] == ["skipped", "skipped", "skipped", "skipped", "skipped"]
     assert alpha_result.steps[0].skip_reason == "guard"
     assert alpha_result.steps[1].skip_reason == "guard"
+    recorded_commands = [request.command.source for request in runtime.requests]
     assert "echo alpha guard 2" not in recorded_commands
     assert "echo alpha pre" not in recorded_commands
     assert "echo alpha post" not in recorded_commands
@@ -1208,39 +1214,23 @@ def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
     )
     session = build_execution_session([plan], operation="pull")
 
-    recorded: dict[str, object] = {}
-
-    class FakeProcess:
-        pid = 12345
-
-        def wait(self):
-            return 0
-
-    def fake_popen(command: str, **kwargs):
-        recorded["command"] = command
-        recorded["kwargs"] = kwargs
-        return FakeProcess()
-
-    monkeypatch.setattr("dotman.execution.subprocess.Popen", fake_popen)
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=0)])
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.setattr("sys.stderr.isatty", lambda: True)
 
-    result = execute_session(session, stream_output=True)
+    result = execute_session(session, stream_output=True, command_runtime=runtime)
 
     assert result.status == "ok"
     assert result.packages[0].steps[0].step.action == "reconcile"
-    assert recorded["command"] == (
+    request = runtime.requests[0]
+    assert request.command == ShellCommand(
         'dotman reconcile editor --repo-path "$DOTMAN_REPO_PATH" --live-path "$DOTMAN_LIVE_PATH"'
     )
-    assert recorded["kwargs"]["cwd"] is None
-    assert recorded["kwargs"]["shell"] is True
-    assert recorded["kwargs"]["executable"] == "/bin/sh"
-    assert "stdin" not in recorded["kwargs"]
-    assert "stdout" not in recorded["kwargs"]
-    assert "stderr" not in recorded["kwargs"]
-    assert recorded["kwargs"]["env"]["DOTMAN_REPO_PATH"] == str(repo_path)
-    assert recorded["kwargs"]["env"]["DOTMAN_LIVE_PATH"] == str(live_path)
+    assert request.cwd is None
+    assert request.io == "tty"
+    assert request.env["DOTMAN_REPO_PATH"] == str(repo_path)
+    assert request.env["DOTMAN_LIVE_PATH"] == str(live_path)
 
 
 def test_execute_session_runs_builtin_jinja_reconcile_helper(
@@ -1370,10 +1360,7 @@ def test_execute_session_fails_tty_hook_without_terminal(
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     monkeypatch.setattr("sys.stderr.isatty", lambda: False)
-    monkeypatch.setattr(
-        "dotman.execution._run_command",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("tty hook should fail before spawning command")),
-    )
+    runtime = MemoryCommandRuntime()
 
     plan = make_package_plan(
         operation="push",
@@ -1390,291 +1377,64 @@ def test_execute_session_fails_tty_hook_without_terminal(
     )
     session = build_execution_session([plan], operation="push")
 
-    result = execute_session(session, stream_output=False)
+    result = execute_session(session, stream_output=False, command_runtime=runtime)
 
     assert result.status == "failed"
     assert result.packages[0].steps[0].error == "hook command io 'tty' requires an interactive terminal"
+    assert runtime.requests == []
 
 
 
-def test_run_command_interactive_uses_terminal_runner_without_pipes(monkeypatch) -> None:
-    recorded: dict[str, object] = {}
-
-    class FakeProcess:
-        pid = 12345
-
-        def wait(self):
-            return 0
-
-    def fake_popen(command: str, **kwargs):
-        recorded["command"] = command
-        recorded["kwargs"] = kwargs
-        return FakeProcess()
-
-    events: list[str] = []
-
-    class FakePreserveTerminalState:
-        def __enter__(self):
-            events.append("enter")
-
-        def __exit__(self, exc_type, exc, traceback):
-            events.append("exit")
-
-    monkeypatch.setattr("dotman.execution.subprocess.Popen", fake_popen)
-    monkeypatch.setattr("dotman.execution.preserve_terminal_state", lambda: FakePreserveTerminalState())
-
-    exit_code, stdout, stderr = execution._run_command(
-        command="printf 'tty\\n'",
-        cwd=None,
-        env={"X": "1"},
-        stream_output=False,
-        interactive=True,
+@pytest.mark.parametrize("interactive", [False, True])
+def test_execute_session_translates_hook_options_to_runtime_request(
+    interactive: bool,
+    monkeypatch,
+) -> None:
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=7, stdout=b"out", stderr=b"err")])
+    monkeypatch.setattr(execution, "request_sudo", lambda reason=None: None)
+    monkeypatch.setattr(execution, "_require_interactive_terminal_for_hook", lambda: None)
+    plan = make_package_plan(
+        operation="push",
+        repo_name="fixture",
+        package_id="app",
+        requested_profile="default",
+        variables={},
+        hooks={
+            "pre_push": [
+                HookPlan(
+                    package_id="app",
+                    hook_name="pre_push",
+                    command="printf result",
+                    cwd=Path("/command-cwd"),
+                    env={"X": "1"},
+                    io="tty" if interactive else "pipe",
+                    elevation="lease",
+                )
+            ]
+        },
+        target_plans=[],
     )
 
-    assert (exit_code, stdout, stderr) == (0, "", "")
-    assert recorded["command"] == "printf 'tty\\n'"
-    assert recorded["kwargs"]["cwd"] is None
-    assert recorded["kwargs"]["shell"] is True
-    assert recorded["kwargs"]["executable"] == "/bin/sh"
-    assert recorded["kwargs"]["env"]["X"] == "1"
-    assert "stdin" not in recorded["kwargs"]
-    assert "stdout" not in recorded["kwargs"]
-    assert "stderr" not in recorded["kwargs"]
-    assert events == ["enter", "exit"]
-
-
-def test_run_command_pipe_uses_devnull_stdin_and_preserves_terminal(monkeypatch) -> None:
-    recorded: dict[str, object] = {}
-    events: list[str] = []
-
-    class FakePreserveTerminalState:
-        def __enter__(self):
-            events.append("enter")
-
-        def __exit__(self, exc_type, exc, traceback):
-            events.append("exit")
-
-    class FakeProcess:
-        pid = 12345
-        stdout = io.StringIO("out\n")
-        stderr = io.StringIO("err\n")
-
-        def wait(self):
-            return 0
-
-    def fake_popen(command: str, **kwargs):
-        recorded["command"] = command
-        recorded["kwargs"] = kwargs
-        return FakeProcess()
-
-    monkeypatch.setattr("dotman.execution.subprocess.Popen", fake_popen)
-    monkeypatch.setattr("dotman.execution.preserve_terminal_state", lambda: FakePreserveTerminalState())
-
-    exit_code, stdout, stderr = execution._run_command(
-        command="printf 'pipe\n'",
-        cwd=None,
-        env={},
-        stream_output=False,
-        interactive=False,
+    result = execute_session(
+        build_execution_session([plan], operation="push"),
+        stream_output=not interactive,
+        command_runtime=runtime,
     )
 
-    assert (exit_code, stdout, stderr) == (0, "out\n", "err\n")
-    kwargs = recorded["kwargs"]
-    assert kwargs["stdin"] is execution.subprocess.DEVNULL
-    assert kwargs["stdout"] is execution.subprocess.PIPE
-    assert kwargs["stderr"] is execution.subprocess.PIPE
-    assert kwargs["start_new_session"] is True
-    assert events == ["enter", "exit"]
+    assert result.status == "failed"
+    assert result.packages[0].steps[0].stdout == "out"
+    assert result.packages[0].steps[0].stderr == "err"
+    request = runtime.requests[0]
+    assert request.command == ShellCommand("printf result")
+    assert request.cwd == Path("/command-cwd")
+    assert request.env["X"] == "1"
+    assert request.io == ("tty" if interactive else "pipe")
+    assert request.stream_output is (not interactive)
+    assert request.elevation == "lease"
 
 
-def test_run_command_root_elevation_requests_sudo_and_prefixes_command(monkeypatch) -> None:
-    recorded: dict[str, object] = {"sudo_reasons": []}
-
-    class FakeProcess:
-        pid = 12345
-        stdout = io.StringIO("")
-        stderr = io.StringIO("")
-
-        def wait(self):
-            return 0
-
-    monkeypatch.setattr("dotman.execution.os.geteuid", lambda: 1000)
-    monkeypatch.setattr("dotman.execution.request_sudo", lambda reason=None: recorded["sudo_reasons"].append(reason))
-    monkeypatch.setattr("dotman.execution.sudo_prefix_command", lambda command: f"SUDO({command})")
-    monkeypatch.setattr("dotman.execution.subprocess.Popen", lambda command, **kwargs: recorded.update({"command": command, "kwargs": kwargs}) or FakeProcess())
-    monkeypatch.setattr("dotman.execution.preserve_terminal_state", lambda: contextlib.nullcontext())
-
-    exit_code, stdout, stderr = execution._run_command(
-        command="systemctl restart sddm",
-        cwd=None,
-        env={},
-        stream_output=False,
-        interactive=False,
-        elevation="root",
-    )
-
-    assert (exit_code, stdout, stderr) == (0, "", "")
-    assert recorded["sudo_reasons"] == ["run privileged command"]
-    assert recorded["command"] == "SUDO(systemctl restart sddm)"
-    assert recorded["kwargs"]["stdin"] is execution.subprocess.DEVNULL
-    assert recorded["kwargs"]["stdout"] is execution.subprocess.PIPE
-    assert recorded["kwargs"]["stderr"] is execution.subprocess.PIPE
-    assert "start_new_session" not in recorded["kwargs"]
-
-
-def test_run_command_lease_elevation_requests_sudo_without_prefix(monkeypatch) -> None:
-    recorded: dict[str, object] = {"sudo_reasons": []}
-
-    class FakeProcess:
-        pid = 12345
-        stdout = io.StringIO("")
-        stderr = io.StringIO("")
-
-        def wait(self):
-            return 0
-
-    monkeypatch.setattr("dotman.execution.os.geteuid", lambda: 1000)
-    monkeypatch.setattr("dotman.execution.request_sudo", lambda reason=None: recorded["sudo_reasons"].append(reason))
-    monkeypatch.setattr("dotman.execution.sudo_prefix_command", lambda command: f"SUDO({command})")
-    monkeypatch.setattr("dotman.execution.subprocess.Popen", lambda command, **kwargs: recorded.update({"command": command, "kwargs": kwargs}) or FakeProcess())
-    monkeypatch.setattr("dotman.execution.preserve_terminal_state", lambda: contextlib.nullcontext())
-
-    execution._run_command(
-        command="sh maybe-sudo-later.sh",
-        cwd=None,
-        env={},
-        stream_output=False,
-        interactive=False,
-        elevation="lease",
-    )
-
-    assert recorded["sudo_reasons"] == ["run privileged command"]
-    assert recorded["command"] == "sh maybe-sudo-later.sh"
-    assert "start_new_session" not in recorded["kwargs"]
-
-
-@pytest.mark.parametrize("elevation", ["broker", "intercept"])
-def test_run_command_broker_elevations_inject_broker_env_without_sudo(monkeypatch, elevation: str) -> None:
-    recorded: dict[str, object] = {}
-
-    class FakeBroker:
-        def env(self, *, reason=None, intercept=False):
-            recorded["broker_reason"] = reason
-            recorded["broker_intercept"] = intercept
-            return {"DOTMAN_ELEVATION_BROKER": "/tmp/broker.sock", "PATH": "/shim:/usr/bin"} if intercept else {"DOTMAN_ELEVATION_BROKER": "/tmp/broker.sock"}
-
-    class FakeProcess:
-        pid = 12345
-        stdout = io.StringIO("")
-        stderr = io.StringIO("")
-
-        def wait(self):
-            return 0
-
-    monkeypatch.setattr("dotman.execution.request_sudo", lambda reason=None: pytest.fail(f"unexpected sudo request: {reason}"))
-    monkeypatch.setattr("dotman.execution.current_elevation_broker", lambda: FakeBroker())
-    monkeypatch.setattr("dotman.execution.subprocess.Popen", lambda command, **kwargs: recorded.update({"env": kwargs["env"], "kwargs": kwargs}) or FakeProcess())
-    monkeypatch.setattr("dotman.execution.preserve_terminal_state", lambda: contextlib.nullcontext())
-
-    execution._run_command(
-        command="sh installer.sh",
-        cwd=None,
-        env={"EXISTING": "1"},
-        stream_output=False,
-        interactive=False,
-        elevation=elevation,
-    )
-
-    assert recorded["broker_reason"] == "run privileged command"
-    assert recorded["broker_intercept"] is (elevation == "intercept")
-    assert recorded["env"]["EXISTING"] == "1"
-    assert recorded["env"]["DOTMAN_ELEVATION_BROKER"] == "/tmp/broker.sock"
-    assert recorded["kwargs"]["stdin"] is execution.subprocess.DEVNULL
-    assert recorded["kwargs"]["stdout"] is execution.subprocess.PIPE
-    assert recorded["kwargs"]["stderr"] is execution.subprocess.PIPE
-    assert "start_new_session" not in recorded["kwargs"]
-    if elevation == "intercept":
-        assert recorded["env"]["PATH"] == "/shim:/usr/bin"
-
-
-def test_run_command_pipe_interrupts_process_group_before_reraising(monkeypatch) -> None:
-    killed: list[tuple[int, int]] = []
-
-    class FakeProcess:
-        pid = 12345
-        stdout = io.StringIO("")
-        stderr = io.StringIO("")
-
-        def __init__(self):
-            self.wait_calls = 0
-
-        def wait(self, timeout=None):
-            self.wait_calls += 1
-            if self.wait_calls == 1:
-                raise KeyboardInterrupt
-            return -signal.SIGINT
-
-    fake_process = FakeProcess()
-
-    monkeypatch.setattr("dotman.execution.subprocess.Popen", lambda *args, **kwargs: fake_process)
-    monkeypatch.setattr("dotman.execution.os.killpg", lambda pid, sig: killed.append((pid, sig)))
-
-    with pytest.raises(KeyboardInterrupt):
-        execution._run_command(
-            command="sleep 30",
-            cwd=None,
-            env={},
-            stream_output=False,
-            interactive=False,
-        )
-
-    assert killed == [(12345, signal.SIGINT)]
-
-
-def test_run_command_elevated_pipe_interrupt_terminates_child_without_process_group(monkeypatch) -> None:
-    killed: list[tuple[int, int]] = []
-    terminated: list[str] = []
-
-    class FakeProcess:
-        pid = 12345
-        stdout = io.StringIO("")
-        stderr = io.StringIO("")
-
-        def __init__(self):
-            self.wait_calls = 0
-
-        def wait(self, timeout=None):
-            self.wait_calls += 1
-            if self.wait_calls == 1:
-                raise KeyboardInterrupt
-            return -signal.SIGINT
-
-        def terminate(self):
-            terminated.append("terminate")
-
-    fake_process = FakeProcess()
-
-    monkeypatch.setattr("dotman.execution.os.geteuid", lambda: 0)
-    monkeypatch.setattr("dotman.execution.subprocess.Popen", lambda *args, **kwargs: fake_process)
-    monkeypatch.setattr("dotman.execution.os.killpg", lambda pid, sig: killed.append((pid, sig)))
-
-    with pytest.raises(KeyboardInterrupt):
-        execution._run_command(
-            command="sudo true",
-            cwd=None,
-            env={},
-            stream_output=False,
-            interactive=False,
-            elevation="root",
-        )
-
-    assert terminated == ["terminate"]
-    assert killed == []
-
-
-def test_execute_session_marks_command_exit_130_as_interrupted(monkeypatch) -> None:
-    monkeypatch.setattr("dotman.execution._run_command", lambda **kwargs: (130, "", ""))
-
+def test_execute_session_marks_command_exit_130_as_interrupted() -> None:
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=130)])
     plan = make_package_plan(
         operation="push",
         repo_name="fixture",
@@ -1689,7 +1449,11 @@ def test_execute_session_marks_command_exit_130_as_interrupted(monkeypatch) -> N
         target_plans=[],
     )
 
-    result = execute_session(build_execution_session([plan], operation="push"), stream_output=False)
+    result = execute_session(
+        build_execution_session([plan], operation="push"),
+        stream_output=False,
+        command_runtime=runtime,
+    )
 
     assert result.status == "interrupted"
     assert result.exit_code == 130
@@ -1962,19 +1726,18 @@ def test_execute_session_keeps_hooks_unprivileged_when_target_step_needs_sudo(
         "dotman.execution.request_sudo",
         lambda reason=None: recorded_events.append((f"sudo:{reason}", True)),
     )
-    monkeypatch.setattr(
-        "dotman.execution._run_command",
-        lambda *, command, cwd, env, stream_output, interactive, elevation="none": (
-            recorded_events.append((command, elevation))
-            or (0, "", "")
-        ),
-    )
+
+    def record_command(request):
+        recorded_events.append((request.command.source, request.elevation))
+        return CommandResult(exit_code=0)
+
+    runtime = MemoryCommandRuntime([record_command] * 3)
     monkeypatch.setattr(
         "dotman.execution._execute_target_step",
         lambda step: recorded_events.append((step.action, step.privileged)),
     )
 
-    result = execute_session(session, stream_output=False)
+    result = execute_session(session, stream_output=False, command_runtime=runtime)
 
     assert result.status == "ok"
     assert ("sudo:write protected path: /etc/sddm.conf", True) in recorded_events
@@ -2022,31 +1785,18 @@ def test_read_bytes_uses_sudo_when_direct_read_is_denied(tmp_path: Path, monkeyp
     target_path.write_text("payload\n", encoding="utf-8")
     target_path.chmod(0o000)
 
-    def fake_run(command, *args, **kwargs):
-        if command[:2] == ["sudo", "-v"]:
-            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
-        if command[:3] == ["sudo", "-n", "/bin/cat"]:
-            assert command[3] == str(target_path)
-            return SimpleNamespace(returncode=0, stdout=b"payload\n", stderr=b"")
-        if command[:3] == ["sudo", "-n", "true"]:
-            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
-        raise AssertionError(f"unexpected sudo command: {command}")
-
-    monkeypatch.setattr(file_access.subprocess, "run", fake_run)
+    runtime = MemoryCommandRuntime(
+        [CommandResult(exit_code=0), CommandResult(exit_code=0, stdout=b"payload\n")]
+    )
+    monkeypatch.setattr(file_access, "current_command_runtime", lambda: runtime)
 
     with file_access.sudo_session():
         assert file_access.read_bytes(target_path) == b"payload\n"
 
 
 def test_request_sudo_emits_user_facing_reason_only_when_password_prompt_is_needed(monkeypatch, capsys) -> None:
-    def fake_run(command, *args, **kwargs):
-        if command[:2] == ["sudo", "-v"]:
-            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
-        if command[:3] == ["sudo", "-n", "true"]:
-            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
-        raise AssertionError(f"unexpected sudo command: {command}")
-
-    monkeypatch.setattr(file_access.subprocess, "run", fake_run)
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=0), CommandResult(exit_code=0)])
+    monkeypatch.setattr(file_access, "current_command_runtime", lambda: runtime)
 
     with file_access.sudo_session():
         file_access.request_sudo("list protected directory: /etc/sddm.conf.d")
@@ -2058,16 +1808,10 @@ def test_request_sudo_emits_user_facing_reason_only_when_password_prompt_is_need
 
 
 def test_request_sudo_emits_user_facing_reason_again_when_cached_lease_expires(monkeypatch, capsys) -> None:
-    keepalive_checks = iter((1,))
-
-    def fake_run(command, *args, **kwargs):
-        if command[:2] == ["sudo", "-v"]:
-            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
-        if command[:3] == ["sudo", "-n", "true"]:
-            return SimpleNamespace(returncode=next(keepalive_checks), stdout=b"", stderr=b"")
-        raise AssertionError(f"unexpected sudo command: {command}")
-
-    monkeypatch.setattr(file_access.subprocess, "run", fake_run)
+    runtime = MemoryCommandRuntime(
+        [CommandResult(exit_code=0), CommandResult(exit_code=1), CommandResult(exit_code=0)]
+    )
+    monkeypatch.setattr(file_access, "current_command_runtime", lambda: runtime)
 
     with file_access.sudo_session():
         file_access.request_sudo("list protected directory: /etc/sddm.conf.d")
@@ -2078,6 +1822,38 @@ def test_request_sudo_emits_user_facing_reason_again_when_cached_lease_expires(m
         "[sudo] password required to list protected directory: /etc/sddm.conf.d\n"
         "[sudo] password required to write protected path: /etc/sddm.conf\n"
     )
+
+
+def test_request_sudo_preserves_authentication_interruption(monkeypatch) -> None:
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=130)])
+    monkeypatch.setattr(file_access, "current_command_runtime", lambda: runtime)
+
+    with file_access.sudo_session(), pytest.raises(KeyboardInterrupt):
+        file_access.request_sudo("write protected path")
+
+
+def test_sudo_lease_keepalive_uses_runtime_captured_on_creation(monkeypatch) -> None:
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=0)])
+    default_runtime_requests = []
+    monkeypatch.setattr(
+        command_runtime_module.DEFAULT_COMMAND_RUNTIME,
+        "run",
+        lambda request: default_runtime_requests.append(request) or CommandResult(exit_code=0),
+    )
+
+    with command_runtime_session(runtime):
+        lease = file_access._SudoLease()
+
+    wait_results = iter((False, True))
+    lease._stop_event = SimpleNamespace(wait=lambda timeout: next(wait_results))
+    keepalive_thread = Thread(target=lease._keepalive_loop)
+    keepalive_thread.start()
+    keepalive_thread.join()
+
+    assert [request.command.arguments for request in runtime.requests] == [
+        ("sudo", "-n", "true")
+    ]
+    assert default_runtime_requests == []
 
 
 def test_restore_repo_path_access_adds_owner_write_bits_for_repo_files_and_dirs(
@@ -2148,42 +1924,16 @@ def test_execute_session_keeps_batch_reconcile_on_piped_command_path(
     )
     session = build_execution_session([plan], operation="pull")
 
-    recorded: dict[str, object] = {}
+    runtime = MemoryCommandRuntime(
+        [CommandResult(exit_code=0, stdout=b"batch reconcile\n")]
+    )
 
-    class FakeStream:
-        def __init__(self, lines: list[str]) -> None:
-            self._lines = iter(lines)
-
-        def readline(self) -> str:
-            return next(self._lines, "")
-
-        def close(self) -> None:
-            return None
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.stdout = FakeStream(["batch reconcile\n"])
-            self.stderr = FakeStream([])
-
-        def wait(self) -> int:
-            return 0
-
-    def fake_popen(command: str, **kwargs):
-        recorded["command"] = command
-        recorded["kwargs"] = kwargs
-        return FakeProcess()
-
-    def fake_run(*args, **kwargs):  # pragma: no cover - the assertion is the test.
-        raise AssertionError("batch reconcile should not use terminal passthrough")
-
-    monkeypatch.setattr("dotman.execution.subprocess.Popen", fake_popen)
-    monkeypatch.setattr("dotman.execution.subprocess.run", fake_run)
-
-    result = execute_session(session, stream_output=True)
+    result = execute_session(session, stream_output=True, command_runtime=runtime)
 
     assert result.status == "ok"
     assert result.packages[0].steps[0].stdout == "batch reconcile\n"
-    assert recorded["command"] == "printf 'batch reconcile\\n'"
+    assert runtime.requests[0].command == ShellCommand("printf 'batch reconcile\\n'")
+    assert runtime.requests[0].io == "pipe"
 
 
 def test_execute_session_runs_custom_reconcile_without_auto_sudo(
@@ -2222,34 +1972,19 @@ def test_execute_session_runs_custom_reconcile_without_auto_sudo(
     monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: True)
     session = build_execution_session([plan], operation="pull")
 
-    recorded: dict[str, object] = {}
-
     monkeypatch.setattr(
         "dotman.execution.request_sudo",
         lambda reason=None: (_ for _ in ()).throw(AssertionError(f"unexpected sudo request: {reason}")),
     )
-    monkeypatch.setattr(
-        "dotman.execution._run_command",
-        lambda *, command, cwd, env, stream_output, interactive, elevation="none": (
-            recorded.update(
-                {
-                    "command": command,
-                    "cwd": cwd,
-                    "env": env,
-                    "stream_output": stream_output,
-                    "interactive": interactive,
-                    "elevation": elevation,
-                }
-            )
-            or (0, "batch reconcile\n", "")
-        ),
+    runtime = MemoryCommandRuntime(
+        [CommandResult(exit_code=0, stdout=b"batch reconcile\n")]
     )
 
-    result = execute_session(session, stream_output=False)
+    result = execute_session(session, stream_output=False, command_runtime=runtime)
 
     assert result.status == "ok"
-    assert recorded["command"] == "printf 'batch reconcile\\n'"
-    assert recorded["elevation"] == "none"
+    assert runtime.requests[0].command == ShellCommand("printf 'batch reconcile\\n'")
+    assert runtime.requests[0].elevation == "none"
 
 
 def test_execute_session_uses_explicit_privileged_reconcile_reason_and_runner(
@@ -2287,25 +2022,22 @@ def test_execute_session_uses_explicit_privileged_reconcile_reason_and_runner(
     )
     session = build_execution_session([plan], operation="pull")
 
-    recorded: dict[str, object] = {"sudo_reasons": []}
+    sudo_reasons: list[str | None] = []
 
     monkeypatch.setattr(
         "dotman.execution.request_sudo",
-        lambda reason=None: recorded["sudo_reasons"].append(reason),
+        lambda reason=None: sudo_reasons.append(reason),
     )
-    monkeypatch.setattr(
-        "dotman.execution._run_command",
-        lambda *, command, cwd, env, stream_output, interactive, elevation="none": (
-            recorded.update({"command": command, "elevation": elevation}) or (0, "batch reconcile\n", "")
-        ),
+    runtime = MemoryCommandRuntime(
+        [CommandResult(exit_code=0, stdout=b"batch reconcile\n")]
     )
 
-    result = execute_session(session, stream_output=False)
+    result = execute_session(session, stream_output=False, command_runtime=runtime)
 
     assert result.status == "ok"
-    assert recorded["sudo_reasons"] == ["execute privileged reconcile for fixture:app.config"]
-    assert recorded["command"] == "printf 'batch reconcile\n'"
-    assert recorded["elevation"] == "root"
+    assert sudo_reasons == ["execute privileged reconcile for fixture:app.config"]
+    assert runtime.requests[0].command == ShellCommand("printf 'batch reconcile\n'")
+    assert runtime.requests[0].elevation == "root"
 
 
 
@@ -2351,21 +2083,21 @@ def test_execute_session_falls_back_to_reconcile_when_capture_fails(
 
     recorded: dict[str, object] = {}
 
-    def fake_run_command(*, command, cwd, env, stream_output, interactive, elevation="none"):
+    def fake_run(request):
+        command = request.command.source
         if command == "capture-command":
-            return capture_exit_code, "", "capture exploded"
+            return CommandResult(exit_code=capture_exit_code, stderr=b"capture exploded")
         if command == "reconcile-command":
-            assert env is not None
-            recorded["review_repo_text"] = Path(env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8")
-            recorded["review_live_text"] = Path(env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8")
-            recorded["reconcile_elevation"] = elevation
+            recorded["review_repo_text"] = Path(request.env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8")
+            recorded["review_live_text"] = Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8")
+            recorded["reconcile_elevation"] = request.elevation
             repo_path.write_text(live_path.read_text(encoding="utf-8"), encoding="utf-8")
-            return 0, "reconciled\n", ""
+            return CommandResult(exit_code=0, stdout=b"reconciled\n")
         raise AssertionError(f"unexpected command: {command}")
 
-    monkeypatch.setattr("dotman.execution._run_command", fake_run_command)
+    runtime = MemoryCommandRuntime([fake_run] * 2)
 
-    result = execute_session(session, stream_output=False)
+    result = execute_session(session, stream_output=False, command_runtime=runtime)
 
     assert result.status == "ok"
     assert result.packages[0].steps[0].step.action == "update_repo"

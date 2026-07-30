@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, OperationPlan, UiConfig, UiMenusConfig, TargetPlan
 from dotman.ui_context import ui_config_scope
 
@@ -891,15 +891,8 @@ def test_select_menu_option_with_prompt_renders_bottom_up_by_default(monkeypatch
 def test_select_menu_option_with_fzf_uses_structured_display_fields(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_run(command, *, input, text, capture_output, check):
-        captured["command"] = command
-        captured["input"] = input
-        captured["text"] = text
-        captured["capture_output"] = capture_output
-        captured["check"] = check
-        return subprocess.CompletedProcess(command, 0, stdout="2\n", stderr="")
-
-    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=0, stdout=b"2\n")])
+    monkeypatch.setattr(cli, "current_command_runtime", lambda: runtime)
     monkeypatch.setattr(cli, "ui_menus_bottom_up_enabled", lambda: True)
 
     selected_index = cli._select_menu_option_with_fzf(
@@ -911,6 +904,10 @@ def test_select_menu_option_with_fzf_uses_structured_display_fields(monkeypatch)
         ],
     )
 
+    request = runtime.requests[0]
+    assert isinstance(request.command, ArgvCommand)
+    captured["command"] = request.command.arguments
+    captured["input"] = request.input.decode("utf-8")
     assert selected_index == 1
     assert "--wrap" in captured["command"]
     assert "--with-nth=2.." in captured["command"]

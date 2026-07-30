@@ -4,6 +4,12 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from dotman.command_runtime import (
+    CommandRequest,
+    ShellCommand,
+    current_command_runtime,
+    raise_for_command_interruption,
+)
 from dotman.models import (
     GuardSkip,
     HookSpec,
@@ -101,8 +107,6 @@ def _run_planning_guard(
     target_name: str | None = None,
     path_rule_pattern: str | None = None,
 ) -> GuardSkip | None:
-    from dotman.execution import INTERRUPTED_EXIT_CODE, run_command
-
     for command_spec in guard_spec.commands:
         command = render_template_string(
             command_spec.run,
@@ -110,19 +114,21 @@ def _run_planning_guard(
             base_dir=guard_spec.declared_in,
             source_path=guard_spec.declared_in,
         ).strip()
-        exit_code, stdout, stderr = run_command(
-            command=command,
-            cwd=guard_spec.declared_in,
-            env=dict(env),
-            stream_output=False,
-            interactive=False,
-            elevation=command_spec.elevation,
-            excluded_env_keys=PLANNING_GUARD_EXCLUDED_ENV_KEYS,
+        result = current_command_runtime().run(
+            CommandRequest(
+                command=ShellCommand(command),
+                cwd=guard_spec.declared_in,
+                env=dict(env),
+                elevation=command_spec.elevation,
+                excluded_env_keys=PLANNING_GUARD_EXCLUDED_ENV_KEYS,
+            )
         )
+        raise_for_command_interruption(result)
+        exit_code = result.exit_code
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        stderr = result.stderr.decode("utf-8", errors="replace")
         if exit_code == 0:
             continue
-        if exit_code == INTERRUPTED_EXIT_CODE:
-            raise KeyboardInterrupt
         detail = _first_nonempty_output_line(stderr, stdout)
         if exit_code == 100:
             return GuardSkip(

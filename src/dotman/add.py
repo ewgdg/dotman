@@ -5,12 +5,12 @@ import json
 import os
 import shlex
 import stat
-import subprocess
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from dotman.atomic_files import write_text_atomic
+from dotman.command_runtime import ArgvCommand, CommandRequest, current_command_runtime
 from dotman.manifest import validate_package_id, validate_target_name
 from dotman.toml_utils import load_toml_text
 
@@ -327,12 +327,14 @@ def review_add_manifest(result: AddOperationResult) -> AddReviewResult | None:
         )
         review_path.chmod(0o444)
 
-        completed = subprocess.run(
-            [*editor_command, str(review_path), str(editable_path)],
-            check=False,
+        command_result = current_command_runtime().run(
+            CommandRequest(
+                command=ArgvCommand((*editor_command, str(review_path), str(editable_path))),
+                io="tty",
+            )
         )
         return AddReviewResult(
-            exit_code=completed.returncode,
+            exit_code=command_result.exit_code,
             manifest_text=editable_path.read_text(encoding="utf-8"),
         )
 

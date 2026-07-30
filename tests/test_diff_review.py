@@ -7,6 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from dotman.command_runtime import (
+    ArgvCommand,
+    CommandResult,
+    MemoryCommandRuntime,
+    ShellCommand,
+    command_runtime_session,
+)
 from dotman.diff_review import (
     DEFAULT_REVIEW_PAGER,
     ReviewItem,
@@ -326,23 +333,16 @@ def test_pull_directory_lazy_capture_view_uses_sudo_when_live_read_needs_it(monk
 
     monkeypatch.setattr("dotman.diff_review.needs_sudo_for_read", lambda path: path == live_path)
 
-    def fake_sudo_prefix(command: str) -> str:
-        recorded["unwrapped_command"] = command
-        return f"sudo-wrapper {command}"
-
-    def fake_run(command: str, **kwargs):
-        recorded["command"] = command
-        recorded["kwargs"] = kwargs
-        return SimpleNamespace(returncode=0, stdout=b"captured live\n", stderr=b"")
-
-    monkeypatch.setattr("dotman.diff_review.sudo_prefix_command", fake_sudo_prefix)
-    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
-
+    runtime = MemoryCommandRuntime(
+        [CommandResult(exit_code=0, stdout=b"captured live\n")]
+    )
     review_item = build_review_items([plan], operation="pull")[0]
 
-    assert _review_item_bytes(review_item, before=False) == b"captured live\n"
-    assert recorded["unwrapped_command"] == "capture-cmd"
-    assert recorded["command"] == "sudo-wrapper capture-cmd"
+    with command_runtime_session(runtime):
+        assert _review_item_bytes(review_item, before=False) == b"captured live\n"
+
+    assert runtime.requests[0].command == ShellCommand("capture-cmd")
+    assert runtime.requests[0].elevation == "root"
 
 
 def test_push_directory_raw_live_review_bytes_use_privileged_file_access(monkeypatch, tmp_path: Path) -> None:
@@ -575,24 +575,22 @@ def test_run_review_item_diff_invokes_git_diff(monkeypatch) -> None:
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     monkeypatch.setattr("dotman.diff_review._select_review_pager_command", lambda: None)
 
-    def fake_run(command: list[str], check: bool, env=None, cwd=None):
-        recorded["command"] = command
-        recorded["check"] = check
-        recorded["env"] = env
-        recorded["cwd"] = cwd
-        assert cwd is not None
-        assert Path(cwd, "live", "~", "...", "share", "live-file").read_text(encoding="utf-8") == "before\n"
-        assert Path(cwd, "repo", "~", ".config", "repo-file").read_text(encoding="utf-8") == "after\n"
-        return SimpleNamespace(returncode=1)
+    def fake_run(request):
+        recorded["request"] = request
+        assert request.cwd is not None
+        assert Path(request.cwd, "live", "~", "...", "share", "live-file").read_text(encoding="utf-8") == "before\n"
+        assert Path(request.cwd, "repo", "~", ".config", "repo-file").read_text(encoding="utf-8") == "after\n"
+        return CommandResult(exit_code=1)
 
-    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
+    runtime = MemoryCommandRuntime([fake_run])
+    with command_runtime_session(runtime):
+        run_review_item_diff(review_item)
 
-    run_review_item_diff(review_item)
-
-    assert recorded["check"] is False
-    assert recorded["env"] is None
-    assert recorded["command"][:5] == ["git", "diff", "--no-index", "--color=auto", "--"]
-    assert recorded["command"][5:] == ["live/~/.../share/live-file", "repo/~/.config/repo-file"]
+    request = recorded["request"]
+    assert request.env == {}
+    assert request.command.arguments[:5] == ("git", "diff", "--no-index", "--color=auto", "--")
+    assert request.command.arguments[5:] == ("live/~/.../share/live-file", "repo/~/.config/repo-file")
+    assert request.io == "tty"
 
 
 def test_run_review_item_diff_materializes_executable_bit_change(monkeypatch, capsys) -> None:
@@ -617,15 +615,14 @@ def test_run_review_item_diff_materializes_executable_bit_change(monkeypatch, ca
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     monkeypatch.setattr("dotman.diff_review._select_review_pager_command", lambda: None)
 
-    def fake_run(command: list[str], check: bool, env=None, cwd=None):
-        assert cwd is not None
-        assert stat.S_IMODE(Path(cwd, "live", "~", "...", "share", "live-file").stat().st_mode) == 0o644
-        assert stat.S_IMODE(Path(cwd, "repo", "~", ".config", "repo-file").stat().st_mode) == 0o755
-        return SimpleNamespace(returncode=1)
+    def fake_run(request):
+        assert request.cwd is not None
+        assert stat.S_IMODE(Path(request.cwd, "live", "~", "...", "share", "live-file").stat().st_mode) == 0o644
+        assert stat.S_IMODE(Path(request.cwd, "repo", "~", ".config", "repo-file").stat().st_mode) == 0o755
+        return CommandResult(exit_code=1)
 
-    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
-
-    run_review_item_diff(review_item)
+    with command_runtime_session(MemoryCommandRuntime([fake_run])):
+        run_review_item_diff(review_item)
 
     assert "file mode:" not in capsys.readouterr().out
 
@@ -651,19 +648,17 @@ def test_run_review_item_diff_materializes_absolute_paths_under_temp_root(monkey
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     monkeypatch.setattr("dotman.diff_review._select_review_pager_command", lambda: None)
 
-    def fake_run(command: list[str], check: bool, env=None, cwd=None):
-        recorded["command"] = command
-        recorded["cwd"] = cwd
-        assert cwd is not None
-        assert Path(cwd, "live", "var", "...", "sddm.conf.d", "kde_settings.conf").read_text(encoding="utf-8") == "before\n"
-        assert Path(cwd, "repo", "etc", "sddm.conf.d", "kde_settings.conf").read_text(encoding="utf-8") == "after\n"
-        return SimpleNamespace(returncode=1)
+    def fake_run(request):
+        recorded["request"] = request
+        assert request.cwd is not None
+        assert Path(request.cwd, "live", "var", "...", "sddm.conf.d", "kde_settings.conf").read_text(encoding="utf-8") == "before\n"
+        assert Path(request.cwd, "repo", "etc", "sddm.conf.d", "kde_settings.conf").read_text(encoding="utf-8") == "after\n"
+        return CommandResult(exit_code=1)
 
-    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
+    with command_runtime_session(MemoryCommandRuntime([fake_run])):
+        run_review_item_diff(review_item)
 
-    run_review_item_diff(review_item)
-
-    assert recorded["command"][5:] == ["live/var/.../sddm.conf.d/kde_settings.conf", "repo/etc/sddm.conf.d/kde_settings.conf"]
+    assert recorded["request"].command.arguments[5:] == ("live/var/.../sddm.conf.d/kde_settings.conf", "repo/etc/sddm.conf.d/kde_settings.conf")
 
 
 def test_run_review_item_diff_uses_repo_and_live_labels_for_pull(monkeypatch) -> None:
@@ -687,19 +682,17 @@ def test_run_review_item_diff_uses_repo_and_live_labels_for_pull(monkeypatch) ->
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     monkeypatch.setattr("dotman.diff_review._select_review_pager_command", lambda: None)
 
-    def fake_run(command: list[str], check: bool, env=None, cwd=None):
-        recorded["command"] = command
-        recorded["cwd"] = cwd
-        assert cwd is not None
-        assert Path(cwd, "repo", "~", ".gitconfig").read_text(encoding="utf-8") == "repo\n"
-        assert Path(cwd, "live", "~", "...", "git", "config").read_text(encoding="utf-8") == "live\n"
-        return SimpleNamespace(returncode=1)
+    def fake_run(request):
+        recorded["request"] = request
+        assert request.cwd is not None
+        assert Path(request.cwd, "repo", "~", ".gitconfig").read_text(encoding="utf-8") == "repo\n"
+        assert Path(request.cwd, "live", "~", "...", "git", "config").read_text(encoding="utf-8") == "live\n"
+        return CommandResult(exit_code=1)
 
-    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
+    with command_runtime_session(MemoryCommandRuntime([fake_run])):
+        run_review_item_diff(review_item)
 
-    run_review_item_diff(review_item)
-
-    assert recorded["command"][5:] == ["repo/~/.gitconfig", "live/~/.../git/config"]
+    assert recorded["request"].command.arguments[5:] == ("repo/~/.gitconfig", "live/~/.../git/config")
 
 
 def test_run_review_item_diff_uses_explicit_pager_when_stdout_is_tty(monkeypatch) -> None:
@@ -723,22 +716,35 @@ def test_run_review_item_diff_uses_explicit_pager_when_stdout_is_tty(monkeypatch
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.setattr("dotman.diff_review._select_review_pager_command", lambda: DEFAULT_REVIEW_PAGER)
 
-    def fake_run(command: list[str], check: bool, env=None, cwd=None):
-        recorded["command"] = command
-        recorded["check"] = check
-        recorded["env"] = env
-        recorded["cwd"] = cwd
-        return SimpleNamespace(returncode=1)
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=1)])
+    with command_runtime_session(runtime):
+        run_review_item_diff(review_item)
 
-    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
+    request = runtime.requests[0]
+    assert request.command.arguments[:6] == ("git", "--paginate", "diff", "--no-index", "--color=auto", "--")
+    assert request.command.arguments[6:] == ("live/~/.../share/live-file", "repo/~/.config/repo-file")
+    assert request.env["GIT_PAGER"] == DEFAULT_REVIEW_PAGER
 
-    run_review_item_diff(review_item)
 
-    assert recorded["check"] is False
-    assert recorded["command"][:6] == ["git", "--paginate", "diff", "--no-index", "--color=auto", "--"]
-    assert recorded["command"][6:] == ["live/~/.../share/live-file", "repo/~/.config/repo-file"]
-    assert recorded["env"] is not None
-    assert recorded["env"]["GIT_PAGER"] == DEFAULT_REVIEW_PAGER
+def test_run_review_item_diff_preserves_interruption(monkeypatch) -> None:
+    review_item = ReviewItem(
+        selection_label="example:git@basic",
+        package_id="git",
+        target_name="gitconfig",
+        action="update",
+        operation="push",
+        repo_path=Path("/repo-file"),
+        live_path=Path("/live-file"),
+        source_path="/repo-file",
+        destination_path="/live-file",
+        before_bytes=b"before\n",
+        after_bytes=b"after\n",
+    )
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+
+    with command_runtime_session(MemoryCommandRuntime([CommandResult(exit_code=130)])):
+        with pytest.raises(KeyboardInterrupt):
+            run_review_item_diff(review_item)
 
 
 def test_review_display_path_uses_tilde_for_home_prefix() -> None:
@@ -844,33 +850,25 @@ def test_run_review_item_edit_prefers_pull_reconcile(monkeypatch, tmp_path: Path
     )
     recorded: dict[str, object] = {}
 
-    def fake_run(command: str, check: bool, shell: bool, cwd: Path | None, env: dict[str, str] | None):
-        recorded["command"] = command
-        recorded["check"] = check
-        recorded["shell"] = shell
-        recorded["cwd"] = cwd
-        recorded["env"] = env
-        assert env is not None
-        assert Path(env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8") == "repo planning view\n"
-        assert Path(env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8") == "live planning view\n"
-        assert Path(env["DOTMAN_REVIEW_REPO_PATH"]).stat().st_mode & 0o222 == 0
-        assert Path(env["DOTMAN_REVIEW_LIVE_PATH"]).stat().st_mode & 0o222 == 0
-        return SimpleNamespace(returncode=0)
+    def fake_run(request):
+        recorded["request"] = request
+        assert Path(request.env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8") == "repo planning view\n"
+        assert Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8") == "live planning view\n"
+        assert Path(request.env["DOTMAN_REVIEW_REPO_PATH"]).stat().st_mode & 0o222 == 0
+        assert Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).stat().st_mode & 0o222 == 0
+        return CommandResult(exit_code=0)
 
-    monkeypatch.setattr("dotman.diff_review.subprocess.run", fake_run)
-
-    exit_code = run_review_item_edit(review_item)
+    with command_runtime_session(MemoryCommandRuntime([fake_run])):
+        exit_code = run_review_item_edit(review_item)
 
     assert exit_code == 0
-    assert recorded["command"] == "sh hooks/reconcile.sh"
-    assert recorded["check"] is False
-    assert recorded["shell"] is True
-    assert recorded["cwd"] == tmp_path
-    assert recorded["env"] is not None
-    assert recorded["env"]["DOTMAN_REPO_PATH"] == str(tmp_path / "repo-file")
-    assert recorded["env"]["DOTMAN_LIVE_PATH"] == str(tmp_path / "live-file")
-    assert recorded["env"]["DOTMAN_TARGET_NAME"] == "init_lua"
-    assert recorded["env"]["PATH"] == os.environ["PATH"]
+    request = recorded["request"]
+    assert request.command == ShellCommand("sh hooks/reconcile.sh")
+    assert request.io == "tty"
+    assert request.cwd == tmp_path
+    assert request.env["DOTMAN_REPO_PATH"] == str(tmp_path / "repo-file")
+    assert request.env["DOTMAN_LIVE_PATH"] == str(tmp_path / "live-file")
+    assert request.env["DOTMAN_TARGET_NAME"] == "init_lua"
 
 
 def test_run_review_item_edit_runs_builtin_jinja_reconcile(monkeypatch, tmp_path: Path) -> None:

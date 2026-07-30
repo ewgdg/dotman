@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import os
 import stat
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from dotman.capture import BUILTIN_PATCH_CAPTURE
+from dotman.command_runtime import (
+    CommandRequest,
+    ShellCommand,
+    current_command_runtime,
+    raise_for_command_interruption,
+)
 from dotman.collisions import validate_reserved_path_conflicts, validate_target_collisions
 from dotman.config import expand_path
-from dotman.file_access import needs_sudo_for_read, read_bytes, sudo_prefix_command
+from dotman.file_access import needs_sudo_for_read, read_bytes
 from dotman.ignore import GITIGNORE_CONTROL_FILE_PATTERNS, collect_gitignore_patterns, list_directory_files
 from dotman.manifest import (
     flatten_vars,
@@ -1654,27 +1659,24 @@ def pull_view_bytes(
 def run_probe_command(metadata: TargetMetadata) -> bool:
     if metadata.probe_command is None:
         raise ValueError(f"missing probe command for {metadata.package_id}:{metadata.target_name}")
-    env = os.environ.copy()
-    env.update(metadata.command_env)
-    completed = subprocess.run(
-        metadata.probe_command,
-        cwd=str(metadata.command_cwd),
-        env=env,
-        shell=True,
-        executable="/bin/sh",
-        capture_output=True,
-        check=False,
+    result = current_command_runtime().run(
+        CommandRequest(
+            command=ShellCommand(metadata.probe_command),
+            cwd=metadata.command_cwd,
+            env=metadata.command_env,
+        )
     )
-    if completed.returncode == 0:
+    raise_for_command_interruption(result)
+    if result.exit_code == 0:
         return True
-    if completed.returncode == 100:
+    if result.exit_code == 100:
         return False
-    stderr = completed.stderr.decode("utf-8", errors="replace").strip()
-    stdout = completed.stdout.decode("utf-8", errors="replace").strip()
-    detail = stderr or stdout or f"exit status {completed.returncode}"
+    stderr = result.stderr.decode("utf-8", errors="replace").strip()
+    stdout = result.stdout.decode("utf-8", errors="replace").strip()
+    detail = stderr or stdout or f"exit status {result.exit_code}"
     raise ValueError(
         f"probe failed for {metadata.package_id}:{metadata.target_name} "
-        f"with status {completed.returncode}: {detail}"
+        f"with status {result.exit_code}: {detail}"
     )
 
 
@@ -1692,35 +1694,30 @@ def run_command_projection(
     inferred_os: str,
     context: dict[str, Any],
 ) -> bytes:
-    env = os.environ.copy()
-    env.update(
-        engine._build_target_command_env(
-            repo=repo,
-            package=package,
-            target=target,
-            repo_path=repo_path,
-            live_path=live_path,
-            selection=selection,
-            operation=operation,
-            inferred_os=inferred_os,
-            context=context,
+    env = engine._build_target_command_env(
+        repo=repo,
+        package=package,
+        target=target,
+        repo_path=repo_path,
+        live_path=live_path,
+        selection=selection,
+        operation=operation,
+        inferred_os=inferred_os,
+        context=context,
+    )
+    result = current_command_runtime().run(
+        CommandRequest(
+            command=ShellCommand(command),
+            cwd=target.declared_in,
+            env=env,
+            elevation="root" if needs_sudo_for_read(live_path) else "none",
         )
     )
-    if needs_sudo_for_read(live_path):
-        command = sudo_prefix_command(command)
-    completed = subprocess.run(
-        command,
-        cwd=str(target.declared_in),
-        env=env,
-        shell=True,
-        executable="/bin/sh",
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        stderr = completed.stderr.decode("utf-8", errors="replace")
+    raise_for_command_interruption(result)
+    if result.exit_code != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace")
         raise ValueError(f"command projection failed for {package.id}:{target.name}: {stderr.strip()}")
-    return completed.stdout
+    return result.stdout
 
 
 def build_target_command_env(

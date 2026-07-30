@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +8,7 @@ import dotman.cli as cli
 import dotman.reconcile as reconcile_module
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
@@ -81,7 +81,13 @@ def test_reconcile_editor_subcommand_invokes_editor_with_transactional_source_co
         editable_include_path.write_text("edited include\n", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.reconcile.subprocess.run", fake_run)
+    def run_editor(request):
+        assert isinstance(request.command, ArgvCommand)
+        completed = fake_run(list(request.command.arguments), False)
+        return CommandResult(exit_code=completed.returncode)
+
+    runtime = MemoryCommandRuntime([run_editor])
+    monkeypatch.setattr(reconcile_module, "current_command_runtime", lambda: runtime)
     monkeypatch.setattr(reconcile_module, "prompt", lambda _message: "y")
 
     exit_code = main(

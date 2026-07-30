@@ -6,8 +6,20 @@ from types import SimpleNamespace
 import dotman.cli as cli
 
 from dotman.cli import main
+from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
 
 from tests.helpers import write_named_manager_config
+
+
+def _patch_cli_runtime(monkeypatch, fake_run) -> MemoryCommandRuntime:
+    def run_editor(request):
+        assert isinstance(request.command, ArgvCommand)
+        completed = fake_run(list(request.command.arguments), False)
+        return CommandResult(exit_code=completed.returncode)
+
+    runtime = MemoryCommandRuntime([run_editor])
+    monkeypatch.setattr(cli, "current_command_runtime", lambda: runtime)
+    return runtime
 
 
 def _write_edit_repo(repo_root: Path) -> None:
@@ -156,7 +168,7 @@ def test_edit_config_cli_opens_selected_config_without_loading_it(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "config"])
 
@@ -200,7 +212,7 @@ def test_edit_repo_cli_opens_selected_repo_without_loading_repo_contents(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "repo", "fixture"])
 
@@ -263,7 +275,7 @@ def test_edit_local_cli_defaults_to_only_repo_and_creates_parent_for_editor(
         recorded["parent_exists"] = local_path.parent.exists()
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "local"])
 
@@ -292,7 +304,7 @@ def test_edit_local_cli_opens_malformed_local_override_without_loading_it(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "local", "fixture"])
 
@@ -326,7 +338,7 @@ def test_edit_local_cli_interactively_resolves_missing_repo(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "local"])
 
@@ -363,7 +375,7 @@ def test_edit_local_cli_interactively_prompts_for_unique_partial_repo(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "local", "bet"])
 
@@ -415,7 +427,7 @@ def test_edit_local_cli_interactively_resolves_ambiguous_repo(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "local", "al"])
 
@@ -482,7 +494,7 @@ def test_edit_cli_opens_tracked_package_directory_with_editor(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "package", "git"])
 
@@ -508,7 +520,7 @@ def test_edit_cli_sugar_opens_tracked_package_directory_with_editor(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "git"])
 
@@ -550,7 +562,7 @@ def test_edit_cli_sugar_keeps_repo_qualified_target_query_target_intent(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "beta:nvim.init_lua"])
 
@@ -631,7 +643,7 @@ def test_edit_target_cli_opens_tracked_file_target_repo_path_with_editor(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "target", "nvim.init_lua"])
 
@@ -664,7 +676,7 @@ def test_edit_target_cli_opens_tracked_directory_target_repo_path_with_editor(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "target", "ssh_dir"])
 
@@ -706,7 +718,7 @@ def test_edit_target_cli_resolves_repo_qualified_target_query(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "target", "beta:nvim.init_lua"])
 
@@ -744,7 +756,7 @@ def test_edit_target_cli_interactively_selects_ambiguous_target(
         recorded["check"] = check
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("dotman.cli.subprocess.run", fake_run)
+    _patch_cli_runtime(monkeypatch, fake_run)
 
     exit_code = main(["--config", str(config_path), "edit", "target", "gitconfig"])
 

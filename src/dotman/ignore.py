@@ -5,11 +5,17 @@ import os
 from pathlib import Path
 from typing import Iterable
 import json
-import subprocess
 import sys
 
 from pathspec import PathSpec
 from pathspec.gitignore import GitIgnoreSpec
+
+from dotman.command_runtime import (
+    ArgvCommand,
+    CommandRequest,
+    current_command_runtime,
+    raise_for_command_interruption,
+)
 
 
 
@@ -188,23 +194,34 @@ def _list_directory_files_via_sudo(
     from dotman.file_access import request_sudo
 
     request_sudo(f"list protected directory: {root}")
-    completed = subprocess.run(
-        ["sudo", "-n", sys.executable, "-m", "dotman.privileged_ops", "list-directory-files", str(root)],
-        input=json.dumps(
-            {
-                "ignore_patterns": ignore_patterns,
-                "skip_markers": skip_markers,
-                "follow_dir_symlinks": follow_dir_symlinks,
-                "force_ignore_patterns": force_ignore_patterns,
-            }
-        ).encode("utf-8"),
-        capture_output=True,
-        check=False,
+    result = current_command_runtime().run(
+        CommandRequest(
+            command=ArgvCommand(
+                (
+                    "sudo",
+                    "-n",
+                    sys.executable,
+                    "-m",
+                    "dotman.privileged_ops",
+                    "list-directory-files",
+                    str(root),
+                )
+            ),
+            input=json.dumps(
+                {
+                    "ignore_patterns": ignore_patterns,
+                    "skip_markers": skip_markers,
+                    "follow_dir_symlinks": follow_dir_symlinks,
+                    "force_ignore_patterns": force_ignore_patterns,
+                }
+            ).encode("utf-8"),
+        )
     )
-    if completed.returncode != 0:
-        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+    raise_for_command_interruption(result)
+    if result.exit_code != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
         raise PermissionError(stderr or f"permission denied for {root}")
-    payload = json.loads(completed.stdout.decode("utf-8"))
+    payload = json.loads(result.stdout.decode("utf-8"))
     return {relative: Path(path_text) for relative, path_text in payload.items()}
 
 

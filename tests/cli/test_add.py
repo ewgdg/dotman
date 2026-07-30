@@ -10,6 +10,7 @@ import dotman.add as add_module
 import dotman.cli as cli
 from dotman.add import AddOperationResult, AddReviewResult, review_add_manifest
 from dotman.cli import main
+from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
 
 from tests.helpers import capture_parser_help, write_named_manager_config
 
@@ -318,7 +319,13 @@ def test_review_add_manifest_uses_dedicated_add_review_wording(
         editable_path.write_text('id = "git"\n\n[targets.f_gitconfig]\n', encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(add_module.subprocess, "run", fake_run)
+    def run_editor(request):
+        assert isinstance(request.command, ArgvCommand)
+        completed = fake_run(list(request.command.arguments), False)
+        return CommandResult(exit_code=completed.returncode)
+
+    runtime = MemoryCommandRuntime([run_editor])
+    monkeypatch.setattr(add_module, "current_command_runtime", lambda: runtime)
 
     result = AddOperationResult(
         repo_name="fixture",

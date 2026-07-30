@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from dotman import planning
+from dotman.command_runtime import current_command_runtime
 from dotman.progress import _TqdmSink, make_planning_sink
 from tests.helpers import make_package_plan, make_resolved_package_selection
 
@@ -141,7 +142,7 @@ def test_build_package_plans_reports_progress_after_package_build(monkeypatch: p
     sink = OrderingSink()
 
     plans = planning.build_package_plans(
-        SimpleNamespace(),
+        SimpleNamespace(command_runtime=current_command_runtime()),
         [selection],
         operation="push",
         sink=sink,
@@ -191,7 +192,7 @@ def test_build_package_plans_closes_progress_on_failure(monkeypatch: pytest.Monk
 
     with pytest.raises(RuntimeError, match="planning failed"):
         planning.build_package_plans(
-            SimpleNamespace(),
+            SimpleNamespace(command_runtime=current_command_runtime()),
             [selection],
             operation="push",
             sink=sink,

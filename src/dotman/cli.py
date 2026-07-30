@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, replace
@@ -17,6 +16,13 @@ from dotman.add import (
     validate_package_id,
 )
 from dotman.capture import capture_patch
+from dotman.command_runtime import (
+    ArgvCommand,
+    CommandRequest,
+    ShellCommand,
+    current_command_runtime,
+    raise_for_command_interruption,
+)
 from dotman.diff_review import (
     ReviewItem,
     build_review_items,
@@ -261,10 +267,15 @@ def open_editor_path(path: Path, *, missing_editor_label: str = "path") -> int:
 
     editor_command = _resolve_editor_command()
     try:
-        completed = subprocess.run([*editor_command, str(path)], check=False)
+        result = current_command_runtime().run(
+            CommandRequest(
+                command=ArgvCommand((*editor_command, str(path))),
+                io="tty",
+            )
+        )
     except FileNotFoundError as exc:
         raise ValueError("editor command was not found") from exc
-    return completed.returncode
+    return result.exit_code
 
 
 def edit_package_directory(package_root: Path) -> int:
@@ -525,25 +536,29 @@ def _select_menu_option_with_fzf(
         " ".join([str(index), *display_fields])
         for index, display_fields in enumerate(display_fields_by_option, start=1)
     ]
-    completed = subprocess.run(
-        [
-            "fzf",
-            "--prompt=Select> ",
-            f"--header={header_text}",
-            "--ansi",
-            "--wrap",
-            "--with-nth=2..",
-            "--accept-nth=1",
-            "--no-sort",
-        ],
-        input="\n".join(entries) + "\n",
-        text=True,
-        capture_output=True,
-        check=False,
+    result = current_command_runtime().run(
+        CommandRequest(
+            command=ArgvCommand(
+                (
+                    "fzf",
+                    "--prompt=Select> ",
+                    f"--header={header_text}",
+                    "--ansi",
+                    "--wrap",
+                    "--with-nth=2..",
+                    "--accept-nth=1",
+                    "--no-sort",
+                )
+            ),
+            input=("\n".join(entries) + "\n").encode("utf-8"),
+            # fzf reads its UI from the controlling terminal while selection
+            # data uses pipes, so it must stay in Dotman's process group.
+            isolate_process_group=False,
+        )
     )
-    if completed.returncode != 0:
+    if result.exit_code != 0:
         raise KeyboardInterrupt
-    return parse_selection_index(completed.stdout.strip(), len(option_labels)) - 1
+    return parse_selection_index(result.stdout_text.strip(), len(option_labels)) - 1
 
 
 def select_menu_option(
@@ -3236,24 +3251,22 @@ def _build_cli_patch_capture_projector(
             temp_source_path = Path(temp_source.name)
         try:
             temp_source_text = str(temp_source_path)
-            completed = subprocess.run(
-                render_command,
-                cwd=str(repo_path.parent),
-                env={
-                    **os.environ,
-                    **base_env,
-                    "DOTMAN_REPO_PATH": temp_source_text,
-                    "DOTMAN_SOURCE": temp_source_text,
-                },
-                shell=True,
-                executable="/bin/sh",
-                capture_output=True,
-                check=False,
+            result = current_command_runtime().run(
+                CommandRequest(
+                    command=ShellCommand(render_command),
+                    cwd=repo_path.parent,
+                    env={
+                        **base_env,
+                        "DOTMAN_REPO_PATH": temp_source_text,
+                        "DOTMAN_SOURCE": temp_source_text,
+                    },
+                )
             )
-            if completed.returncode != 0:
-                stderr = completed.stderr.decode("utf-8", errors="replace")
-                raise ValueError(stderr.strip() or f"render command exited with status {completed.returncode}")
-            return completed.stdout
+            raise_for_command_interruption(result)
+            if result.exit_code != 0:
+                stderr = result.stderr.decode("utf-8", errors="replace")
+                raise ValueError(stderr.strip() or f"render command exited with status {result.exit_code}")
+            return result.stdout
         finally:
             temp_source_path.unlink(missing_ok=True)
 
