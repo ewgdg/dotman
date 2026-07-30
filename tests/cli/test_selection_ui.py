@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 import pytest
-from dotman.cli import PendingSelectionItem, prompt_for_excluded_items
+from dotman.cli_interaction import PendingSelectionItem, prompt_for_excluded_items
 from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, OperationPlan, UiConfig, UiMenusConfig, TargetPlan
 from dotman.ui_context import ui_config_scope

@@ -5,9 +5,10 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 import pytest
-from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.cli import main
+from dotman.cli_interaction import PendingSelectionItem, prompt_for_excluded_items
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
@@ -492,6 +493,7 @@ def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+    monkeypatch.setattr("dotman.cli.colors_enabled", lambda: True)
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"

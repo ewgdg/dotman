@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import dotman.add as add_module
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 from dotman.add import AddOperationResult, AddReviewResult, review_add_manifest
 from dotman.cli import main
 from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime

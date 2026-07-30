@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias, overload
 
 
 def package_ref_text(*, package_id: str, bound_profile: str | None = None) -> str:
@@ -805,6 +806,8 @@ def standalone_hook_package_summaries(
         for hook_plan in hook_plans:
             if hook_plan.scope_kind != "package":
                 continue
+            if hook_plan.package_id is None:
+                raise ValueError("package-scoped hook plans must include a package ID")
             if hook_plan.package_id in executable_package_ids:
                 continue
             package_hook_names = hook_names_by_package.setdefault(hook_plan.package_id, [])
@@ -892,7 +895,7 @@ class PackagePlan:
 
 
 @dataclass(frozen=True)
-class OperationPlan:
+class OperationPlan(Sequence[PackagePlan]):
     operation: str
     package_plans: tuple[PackagePlan, ...]
     repo_hooks: dict[str, dict[str, list[HookPlan]]] = field(default_factory=dict)
@@ -906,7 +909,13 @@ class OperationPlan:
     def __len__(self) -> int:
         return len(self.package_plans)
 
-    def __getitem__(self, index: int) -> PackagePlan:
+    @overload
+    def __getitem__(self, index: int) -> PackagePlan: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[PackagePlan, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> PackagePlan | tuple[PackagePlan, ...]:
         return self.package_plans[index]
 
     @property
@@ -928,7 +937,10 @@ class OperationPlan:
         }
 
 
-def package_plans_for_operation_plan(plans: OperationPlan | list[PackagePlan] | tuple[PackagePlan, ...]) -> list[PackagePlan]:
+PlanCollection: TypeAlias = OperationPlan | Sequence[PackagePlan]
+
+
+def package_plans_for_operation_plan(plans: PlanCollection) -> list[PackagePlan]:
     if isinstance(plans, OperationPlan):
         return list(plans.package_plans)
     return list(plans)

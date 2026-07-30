@@ -4,7 +4,7 @@ import json
 import stat
 from pathlib import Path
 
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 import dotman.cli_emit as cli_emit
 from dotman.cli import main
 from tests.helpers import write_named_manager_config
@@ -854,6 +854,7 @@ def test_push_cli_human_execution_colors_step_status_only(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+    monkeypatch.setattr("dotman.cli.colors_enabled", lambda: True)
 
     repo_root = tmp_path / "repo"
     _write_basic_execution_repo(repo_root)

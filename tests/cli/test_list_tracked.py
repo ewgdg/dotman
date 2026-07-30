@@ -5,9 +5,10 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 import pytest
-from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.cli import main
+from dotman.cli_interaction import PendingSelectionItem, prompt_for_excluded_items
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (

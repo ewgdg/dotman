@@ -1,6 +1,42 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
+
+
+_EDIT_SUGAR_TOP_LEVEL_OPTIONS_WITH_VALUES = {"--config", "--file-symlink-mode", "--dir-symlink-mode"}
+
+
+def _command_index(argv: Sequence[str]) -> int | None:
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            return None
+        if token in _EDIT_SUGAR_TOP_LEVEL_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
+        if any(token.startswith(f"{option}=") for option in _EDIT_SUGAR_TOP_LEVEL_OPTIONS_WITH_VALUES):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return index
+    return None
+
+
+def normalize_edit_query_argv(argv: Sequence[str]) -> list[str]:
+    normalized_argv = list(argv)
+    command_index = _command_index(normalized_argv)
+    if command_index is None or normalized_argv[command_index] != "edit":
+        return normalized_argv
+    if command_index + 1 >= len(normalized_argv):
+        return normalized_argv
+    next_token = normalized_argv[command_index + 1]
+    if next_token in {"package", "target", "local", "config", "repo", "query"} or next_token.startswith("-"):
+        return normalized_argv
+    return [*normalized_argv[: command_index + 1], "query", *normalized_argv[command_index + 1 :]]
 
 
 def add_track_request_argument(parser: argparse.ArgumentParser, *, required: bool = True) -> None:

@@ -5,9 +5,10 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 import pytest
-from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.cli import main
+from dotman.cli_interaction import PendingSelectionItem, prompt_for_excluded_items
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
@@ -118,13 +119,16 @@ def test_pull_cli_reviews_diffs_before_selection(
 
     original_filter = cli.filter_plans_for_interactive_selection
 
-    def fake_filter_plans_for_interactive_selection(*, plans, operation, json_output, full_paths=False):
+    def fake_filter_plans_for_interactive_selection(
+        *, plans, operation, json_output, full_paths=False, run_noop=False
+    ):
         order.append("selection")
         return original_filter(
             plans=plans,
             operation=operation,
             json_output=json_output,
             full_paths=full_paths,
+            run_noop=run_noop,
         )
 
     monkeypatch.setattr(cli, "filter_plans_for_interactive_selection", fake_filter_plans_for_interactive_selection)
@@ -241,7 +245,7 @@ def test_pull_cli_uses_resolver_when_input_is_ambiguous_between_partial_binding_
     monkeypatch.setattr(
         cli,
         "filter_plans_for_interactive_selection",
-        lambda *, plans, operation, json_output, full_paths=False: list(plans),
+        lambda *, plans, operation, json_output, full_paths=False, run_noop=False: plans,
     )
     monkeypatch.setattr(
         cli,
@@ -315,7 +319,7 @@ def test_pull_cli_accepts_partial_owned_package_match(
     monkeypatch.setattr(
         cli,
         "filter_plans_for_interactive_selection",
-        lambda *, plans, operation, json_output, full_paths=False: list(plans),
+        lambda *, plans, operation, json_output, full_paths=False, run_noop=False: plans,
     )
     monkeypatch.setattr(
         cli,

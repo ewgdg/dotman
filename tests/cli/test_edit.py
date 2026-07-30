@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 
 from dotman.cli import main
 from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime

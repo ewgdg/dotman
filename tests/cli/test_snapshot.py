@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 from dotman.cli import main
 from dotman.models import SnapshotConfig, TargetPlan
 from dotman.snapshot import create_push_snapshot, list_snapshots
@@ -252,7 +252,7 @@ def test_push_execute_replaces_symlinked_target_and_restore_restores_link(
     monkeypatch.setattr(
         cli,
         "filter_plans_for_interactive_selection",
-        lambda *, plans, operation, json_output, full_paths=False: list(plans),
+        lambda *, plans, operation, json_output, full_paths=False, run_noop=False: plans,
     )
 
     push_exit_code = main(["--config", str(config_path), "push"])
@@ -344,7 +344,7 @@ def test_push_execute_replaces_broken_symlink_and_restore_restores_link(
     monkeypatch.setattr(
         cli,
         "filter_plans_for_interactive_selection",
-        lambda *, plans, operation, json_output, full_paths=False: list(plans),
+        lambda *, plans, operation, json_output, full_paths=False, run_noop=False: plans,
     )
 
     push_exit_code = main(["--config", str(config_path), "push"])

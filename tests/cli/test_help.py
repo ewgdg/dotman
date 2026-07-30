@@ -5,9 +5,10 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 import pytest
-from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.cli import build_parser, main
+from dotman.cli_interaction import PendingSelectionItem, prompt_for_excluded_items
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
@@ -68,7 +69,7 @@ def test_removed_snapshot_command_is_rejected_instead_of_aliased(capsys) -> None
     removed_command = "roll" + "back"
 
     with pytest.raises(SystemExit) as exc_info:
-        cli.build_parser().parse_args([removed_command])
+        build_parser().parse_args([removed_command])
 
     assert exc_info.value.code == 2
     error_output = capsys.readouterr().err
@@ -178,7 +179,7 @@ def test_list_help_shows_tracked_state_and_catalog_subcommands(capsys) -> None:
     ],
 )
 def test_removed_installed_subcommands_are_rejected(capsys, args: tuple[str, ...], rejected_token: str) -> None:
-    parser = cli.build_parser()
+    parser = build_parser()
 
     with pytest.raises(SystemExit) as exc_info:
         parser.parse_args(list(args))
@@ -407,7 +408,7 @@ def test_run_diff_review_menu_uses_full_paths_when_requested(monkeypatch, capsys
 
 @pytest.mark.parametrize("command", ["apply", "upgrade", "import", "remove"])
 def test_legacy_top_level_cli_commands_are_not_available(command: str) -> None:
-    parser = cli.build_parser()
+    parser = build_parser()
 
     with pytest.raises(SystemExit) as exc_info:
         parser.parse_args([command, "example:nvim@basic"])

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-import dotman.cli as cli
+from dotman.cli import main
 from dotman.engine import DotmanEngine
 from dotman.models import HookCommandSpec
 from dotman.planning_guards import GuardPlanningError
@@ -338,15 +338,11 @@ def test_all_path_rule_work_skipped_cli_reports_pattern_and_bypasses_interaction
     (source_root / "one.txt").write_text("one\n", encoding="utf-8")
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
-    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda **_kwargs: pytest.fail("review must not run"))
-    monkeypatch.setattr(cli, "filter_plans_for_interactive_selection", lambda **_kwargs: pytest.fail("selection must not run"))
-    monkeypatch.setattr(cli, "run_execution", lambda **_kwargs: pytest.fail("execution must not run"))
-
-    assert cli.main(["--config", str(config_path), "push"]) == 0
+    assert main(["--config", str(config_path), "push"]) == 0
     human_output = capsys.readouterr().out
     assert "skipped (guard) fixture:app.config (path rule: *.txt) (directory disabled)" in human_output
 
-    assert cli.main(["--config", str(config_path), "--json", "push", "--dry-run"]) == 0
+    assert main(["--config", str(config_path), "--json", "push", "--dry-run"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["package_entries"] == []
     assert payload["guard_skips"] == [

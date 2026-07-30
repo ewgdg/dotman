@@ -1,0 +1,2060 @@
+from __future__ import annotations
+
+import os
+import shlex
+import shutil
+import sys
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any, Literal, TypeVar, cast
+
+from dotman import cli_emit, cli_style
+from dotman.add import (
+    AddOperationResult,
+    AddReviewResult,
+    add_editor_available,
+    review_add_manifest,
+)
+from dotman.command_runtime import (
+    ArgvCommand,
+    CommandRequest,
+    current_command_runtime,
+)
+from dotman.diff_review import (
+    ReviewItem,
+    build_review_items,
+    run_review_item_diff,
+)
+from dotman.engine import DotmanEngine
+from dotman.interaction import Interaction
+from dotman.models import (
+    FullSpecSelector,
+    OperationPlan,
+    PackagePlan,
+    PlanCollection,
+    SelectorKind,
+    finalize_hook_plans_for_targets,
+    package_plans_for_operation_plan,
+    package_ref_text,
+    standalone_hook_package_summaries,
+    standalone_hook_target_summaries,
+)
+from dotman.package_resolution import (
+    parse_full_spec_selector_text,
+    parse_package_ref_text,
+)
+from dotman.planning import finalize_repo_hook_plans, standalone_repo_hook_summary
+from dotman.resolver import (
+    ResolverOption,
+    build_full_spec_selector_field_kinds,
+    build_full_spec_selector_match_fields,
+    build_package_field_kinds,
+    build_package_match_fields,
+    build_selector_field_kinds,
+    build_selector_match_fields,
+    parse_slash_qualified_query,
+    rank_resolver_option,
+)
+from dotman.repository import Repository
+from dotman.snapshot import (
+    RestoreAction,
+    SnapshotRecord,
+    find_snapshot_matches,
+)
+from dotman.terminal import ESCAPE_INPUT, read_prompt_line
+from dotman.ui_context import current_ui_config
+
+MENU_HEADER_MARKER = cli_style.MENU_HEADER_MARKER
+MENU_HEADER_MARKER_STYLE = cli_style.MENU_HEADER_MARKER_STYLE
+MENU_INDEX_STYLE = cli_style.MENU_INDEX_STYLE
+MENU_PROMPT_STYLE = cli_style.MENU_PROMPT_STYLE
+MENU_HINT_STYLE = cli_style.MENU_HINT_STYLE
+MENU_REPO_STYLE = cli_style.MENU_REPO_STYLE
+MENU_ACTION_STYLE_BY_NAME = cli_style.MENU_ACTION_STYLE_BY_NAME
+EXECUTION_STATUS_STYLE_BY_NAME = cli_style.EXECUTION_STATUS_STYLE_BY_NAME
+MENU_SELECTION_OVERHEAD_LINES = 6
+SelectableItem = TypeVar("SelectableItem")
+SinglePartialResolverMode = Literal["confirm", "menu"]
+
+
+@dataclass(frozen=True)
+class PendingSelectionItem:
+    selection_label: str
+    package_id: str
+    action: str
+    target_name: str | None = None
+    bound_profile: str | None = None
+    source_path: str | None = None
+    destination_path: str | None = None
+    kind: str = "target"
+    hook_names: tuple[str, ...] = ()
+    repo_name: str | None = None
+
+
+def prompt(message: str, *, escape_result: str | None = None) -> str:
+    return read_prompt_line(
+        message,
+        input_stream=sys.stdin,
+        output_stream=sys.stdout,
+        escape_result=escape_result,
+    )
+
+
+def colors_enabled() -> bool:
+    return cli_style.colors_enabled()
+
+
+def style_text(text: str, *codes: str) -> str:
+    return cli_style.style_text(text, *codes)
+
+
+def repo_name_from_selection_label(selection_label: str) -> str:
+    return cli_style.repo_name_from_selection_label(selection_label)
+
+
+def repo_qualified_selector_text(*, repo_name: str, selector: str) -> str:
+    return cli_style.repo_qualified_selector_text(repo_name=repo_name, selector=selector)
+
+
+def package_label_text(
+    *,
+    repo_name: str,
+    package_id: str,
+    bound_profile: str | None = None,
+    target_name: str | None = None,
+    package_first: bool = False,
+    include_repo_context: bool = False,
+) -> str:
+    return cli_style.package_label_text(
+        repo_name=repo_name,
+        package_id=package_id,
+        bound_profile=bound_profile,
+        target_name=target_name,
+        package_first=package_first,
+        include_repo_context=include_repo_context,
+    )
+
+
+def render_package_label(
+    *,
+    repo_name: str,
+    package_id: str,
+    bound_profile: str | None = None,
+    target_name: str | None = None,
+    package_first: bool = False,
+    include_repo_context: bool = False,
+) -> str:
+    return cli_style.render_package_label(
+        repo_name=repo_name,
+        package_id=package_id,
+        bound_profile=bound_profile,
+        target_name=target_name,
+        package_first=package_first,
+        include_repo_context=include_repo_context,
+        use_color=colors_enabled(),
+    )
+
+
+def render_package_target_label(*, repo_name: str, package_id: str, target_name: str, bound_profile: str | None = None) -> str:
+    return cli_style.render_package_target_label(
+        repo_name=repo_name,
+        package_id=package_id,
+        target_name=target_name,
+        bound_profile=bound_profile,
+        use_color=colors_enabled(),
+    )
+
+
+def package_profile_label_text(*, repo_name: str, package_id: str, profile: str) -> str:
+    return cli_style.package_profile_label_text(repo_name=repo_name, package_id=package_id, profile=profile)
+
+
+def render_package_profile_label(*, repo_name: str, package_id: str, profile: str) -> str:
+    return cli_style.render_package_profile_label(
+        repo_name=repo_name,
+        package_id=package_id,
+        profile=profile,
+        use_color=colors_enabled(),
+    )
+
+
+def full_spec_selector_label_text(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
+    return cli_style.full_spec_selector_label_text(
+        repo_name=repo_name,
+        selector=selector,
+        profile=profile,
+        selector_first=selector_first,
+    )
+
+
+def render_full_spec_selector_label(*, repo_name: str, selector: str, profile: str, selector_first: bool = False) -> str:
+    return cli_style.render_full_spec_selector_label(
+        repo_name=repo_name,
+        selector=selector,
+        profile=profile,
+        selector_first=selector_first,
+        use_color=colors_enabled(),
+    )
+
+
+def render_full_spec_selector_reference(binding: FullSpecSelector) -> str:
+    return cli_style.render_full_spec_selector_reference(binding, use_color=colors_enabled())
+
+
+def open_editor_path(path: Path, *, missing_editor_label: str = "path") -> int:
+    if not add_editor_available():
+        print(f"No editor configured. {missing_editor_label}: {path}")
+        return 0
+
+    editor_command = _resolve_editor_command()
+    try:
+        result = current_command_runtime().run(
+            CommandRequest(
+                command=ArgvCommand((*editor_command, str(path))),
+                io="tty",
+            )
+        )
+    except FileNotFoundError as exc:
+        raise ValueError("editor command was not found") from exc
+    return result.exit_code
+
+
+def edit_package_directory(package_root: Path) -> int:
+    return open_editor_path(package_root, missing_editor_label="package path")
+
+
+def _resolve_editor_command() -> list[str]:
+    editor_value = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if not editor_value:
+        raise ValueError("edit requires $VISUAL or $EDITOR")
+    editor_command = [argument for argument in shlex.split(editor_value) if argument != "-d"]
+    if not editor_command:
+        raise ValueError("edit requires a non-empty $VISUAL or $EDITOR")
+    return editor_command
+
+
+def render_tracked_reason(reason: str) -> str:
+    return cli_style.render_tracked_reason(reason, use_color=colors_enabled())
+
+
+def render_tracked_state(state: str) -> str:
+    return cli_style.render_tracked_state(state, use_color=colors_enabled())
+
+
+def render_tracked_issue_label(engine: DotmanEngine, issue) -> str:
+    bound_profile: str | None = None
+    try:
+        repo = engine.get_repo(issue.repo)
+    except ValueError:
+        repo = None
+    if repo is not None and issue.selector in repo.packages:
+        package = repo.resolve_package(issue.selector)
+        if package.binding_mode == "multi_instance":
+            bound_profile = issue.profile
+    return render_package_label(
+        repo_name=issue.repo,
+        package_id=issue.selector,
+        bound_profile=bound_profile,
+    )
+
+
+def render_info_section_header(label: str) -> str:
+    return cli_style.render_info_section_header(label, use_color=colors_enabled())
+
+
+def resolve_variable_text(
+    engine: DotmanEngine,
+    variable_text: str,
+    *,
+    json_output: bool,
+) -> str:
+    query_text = variable_text.strip().removeprefix("vars.")
+    exact_matches, partial_matches = engine.find_variable_matches(variable_text)
+    return resolve_candidate_match(
+        exact_matches=exact_matches,
+        partial_matches=partial_matches,
+        query_text=query_text,
+        interactive=interactive_mode_enabled(json_output=json_output),
+        exact_header_text=f"Select a variable for '{variable_text}':",
+        partial_header_text=f"Select a variable for '{variable_text}':",
+        option_resolver=lambda match: ResolverOption(
+            display_label=match,
+            match_fields=(match,),
+            field_kinds=("variable",),
+        ),
+        exact_error_text=f"variable '{variable_text}' is ambiguous: " + ", ".join(exact_matches),
+        partial_error_text=f"variable '{variable_text}' is ambiguous: " + ", ".join(partial_matches),
+        not_found_text=f"variable '{variable_text}' did not match any resolved variable",
+    )
+
+
+def format_snapshot_timestamp(timestamp: str | None) -> str:
+    return cli_style.format_snapshot_timestamp(timestamp)
+
+
+def render_snapshot_status(status: str) -> str:
+    return cli_style.render_snapshot_status(status, use_color=colors_enabled())
+
+
+def render_snapshot_ref(snapshot_id: str) -> str:
+    return cli_style.render_snapshot_ref(snapshot_id, use_color=colors_enabled())
+
+
+def render_snapshot_metadata_label(label: str) -> str:
+    return cli_style.render_snapshot_metadata_label(label, use_color=colors_enabled())
+
+
+def render_snapshot_provenance(*, repo_name: str | None, package_id: str | None, target_name: str | None, selection_label: str | None) -> str | None:
+    return cli_style.render_snapshot_provenance(
+        repo_name=repo_name,
+        package_id=package_id,
+        target_name=target_name,
+        selection_label=selection_label,
+        use_color=colors_enabled(),
+    )
+
+
+def render_snapshot_reason(action: str) -> str:
+    return cli_style.render_snapshot_reason(action, use_color=colors_enabled())
+
+
+def render_menu_badge(text: str) -> str:
+    return cli_style.render_menu_badge(text, use_color=colors_enabled())
+
+
+def ui_full_paths_enabled() -> bool:
+    ui_config = current_ui_config()
+    if ui_config is not None:
+        return ui_config.full_paths
+    return False
+
+
+def join_menu_display_fields(*fields: str) -> str:
+    return cli_style.join_menu_display_fields(*fields)
+
+
+def build_selector_match_display_fields(*, repo_name: str, selector: str, selector_kind: str) -> tuple[str, ...]:
+    return cli_style.build_selector_match_display_fields(
+        repo_name=repo_name,
+        selector=selector,
+        selector_kind=selector_kind,
+        use_color=colors_enabled(),
+    )
+
+
+def render_selector_match_label(*, repo_name: str, selector: str, selector_kind: str) -> str:
+    return cli_style.render_selector_match_label(
+        repo_name=repo_name,
+        selector=selector,
+        selector_kind=selector_kind,
+        use_color=colors_enabled(),
+    )
+
+
+def print_selection_header(header_text: str) -> None:
+    print()
+    if not colors_enabled():
+        print(header_text)
+        return
+    print(
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(header_text, '1')}"
+    )
+
+
+def print_selection_item(index: int, label: str) -> None:
+    if not colors_enabled():
+        print(f"  {index:>2}) {label}")
+        return
+    print(f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} {label}")
+
+
+def parse_selection_index(raw_answer: str, item_count: int) -> int:
+    answer = raw_answer.strip()
+    if not answer:
+        return 1
+    if not answer.isdigit():
+        raise ValueError(f"unsupported selection: {answer}")
+    selected_index = int(answer)
+    if not 1 <= selected_index <= item_count:
+        raise ValueError(f"selection index out of range: {selected_index}")
+    return selected_index
+
+
+def parse_selection_token(token: str, item_count: int) -> set[int]:
+    if token.isdigit():
+        selected_index = int(token)
+        if not 1 <= selected_index <= item_count:
+            raise ValueError(f"selection index out of range: {selected_index}")
+        return {selected_index}
+    if "-" not in token:
+        raise ValueError(f"unsupported token: {token}")
+    start_text, end_text = token.split("-", 1)
+    if not start_text.isdigit() or not end_text.isdigit():
+        raise ValueError(f"unsupported token: {token}")
+    start_index = int(start_text)
+    end_index = int(end_text)
+    if start_index > end_index:
+        raise ValueError(f"invalid range: {token}")
+    if start_index < 1 or end_index > item_count:
+        raise ValueError(f"selection index out of range: {token}")
+    return set(range(start_index, end_index + 1))
+
+
+def parse_selection_indexes(raw_answer: str, item_count: int) -> set[int]:
+    answer = raw_answer.strip()
+    if not answer:
+        return set()
+    keep_only_mode = answer.startswith("^")
+    if keep_only_mode:
+        answer = answer[1:].strip()
+        if not answer:
+            raise ValueError("missing keep-only selection after '^'")
+    selected_indexes: set[int] = set()
+    for token in answer.replace(",", " ").split():
+        selected_indexes.update(parse_selection_token(token, item_count))
+    if keep_only_mode:
+        return set(range(1, item_count + 1)) - selected_indexes
+    return selected_indexes
+
+
+def _select_menu_option_with_prompt(*, header_text: str, option_labels: Sequence[str]) -> int:
+    print_selection_header(header_text)
+    indexed_labels = list(enumerate(option_labels, start=1))
+    if ui_menus_bottom_up_enabled():
+        indexed_labels.reverse()
+    for index, option_label in indexed_labels:
+        print_selection_item(index, option_label)
+    while True:
+        try:
+            answer = prompt(selection_prompt())
+            if answer.strip() == "?":
+                print_selection_help()
+                continue
+            return parse_selection_index(answer, len(option_labels)) - 1
+        except ValueError as exc:
+            print(f"invalid selection: {exc}", file=sys.stderr)
+
+
+def _fzf_available() -> bool:
+    return shutil.which("fzf") is not None
+
+
+def ui_menus_bottom_up_enabled() -> bool:
+    raw_value = os.environ.get("DOTMAN_MENU_BOTTOM_UP")
+    if raw_value is not None:
+        return raw_value.strip().lower() not in {"0", "false", "no", "off"}
+    ui_config = current_ui_config()
+    if ui_config is not None:
+        return ui_config.menus.bottom_up
+    return True
+
+
+def _effective_full_paths(full_paths: bool | None) -> bool:
+    if full_paths is not None:
+        return full_paths
+    return ui_full_paths_enabled()
+
+
+def _should_use_fzf_for_selection(option_labels: Sequence[str]) -> bool:
+    terminal_lines = shutil.get_terminal_size((80, 24)).lines
+    return len(option_labels) > max(1, terminal_lines - MENU_SELECTION_OVERHEAD_LINES)
+
+
+def _select_menu_option_with_fzf(
+    *,
+    header_text: str,
+    option_labels: Sequence[str],
+    option_display_fields: Sequence[Sequence[str]] | None = None,
+) -> int:
+    if option_display_fields is not None and len(option_display_fields) != len(option_labels):
+        raise ValueError("fzf display fields must align with option labels")
+    display_fields_by_option = [
+        tuple(field for field in fields if field)
+        for fields in (option_display_fields or [(label,) for label in option_labels])
+    ]
+    entries = [
+        " ".join([str(index), *display_fields])
+        for index, display_fields in enumerate(display_fields_by_option, start=1)
+    ]
+    result = current_command_runtime().run(
+        CommandRequest(
+            command=ArgvCommand(
+                (
+                    "fzf",
+                    "--prompt=Select> ",
+                    f"--header={header_text}",
+                    "--ansi",
+                    "--wrap",
+                    "--with-nth=2..",
+                    "--accept-nth=1",
+                    "--no-sort",
+                )
+            ),
+            input=("\n".join(entries) + "\n").encode("utf-8"),
+            # fzf reads its UI from the controlling terminal while selection
+            # data uses pipes, so it must stay in Dotman's process group.
+            isolate_process_group=False,
+        )
+    )
+    if result.exit_code != 0:
+        raise KeyboardInterrupt
+    return parse_selection_index(result.stdout_text.strip(), len(option_labels)) - 1
+
+
+def select_menu_option(
+    *,
+    header_text: str,
+    option_labels: Sequence[str],
+    option_display_fields: Sequence[Sequence[str]] | None = None,
+) -> int:
+    if _fzf_available() and _should_use_fzf_for_selection(option_labels):
+        return _select_menu_option_with_fzf(
+            header_text=header_text,
+            option_labels=option_labels,
+            option_display_fields=option_display_fields,
+        )
+    return _select_menu_option_with_prompt(header_text=header_text, option_labels=option_labels)
+
+
+def selection_prompt() -> str:
+    prompt_text = "Select a number"
+    hint_text = '("?"; default: 1)'
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text}: "
+    return (
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+    )
+
+
+def pending_selection_prompt() -> str:
+    prompt_text = "Exclude by number or range"
+    hint_text = '("?"; e.g. "1 2 4-6" or "^3"; default: none)'
+    if not colors_enabled():
+        return f"\n{prompt_text} {hint_text}: "
+    return (
+        f"\n{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+    )
+
+
+def review_menu_prompt() -> str:
+    prompt_text = "Review command"
+    hint_text = '("?", number, "n", "a", "l", "s", Esc; default: next)'
+    if not colors_enabled():
+        return f"\n{prompt_text} {hint_text}: "
+    return (
+        f"\n{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
+    )
+
+
+def partial_match_confirmation_prompt(*, candidate_label: str) -> str:
+    prompt_text = f"Did you mean '{candidate_label}'?"
+    hint_text = "[y/n]"
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text} "
+    return (
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
+    )
+
+
+def push_symlink_replacement_prompt() -> str:
+    prompt_text = "Replace symlinked live target(s) before push?"
+    hint_text = "[y/n]"
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text} "
+    return (
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
+    )
+
+
+def review_continue_prompt() -> str:
+    prompt_text = "Continue?"
+    hint_text = "[Y/n]"
+    if not colors_enabled():
+        return f"{prompt_text} {hint_text} "
+    return (
+        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
+        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
+        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
+    )
+
+
+def _prompt_yes_no(message: str, *, default: bool | None = None) -> bool:
+    while True:
+        answer = prompt(message).strip().lower()
+        if answer == "" and default is not None:
+            return default
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
+
+
+def confirm_review_continue(*, assume_yes: bool = False) -> bool:
+    if assume_yes:
+        return True
+    return _prompt_yes_no(review_continue_prompt(), default=True)
+
+
+def print_selection_help() -> None:
+    print("Selection help:")
+    print("  <number>  choose that item")
+
+
+def print_pending_selection_help() -> None:
+    print("Selection help:")
+    print("  <number>       exclude one item")
+    print("  <a-b>          exclude a range")
+    print("  1 3 5-7        exclude multiple items or ranges")
+    print("  ^<selection>   keep only the selected items")
+
+
+def print_review_command_help() -> None:
+    print("Review commands:")
+    print("  <number>   inspect one diff")
+    print("  n          inspect next diff")
+    print("  a          inspect all diffs")
+    print("  l, list    list review items")
+    print("  s, skip    skip remaining review")
+    print("  Esc        abort")
+    print('  "?"        show this help')
+
+
+def interactive_mode_enabled(*, json_output: bool) -> bool:
+    return not json_output and sys.stdin.isatty()
+
+
+def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
+    return _prompt_yes_no(partial_match_confirmation_prompt(candidate_label=candidate_label))
+
+
+def confirm_push_symlink_replacement(*, assume_yes: bool = False) -> bool:
+    if assume_yes:
+        return True
+    return _prompt_yes_no(push_symlink_replacement_prompt())
+
+
+def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | None]:
+    answer = raw_answer.strip().lower()
+    if not answer or answer == "n":
+        return "next", None
+    if answer in {"s", "skip"}:
+        return "skip_review", None
+    if answer in {"l", "list"}:
+        return "list", None
+    if answer == "?":
+        return "help", None
+    if answer == "a":
+        return "all", None
+    if answer == ESCAPE_INPUT:
+        return "abort", None
+    if answer.isdigit():
+        selected_index = parse_selection_index(answer, item_count)
+        return "inspect", selected_index - 1
+    raise ValueError(f"unsupported review command: {raw_answer.strip()}")
+
+
+def resolve_candidate_match(
+    *,
+    exact_matches: Sequence[SelectableItem],
+    partial_matches: Sequence[SelectableItem],
+    query_text: str,
+    interactive: bool,
+    exact_header_text: str,
+    partial_header_text: str,
+    option_resolver: Callable[[SelectableItem], ResolverOption],
+    exact_error_text: str,
+    partial_error_text: str,
+    not_found_text: str,
+    single_partial_mode: SinglePartialResolverMode = "menu",
+    single_partial_error_text: str | None = None,
+    rank_matches: bool = True,
+) -> SelectableItem:
+    if rank_matches:
+        ranked_exact_matches = sorted(
+            exact_matches,
+            key=lambda match: rank_resolver_option(
+                query=query_text,
+                option=option_resolver(match),
+            ),
+        )
+        ranked_partial_matches = sorted(
+            partial_matches,
+            key=lambda match: rank_resolver_option(
+                query=query_text,
+                option=option_resolver(match),
+            ),
+        )
+    else:
+        ranked_exact_matches = list(exact_matches)
+        ranked_partial_matches = list(partial_matches)
+    if len(exact_matches) == 1:
+        return ranked_exact_matches[0]
+    if len(exact_matches) > 1:
+        if not interactive:
+            raise ValueError(exact_error_text)
+        resolved_options = [option_resolver(match) for match in ranked_exact_matches]
+        selected_index = select_menu_option(
+            header_text=exact_header_text,
+            option_labels=[option.display_label for option in resolved_options],
+            option_display_fields=[option.display_fields or (option.display_label,) for option in resolved_options],
+        )
+        return ranked_exact_matches[selected_index]
+    if len(partial_matches) == 1:
+        partial_match = ranked_partial_matches[0]
+        partial_option = option_resolver(partial_match)
+        if not interactive:
+            if single_partial_error_text is not None:
+                raise ValueError(single_partial_error_text)
+            raise ValueError(
+                f"no exact match for '{query_text}'; use exact name '{partial_option.display_label}'"
+            )
+        if single_partial_mode == "menu":
+            selected_index = select_menu_option(
+                header_text=partial_header_text,
+                option_labels=[partial_option.display_label],
+                option_display_fields=[partial_option.display_fields or (partial_option.display_label,)],
+            )
+            return ranked_partial_matches[selected_index]
+        if single_partial_mode != "confirm":
+            raise ValueError(f"unsupported single partial resolver mode: {single_partial_mode}")
+        if not confirm_partial_candidate_match(candidate_label=partial_option.display_label):
+            raise ValueError(f"confirmation required for partial match '{query_text}'")
+        return partial_match
+    if len(partial_matches) > 1:
+        if not interactive:
+            raise ValueError(partial_error_text)
+        resolved_options = [option_resolver(match) for match in ranked_partial_matches]
+        selected_index = select_menu_option(
+            header_text=partial_header_text,
+            option_labels=[option.display_label for option in resolved_options],
+            option_display_fields=[option.display_fields or (option.display_label,) for option in resolved_options],
+        )
+        return ranked_partial_matches[selected_index]
+    raise ValueError(not_found_text)
+
+
+def resolve_tracked_package_entry_text(
+    engine: DotmanEngine,
+    binding_text: str,
+    *,
+    operation: str,
+    allow_package_owners: bool,
+    json_output: bool,
+) -> tuple[object | None, FullSpecSelector]:
+    explicit_repo, selector, profile = parse_full_spec_selector_text(binding_text)
+    interactive = interactive_mode_enabled(json_output=json_output)
+    binding_label = selector if profile is None else f"{selector}@{profile}"
+
+    if operation == "untrack":
+        resolved_selector, _resolved_profile, exact_matches, partial_matches = engine.find_persisted_tracked_package_entry_matches(binding_text)
+        package_matches, owner_package_entries = engine.find_tracked_package_matches_for_untrack(
+            selector=resolved_selector,
+            profile=profile,
+            repo_name=explicit_repo,
+        )
+
+        def persisted_option(record) -> ResolverOption:
+            base_label = render_full_spec_selector_label(
+                repo_name=record.package_entry.repo,
+                selector=record.package_entry.selector,
+                profile=record.package_entry.profile,
+                selector_first=True,
+            )
+            state_badge = ""
+            if record.repo is None or record.state_key != record.package_entry.repo:
+                state_badge = render_menu_badge(f"[{record.state_key}]")
+            return ResolverOption(
+                display_label=join_menu_display_fields(base_label, state_badge),
+                display_fields=(base_label, state_badge) if state_badge else (base_label,),
+                match_fields=build_full_spec_selector_match_fields(
+                    repo_name=record.package_entry.repo,
+                    selector=record.package_entry.selector,
+                    profile=record.package_entry.profile,
+                ),
+                field_kinds=build_full_spec_selector_field_kinds(),
+            )
+
+        def package_option(package) -> ResolverOption:
+            display_label = render_package_label(
+                repo_name=package.repo,
+                package_id=package.package_id,
+                bound_profile=package.bound_profile,
+                package_first=True,
+                include_repo_context=True,
+            )
+            return ResolverOption(
+                display_label=display_label,
+                match_fields=build_package_match_fields(
+                    repo_name=package.repo,
+                    package_id=package.package_id,
+                    bound_profile=package.bound_profile,
+                ),
+                field_kinds=build_package_field_kinds(has_bound_profile=package.bound_profile is not None),
+            )
+
+        def package_owner_error(package) -> ValueError:
+            matching_owner_package_entries = [
+                binding
+                for binding in package.package_entries
+                if profile is None or binding.profile == profile
+            ]
+            owners = ", ".join(
+                render_full_spec_selector_label(
+                    repo_name=binding.repo,
+                    selector=binding.selector,
+                    profile=binding.profile,
+                    selector_first=True,
+                )
+                for binding in matching_owner_package_entries
+            )
+            required_repo = explicit_repo or package.repo
+            required_ref = render_package_label(
+                repo_name=required_repo,
+                package_id=package.package_id,
+                bound_profile=package.bound_profile,
+                package_first=True,
+                include_repo_context=True,
+            )
+            return ValueError(
+                f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
+            )
+
+        filtered_package_matches = [
+            package
+            for package in package_matches
+            if not any(
+                record.package_entry.repo == package.repo and record.package_entry.selector == package.package_id
+                for record in partial_matches
+            )
+        ]
+
+        def combined_option(match) -> ResolverOption:
+            match_kind, item = match
+            if match_kind == "binding":
+                return persisted_option(item)
+            return package_option(item)
+
+        if interactive and (exact_matches or partial_matches or filtered_package_matches):
+            selected_kind, selected_item = resolve_candidate_match(
+                exact_matches=[("binding", record) for record in exact_matches],
+                partial_matches=[("binding", record) for record in partial_matches]
+                + [("package", package) for package in filtered_package_matches],
+                query_text=binding_label,
+                interactive=True,
+                exact_header_text=f"Select a tracked package entry for '{binding_label}':",
+                partial_header_text=(
+                    f"Select an untrack target for '{binding_label}':"
+                    if filtered_package_matches
+                    else f"Select a tracked package entry for '{binding_label}':"
+                ),
+                option_resolver=combined_option,
+                exact_error_text="unused",
+                partial_error_text="unused",
+                not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
+            )
+            if selected_kind == "binding":
+                selected_record = cast(Any, selected_item)
+                return selected_record.repo, selected_record.package_entry
+            raise package_owner_error(selected_item)
+
+        if len(exact_matches) == 1:
+            record = exact_matches[0]
+            return record.repo, record.package_entry
+        if len(exact_matches) > 1:
+            raise ValueError(
+                f"tracked package entry '{binding_label}' is ambiguous: "
+                + ", ".join(
+                    f"{record.package_entry.repo}:{record.package_entry.selector}@{record.package_entry.profile}"
+                    for record in exact_matches
+                )
+            )
+
+        if partial_matches:
+            if filtered_package_matches:
+                package_candidates = ", ".join(
+                    f"{package.repo}:{package.package_ref}"
+                    for package in filtered_package_matches
+                )
+                raise ValueError(
+                    f"tracked package entry '{binding_label}' is ambiguous: tracked packages: {package_candidates}"
+                )
+            if len(partial_matches) == 1:
+                record = partial_matches[0]
+                raise ValueError(
+                    f"no exact match for '{binding_label}'; use exact name '{persisted_option(record).display_label}'"
+                )
+            raise ValueError(
+                f"tracked package entry '{binding_label}' is ambiguous: "
+                + ", ".join(
+                    f"{record.package_entry.repo}:{record.package_entry.selector}@{record.package_entry.profile}"
+                    for record in partial_matches
+                )
+            )
+
+        if filtered_package_matches:
+            if len(filtered_package_matches) > 1:
+                raise ValueError(
+                    f"tracked package entry '{binding_label}' is ambiguous: tracked packages: "
+                    + ", ".join(
+                        f"{package.repo}:{package.package_ref}" for package in filtered_package_matches
+                    )
+                )
+            raise package_owner_error(filtered_package_matches[0])
+
+        raise ValueError(f"tracked package entry '{binding_label}' is not currently tracked")
+
+    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
+    lookup_repo, lookup_selector = parse_slash_qualified_query(
+        repo_names=repo_names,
+        explicit_repo=explicit_repo,
+        selector=selector,
+    )
+    lookup_binding_text = (
+        f"{lookup_repo}:{lookup_selector}" if lookup_repo is not None else lookup_selector
+    )
+    if profile is not None:
+        lookup_binding_text = f"{lookup_binding_text}@{profile}"
+    resolved_selector, resolved_profile, exact_matches, partial_matches, owner_package_entries = (
+        engine.find_tracked_package_entry_matches(lookup_binding_text)
+    )
+    binding_resolver = lambda match: ResolverOption(
+        display_label=render_full_spec_selector_label(
+            repo_name=match[0].config.name,
+            selector=match[1].selector,
+            profile=match[1].profile,
+            selector_first=True,
+        ),
+        match_fields=build_full_spec_selector_match_fields(
+            repo_name=match[0].config.name,
+            selector=match[1].selector,
+            profile=match[1].profile,
+        ),
+        field_kinds=build_full_spec_selector_field_kinds(),
+    )
+
+    package_matches, _package_owner_package_entries = engine.find_tracked_package_matches_for_untrack(
+        selector=resolved_selector,
+        profile=resolved_profile,
+        repo_name=lookup_repo,
+    )
+    direct_binding_match_keys = {
+        (repo.config.name, binding.selector, binding.profile)
+        for repo, binding in [*exact_matches, *partial_matches]
+    }
+    owner_target_matches: list[tuple[object, str, FullSpecSelector]] = []
+    seen_owner_target_matches: set[tuple[str, str, str, str]] = set()
+    for package in package_matches:
+        repo = engine.get_repo(package.repo)
+        for owner_binding in package.package_entries:
+            if resolved_profile is not None and owner_binding.profile != resolved_profile:
+                continue
+            if (package.repo, package.package_id, owner_binding.profile) in direct_binding_match_keys:
+                continue
+            owner_match_key = (
+                package.repo,
+                package.package_id,
+                owner_binding.profile,
+                owner_binding.selector,
+            )
+            if owner_match_key in seen_owner_target_matches:
+                continue
+            seen_owner_target_matches.add(owner_match_key)
+            owner_target_matches.append(
+                (
+                    repo,
+                    package.package_id,
+                    FullSpecSelector(
+                        repo=owner_binding.repo,
+                        selector=owner_binding.selector,
+                        selector_kind=owner_binding.selector_kind,
+                        profile=owner_binding.profile,
+                    ),
+                )
+            )
+
+    owner_exact_matches = [match for match in owner_target_matches if match[1] == resolved_selector]
+    owner_partial_matches = [match for match in owner_target_matches if match[1] != resolved_selector]
+
+    def owner_target_resolver(match) -> ResolverOption:
+        owner_repo, package_id, owner_binding = match
+        target_label = render_package_profile_label(
+            repo_name=owner_repo.config.name,
+            package_id=package_id,
+            profile=owner_binding.profile,
+        )
+        owner_label = full_spec_selector_label_text(
+            repo_name=owner_repo.config.name,
+            selector=owner_binding.selector,
+            profile=owner_binding.profile,
+            selector_first=True,
+        )
+        owner_badge = render_menu_badge(f"[via {owner_label}]")
+        return ResolverOption(
+            display_label=target_label,
+            display_fields=(target_label, owner_badge),
+            match_fields=build_full_spec_selector_match_fields(
+                repo_name=owner_repo.config.name,
+                selector=package_id,
+                profile=owner_binding.profile,
+            ),
+            field_kinds=build_full_spec_selector_field_kinds(),
+        )
+
+    def owner_target_error_label(match) -> str:
+        owner_repo, package_id, owner_binding = match
+        return (
+            f"{owner_repo.config.name}:{package_id}@{owner_binding.profile}"
+            f" via {owner_repo.config.name}:{owner_binding.selector}@{owner_binding.profile}"
+        )
+
+    def binding_from_owner_match(match) -> tuple[object, FullSpecSelector]:
+        owner_repo, package_id, owner_binding = match
+        return owner_repo, FullSpecSelector(
+            repo=owner_repo.config.name,
+            selector=package_id,
+            selector_kind="package",
+            profile=owner_binding.profile,
+        )
+
+    if allow_package_owners and not exact_matches and (partial_matches or owner_exact_matches or owner_partial_matches):
+        # Tracked package targets can be selected through owner bindings. Combine them
+        # with partial tracked-binding hits so ambiguous user input goes through the
+        # normal resolver instead of silently preferring one path.
+        def combined_resolver(match) -> ResolverOption:
+            match_kind, item = match
+            if match_kind == "binding":
+                return binding_resolver(item)
+            return owner_target_resolver(item)
+
+        combined_exact_matches = [(
+            "owner", match
+        ) for match in owner_exact_matches] if not partial_matches else []
+        combined_partial_matches = [("binding", match) for match in partial_matches] + [
+            ("owner", match)
+            for match in ([*owner_exact_matches, *owner_partial_matches] if partial_matches else owner_partial_matches)
+        ]
+        selected_kind, selected_item = resolve_candidate_match(
+            exact_matches=combined_exact_matches,
+            partial_matches=combined_partial_matches,
+            query_text=binding_label,
+            interactive=interactive,
+            exact_header_text=f"Select a tracked package entry for '{binding_label}':",
+            partial_header_text=f"Select a tracked package entry for '{binding_label}':",
+            option_resolver=combined_resolver,
+            exact_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
+            + ", ".join(owner_target_error_label(match) for match in owner_exact_matches),
+            partial_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
+            + ", ".join(
+                [
+                    *(
+                        f"{repo.config.name}:{binding.selector}@{binding.profile}"
+                        for repo, binding in partial_matches
+                    ),
+                    *(
+                        owner_target_error_label(match)
+                        for match in ([*owner_exact_matches, *owner_partial_matches] if partial_matches else owner_partial_matches)
+                    ),
+                ]
+            ),
+            not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
+        )
+        if selected_kind == "binding":
+            return cast(tuple[Repository, FullSpecSelector], selected_item)
+        return binding_from_owner_match(selected_item)
+
+    try:
+        return resolve_candidate_match(
+            exact_matches=exact_matches,
+            partial_matches=partial_matches,
+            query_text=binding_label,
+            interactive=interactive,
+            exact_header_text=f"Select a tracked package entry for '{binding_label}':",
+            partial_header_text=f"Select a tracked package entry for '{binding_label}':",
+            option_resolver=binding_resolver,
+            exact_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
+            + ", ".join(f"{repo.config.name}:{binding.selector}@{binding.profile}" for repo, binding in exact_matches),
+            partial_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
+            + ", ".join(f"{repo.config.name}:{binding.selector}@{binding.profile}" for repo, binding in partial_matches),
+            not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
+        )
+    except ValueError as exc:
+        if allow_package_owners and owner_package_entries:
+            if len(owner_package_entries) == 1:
+                owner_repo, owner_binding = owner_package_entries[0]
+            elif interactive:
+                owner_repo, owner_binding = resolve_candidate_match(
+                    exact_matches=[],
+                    partial_matches=owner_package_entries,
+                    query_text=binding_label,
+                    interactive=interactive,
+                    exact_header_text=f"Select a tracked package entry for '{binding_label}':",
+                    partial_header_text=f"Select a tracked package entry for '{binding_label}':",
+                    option_resolver=binding_resolver,
+                    exact_error_text="unused",
+                    partial_error_text=f"{operation} target '{binding_label}' is ambiguous across tracked package entries: "
+                    + ", ".join(
+                        f"{repo.config.name}:{binding.selector}@{binding.profile}"
+                        for repo, binding in owner_package_entries
+                    ),
+                    not_found_text="unused",
+                )
+            else:
+                candidates = ", ".join(
+                    f"{repo.config.name}:{binding.selector}@{binding.profile}"
+                    for repo, binding in owner_package_entries
+                )
+                raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked package entries: {candidates}") from None
+            return binding_from_owner_match((owner_repo, owner_binding))
+        if owner_package_entries and not allow_package_owners:
+            owners = ", ".join(
+                f"{repo.config.name}:{binding.selector}@{binding.profile}"
+                for repo, binding in owner_package_entries
+            )
+            repo_name, _selector, _profile = parse_full_spec_selector_text(binding_text)
+            required_repo = repo_name or lookup_repo or owner_package_entries[0][0].config.name
+            required_ref = f"{required_repo}:{resolved_selector}"
+            raise ValueError(
+                f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
+            ) from None
+        raise exc
+
+
+def resolve_tracked_package_text(
+    engine: DotmanEngine,
+    package_text: str,
+    *,
+    json_output: bool,
+) -> tuple[Repository, str, str | None]:
+    explicit_repo, selector, bound_profile = parse_package_ref_text(package_text)
+    package_query = package_ref_text(package_id=selector, bound_profile=bound_profile)
+    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
+    lookup_repo, lookup_selector = parse_slash_qualified_query(
+        repo_names=repo_names,
+        explicit_repo=explicit_repo,
+        selector=selector,
+    )
+    lookup_package_ref = package_ref_text(package_id=lookup_selector, bound_profile=bound_profile)
+    lookup_package_text = f"{lookup_repo}:{lookup_package_ref}" if lookup_repo is not None else lookup_package_ref
+    selector, bound_profile, exact_matches, partial_matches = engine.find_tracked_package_matches(lookup_package_text)
+    return resolve_candidate_match(
+        exact_matches=exact_matches,
+        partial_matches=partial_matches,
+        query_text=package_query,
+        interactive=interactive_mode_enabled(json_output=json_output),
+        exact_header_text=f"Select a tracked package for '{package_query}':",
+        partial_header_text=f"Select a tracked package for '{package_query}':",
+        option_resolver=lambda match: ResolverOption(
+            display_label=render_package_label(
+                repo_name=match[0].config.name,
+                package_id=match[1],
+                bound_profile=match[2],
+                package_first=True,
+                include_repo_context=True,
+            ),
+            match_fields=build_package_match_fields(
+                repo_name=match[0].config.name,
+                package_id=match[1],
+                bound_profile=match[2],
+            ),
+            field_kinds=build_package_field_kinds(has_bound_profile=match[2] is not None),
+        ),
+        exact_error_text=(
+            (
+                f"tracked package '{package_query}' is defined in multiple repos: "
+                if len({repo.config.name for repo, _package_id, _match_bound_profile in exact_matches}) > 1
+                else f"tracked package '{package_query}' is ambiguous: "
+            )
+            + ", ".join(
+                f"{repo.config.name}:{package_ref_text(package_id=package_id, bound_profile=match_bound_profile)}"
+                for repo, package_id, match_bound_profile in exact_matches
+            )
+        ),
+        partial_error_text=f"tracked package '{package_query}' is ambiguous: "
+        + ", ".join(
+            f"{repo.config.name}:{package_ref_text(package_id=package_id, bound_profile=match_bound_profile)}"
+            for repo, package_id, match_bound_profile in partial_matches
+        ),
+        not_found_text=f"tracked package '{package_query}' did not match any tracked package",
+    )
+
+
+def resolve_trackable_selector_text(
+    engine: DotmanEngine,
+    query_text: str,
+    *,
+    json_output: bool,
+) -> tuple[Repository, str, SelectorKind]:
+    explicit_repo, selector, selector_profile = parse_full_spec_selector_text(query_text)
+    if selector_profile is not None:
+        raise ValueError("trackable lookup does not accept selector@profile syntax")
+    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
+    lookup_repo, lookup_selector = parse_slash_qualified_query(
+        repo_names=repo_names,
+        explicit_repo=explicit_repo,
+        selector=selector,
+    )
+    exact_matches, partial_matches = engine.find_selector_matches(lookup_selector, lookup_repo)
+    return resolve_candidate_match(
+        exact_matches=exact_matches,
+        partial_matches=partial_matches,
+        query_text=selector,
+        interactive=interactive_mode_enabled(json_output=json_output),
+        exact_header_text=f"Select a package or group for '{selector}':",
+        partial_header_text=f"Select a package or group for '{selector}':",
+        option_resolver=lambda match: ResolverOption(
+            display_label=render_selector_match_label(
+                repo_name=match[0].config.name,
+                selector=match[1],
+                selector_kind=match[2],
+            ),
+            display_fields=build_selector_match_display_fields(
+                repo_name=match[0].config.name,
+                selector=match[1],
+                selector_kind=match[2],
+            ),
+            match_fields=build_selector_match_fields(
+                repo_name=match[0].config.name,
+                selector=match[1],
+            ),
+            field_kinds=build_selector_field_kinds(),
+        ),
+        exact_error_text=f"selector '{selector}' is defined in multiple repos: "
+        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_matches),
+        partial_error_text=f"selector '{selector}' is ambiguous: "
+        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches),
+        not_found_text=f"selector '{selector}' did not match any package or group",
+    )
+
+
+def collect_pending_selection_items(plans: Sequence) -> list[PendingSelectionItem]:
+    return collect_pending_selection_items_for_operation(plans, operation="push")
+
+
+def selection_item_paths(*, operation: str, repo_path: Path | str, live_path: Path | str) -> tuple[str, str]:
+    repo_text = str(repo_path)
+    live_text = str(live_path)
+    if operation == "pull":
+        return live_text, repo_text
+    return repo_text, live_text
+
+
+def selection_item_action(*, operation: str, action: str) -> str:
+    if action == "probe":
+        return "install"
+    return action
+
+
+def selection_item_identity(
+    *,
+    selection_label: str,
+    package_id: str,
+    target_name: str,
+    operation: str,
+    repo_path: Path | str,
+    live_path: Path | str,
+) -> tuple[str, str, str, str, str]:
+    source_path, destination_path = selection_item_paths(
+        operation=operation,
+        repo_path=repo_path,
+        live_path=live_path,
+    )
+    return (
+        selection_label,
+        package_id,
+        target_name,
+        source_path,
+        destination_path,
+    )
+
+
+def collect_pending_selection_items_for_operation(
+    plans: Sequence,
+    *,
+    operation: str,
+    run_noop: bool = False,
+    use_raw_hook_plans: bool = False,
+) -> list[PendingSelectionItem]:
+    selection_items: list[PendingSelectionItem] = []
+    package_plans = package_plans_for_operation_plan(plans)
+    for plan in package_plans:
+        selection_label = plan.selection_label
+        for target in plan.target_plans:
+            if target.directory_items:
+                for item in target.directory_items:
+                    source_path, destination_path = selection_item_paths(
+                        operation=operation,
+                        repo_path=item.repo_path,
+                        live_path=item.live_path,
+                    )
+                    selection_items.append(
+                        PendingSelectionItem(
+                            selection_label=selection_label,
+                            package_id=target.package_id,
+                            target_name=target.target_name,
+                            action=selection_item_action(operation=operation, action=item.action),
+                            source_path=source_path,
+                            destination_path=destination_path,
+                        )
+                    )
+                continue
+            if target.action == "noop":
+                continue
+            if target.target_kind == "probe":
+                selection_items.append(
+                    PendingSelectionItem(
+                        selection_label=selection_label,
+                        package_id=target.package_id,
+                        action=selection_item_action(operation=operation, action=target.action),
+                        target_name=target.target_name,
+                        bound_profile=plan.bound_profile,
+                    )
+                )
+                continue
+            source_path, destination_path = selection_item_paths(
+                operation=operation,
+                repo_path=target.repo_path,
+                live_path=target.live_path,
+            )
+            selection_items.append(
+                PendingSelectionItem(
+                    selection_label=selection_label,
+                    package_id=target.package_id,
+                    action=selection_item_action(operation=operation, action=target.action),
+                    target_name=target.target_name,
+                    bound_profile=plan.bound_profile,
+                    source_path=source_path,
+                    destination_path=destination_path,
+                )
+            )
+        hook_source = (getattr(plan, "hook_plans", None) or plan.hooks) if use_raw_hook_plans else plan.hooks
+        finalized_hooks = (
+            finalize_hook_plans_for_targets(
+                hook_source,
+                plan.target_plans,
+                allow_standalone_noop_hooks=run_noop,
+            )
+            if use_raw_hook_plans
+            else hook_source
+        )
+        standalone_hook_packages = standalone_hook_package_summaries(finalized_hooks, plan.target_plans)
+        for package_id, hook_names in standalone_hook_packages.items():
+            selection_items.append(
+                PendingSelectionItem(
+                    selection_label=selection_label,
+                    package_id=package_id,
+                    action="hooks",
+                    kind="package_hook_noop",
+                    bound_profile=plan.bound_profile,
+                    hook_names=hook_names,
+                )
+            )
+        standalone_hook_targets = standalone_hook_target_summaries(finalized_hooks, plan.target_plans)
+        for (package_id, target_name), hook_names in standalone_hook_targets.items():
+            selection_items.append(
+                PendingSelectionItem(
+                    selection_label=selection_label,
+                    package_id=package_id,
+                    target_name=target_name,
+                    action="hooks",
+                    kind="target_hook_noop",
+                    bound_profile=plan.bound_profile,
+                    hook_names=hook_names,
+                )
+            )
+    if isinstance(plans, OperationPlan):
+        provisional_package_plans = [
+            replace(
+                plan,
+                hooks=(
+                    finalize_hook_plans_for_targets(
+                        (getattr(plan, "hook_plans", None) or plan.hooks),
+                        plan.target_plans,
+                        allow_standalone_noop_hooks=run_noop,
+                    )
+                    if use_raw_hook_plans
+                    else plan.hooks
+                ),
+            )
+            for plan in package_plans
+        ]
+        for repo_name in plans.repo_order:
+            repo_package_plans = [plan for plan in provisional_package_plans if plan.repo_name == repo_name]
+            hook_source = (plans.repo_hook_plans or {}).get(repo_name, {}) if use_raw_hook_plans else plans.repo_hooks.get(repo_name, {})
+            finalized_repo_hooks = (
+                finalize_repo_hook_plans(
+                    hook_source,
+                    repo_package_plans,
+                    allow_standalone_noop_hooks=run_noop,
+                )
+                if use_raw_hook_plans
+                else hook_source
+            )
+            hook_names = standalone_repo_hook_summary(finalized_repo_hooks, repo_package_plans)
+            if hook_names is None:
+                continue
+            selection_items.append(
+                PendingSelectionItem(
+                    selection_label=f"{repo_name}:repo@repo",
+                    package_id=repo_name,
+                    action="hooks",
+                    kind="repo_hook_noop",
+                    hook_names=hook_names,
+                    repo_name=repo_name,
+                )
+            )
+    return selection_items
+
+
+def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full_paths: bool | None = None) -> None:
+    full_paths = _effective_full_paths(full_paths)
+    repo_name = item.repo_name or repo_name_from_selection_label(item.selection_label)
+    if item.kind in {"package_hook_noop", "target_hook_noop", "repo_hook_noop"}:
+        if item.kind == "repo_hook_noop":
+            owner_label = repo_name
+        else:
+            owner_label = package_label_text(
+                repo_name=repo_name,
+                package_id=item.package_id,
+                bound_profile=item.bound_profile,
+                target_name=item.target_name if item.kind == "target_hook_noop" else None,
+            )
+        hook_summary = cli_style.hook_summary_text(item.hook_names)
+        if not colors_enabled():
+            item_text = f"[hooks] {owner_label}"
+            item_text += cli_style.render_annotation_parentheses(hook_summary, use_color=False)
+            print(f"  {index:>2}) {item_text}")
+            return
+
+        badge_text = style_text("[hooks]", *MENU_ACTION_STYLE_BY_NAME.get("update", ("1",)))
+        if item.kind == "repo_hook_noop":
+            package_text = style_text(repo_name, *MENU_REPO_STYLE)
+        elif item.kind == "target_hook_noop":
+            if item.target_name is None:
+                raise ValueError("target hook selection items must include a target name")
+            package_text = render_package_target_label(
+                repo_name=repo_name,
+                package_id=item.package_id,
+                target_name=item.target_name,
+                bound_profile=item.bound_profile,
+            )
+        else:
+            package_text = render_package_label(repo_name=repo_name, package_id=item.package_id, bound_profile=item.bound_profile)
+        summary_text = cli_style.render_annotation_parentheses(hook_summary, use_color=True)
+        print(
+            f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+            f"{badge_text} {package_text}{summary_text}"
+        )
+        return
+
+    if item.target_name is None:
+        raise ValueError("target selection items must include a target name")
+
+    package_target = package_label_text(
+        repo_name=repo_name,
+        package_id=item.package_id,
+        bound_profile=item.bound_profile,
+        target_name=item.target_name,
+    )
+    if item.action == "install" and item.source_path is None and item.destination_path is None:
+        if not colors_enabled():
+            print(f"  {index:>2}) [install] {package_target} [probe]")
+            return
+        action_text = style_text("[install]", *MENU_ACTION_STYLE_BY_NAME.get("install", ("1",)))
+        package_label = render_package_target_label(
+            repo_name=repo_name,
+            package_id=item.package_id,
+            target_name=item.target_name,
+            bound_profile=item.bound_profile,
+        )
+        probe_badge = cli_style.render_menu_badge("[probe]", use_color=True)
+        print(
+            f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+            f"{action_text} {package_label} {probe_badge}"
+        )
+        return
+    if item.source_path is None or item.destination_path is None:
+        raise ValueError("file selection items must include source and destination paths")
+    source_path = display_cli_path(item.source_path, full_paths=full_paths)
+    destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
+    if not colors_enabled():
+        item_text = (
+            f"[{item.action}] {package_target}: "
+            f"{source_path} -> {destination_path}"
+        )
+        print(f"  {index:>2}) {item_text}")
+        return
+
+    action_style = MENU_ACTION_STYLE_BY_NAME.get(item.action, ("1",))
+    action_text = style_text(f"[{item.action}]", *action_style)
+    package_label = render_package_target_label(
+        repo_name=repo_name,
+        package_id=item.package_id,
+        target_name=item.target_name,
+        bound_profile=item.bound_profile,
+    )
+    arrow_text = style_text("->", *MENU_HINT_STYLE)
+    print(
+        f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+        f"{action_text} {package_label}: {source_path} {arrow_text} {destination_path}"
+    )
+
+
+def prompt_for_excluded_items(
+    selection_items: Sequence[PendingSelectionItem],
+    *,
+    operation: str,
+    full_paths: bool | None = None,
+) -> set[int]:
+    full_paths = _effective_full_paths(full_paths)
+    print_selection_header(f"Select items to exclude from {operation}:")
+    for index, item in enumerate(selection_items, start=1):
+        print_pending_selection_item(index, item, full_paths=full_paths)
+    while True:
+        try:
+            answer = prompt(pending_selection_prompt())
+            if answer.strip() == "?":
+                print_pending_selection_help()
+                continue
+            return parse_selection_indexes(answer, len(selection_items))
+        except ValueError as exc:
+            print(f"invalid selection: {exc}", file=sys.stderr)
+
+
+def filter_plans_for_interactive_selection(
+    *,
+    plans: PlanCollection,
+    operation: str,
+    json_output: bool,
+    full_paths: bool | None = None,
+    run_noop: bool = False,
+) -> OperationPlan | list[PackagePlan]:
+    full_paths = _effective_full_paths(full_paths)
+    selection_items = collect_pending_selection_items_for_operation(
+        plans,
+        operation=operation,
+        run_noop=run_noop,
+        use_raw_hook_plans=True,
+    )
+    excluded_indexes: set[int] = set()
+    if interactive_mode_enabled(json_output=json_output) and selection_items:
+        excluded_indexes = prompt_for_excluded_items(
+            selection_items,
+            operation=operation,
+            full_paths=full_paths,
+        )
+
+    excluded_targets: set[tuple[str, str, str, str, str]] = set()
+    excluded_standalone_packages: set[tuple[str, str]] = set()
+    excluded_standalone_targets: set[tuple[str, str, str]] = set()
+    excluded_repo_names: set[str] = set()
+    for excluded_index in excluded_indexes:
+        item = selection_items[excluded_index - 1]
+        if item.kind == "package_hook_noop":
+            excluded_standalone_packages.add((item.selection_label, item.package_id))
+            continue
+        if item.kind == "target_hook_noop":
+            excluded_standalone_targets.add((item.selection_label, item.package_id, item.target_name or ""))
+            continue
+        if item.kind == "repo_hook_noop":
+            excluded_repo_names.add(item.repo_name or repo_name_from_selection_label(item.selection_label))
+            continue
+        excluded_targets.add(
+            (
+                item.selection_label,
+                item.package_id,
+                item.target_name or "",
+                item.source_path or "",
+                item.destination_path or "",
+            )
+        )
+
+    package_plans = package_plans_for_operation_plan(plans)
+    filtered_plans = []
+    for plan in package_plans:
+        selection_label = plan.selection_label
+        filtered_targets = []
+        for target in plan.target_plans:
+            if target.target_kind == "probe":
+                probe_identity = (
+                    selection_label,
+                    target.package_id,
+                    target.target_name,
+                    "",
+                    "",
+                )
+                if probe_identity not in excluded_targets:
+                    filtered_targets.append(target)
+                continue
+            if target.directory_items:
+                remaining_items = tuple(
+                    item
+                    for item in target.directory_items
+                    if selection_item_identity(
+                        selection_label=selection_label,
+                        package_id=target.package_id,
+                        target_name=target.target_name,
+                        operation=operation,
+                        repo_path=item.repo_path,
+                        live_path=item.live_path,
+                    )
+                    not in excluded_targets
+                )
+                if remaining_items:
+                    filtered_targets.append(replace(target, directory_items=remaining_items))
+                else:
+                    filtered_targets.append(replace(target, action="noop", directory_items=()))
+                continue
+            if selection_item_identity(
+                selection_label=selection_label,
+                package_id=target.package_id,
+                target_name=target.target_name,
+                operation=operation,
+                repo_path=target.repo_path,
+                live_path=target.live_path,
+            ) not in excluded_targets:
+                filtered_targets.append(target)
+        raw_hook_plans = getattr(plan, "hook_plans", None) or plan.hooks
+        filtered_plans.append(
+            replace(
+                plan,
+                hooks=finalize_hook_plans_for_targets(
+                    raw_hook_plans,
+                    filtered_targets,
+                    allow_standalone_noop_hooks=run_noop,
+                    excluded_standalone_package_ids={
+                        package_id
+                        for current_selection_label, package_id in excluded_standalone_packages
+                        if current_selection_label == selection_label
+                    },
+                    excluded_standalone_target_ids={
+                        (package_id, target_name)
+                        for current_selection_label, package_id, target_name in excluded_standalone_targets
+                        if current_selection_label == selection_label
+                    },
+                ),
+                target_plans=filtered_targets,
+            )
+        )
+    if isinstance(plans, OperationPlan):
+        repo_hooks = {
+            repo_name: finalize_repo_hook_plans(
+                (plans.repo_hook_plans or {}).get(repo_name, {}),
+                [plan for plan in filtered_plans if plan.repo_name == repo_name],
+                allow_standalone_noop_hooks=run_noop,
+                excluded_repo_names=excluded_repo_names,
+            )
+            for repo_name in plans.repo_order
+        }
+        repo_hooks = {repo_name: hooks for repo_name, hooks in repo_hooks.items() if hooks}
+        return replace(
+            plans,
+            package_plans=tuple(filtered_plans),
+            repo_hooks=repo_hooks,
+        )
+    return filtered_plans
+
+
+def print_review_item(index: int, item: ReviewItem, *, full_paths: bool | None = None) -> None:
+    full_paths = _effective_full_paths(full_paths)
+    repo_name = repo_name_from_selection_label(item.selection_label)
+    bound_profile = getattr(item, "bound_profile", None)
+    package_target = package_label_text(
+        repo_name=repo_name,
+        package_id=item.package_id,
+        bound_profile=bound_profile,
+        target_name=item.target_name,
+    )
+    if item.is_probe:
+        if not colors_enabled():
+            print(f"  {index:>2}) [{item.action}] {package_target} [probe]")
+            return
+        action_text = style_text(f"[{item.action}]", *MENU_ACTION_STYLE_BY_NAME.get(item.action, ("1",)))
+        package_label = render_package_target_label(
+            repo_name=repo_name,
+            package_id=item.package_id,
+            target_name=item.target_name,
+            bound_profile=bound_profile,
+        )
+        probe_badge = cli_style.render_menu_badge("[probe]", use_color=True)
+        print(
+            f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+            f"{action_text} {package_label} {probe_badge}"
+        )
+        return
+
+    diff_badge = "[diff unavailable]" if item.diff_unavailable_reason is not None else None
+    source_path = display_cli_path(item.source_path, full_paths=full_paths)
+    destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
+    if not colors_enabled():
+        item_text = f"[{item.action}] {package_target}"
+        if diff_badge is not None:
+            item_text += f" {diff_badge}"
+        item_text += f": {source_path} -> {destination_path}"
+        print(f"  {index:>2}) {item_text}")
+        return
+
+    action_style = MENU_ACTION_STYLE_BY_NAME.get(item.action, ("1",))
+    action_text = style_text(f"[{item.action}]", *action_style)
+    package_label = render_package_target_label(
+        repo_name=repo_name,
+        package_id=item.package_id,
+        target_name=item.target_name,
+        bound_profile=bound_profile,
+    )
+    badge_text = f" {style_text(diff_badge, *MENU_HINT_STYLE)}" if diff_badge is not None else ""
+    arrow_text = style_text("->", *MENU_HINT_STYLE)
+    print(
+        f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
+        f"{action_text} {package_label}{badge_text}: "
+        f"{source_path} {arrow_text} {destination_path}"
+    )
+
+
+def review_diff_header(review_item: ReviewItem, *, index: int, total: int) -> str:
+    return (
+        f"Diff {index}/{total}: "
+        f"{package_label_text(
+            repo_name=repo_name_from_selection_label(review_item.selection_label),
+            package_id=review_item.package_id,
+            bound_profile=review_item.bound_profile,
+            target_name=review_item.target_name,
+        )} "
+        f"[{review_item.action}]"
+    )
+
+
+def print_review_diff_header(
+    review_item: ReviewItem,
+    *,
+    index: int,
+    total: int,
+    full_paths: bool | None = None,
+) -> None:
+    full_paths = _effective_full_paths(full_paths)
+    header_text = review_diff_header(review_item, index=index, total=total)
+    path_text = review_diff_path_line(review_item, full_paths=full_paths)
+    separator = "-" * 5
+    if not colors_enabled():
+        print()
+        print(f"{separator} {header_text} {separator}")
+        print(path_text)
+        return
+    repo_name = repo_name_from_selection_label(review_item.selection_label)
+    prefix_text = style_text(f"Diff {index}/{total}:", *MENU_HINT_STYLE)
+    package_label = render_package_target_label(
+        repo_name=repo_name,
+        package_id=review_item.package_id,
+        target_name=review_item.target_name,
+        bound_profile=review_item.bound_profile,
+    )
+    action_text = style_text(f"[{review_item.action}]", *MENU_ACTION_STYLE_BY_NAME.get(review_item.action, ("1",)))
+    print()
+    print(
+        f"{style_text(separator, *MENU_HINT_STYLE)} "
+        f"{prefix_text} {package_label} {action_text} "
+        f"{style_text(separator, *MENU_HINT_STYLE)}"
+    )
+    print(style_text(path_text, *MENU_HINT_STYLE))
+
+
+def review_diff_path_line(review_item: ReviewItem, *, full_paths: bool | None = None) -> str:
+    full_paths = _effective_full_paths(full_paths)
+    if review_item.is_probe:
+        return "probe target: no files"
+    destination_path = display_cli_path(review_item.destination_path, full_paths=full_paths)
+    return f"file: {destination_path}"
+
+
+def review_diff_footer(*, index: int, total: int) -> str:
+    return f"End Diff {index}/{total}"
+
+
+def print_review_diff_footer(*, index: int, total: int) -> None:
+    footer_text = review_diff_footer(index=index, total=total)
+    separator = "-" * 5
+    if not colors_enabled():
+        print(f"{separator} {footer_text} {separator}")
+        return
+    print(
+        f"{style_text(separator, *MENU_HINT_STYLE)} "
+        f"{style_text(footer_text, *MENU_HINT_STYLE)} "
+        f"{style_text(separator, *MENU_HINT_STYLE)}"
+    )
+
+
+def print_review_menu_items(
+    review_items: Sequence[ReviewItem],
+    *,
+    operation: str,
+    full_paths: bool | None = None,
+) -> None:
+    full_paths = _effective_full_paths(full_paths)
+    print_selection_header(f"Review pending diffs for {operation}:")
+    for index, item in enumerate(review_items, start=1):
+        print_review_item(index, item, full_paths=full_paths)
+
+
+def run_diff_review_menu(
+    review_items: Sequence[ReviewItem],
+    *,
+    operation: str,
+    full_paths: bool | None = None,
+    assume_yes: bool = False,
+) -> bool:
+    full_paths = _effective_full_paths(full_paths)
+    print_review_menu_items(review_items, operation=operation, full_paths=full_paths)
+
+    last_viewed_index: int | None = None
+    while True:
+        try:
+            command_name, selected_index = parse_review_command(
+                prompt(review_menu_prompt(), escape_result=ESCAPE_INPUT),
+                len(review_items),
+            )
+        except ValueError as exc:
+            print(f"invalid selection: {exc}", file=sys.stderr)
+            continue
+
+        if command_name == "help":
+            print_review_command_help()
+            continue
+        if command_name == "list":
+            print_review_menu_items(review_items, operation=operation, full_paths=full_paths)
+            continue
+        if command_name == "skip_review":
+            return True
+        if command_name == "abort":
+            return False
+        if command_name == "all":
+            for item_index, item in enumerate(review_items, start=1):
+                try:
+                    print_review_diff_header(item, index=item_index, total=len(review_items), full_paths=full_paths)
+                    run_review_item_diff(item)
+                    print_review_diff_footer(index=item_index, total=len(review_items))
+                except ValueError as exc:
+                    print(f"review unavailable: {exc}", file=sys.stderr)
+            if review_items:
+                last_viewed_index = len(review_items) - 1
+            continue
+        if command_name == "next":
+            selected_index = 0 if last_viewed_index is None else last_viewed_index + 1
+            if selected_index >= len(review_items):
+                if confirm_review_continue(assume_yes=assume_yes):
+                    return True
+                continue
+        if selected_index is None:
+            print("invalid selection: missing review item", file=sys.stderr)
+            continue
+        if command_name in {"inspect", "next"}:
+            last_viewed_index = selected_index
+            try:
+                print_review_diff_header(
+                    review_items[selected_index],
+                    index=selected_index + 1,
+                    total=len(review_items),
+                    full_paths=full_paths,
+                )
+                run_review_item_diff(review_items[selected_index])
+                print_review_diff_footer(index=selected_index + 1, total=len(review_items))
+            except ValueError as exc:
+                print(f"review unavailable: {exc}", file=sys.stderr)
+            continue
+    return True
+
+
+def review_plans_for_interactive_diffs(
+    *,
+    plans: PlanCollection,
+    operation: str,
+    json_output: bool,
+    full_paths: bool | None = None,
+    assume_yes: bool = False,
+) -> bool:
+    full_paths = _effective_full_paths(full_paths)
+    if not interactive_mode_enabled(json_output=json_output):
+        return True
+    review_items = build_review_items(plans, operation=operation)
+    if not review_items:
+        return True
+    return run_diff_review_menu(review_items, operation=operation, full_paths=full_paths, assume_yes=assume_yes)
+
+
+def _push_symlink_hazard_description(hazard: cli_emit.PushSymlinkHazard, *, full_paths: bool | None) -> str:
+    full_paths = _effective_full_paths(full_paths)
+    live_path = cli_emit.display_cli_path(hazard.live_path, full_paths=full_paths)
+    symlink_target = hazard.symlink_target or "<unknown>"
+    return (
+        f"{hazard.selection_label} "
+        f"{cli_style.package_label_text(repo_name=hazard.selection_label.split(':', 1)[0], package_id=hazard.package_id, target_name=hazard.target_name)} "
+        f"({live_path} -> {symlink_target})"
+    )
+
+
+def prepare_push_plans_for_execution(
+    *,
+    plans: OperationPlan,
+    json_output: bool,
+    full_paths: bool | None = None,
+    assume_yes: bool = False,
+) -> OperationPlan | None:
+    full_paths = _effective_full_paths(full_paths)
+    hazards = cli_emit.collect_push_live_symlink_hazards(plans)
+    if not hazards:
+        return plans
+
+    interactive = interactive_mode_enabled(json_output=json_output)
+    if interactive:
+        cli_emit.print_push_live_symlink_hazard_warning(hazards, use_color=colors_enabled(), full_paths=full_paths)
+
+    hazard_descriptions = ", ".join(
+        _push_symlink_hazard_description(hazard, full_paths=full_paths)
+        for hazard in hazards
+    )
+    unsupported = [hazard for hazard in hazards if not hazard.replaceable]
+    if unsupported:
+        unsupported_descriptions = ", ".join(
+            _push_symlink_hazard_description(hazard, full_paths=full_paths)
+            for hazard in unsupported
+        )
+        if interactive:
+            raise ValueError(
+                f"refusing to replace unsupported symlinked directory target(s): {unsupported_descriptions}"
+            )
+        raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
+
+    if assume_yes:
+        return cli_emit.allow_push_live_symlink_replacements(plans)
+    if not interactive:
+        raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
+
+    if not confirm_push_symlink_replacement(assume_yes=assume_yes):
+        return None
+    return cli_emit.allow_push_live_symlink_replacements(plans)
+
+
+def emit_interrupt_notice() -> None:
+    sys.stderr.write("\ninterrupted\n")
+
+
+def display_cli_path(reference_path: Path | str, *, full_paths: bool) -> str:
+    return cli_emit.display_cli_path(reference_path, full_paths=full_paths)
+
+
+def resolve_snapshot_record(snapshot_root: Path, snapshot_ref: str | None, *, json_output: bool) -> SnapshotRecord:
+    matches = find_snapshot_matches(snapshot_root, snapshot_ref)
+    if not matches:
+        if snapshot_ref is None or snapshot_ref == "latest":
+            raise ValueError("no snapshots are available")
+        raise ValueError(f"snapshot '{snapshot_ref}' did not match any available snapshot")
+    if len(matches) == 1:
+        return matches[0]
+    if not interactive_mode_enabled(json_output=json_output):
+        raise ValueError(
+            f"snapshot '{snapshot_ref}' is ambiguous: " + ", ".join(snapshot.snapshot_id for snapshot in matches)
+        )
+    selected_index = select_menu_option(
+        header_text=f"Select a snapshot for '{snapshot_ref}':",
+        option_labels=[
+            f"{snapshot.snapshot_id} [{snapshot.status}] ({snapshot.entry_count} path{'s' if snapshot.entry_count != 1 else ''})"
+            for snapshot in matches
+        ],
+    )
+    return matches[selected_index]
+
+
+visible_restore_actions = cli_emit.visible_restore_actions
+build_restore_review_items = cli_emit.build_restore_review_items
+
+
+
+def review_restore_actions_for_interactive_diffs(
+    *,
+    snapshot: SnapshotRecord,
+    actions: Sequence[RestoreAction],
+    json_output: bool,
+    full_paths: bool | None = None,
+    assume_yes: bool = False,
+) -> bool:
+    full_paths = _effective_full_paths(full_paths)
+    if not interactive_mode_enabled(json_output=json_output):
+        return True
+    review_items = build_restore_review_items(snapshot, actions)
+    if not review_items:
+        return True
+    return run_diff_review_menu(review_items, operation="restore", full_paths=full_paths, assume_yes=assume_yes)
+
+
+
+@dataclass(frozen=True)
+class InspectionRuntime:
+    def resolve_tracked_package_text(
+        self,
+        engine: DotmanEngine,
+        package_text: str,
+        *,
+        json_output: bool,
+    ) -> tuple[Repository, str, str | None]:
+        return resolve_tracked_package_text(engine, package_text, json_output=json_output)
+
+    def resolve_trackable_selector_text(
+        self,
+        engine: DotmanEngine,
+        query_text: str,
+        *,
+        json_output: bool,
+    ) -> tuple[Repository, str, SelectorKind]:
+        return resolve_trackable_selector_text(engine, query_text, json_output=json_output)
+
+    def resolve_variable_text(
+        self,
+        engine: DotmanEngine,
+        variable_text: str,
+        *,
+        json_output: bool,
+    ) -> str:
+        return resolve_variable_text(engine, variable_text, json_output=json_output)
+
+    def resolve_snapshot_record(
+        self,
+        snapshot_root: Path,
+        snapshot_ref: str | None,
+        *,
+        json_output: bool,
+    ) -> SnapshotRecord:
+        return resolve_snapshot_record(snapshot_root, snapshot_ref, json_output=json_output)
+
+
+@dataclass(frozen=True)
+class StateRuntime:
+    interaction: Interaction | None
+
+    def add_editor_available(self) -> bool:
+        return add_editor_available()
+
+    def review_add_manifest(self, result: AddOperationResult) -> AddReviewResult | None:
+        return review_add_manifest(result)
+
+    def open_editor_path(self, *, path: Path, missing_editor_label: str) -> int:
+        return open_editor_path(path, missing_editor_label=missing_editor_label)
+
+    def emit_resolution_error(self, error: ValueError) -> None:
+        cli_emit.emit_error(
+            error,
+            use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None,
+        )
+
+    def emit_resolution_message(self, message: str) -> None:
+        sys.stdout.write(message)
+

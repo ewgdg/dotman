@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import dotman.cli as cli
 import pytest
+from dotman.cli import build_parser
 from dotman.models import PackagePlan, ResolvedPackageIdentity, ResolvedPackageSelection
 
 
@@ -121,7 +121,7 @@ def single_package_plan(engine, query_text: str, *, operation: str = "push", pro
 
 
 def capture_parser_help(capsys: pytest.CaptureFixture[str], *args: str) -> str:
-    parser = cli.build_parser()
+    parser = build_parser()
 
     with pytest.raises(SystemExit) as exc_info:
         parser.parse_args([*args, "--help"])

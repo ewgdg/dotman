@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import dotman.cli as cli
+import dotman.cli_interaction as cli
 from dotman.cli import main
 
 from tests.helpers import write_named_manager_config

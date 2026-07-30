@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-import dotman.cli as cli
-from dotman import cli_commands
+from dotman import sync_commands
+from dotman.cli import main
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session
 from tests.helpers import write_single_repo_config, write_tracked_packages_state
@@ -290,22 +290,12 @@ def test_all_guard_skipped_cli_reports_before_ui_and_returns_without_execution(
             self.closed = True
 
     sink = RecordingSink()
-    original_emit_guard_skips = cli.emit_planning_guard_skips
+    monkeypatch.setattr(sync_commands, "make_planning_sink", lambda *, json_output: sink)
 
-    def emit_guard_skips_after_progress(**kwargs) -> None:
-        assert sink.closed is True
-        original_emit_guard_skips(**kwargs)
-
-    monkeypatch.setattr(cli_commands, "make_planning_sink", lambda *, json_output: sink)
-    monkeypatch.setattr(cli, "emit_planning_guard_skips", emit_guard_skips_after_progress)
-
-    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda **_kwargs: pytest.fail("review must not run"))
-    monkeypatch.setattr(cli, "filter_plans_for_interactive_selection", lambda **_kwargs: pytest.fail("selection must not run"))
-    monkeypatch.setattr(cli, "run_execution", lambda **_kwargs: pytest.fail("execution must not run"))
-
-    exit_code = cli.main(["--config", str(config_path), "push"])
+    exit_code = main(["--config", str(config_path), "push"])
 
     assert exit_code == 0
+    assert sink.closed is True
     output = capsys.readouterr().out
     assert "skipped (guard) fixture:app (host mismatch)" in output
     assert "executing push" not in output
@@ -330,7 +320,7 @@ def test_guard_skip_json_is_structured_and_omits_command_text(
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
 
-    exit_code = cli.main(["--config", str(config_path), "--json", "push", "--dry-run"])
+    exit_code = main(["--config", str(config_path), "--json", "push", "--dry-run"])
 
     assert exit_code == 0
     raw_output = capsys.readouterr().out

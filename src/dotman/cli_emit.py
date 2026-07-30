@@ -8,7 +8,7 @@ from typing import Any, Callable, Sequence
 
 from dotman import cli_style
 from dotman.diff_review import ReviewItem, display_review_path
-from dotman.models import OperationPlan, package_plans_for_operation_plan
+from dotman.models import OperationPlan, PackagePlan, PlanCollection, package_plans_for_operation_plan
 from dotman.operation_runner import (
     RestoreActionFinished,
     RestoreActionStarted,
@@ -77,7 +77,7 @@ class PushSymlinkHazard:
         }
 
 
-def collect_push_live_symlink_hazards(plans: Sequence[Any]) -> list[PushSymlinkHazard]:
+def collect_push_live_symlink_hazards(plans: PlanCollection) -> list[PushSymlinkHazard]:
     hazards: list[PushSymlinkHazard] = []
     for plan in package_plans_for_operation_plan(plans):
         selection_label = plan.selection_label
@@ -115,8 +115,8 @@ def collect_push_live_symlink_hazards(plans: Sequence[Any]) -> list[PushSymlinkH
     return hazards
 
 
-def allow_push_live_symlink_replacements(plans: Sequence[Any]) -> list[Any]:
-    updated_plans: list[Any] = []
+def allow_push_live_symlink_replacements(plans: OperationPlan) -> OperationPlan:
+    updated_plans: list[PackagePlan] = []
     for plan in package_plans_for_operation_plan(plans):
         updated_targets = []
         for target in plan.target_plans:
@@ -130,9 +130,7 @@ def allow_push_live_symlink_replacements(plans: Sequence[Any]) -> list[Any]:
             else:
                 updated_targets.append(target)
         updated_plans.append(replace(plan, target_plans=updated_targets))
-    if isinstance(plans, OperationPlan):
-        return replace(plans, package_plans=tuple(updated_plans))
-    return updated_plans
+    return replace(plans, package_plans=tuple(updated_plans))
 
 
 def print_push_live_symlink_hazard_warning(
@@ -174,7 +172,7 @@ def effective_execution_mode(*, dry_run_requested: bool) -> str:
     return "dry-run" if dry_run_requested else "execute"
 
 
-def count_hook_commands(plans: Sequence[Any]) -> int:
+def count_hook_commands(plans: PlanCollection) -> int:
     package_hook_count = sum(len(hook_plans) for plan in package_plans_for_operation_plan(plans) for hook_plans in plan.hooks.values())
     repo_hook_count = 0
     if isinstance(plans, OperationPlan):
@@ -246,6 +244,8 @@ def _print_payload_target_item(item: Any, *, full_paths: bool, use_color: bool) 
     print(f"      {target_label} -> {_render_payload_action(item.action, use_color=use_color)}")
     if item.source_path is None and item.destination_path is None:
         return
+    if item.source_path is None or item.destination_path is None:
+        raise ValueError("payload target paths must be both present or both absent")
     source_path = display_cli_path(item.source_path, full_paths=full_paths)
     destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
     arrow_text = cli_style.style_text("->", *cli_style.MENU_HINT_STYLE) if use_color else "->"
@@ -253,7 +253,7 @@ def _print_payload_target_item(item: Any, *, full_paths: bool, use_color: bool) 
 
 
 def collect_payload_package_sections(
-    plans: Sequence[Any],
+    plans: PlanCollection,
     *,
     operation: str,
     collect_pending_selection_items_for_operation: CollectPendingSelectionItems,
@@ -306,7 +306,7 @@ def collect_payload_package_sections(
     return list(package_sections.values())
 
 
-def collect_payload_repo_hook_sections(plans: Sequence[Any]) -> list[PayloadRepoHookSection]:
+def collect_payload_repo_hook_sections(plans: PlanCollection) -> list[PayloadRepoHookSection]:
     if not isinstance(plans, OperationPlan):
         return []
     return [
@@ -318,7 +318,7 @@ def collect_payload_repo_hook_sections(plans: Sequence[Any]) -> list[PayloadRepo
 
 def emit_planning_guard_skips(
     *,
-    plans: Sequence[Any],
+    plans: PlanCollection,
     json_output: bool,
     use_color: bool,
 ) -> None:
@@ -350,7 +350,7 @@ def emit_planning_guard_skips(
 def emit_payload(
     *,
     operation: str,
-    plans: Sequence[Any],
+    plans: PlanCollection,
     json_output: bool,
     mode: str,
     full_paths: bool = False,
@@ -374,7 +374,7 @@ def emit_payload(
         if not visible_targets and not visible_hooks:
             continue
         visible_plans.append(replace(plan, target_plans=visible_targets, hooks=visible_hooks))
-    visible_operation_plans: Sequence[Any]
+    visible_operation_plans: PlanCollection
     if isinstance(plans, OperationPlan):
         visible_operation_plans = replace(plans, package_plans=tuple(visible_plans))
     else:

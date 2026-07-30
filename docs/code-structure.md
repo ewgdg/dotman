@@ -29,8 +29,10 @@ Focused CLI responsibilities live in dedicated modules:
   workflows
 - `state_commands.py` — track, untrack, add, and edit workflows composed with
   command-specific resolution and editor interfaces
-- `cli_commands.py` — push, pull, and restore dispatch through the remaining
-  sync-only runtime interface
+- `sync_commands.py` — typed push, pull, and restore planning, review, preview,
+  and execution workflows
+- `cli_interaction.py` — shared terminal selection, resolution, diff review,
+  and focused runtime adapters used by command runners
 - `cli_style.py` — labels, colors, and display helpers
 - `interaction.py` — typed terminal choices, confirmations, and text input, with
   production and deterministic scripted adapters
@@ -42,6 +44,10 @@ Execution presentation is event-driven. `operation_runner.py` owns the push,
 pull, and restore mutation lifecycle and emits typed events. Human and JSON
 renderers in `cli_emit.py` consume those events and final results without
 performing command, privilege, snapshot, or restore work.
+
+The root selects every command through the same declared runner map. Sync
+commands call typed engine planning and operation-runner interfaces directly;
+there is no global callback-dispatch record or sync-specific fallback path.
 
 If new CLI behavior grows beyond a small helper, prefer adding or extending a focused module instead of rebuilding a large `cli.py` monolith.
 
