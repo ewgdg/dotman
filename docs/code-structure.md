@@ -25,6 +25,11 @@ Focused CLI responsibilities live in dedicated modules:
 - `cli_emit.py` — text/JSON output formatting
 - `cli_commands.py` — per-command handlers
 - `cli_style.py` — labels, colors, and display helpers
+- `interaction.py` — typed terminal choices, confirmations, and text input, with
+  production and deterministic scripted adapters
+- `track_resolution.py`, `untrack_resolution.py`, `add_resolution.py`, and
+  `edit_resolution.py` — command-specific matching, ambiguity, profile, label,
+  and confirmation policy
 
 Execution presentation is event-driven. `operation_runner.py` owns the push,
 pull, and restore mutation lifecycle and emits typed events. Human and JSON

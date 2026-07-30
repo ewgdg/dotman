@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import dotman.cli as cli
 import pytest
 from dotman.cli import PendingSelectionItem, main, prompt_for_excluded_items
+from dotman.interaction import ScriptedInteraction
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
@@ -70,9 +71,7 @@ def test_track_cli_interactively_selects_profile_when_missing(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    answers = iter(["1", ""])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["basic"])
 
     exit_code = main(
         [
@@ -80,12 +79,13 @@ def test_track_cli_interactively_selects_profile_when_missing(
             str(write_manager_config(tmp_path)),
             "track",
             "example:git",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a profile for example:git:" in output
+    assert interaction.requests[0].header_text == "Select a profile for example:git:"
     assert "tracked example:git@basic" in output
     assert (tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -107,7 +107,6 @@ def test_track_cli_interactively_switches_to_non_conflicting_profile(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     repo_root = tmp_path / "switch-repo"
     write_profile_switch_repo(repo_root)
@@ -130,8 +129,7 @@ def test_track_cli_interactively_switches_to_non_conflicting_profile(
         encoding="utf-8",
     )
 
-    answers = iter(["1", ""])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["basic", "work"])
 
     exit_code = main(
         [
@@ -139,13 +137,16 @@ def test_track_cli_interactively_switches_to_non_conflicting_profile(
             str(config_path),
             "track",
             "fixture:alpha",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a profile for fixture:alpha:" in output
-    assert "Select a non-conflicting profile for fixture:alpha@basic:" in output
+    assert [request.header_text for request in interaction.requests] == [
+        "Select a profile for fixture:alpha:",
+        "Select a non-conflicting profile for fixture:alpha@basic:",
+    ]
     assert "tracked fixture:alpha@work" in output
     assert (state_dir / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -172,8 +173,9 @@ def test_track_cli_returns_130_on_keyboard_interrupt_during_profile_selection(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(KeyboardInterrupt()))
+    class InterruptingInteraction(ScriptedInteraction):
+        def choose(self, request):
+            raise KeyboardInterrupt
 
     exit_code = main(
         [
@@ -181,7 +183,8 @@ def test_track_cli_returns_130_on_keyboard_interrupt_during_profile_selection(
             str(write_manager_config(tmp_path)),
             "track",
             "example:git",
-        ]
+        ],
+        interaction=InterruptingInteraction(),
     )
 
     captured = capsys.readouterr()
@@ -196,9 +199,7 @@ def test_track_cli_interactively_selects_repo_for_exact_selector_collision(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    answers = iter(["2", ""])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["beta:sunshine"])
 
     config_path = write_named_manager_config(
         tmp_path,
@@ -214,14 +215,15 @@ def test_track_cli_interactively_selects_repo_for_exact_selector_collision(
             str(config_path),
             "track",
             "sunshine@host/linux",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a repo for exact selector 'sunshine':" in output
-    assert "alpha:sunshine [package]" in output
-    assert "beta:sunshine [package]" in output
+    request = interaction.requests[0]
+    assert request.header_text == "Select a repo for exact selector 'sunshine':"
+    assert [option.value for option in request.options] == ["alpha:sunshine", "beta:sunshine"]
     assert "tracked beta:sunshine@host/linux" in output
     assert (tmp_path / "state" / "dotman" / "repos" / "beta" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -243,9 +245,7 @@ def test_track_cli_interactively_selects_partial_selector_match(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    answers = iter(["2", ""])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["sandbox:linux/1password"])
 
     exit_code = main(
         [
@@ -253,12 +253,13 @@ def test_track_cli_interactively_selects_partial_selector_match(
             str(write_manager_config(tmp_path)),
             "track",
             "sandbox:1pass@host/linux",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a selector match for '1pass':" in output
+    assert interaction.requests[0].header_text == "Select a selector match for '1pass':"
     assert "tracked sandbox:linux/1password@host/linux" in output
     assert (tmp_path / "state" / "dotman" / "repos" / "sandbox" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -336,19 +337,7 @@ def test_track_cli_selects_unique_partial_profile_in_interactive_mode(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    selected_menu: dict[str, object] = {}
-
-    def select_profile_match(**kwargs):
-        selected_menu.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(cli, "select_menu_option", select_profile_match)
-    monkeypatch.setattr(
-        cli,
-        "prompt",
-        lambda _message: (_ for _ in ()).throw(AssertionError("expected resolver menu, not partial confirmation")),
-    )
+    interaction = ScriptedInteraction(choices=["work"])
 
     exit_code = main(
         [
@@ -356,12 +345,14 @@ def test_track_cli_selects_unique_partial_profile_in_interactive_mode(
             str(write_manager_config(tmp_path)),
             "track",
             "example:git@wor",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
-    assert selected_menu["header_text"] == "Select a profile match for 'wor' in example:git:"
-    assert selected_menu["option_labels"] == ["work"]
+    request = interaction.requests[0]
+    assert request.header_text == "Select a profile match for 'wor' in example:git:"
+    assert [option.value for option in request.options] == ["work"]
     assert "tracked example:git@work" in capsys.readouterr().out
 
 def test_track_cli_interactively_selects_ambiguous_partial_profile_match(
@@ -372,9 +363,7 @@ def test_track_cli_interactively_selects_ambiguous_partial_profile_match(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    answers = iter(["1", ""])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["os/mac"])
 
     exit_code = main(
         [
@@ -382,12 +371,13 @@ def test_track_cli_interactively_selects_ambiguous_partial_profile_match(
             str(write_manager_config(tmp_path)),
             "track",
             "sandbox:1password@os/",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a profile match for 'os/' in sandbox:1password:" in output
+    assert interaction.requests[0].header_text == "Select a profile match for 'os/' in sandbox:1password:"
     assert "tracked sandbox:1password@os/mac" in output
 
 def test_track_cli_interactively_falls_back_to_full_profile_menu_for_unknown_profile(
@@ -398,9 +388,9 @@ def test_track_cli_interactively_falls_back_to_full_profile_menu_for_unknown_pro
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    answers = iter(["1", "2", ""])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(
+        choices=["sandbox:1password", "host/linux"],
+    )
 
     exit_code = main(
         [
@@ -408,13 +398,16 @@ def test_track_cli_interactively_falls_back_to_full_profile_menu_for_unknown_pro
             str(write_manager_config(tmp_path)),
             "track",
             "ss@wor",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a selector match for 'ss':" in output
-    assert "Select a profile for sandbox:1password:" in output
+    assert [request.header_text for request in interaction.requests] == [
+        "Select a selector match for 'ss':",
+        "Select a profile for sandbox:1password:",
+    ]
     assert "tracked sandbox:1password@host/linux" in output
 
 def test_track_cli_confirms_before_updating_existing_binding_profile(
@@ -425,9 +418,7 @@ def test_track_cli_confirms_before_updating_existing_binding_profile(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    answers = iter(["2", "y"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["work"], confirmations=[True])
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -452,13 +443,14 @@ def test_track_cli_confirms_before_updating_existing_binding_profile(
             str(write_manager_config(tmp_path)),
             "track",
             "example:git",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a profile for example:git:" in output
-    assert "Confirm tracked package entry replacement for example:git:" in output
+    assert interaction.requests[0].header_text == "Select a profile for example:git:"
+    assert "Confirm tracked package entry replacement for example:git:" in interaction.requests[1].message
     assert "tracked example:git@work" in output
     assert (tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -480,8 +472,7 @@ def test_track_cli_keeps_existing_binding_when_profile_replacement_is_declined(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "prompt", lambda _message: "n")
+    interaction = ScriptedInteraction(confirmations=[False])
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -506,12 +497,13 @@ def test_track_cli_keeps_existing_binding_when_profile_replacement_is_declined(
             str(write_manager_config(tmp_path)),
             "track",
             "example:git@work",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Confirm tracked package entry replacement for example:git:" in output
+    assert "Confirm tracked package entry replacement for example:git:" in interaction.requests[0].message
     assert "kept existing tracked package entry example:git@basic" in output
     assert (tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml").read_text(encoding="utf-8") == "\n".join(
         [
@@ -524,6 +516,91 @@ def test_track_cli_keeps_existing_binding_when_profile_replacement_is_declined(
             "",
         ]
     )
+
+
+def test_track_cli_assume_yes_replaces_profile_without_interactive_stdin(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "tracked-packages.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                "",
+                "[[packages]]",
+                'repo = "example"',
+                'package_id = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "track",
+            "--yes",
+            "example:git@work",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Confirm tracked package entry replacement for example:git:" in output
+    assert "Confirm replacement?" not in output
+    assert "tracked example:git@work" in output
+
+
+def test_track_cli_json_assume_yes_replaces_profile_without_human_summary(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "tracked-packages.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                "",
+                "[[packages]]",
+                'repo = "example"',
+                'package_id = "git"',
+                'profile = "basic"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(write_manager_config(tmp_path)),
+            "--json",
+            "track",
+            "--yes",
+            "example:git@work",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["package_entry"]["package_id"] == "git"
+    assert payload["package_entry"]["profile"] == "work"
+
 
 def test_track_cli_refuses_silent_profile_replacement_in_non_interactive_mode(
     tmp_path: Path,
@@ -585,8 +662,7 @@ def test_track_cli_confirms_before_overriding_implicit_targets(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "prompt", lambda _message: "y")
+    interaction = ScriptedInteraction(confirmations=[True])
 
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -611,13 +687,14 @@ def test_track_cli_confirms_before_overriding_implicit_targets(
             str(write_manager_config(tmp_path)),
             "track",
             "example:work/git@work",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Confirm explicit override for example:work/git@work:" in output
-    assert "implicit: example:git@basic (git)" in output
+    assert "Confirm explicit override for example:work/git@work:" in interaction.requests[0].message
+    assert "implicit: example:git@basic (git)" in interaction.requests[0].message
     assert "tracked example:work/git@work" in output
 
 def test_track_cli_refuses_implicit_override_in_non_interactive_mode(
@@ -702,7 +779,6 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     repo_root = tmp_path / "implicit-conflict-repo"
     write_implicit_conflict_repo(repo_root)
@@ -725,8 +801,7 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
         encoding="utf-8",
     )
 
-    answers = iter(["1", "y"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["alpha"])
 
     exit_code = main(
         [
@@ -734,12 +809,15 @@ def test_track_cli_can_promote_conflicting_package_from_implicit_conflict(
             str(config_path),
             "track",
             "fixture:alpha-stack@basic",
-        ]
+        ],
+        interaction=interaction,
     )
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a conflicting package to track explicitly for fixture:alpha-stack@basic:" in output
+    assert interaction.requests[0].header_text == (
+        "Select a conflicting package to track explicitly for fixture:alpha-stack@basic:"
+    )
     assert "Confirm explicit override for fixture:alpha@basic:" not in output
     assert "implicit: fixture:beta@basic (beta)" not in output
     assert "tracked fixture:alpha@basic" in output
@@ -768,8 +846,6 @@ def test_track_cli_skips_same_profile_package_override_prompt(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "prompt", lambda _message: "y")
 
     repo_root = tmp_path / "override-preview-repo"
     write_package_override_preview_repo(repo_root)

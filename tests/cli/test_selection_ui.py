@@ -1259,27 +1259,10 @@ def test_pending_selection_prompt_prepends_blank_line(monkeypatch) -> None:
     assert cli.pending_selection_prompt() == '\nExclude by number or range ("?"; e.g. "1 2 4-6" or "^3"; default: none): '
 
 
-def test_write_manifest_confirmation_prompt_uses_bracket_style(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
-    assert (
-        cli.write_manifest_confirmation_prompt(repo_name="fixture", package_id="git")
-        == 'Write package config changes for fixture:git? [y/n] '
-    )
-
-
 def test_push_symlink_replacement_prompt_uses_bracket_style(monkeypatch) -> None:
     monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.push_symlink_replacement_prompt() == 'Replace symlinked live target(s) before push? [y/n] '
-
-
-def test_confirm_add_manifest_write_requires_explicit_answer(monkeypatch, capsys) -> None:
-    answers = iter(["", "maybe", "n"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
-
-    assert cli.confirm_add_manifest_write(repo_name="fixture", package_id="git") is False
-    assert capsys.readouterr().err.count("invalid confirmation: enter 'y' or 'n'") == 2
 
 
 def test_confirm_push_symlink_replacement_requires_explicit_answer(monkeypatch, capsys) -> None:
@@ -1296,107 +1279,10 @@ def test_confirm_review_continue_skips_prompt_when_assume_yes(monkeypatch) -> No
     assert cli.confirm_review_continue(assume_yes=True) is True
 
 
-def test_confirm_add_manifest_write_skips_prompt_when_assume_yes(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
-
-    assert cli.confirm_add_manifest_write(repo_name="fixture", package_id="git", assume_yes=True) is True
-
-
 def test_confirm_push_symlink_replacement_skips_prompt_when_assume_yes(monkeypatch) -> None:
     monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
 
     assert cli.confirm_push_symlink_replacement(assume_yes=True) is True
-
-
-def test_ensure_track_package_entry_replacement_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
-    binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="package", profile="current")
-    existing_binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="package", profile="existing")
-    replacement_binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="package", profile="replacement")
-    engine = SimpleNamespace(get_repo=lambda _repo_name: SimpleNamespace(packages={}), expand_tracked_package_entry=lambda _binding: [replacement_binding])
-    monkeypatch.setattr(cli, "find_recorded_package_entries_for_scope", lambda _engine, _binding: [existing_binding])
-    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
-
-    assert cli.ensure_track_package_entry_replacement_confirmed(engine, binding=binding, json_output=False, assume_yes=True) is True
-
-
-def test_ensure_track_package_entry_implicit_overrides_confirmed_skips_prompt_when_assume_yes(monkeypatch) -> None:
-    binding = FullSpecSelector(repo="fixture", selector="stack", selector_kind="group", profile="current")
-    engine = SimpleNamespace(
-        preview_tracked_package_entry_implicit_overrides=lambda _binding: [
-            SimpleNamespace(
-                winner=SimpleNamespace(
-                    selection_label="fixture:stack@current",
-                    package_id="stack",
-                    selection=SimpleNamespace(
-                        identity=SimpleNamespace(repo="fixture", bound_profile=None),
-                        requested_profile="current",
-                    ),
-                ),
-                overridden=(
-                    SimpleNamespace(
-                        selection_label="fixture:stack@implicit",
-                        package_id="implicit",
-                        selection=SimpleNamespace(requested_profile="implicit"),
-                    ),
-                ),
-            )
-        ]
-    )
-    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
-
-    assert cli.ensure_track_package_entry_implicit_overrides_confirmed(engine, binding=binding, json_output=False, assume_yes=True) is True
-
-
-def test_confirm_track_package_entry_implicit_overrides_uses_menu_colors(monkeypatch, capsys) -> None:
-    binding = FullSpecSelector(repo="fixture", selector="alpha", selector_kind="package", profile="work")
-    override = SimpleNamespace(
-        winner=SimpleNamespace(
-            selection_label="fixture:alpha@work",
-            package_id="alpha",
-            selection=SimpleNamespace(requested_profile="work"),
-        ),
-        overridden=(
-            SimpleNamespace(
-                selection_label="fixture:beta@basic",
-                package_id="beta",
-                selection=SimpleNamespace(requested_profile="basic"),
-            ),
-        ),
-    )
-    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
-
-    assert cli.confirm_track_package_entry_implicit_overrides(binding=binding, overrides=[override], assume_yes=True) is True
-
-    output = capsys.readouterr().out
-    assert "\033[1;34m::\033[0m" in output
-    assert "\033[2mnew:\033[0m" in output
-    assert "\033[2mimplicit:\033[0m" in output
-    assert "\033[2;34mfixture\033[0m\033[2m:\033[0m\033[1malpha\033[0m\033[2m@work\033[0m" in output
-    assert "\033[2;34mfixture\033[0m\033[2m:\033[0m\033[1mbeta\033[0m\033[2m@basic\033[0m" in output
-
-
-def test_ensure_track_package_entry_implicit_overrides_confirmed_skips_same_profile_prompt(monkeypatch) -> None:
-    binding = FullSpecSelector(repo="fixture", selector="alpha", selector_kind="package", profile="basic")
-    override = SimpleNamespace(
-        winner=SimpleNamespace(
-            selection_label="fixture:alpha@basic",
-            package_id="alpha",
-            selection=SimpleNamespace(requested_profile="basic"),
-        ),
-        overridden=(
-            SimpleNamespace(
-                selection_label="fixture:beta@basic",
-                package_id="beta",
-                selection=SimpleNamespace(requested_profile="basic"),
-            ),
-        ),
-    )
-    engine = SimpleNamespace(
-        preview_tracked_package_entry_implicit_overrides=lambda _binding: [override],
-    )
-    monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
-
-    assert cli.ensure_track_package_entry_implicit_overrides_confirmed(engine, binding=binding, json_output=False) is True
 
 
 def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) -> None:

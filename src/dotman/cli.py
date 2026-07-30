@@ -5,17 +5,18 @@ import shlex
 import shutil
 import sys
 import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Literal, Sequence, TypeVar
+from typing import Literal, TypeVar
 
-from dotman import cli_style
+from dotman import cli_commands, cli_emit, cli_style
 from dotman.add import (
     add_editor_available,
     review_add_manifest,
-    validate_package_id,
 )
 from dotman.capture import capture_patch
+from dotman.cli_parser import build_parser as build_cli_parser
 from dotman.command_runtime import (
     ArgvCommand,
     CommandRequest,
@@ -28,53 +29,51 @@ from dotman.diff_review import (
     build_review_items,
     run_review_item_diff,
 )
-from dotman.config import load_manager_config
-from dotman.collisions import TrackedTargetConflictError
+from dotman.doctor import DoctorSummary
 from dotman.engine import DotmanEngine
-from dotman.package_resolution import parse_full_spec_selector_text, parse_package_ref_text
-from dotman.operation_runner import run_restore_operation, run_sync_operation
+from dotman.interaction import Interaction, TerminalInteraction
+from dotman.manifest import flatten_vars
 from dotman.models import (
     FullSpecSelector,
     OperationPlan,
-    RepoConfig,
-    ResolvedSelector,
     finalize_hook_plans_for_targets,
-    package_ref_text,
     package_plans_for_operation_plan,
+    package_ref_text,
     standalone_hook_package_summaries,
     standalone_hook_target_summaries,
 )
-from dotman.manifest import flatten_vars
+from dotman.operation_runner import run_restore_operation, run_sync_operation
+from dotman.package_resolution import (
+    parse_full_spec_selector_text,
+    parse_package_ref_text,
+)
+from dotman.planning import finalize_repo_hook_plans, standalone_repo_hook_summary
 from dotman.reconcile import run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
-from dotman.templates import JinjaRenderError, build_template_context, render_template_file, render_template_string
-from dotman.snapshot import (
-    RestoreAction,
-    SnapshotRecord,
-    find_snapshot_matches,
-)
-from dotman.terminal import ESCAPE_INPUT, read_prompt_line
 from dotman.resolver import (
     ResolverOption,
     build_full_spec_selector_field_kinds,
     build_full_spec_selector_match_fields,
     build_package_field_kinds,
     build_package_match_fields,
-    build_profile_field_kinds,
-    build_profile_match_fields,
     build_selector_field_kinds,
     build_selector_match_fields,
-    build_target_field_kinds,
-    build_target_match_fields,
     parse_slash_qualified_query,
     rank_resolver_option,
 )
-from dotman.cli_parser import build_parser as build_cli_parser
-from dotman import cli_emit, cli_commands
-from dotman.planning import finalize_repo_hook_plans, standalone_repo_hook_summary
+from dotman.snapshot import (
+    RestoreAction,
+    SnapshotRecord,
+    find_snapshot_matches,
+)
+from dotman.templates import (
+    JinjaRenderError,
+    build_template_context,
+    render_template_file,
+    render_template_string,
+)
+from dotman.terminal import ESCAPE_INPUT, read_prompt_line
 from dotman.ui_context import current_ui_config
-from dotman.doctor import DoctorSummary
-
 
 MENU_HEADER_MARKER = cli_style.MENU_HEADER_MARKER
 MENU_HEADER_MARKER_STYLE = cli_style.MENU_HEADER_MARKER_STYLE
@@ -104,39 +103,6 @@ class PendingSelectionItem:
     hook_names: tuple[str, ...] = ()
     repo_name: str | None = None
 
-
-@dataclass(frozen=True)
-class UntrackGroupResolution:
-    repo: str
-    selector: str
-    selector_kind: str
-    profile: str | None
-    removal_bindings: tuple[FullSpecSelector, ...]
-
-    @property
-    def label(self) -> str:
-        base_label = f"{self.repo}:{self.selector}"
-        if self.profile is None:
-            return base_label
-        return f"{base_label}@{self.profile}"
-
-
-@dataclass(frozen=True)
-class _EditQueryCandidate:
-    kind: str
-    repo_name: str
-    package_id: str
-    target_name: str | None
-    bound_profile: str | None
-    path: Path
-    option: ResolverOption
-
-    @property
-    def ref_text(self) -> str:
-        package_ref = package_ref_text(package_id=self.package_id, bound_profile=self.bound_profile)
-        if self.target_name is None:
-            return f"{self.repo_name}:{package_ref}"
-        return f"{self.repo_name}:{package_ref}.{self.target_name}"
 
 def prompt(message: str, *, escape_result: str | None = None) -> str:
     return read_prompt_line(
@@ -246,21 +212,6 @@ def render_full_spec_selector_label(*, repo_name: str, selector: str, profile: s
 
 def render_full_spec_selector_reference(binding: FullSpecSelector) -> str:
     return cli_style.render_full_spec_selector_reference(binding, use_color=colors_enabled())
-
-
-def find_remaining_tracked_package_after_untrack(engine: DotmanEngine, binding: FullSpecSelector):
-    try:
-        repo = engine.get_repo(binding.repo)
-    except ValueError:
-        return None
-    if binding.selector not in repo.packages:
-        return None
-    if repo.resolve_package(binding.selector).binding_mode == "multi_instance":
-        return None
-    try:
-        return engine.describe_tracked_package(f"{binding.repo}:{binding.selector}")
-    except ValueError:
-        return None
 
 
 def open_editor_path(path: Path, *, missing_editor_label: str = "path") -> int:
@@ -615,36 +566,12 @@ def review_menu_prompt() -> str:
     )
 
 
-def confirmation_prompt() -> str:
-    prompt_text = "Confirm replacement?"
-    hint_text = "[y/n]"
-    if not colors_enabled():
-        return f"{prompt_text} {hint_text} "
-    return (
-        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
-        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
-        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
-    )
-
-
 def partial_match_confirmation_prompt(*, candidate_label: str) -> str:
     prompt_text = f"Did you mean '{candidate_label}'?"
     hint_text = "[y/n]"
     if not colors_enabled():
         return f"{prompt_text} {hint_text} "
     return (
-        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
-        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
-    )
-
-
-def write_manifest_confirmation_prompt(*, repo_name: str, package_id: str) -> str:
-    prompt_text = f"Write package config changes for {repo_name}:{package_id}?"
-    hint_text = "[y/n]"
-    if not colors_enabled():
-        return f"{prompt_text} {hint_text} "
-    return (
-        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
         f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
         f"{style_text(hint_text, *MENU_HINT_STYLE)} "
     )
@@ -720,281 +647,14 @@ def interactive_mode_enabled(*, json_output: bool) -> bool:
     return not json_output and sys.stdin.isatty()
 
 
-def tracked_package_entry_replacement_scope(engine: DotmanEngine, binding: FullSpecSelector) -> tuple[str, str, str | None]:
-    repo = engine.get_repo(binding.repo)
-    if binding.selector in repo.packages and repo.resolve_package(binding.selector).binding_mode == "multi_instance":
-        return (binding.repo, binding.selector, binding.profile)
-    return (binding.repo, binding.selector, None)
-
-
-def find_recorded_package_entries_for_scope(engine: DotmanEngine, binding: FullSpecSelector) -> list[FullSpecSelector]:
-    repo = engine.get_repo(binding.repo)
-    existing_by_scope = {
-        tracked_package_entry_replacement_scope(engine, existing): existing
-        for existing in engine.read_effective_tracked_package_entries(repo)
-    }
-    matches: list[FullSpecSelector] = []
-    for expanded_binding in engine.expand_tracked_package_entry(binding):
-        existing = existing_by_scope.get(tracked_package_entry_replacement_scope(engine, expanded_binding))
-        if existing is not None and existing not in matches:
-            matches.append(existing)
-    return matches
-
-
-def find_recorded_package_entry_for_scope(engine: DotmanEngine, binding: FullSpecSelector) -> FullSpecSelector | None:
-    matches = find_recorded_package_entries_for_scope(engine, binding)
-    return matches[0] if len(matches) == 1 else None
-
-
-def find_recorded_package_entry_exact(engine: DotmanEngine, binding: FullSpecSelector) -> FullSpecSelector | None:
-    repo = engine.get_repo(binding.repo)
-    expanded_bindings = engine.expand_tracked_package_entry(binding)
-    if len(expanded_bindings) != 1:
-        return None
-    expanded_binding = expanded_bindings[0]
-    for existing in engine.read_effective_tracked_package_entries(repo):
-        if (
-            existing.repo == expanded_binding.repo
-            and existing.selector == expanded_binding.selector
-            and existing.profile == expanded_binding.profile
-        ):
-            return existing
-    return None
-
-
-def confirm_tracked_package_entry_replacement(
-    *,
-    existing_binding: FullSpecSelector,
-    replacement_binding: FullSpecSelector,
-    assume_yes: bool = False,
-) -> bool:
-    binding_scope = f"{replacement_binding.repo}:{replacement_binding.selector}"
-    print_selection_header(f"Confirm tracked package entry replacement for {binding_scope}:")
-    print(
-        "  existing: "
-        + render_full_spec_selector_label(
-            repo_name=existing_binding.repo,
-            selector=existing_binding.selector,
-            profile=existing_binding.profile,
-        )
-    )
-    print(
-        "  new:      "
-        + render_full_spec_selector_label(
-            repo_name=replacement_binding.repo,
-            selector=replacement_binding.selector,
-            profile=replacement_binding.profile,
-        )
-    )
-    if assume_yes:
-        return True
-    return _prompt_yes_no(confirmation_prompt())
-
-
-def ensure_track_package_entry_replacement_confirmed(
-    engine: DotmanEngine,
-    *,
-    binding: FullSpecSelector,
-    json_output: bool,
-    assume_yes: bool = False,
-) -> bool:
-    expanded_bindings = engine.expand_tracked_package_entry(binding)
-    existing_bindings = find_recorded_package_entries_for_scope(engine, binding)
-    replacements = [
-        (existing_binding, expanded_binding)
-        for expanded_binding in expanded_bindings
-        for existing_binding in existing_bindings
-        if tracked_package_entry_replacement_scope(engine, existing_binding) == tracked_package_entry_replacement_scope(engine, expanded_binding)
-        and existing_binding.profile != expanded_binding.profile
-    ]
-    if not replacements:
-        return True
-    if assume_yes:
-        if len(replacements) == 1:
-            existing_binding, replacement_binding = replacements[0]
-            return confirm_tracked_package_entry_replacement(
-                existing_binding=existing_binding,
-                replacement_binding=replacement_binding,
-                assume_yes=True,
-            )
-        print_selection_header(f"Confirm tracked package entry replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
-        for existing_binding, replacement_binding in replacements:
-            print(f"  existing: {render_full_spec_selector_reference(existing_binding)}")
-            print(f"  new:      {render_full_spec_selector_reference(replacement_binding)}")
-        return True
-    if len(replacements) == 1:
-        existing_binding, replacement_binding = replacements[0]
-        if not interactive_mode_enabled(json_output=json_output):
-            raise ValueError(
-                f"refusing to replace tracked package entry '{existing_binding.repo}:{existing_binding.selector}@"
-                f"{existing_binding.profile}' with '{replacement_binding.repo}:{replacement_binding.selector}@{replacement_binding.profile}' "
-                "in non-interactive mode"
-            )
-        return confirm_tracked_package_entry_replacement(
-            existing_binding=existing_binding,
-            replacement_binding=replacement_binding,
-            assume_yes=False,
-        )
-    replacement_labels = ", ".join(
-        f"{existing.repo}:{existing.selector}@{existing.profile} -> {replacement.repo}:{replacement.selector}@{replacement.profile}"
-        for existing, replacement in replacements
-    )
-    if not interactive_mode_enabled(json_output=json_output):
-        raise ValueError(
-            f"refusing to replace tracked package entries for '{binding.repo}:{binding.selector}@{binding.profile}' "
-            f"in non-interactive mode: {replacement_labels}"
-        )
-    print_selection_header(f"Confirm tracked package entry replacements for {binding.repo}:{binding.selector}@{binding.profile}:")
-    for existing_binding, replacement_binding in replacements:
-        print(f"  existing: {render_full_spec_selector_reference(existing_binding)}")
-        print(f"  new:      {render_full_spec_selector_reference(replacement_binding)}")
-    return _prompt_yes_no(confirmation_prompt())
-
-
 def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
     return _prompt_yes_no(partial_match_confirmation_prompt(candidate_label=candidate_label))
-
-
-def _render_override_candidate(candidate, *, role: str) -> str:
-    repo_name, selector, profile = parse_full_spec_selector_text(candidate.selection_label)
-    candidate_label = candidate.selection_label
-    if repo_name is not None and profile is not None:
-        candidate_label = render_full_spec_selector_label(
-            repo_name=repo_name,
-            selector=selector,
-            profile=profile,
-        )
-    return " ".join(
-        [
-            render_menu_badge(f"{role}:"),
-            candidate_label,
-            render_menu_badge(f"({candidate.package_id})"),
-        ]
-    )
-
-
-def _explicit_override_needs_confirmation(override) -> bool:
-    # Same-profile promotions only make an already resolved implicit package explicit.
-    # Different-profile promotions may switch rendered values and need confirmation.
-    return any(
-        contender.selection.requested_profile != override.winner.selection.requested_profile
-        for contender in override.overridden
-    )
-
-
-def confirm_track_package_entry_implicit_overrides(*, binding: FullSpecSelector, overrides: Sequence, assume_yes: bool = False) -> bool:
-    binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
-    print_selection_header(f"Confirm explicit override for {binding_label}:")
-    print("  " + render_menu_badge("this track request will replace implicitly tracked package owners:"))
-    for override in overrides:
-        print(f"    {_render_override_candidate(override.winner, role='new')}")
-        for contender in override.overridden:
-            print(f"      {_render_override_candidate(contender, role='implicit')}")
-    if assume_yes:
-        return True
-    return _prompt_yes_no(confirmation_prompt())
-
-
-def ensure_track_package_entry_implicit_overrides_confirmed(
-    engine: DotmanEngine,
-    *,
-    binding: FullSpecSelector,
-    json_output: bool,
-    assume_yes: bool = False,
-) -> bool:
-    overrides = engine.preview_tracked_package_entry_implicit_overrides(binding)
-    overrides = [override for override in overrides if _explicit_override_needs_confirmation(override)]
-    if not overrides:
-        return True
-    if assume_yes:
-        return confirm_track_package_entry_implicit_overrides(
-            binding=binding,
-            overrides=overrides,
-            assume_yes=True,
-        )
-    if not interactive_mode_enabled(json_output=json_output):
-        raise ValueError(
-            f"refusing to let '{binding.repo}:{binding.selector}@{binding.profile}' explicitly override implicitly tracked targets "
-            "in non-interactive mode"
-        )
-    return confirm_track_package_entry_implicit_overrides(binding=binding, overrides=overrides)
-
-
-def confirm_add_manifest_write(*, repo_name: str, package_id: str, assume_yes: bool = False) -> bool:
-    if assume_yes:
-        return True
-    return _prompt_yes_no(
-        write_manifest_confirmation_prompt(repo_name=repo_name, package_id=package_id)
-    )
 
 
 def confirm_push_symlink_replacement(*, assume_yes: bool = False) -> bool:
     if assume_yes:
         return True
     return _prompt_yes_no(push_symlink_replacement_prompt())
-
-
-def prompt_for_conflicting_package_entry(
-    engine: DotmanEngine,
-    *,
-    binding: FullSpecSelector,
-    conflict: TrackedTargetConflictError,
-    json_output: bool,
-) -> FullSpecSelector | None:
-    if conflict.precedence != "implicit" or not interactive_mode_enabled(json_output=json_output):
-        return None
-    candidate_bindings = set(engine.expand_tracked_package_entry(binding))
-
-    def candidate_binding(candidate) -> FullSpecSelector:
-        return FullSpecSelector(
-            repo=candidate.selection.identity.repo,
-            selector=candidate.selection.source_selector or candidate.package_id,
-            selector_kind="package",
-            profile=candidate.selection.requested_profile,
-        )
-
-    package_ids = sorted(
-        {
-            candidate.package_id
-            for candidate in conflict.candidates
-            if candidate_binding(candidate) in candidate_bindings
-        }
-    )
-    if not package_ids:
-        # Group/package-entry expansions do not always preserve the same selector text
-        # as the implicit conflict candidates. Fall back to conflict package ids so the
-        # user can explicitly promote one package to break the tie.
-        package_ids = sorted({candidate.package_id for candidate in conflict.candidates})
-    if not package_ids:
-        return None
-    binding_label = f"{binding.repo}:{binding.selector}@{binding.profile}"
-    if len(package_ids) == 1:
-        package_id = package_ids[0]
-        promoted_binding = FullSpecSelector(
-            repo=binding.repo,
-            selector=package_id,
-            selector_kind="package",
-            profile=binding.profile,
-        )
-        print_selection_header(f"Resolve implicit conflict for {binding_label}:")
-        print(f"  target path: {conflict.live_path}")
-        print(f"  requested: {binding_label}")
-        print(f"  promote:   {promoted_binding.repo}:{promoted_binding.selector}@{promoted_binding.profile}")
-        print("  explicit tracking can break the implicit tie for this package.")
-        if _prompt_yes_no(confirmation_prompt()):
-            return promoted_binding
-        return None
-
-    selected_index = select_menu_option(
-        header_text=f"Select a conflicting package to track explicitly for {binding_label}:",
-        option_labels=package_ids,
-    )
-    return FullSpecSelector(
-        repo=binding.repo,
-        selector=package_ids[selected_index],
-        selector_kind="package",
-        profile=binding.profile,
-    )
 
 
 def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | None]:
@@ -1095,105 +755,6 @@ def resolve_candidate_match(
         )
         return ranked_partial_matches[selected_index]
     raise ValueError(not_found_text)
-
-
-def resolve_track_selector_text(
-    engine: DotmanEngine,
-    binding_text: str,
-    *,
-    json_output: bool,
-) -> FullSpecSelector:
-    explicit_repo, selector, selector_profile = parse_full_spec_selector_text(binding_text)
-    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
-    lookup_repo, lookup_selector = parse_slash_qualified_query(
-        repo_names=repo_names,
-        explicit_repo=explicit_repo,
-        selector=selector,
-    )
-    exact_matches, partial_matches = engine.find_selector_matches(lookup_selector, lookup_repo)
-    interactive = interactive_mode_enabled(json_output=json_output)
-    repo, resolved_selector, selector_kind = resolve_candidate_match(
-        exact_matches=exact_matches,
-        partial_matches=partial_matches,
-        query_text=selector,
-        interactive=interactive,
-        exact_header_text=f"Select a repo for exact selector '{selector}':",
-        partial_header_text=f"Select a selector match for '{selector}':",
-        option_resolver=lambda match: ResolverOption(
-            display_label=render_selector_match_label(
-                repo_name=match[0].config.name,
-                selector=match[1],
-                selector_kind=match[2],
-            ),
-            display_fields=build_selector_match_display_fields(
-                repo_name=match[0].config.name,
-                selector=match[1],
-                selector_kind=match[2],
-            ),
-            match_fields=build_selector_match_fields(
-                repo_name=match[0].config.name,
-                selector=match[1],
-            ),
-            field_kinds=build_selector_field_kinds(),
-        ),
-        exact_error_text=f"selector '{selector}' is defined in multiple repos: "
-        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_matches),
-        partial_error_text=f"selector '{selector}' is ambiguous: "
-        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches),
-        not_found_text=f"selector '{selector}' did not match any package or group",
-    )
-    resolved_selector_ref = ResolvedSelector(
-        repo=repo.config.name,
-        selector=resolved_selector,
-        selector_kind=selector_kind,
-    )
-
-    available_profiles = engine.list_profiles(repo.config.name)
-    if not available_profiles:
-        raise ValueError(f"repo '{repo.config.name}' does not define any profiles")
-
-    resolved_profile = selector_profile
-    if resolved_profile:
-        exact_profile_matches = [profile_name for profile_name in available_profiles if profile_name == resolved_profile]
-        partial_profile_matches = [
-            profile_name for profile_name in available_profiles if resolved_profile in profile_name
-        ]
-        profile_selection_matches = partial_profile_matches
-        profile_selection_header = (
-            f"Select a profile match for '{resolved_profile}' in {repo.config.name}:{resolved_selector}:"
-        )
-        if interactive and not exact_profile_matches and not partial_profile_matches:
-            profile_selection_matches = list(available_profiles)
-            profile_selection_header = f"Select a profile for {repo.config.name}:{resolved_selector}:"
-        resolved_profile = resolve_candidate_match(
-            exact_matches=exact_profile_matches,
-            partial_matches=profile_selection_matches,
-            query_text=resolved_profile,
-            interactive=interactive,
-            exact_header_text=f"Select a profile for {repo.config.name}:{resolved_selector}:",
-            partial_header_text=profile_selection_header,
-            option_resolver=lambda profile_name: ResolverOption(
-                display_label=profile_name,
-                match_fields=build_profile_match_fields(profile=profile_name),
-                field_kinds=build_profile_field_kinds(),
-            ),
-            exact_error_text=f"profile '{resolved_profile}' is defined multiple times in repo '{repo.config.name}'",
-            partial_error_text=f"profile '{resolved_profile}' is ambiguous in repo '{repo.config.name}': "
-            + ", ".join(partial_profile_matches),
-            not_found_text=f"profile '{resolved_profile}' did not match any profile in repo '{repo.config.name}'",
-        )
-    elif len(available_profiles) == 1:
-        resolved_profile = available_profiles[0]
-    elif interactive:
-        selected_index = select_menu_option(
-            header_text=f"Select a profile for {repo.config.name}:{resolved_selector}:",
-            option_labels=list(available_profiles),
-        )
-        resolved_profile = available_profiles[selected_index]
-    else:
-        raise ValueError("profile is required in non-interactive mode")
-
-    return resolved_selector_ref.with_profile(resolved_profile)
 
 
 def resolve_tracked_package_entry_text(
@@ -1581,143 +1142,6 @@ def resolve_tracked_package_entry_text(
         raise exc
 
 
-def resolve_untrack_group_text(
-    engine: DotmanEngine,
-    binding_text: str,
-    *,
-    json_output: bool,
-) -> UntrackGroupResolution | None:
-    explicit_repo, selector, selector_profile = parse_full_spec_selector_text(binding_text)
-    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
-    lookup_repo, lookup_selector = parse_slash_qualified_query(
-        repo_names=repo_names,
-        explicit_repo=explicit_repo,
-        selector=selector,
-    )
-    exact_matches, partial_matches = engine.find_selector_matches(lookup_selector, lookup_repo)
-    exact_group_matches = [match for match in exact_matches if match[2] == "group"]
-    partial_group_matches = [match for match in partial_matches if match[2] == "group"]
-    interactive = interactive_mode_enabled(json_output=json_output)
-    # Non-interactive fallback is exact-only so group lookup does not mask existing untrack errors.
-    if not exact_group_matches and (not interactive or not partial_group_matches):
-        return None
-
-    repo, resolved_selector, selector_kind = resolve_candidate_match(
-        exact_matches=exact_group_matches,
-        partial_matches=partial_group_matches,
-        query_text=selector,
-        interactive=interactive,
-        exact_header_text=f"Select a group for '{selector}':",
-        partial_header_text=f"Select a group for '{selector}':",
-        option_resolver=lambda match: ResolverOption(
-            display_label=render_selector_match_label(
-                repo_name=match[0].config.name,
-                selector=match[1],
-                selector_kind=match[2],
-            ),
-            display_fields=build_selector_match_display_fields(
-                repo_name=match[0].config.name,
-                selector=match[1],
-                selector_kind=match[2],
-            ),
-            match_fields=build_selector_match_fields(
-                repo_name=match[0].config.name,
-                selector=match[1],
-            ),
-            field_kinds=build_selector_field_kinds(),
-        ),
-        exact_error_text=f"group '{selector}' is defined in multiple repos: "
-        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in exact_group_matches),
-        partial_error_text=f"group '{selector}' is ambiguous: "
-        + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_group_matches),
-        not_found_text=f"group '{selector}' did not match any tracked group",
-    )
-    group_package_ids = set(repo.expand_group(resolved_selector))
-    tracked_group_bindings = tuple(
-        binding
-        for binding in engine.read_effective_tracked_package_entries(repo)
-        if binding.repo == repo.config.name and binding.selector in group_package_ids
-    )
-    tracked_profiles = sorted({binding.profile for binding in tracked_group_bindings})
-    resolved_profile = selector_profile
-    if selector_profile:
-        available_profiles = engine.list_profiles(repo.config.name)
-        if not available_profiles:
-            raise ValueError(f"repo '{repo.config.name}' does not define any profiles")
-        partial_profile_matches = [
-            profile_name for profile_name in available_profiles if selector_profile in profile_name
-        ]
-        resolved_profile = resolve_candidate_match(
-            exact_matches=[profile_name for profile_name in available_profiles if profile_name == selector_profile],
-            partial_matches=partial_profile_matches,
-            query_text=selector_profile,
-            interactive=interactive,
-            exact_header_text=f"Select a profile for {repo.config.name}:{resolved_selector}:",
-            partial_header_text=f"Select a profile match for '{selector_profile}' in {repo.config.name}:{resolved_selector}:",
-            option_resolver=lambda profile_name: ResolverOption(
-                display_label=profile_name,
-                match_fields=build_profile_match_fields(profile=profile_name),
-                field_kinds=build_profile_field_kinds(),
-            ),
-            exact_error_text=f"profile '{selector_profile}' is defined multiple times in repo '{repo.config.name}'",
-            partial_error_text=f"profile '{selector_profile}' is ambiguous in repo '{repo.config.name}': "
-            + ", ".join(partial_profile_matches),
-            not_found_text=f"profile '{selector_profile}' did not match any profile in repo '{repo.config.name}'",
-        )
-    elif tracked_group_bindings:
-        profiles_by_package: dict[str, set[str]] = {}
-        for binding in tracked_group_bindings:
-            profiles_by_package.setdefault(binding.selector, set()).add(binding.profile)
-        ambiguous_packages = {
-            package_id: sorted(package_profiles)
-            for package_id, package_profiles in profiles_by_package.items()
-            if len(package_profiles) > 1
-        }
-        if len(tracked_profiles) == 1:
-            resolved_profile = tracked_profiles[0]
-        elif not ambiguous_packages:
-            resolved_profile = None
-        elif interactive:
-            selected_index = select_menu_option(
-                header_text=f"Select a tracked profile for {repo.config.name}:{resolved_selector}:",
-                option_labels=tracked_profiles,
-            )
-            resolved_profile = tracked_profiles[selected_index]
-        else:
-            ambiguous_package_text = ", ".join(
-                ", ".join(
-                    package_ref_text(package_id=package_id, bound_profile=profile)
-                    for profile in package_profiles
-                )
-                for package_id, package_profiles in sorted(ambiguous_packages.items())
-            )
-            raise ValueError(
-                f"tracked group '{repo.config.name}:{resolved_selector}' is ambiguous across package instances: "
-                + ambiguous_package_text
-            )
-    elif interactive:
-        raise ValueError(f"tracked group '{repo.config.name}:{resolved_selector}' has no tracked package entries")
-    else:
-        raise ValueError(f"tracked group '{repo.config.name}:{resolved_selector}' has no tracked package entries")
-
-    removal_bindings = tuple(
-        binding
-        for binding in tracked_group_bindings
-        if resolved_profile is None or binding.profile == resolved_profile
-    )
-    if not removal_bindings:
-        raise ValueError(
-            f"tracked group '{repo.config.name}:{resolved_selector}@{resolved_profile}' has no tracked package entries"
-        )
-    return UntrackGroupResolution(
-        repo=repo.config.name,
-        selector=resolved_selector,
-        selector_kind=selector_kind,
-        profile=resolved_profile,
-        removal_bindings=removal_bindings,
-    )
-
-
 def resolve_tracked_package_text(
     engine: DotmanEngine,
     package_text: str,
@@ -1823,581 +1247,6 @@ def resolve_trackable_selector_text(
         + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches),
         not_found_text=f"selector '{selector}' did not match any package or group",
     )
-
-
-def resolve_tracked_target_text(
-    engine: DotmanEngine,
-    target_text: str,
-    *,
-    json_output: bool,
-):
-    query_text, exact_matches, partial_matches = engine.find_tracked_target_matches(target_text)
-    return resolve_candidate_match(
-        exact_matches=exact_matches,
-        partial_matches=partial_matches,
-        query_text=query_text,
-        interactive=interactive_mode_enabled(json_output=json_output),
-        exact_header_text=f"Select a tracked target for '{query_text}':",
-        partial_header_text=f"Select a tracked target for '{query_text}':",
-        option_resolver=lambda match: ResolverOption(
-            display_label=render_package_label(
-                repo_name=match.repo_name,
-                package_id=match.package_id,
-                bound_profile=match.bound_profile,
-                target_name=match.target_name,
-                package_first=True,
-                include_repo_context=True,
-            ),
-            match_fields=build_target_match_fields(
-                repo_name=match.repo_name,
-                package_id=match.package_id,
-                target_name=match.target_name,
-                bound_profile=match.bound_profile,
-            ),
-            field_kinds=build_target_field_kinds(has_bound_profile=match.bound_profile is not None),
-        ),
-        exact_error_text=f"tracked target '{query_text}' is ambiguous: "
-        + ", ".join(
-            f"{match.repo_name}:{package_ref_text(package_id=match.package_id, bound_profile=match.bound_profile)}.{match.target_name}"
-            for match in exact_matches
-        ),
-        partial_error_text=f"tracked target '{query_text}' is ambiguous: "
-        + ", ".join(
-            f"{match.repo_name}:{package_ref_text(package_id=match.package_id, bound_profile=match.bound_profile)}.{match.target_name}"
-            for match in partial_matches
-        ),
-        not_found_text=f"tracked target '{query_text}' did not match any tracked target",
-    )
-
-
-def _parse_edit_query_text(query_text: str) -> tuple[str, str | None, str, str | None]:
-    if any(marker in query_text for marker in ("@", "<", ">")):
-        raise ValueError("edit query does not accept selector@profile syntax; use explicit edit package or edit target")
-
-    explicit_repo, selector, selector_profile = parse_full_spec_selector_text(query_text)
-    if selector_profile is not None:
-        raise ValueError("edit query does not accept selector@profile syntax; use explicit edit package or edit target")
-
-    if "." in selector:
-        package_id, separator, target_name = selector.partition(".")
-        if not separator or not package_id or not target_name:
-            raise ValueError(
-                f"invalid edit target query '{query_text}'; expected [<repo>:]<package>.<target>"
-            )
-        return "target", explicit_repo, package_id, target_name
-
-    return "package", explicit_repo, selector, None
-
-
-def _build_edit_query_candidate_option(
-    *,
-    kind: str,
-    repo_name: str,
-    package_id: str,
-    target_name: str | None,
-    bound_profile: str | None,
-) -> ResolverOption:
-    ref_text = package_ref_text(package_id=package_id, bound_profile=bound_profile)
-    if kind == "package":
-        label_display = f"{repo_name}:{ref_text} [package]"
-        display_fields = (
-            cli_style.join_menu_display_fields(
-                cli_style.render_package_label(
-                    repo_name=repo_name,
-                    package_id=package_id,
-                    bound_profile=bound_profile,
-                    package_first=True,
-                    include_repo_context=True,
-                    use_color=colors_enabled(),
-                ),
-                cli_style.render_menu_badge("[package]", use_color=colors_enabled()),
-            ),
-        )
-        return ResolverOption(
-            display_label=label_display,
-            display_fields=display_fields,
-            match_fields=build_package_match_fields(
-                repo_name=repo_name,
-                package_id=package_id,
-                bound_profile=bound_profile,
-            ),
-            field_kinds=build_package_field_kinds(has_bound_profile=bound_profile is not None),
-        )
-    if target_name is None:
-        raise ValueError("target candidates require a target name")
-    label_display = f"{repo_name}:{ref_text}.{target_name} [target]"
-    display_fields = (
-        cli_style.join_menu_display_fields(
-            cli_style.render_package_label(
-                repo_name=repo_name,
-                package_id=package_id,
-                target_name=target_name,
-                package_first=True,
-                include_repo_context=True,
-                use_color=colors_enabled(),
-            ),
-            cli_style.render_menu_badge("[target]", use_color=colors_enabled()),
-        ),
-    )
-    return ResolverOption(
-        display_label=label_display,
-        display_fields=display_fields,
-        match_fields=build_target_match_fields(
-            repo_name=repo_name,
-            package_id=package_id,
-            target_name=target_name,
-            bound_profile=bound_profile,
-        ),
-        field_kinds=build_target_field_kinds(has_bound_profile=bound_profile is not None),
-    )
-
-
-def _make_edit_query_candidate(
-    *,
-    kind: str,
-    repo_name: str,
-    package_id: str,
-    target_name: str | None,
-    bound_profile: str | None,
-    path: Path,
-) -> _EditQueryCandidate:
-    return _EditQueryCandidate(
-        kind=kind,
-        repo_name=repo_name,
-        package_id=package_id,
-        target_name=target_name,
-        bound_profile=bound_profile,
-        path=path,
-        option=_build_edit_query_candidate_option(
-            kind=kind,
-            repo_name=repo_name,
-            package_id=package_id,
-            target_name=target_name,
-            bound_profile=bound_profile,
-        ),
-    )
-
-
-def _format_edit_query_candidates(candidates: Sequence[_EditQueryCandidate]) -> str:
-    return ", ".join(f"{candidate.kind} {candidate.ref_text}" for candidate in candidates)
-
-
-def resolve_edit_query_text(
-    engine: DotmanEngine,
-    query_text: str,
-    *,
-    json_output: bool,
-) -> Path:
-    intent, explicit_repo, selector, _target_name = _parse_edit_query_text(query_text)
-    if intent == "target":
-        tracked_target = resolve_tracked_target_text(
-            engine,
-            query_text,
-            json_output=json_output,
-        )
-        return tracked_target.repo_path
-
-    query = selector if explicit_repo is None else f"{explicit_repo}:{selector}"
-    _package_query, _package_bound_profile, package_exact_matches, package_partial_matches = engine.find_tracked_package_matches(query)
-    _target_query, target_exact_matches, target_partial_matches = engine.find_tracked_target_matches(query)
-
-    exact_candidates: list[_EditQueryCandidate] = []
-    partial_candidates: list[_EditQueryCandidate] = []
-
-    for repo, package_id, bound_profile in package_exact_matches:
-        exact_candidates.append(
-            _make_edit_query_candidate(
-                kind="package",
-                repo_name=repo.config.name,
-                package_id=package_id,
-                target_name=None,
-                bound_profile=bound_profile,
-                path=repo.resolve_package(package_id).package_root,
-            )
-        )
-    for match in target_exact_matches:
-        exact_candidates.append(
-            _make_edit_query_candidate(
-                kind="target",
-                repo_name=match.repo_name,
-                package_id=match.package_id,
-                target_name=match.target_name,
-                bound_profile=match.bound_profile,
-                path=match.repo_path,
-            )
-        )
-    for repo, package_id, bound_profile in package_partial_matches:
-        partial_candidates.append(
-            _make_edit_query_candidate(
-                kind="package",
-                repo_name=repo.config.name,
-                package_id=package_id,
-                target_name=None,
-                bound_profile=bound_profile,
-                path=repo.resolve_package(package_id).package_root,
-            )
-        )
-    for match in target_partial_matches:
-        partial_candidates.append(
-            _make_edit_query_candidate(
-                kind="target",
-                repo_name=match.repo_name,
-                package_id=match.package_id,
-                target_name=match.target_name,
-                bound_profile=match.bound_profile,
-                path=match.repo_path,
-            )
-        )
-
-    selected_candidate = resolve_candidate_match(
-        exact_matches=exact_candidates,
-        partial_matches=partial_candidates,
-        query_text=query_text,
-        interactive=interactive_mode_enabled(json_output=json_output),
-        exact_header_text=f"Select an edit target for '{query_text}':",
-        partial_header_text=f"Select an edit target for '{query_text}':",
-        option_resolver=lambda candidate: candidate.option,
-        exact_error_text=f"edit query '{query_text}' is ambiguous: " + _format_edit_query_candidates(exact_candidates),
-        partial_error_text=f"edit query '{query_text}' is ambiguous: " + _format_edit_query_candidates(partial_candidates),
-        not_found_text=f"edit query '{query_text}' did not match any tracked package or target",
-        single_partial_mode="menu",
-        single_partial_error_text=(
-            f"no exact match for '{query_text}'; use exact name '{partial_candidates[0].kind} {partial_candidates[0].ref_text}'"
-            if len(partial_candidates) == 1
-            else None
-        ),
-    )
-    return selected_candidate.path
-
-
-def parse_add_package_query(
-    engine: DotmanEngine,
-    package_query: str,
-) -> tuple[str | None, str]:
-    explicit_repo, selector, profile = parse_full_spec_selector_text(package_query)
-    if profile is not None:
-        raise ValueError("add package query expects a package selector, not a binding")
-    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
-    lookup_repo, lookup_selector = parse_slash_qualified_query(
-        repo_names=repo_names,
-        explicit_repo=explicit_repo,
-        selector=selector,
-    )
-    return lookup_repo, lookup_selector
-
-
-def _query_fragment_rank(query: str | None, text: str) -> tuple[int, int, int]:
-    if query is None or not query.strip():
-        return (0, 0, len(text))
-    normalized_query = query.strip().lower()
-    normalized_text = text.lower()
-    if normalized_text == normalized_query:
-        return (0, 0, len(normalized_text))
-    if normalized_text.startswith(normalized_query):
-        return (1, 0, len(normalized_text))
-    match_index = normalized_text.find(normalized_query)
-    if match_index == -1:
-        return (9, 999, len(normalized_text))
-    return (2, match_index, len(normalized_text))
-
-
-def rank_add_package_candidate(match: tuple[object, str], *, repo_query: str | None, package_query: str | None) -> tuple[int, int, int, int, int, int, str, str]:
-    repo, package_id = match
-    repo_rank = _query_fragment_rank(repo_query, repo.config.name)
-    package_rank = _query_fragment_rank(package_query, package_id)
-    return (*repo_rank, *package_rank, repo.config.name.lower(), package_id.lower())
-
-
-def find_add_package_matches(
-    engine: DotmanEngine,
-    package_query: str,
-) -> tuple[str | None, str, list[tuple[object, str]], list[tuple[object, str]]]:
-    repo_query, package_fragment = parse_add_package_query(engine, package_query)
-    exact_matches: list[tuple[object, str]] = []
-    partial_matches: list[tuple[object, str]] = []
-    normalized_repo_query = None if repo_query is None else repo_query.lower()
-    normalized_package_query = package_fragment.lower()
-
-    for repo_config in engine.config.ordered_repos:
-        repo = engine.get_repo(repo_config.name)
-        repo_name = repo.config.name
-        repo_matches_exact = repo_query is None or repo_name == repo_query
-        repo_matches_partial = repo_query is None or normalized_repo_query in repo_name.lower()
-        if not repo_matches_partial:
-            continue
-        for package_id in repo.packages:
-            normalized_package_id = package_id.lower()
-            if repo_matches_exact and package_id == package_fragment:
-                exact_matches.append((repo, package_id))
-                continue
-            if normalized_package_query in normalized_package_id:
-                partial_matches.append((repo, package_id))
-
-    unique_partials = {
-        (repo.config.name, package_id): (repo, package_id)
-        for repo, package_id in partial_matches
-        if (repo, package_id) not in exact_matches
-    }
-    return repo_query, package_fragment, exact_matches, list(unique_partials.values())
-
-
-def create_add_option_label(package_query: str | None) -> str:
-    return "create a new package"
-
-
-def prompt_for_new_package_id(*, default_package_id: str | None) -> str:
-    while True:
-        prompt_text = "Package ID"
-        if default_package_id:
-            prompt_text += f" [{default_package_id}]"
-        package_id = prompt(f"{prompt_text}: ").strip()
-        if not package_id:
-            package_id = default_package_id or ""
-        try:
-            validate_package_id(package_id)
-        except ValueError as exc:
-            cli_emit.emit_error(exc, use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None)
-            continue
-        return package_id
-
-
-def prompt_for_add_repo_name(engine: DotmanEngine, *, repo_query: str | None) -> str:
-    if repo_query is not None and repo_query in engine.config.repos:
-        return repo_query
-    matching_repos = [
-        repo_config.name
-        for repo_config in engine.config.ordered_repos
-        if repo_query is None or repo_query.lower() in repo_config.name.lower()
-    ]
-    repo_names = matching_repos or [repo_config.name for repo_config in engine.config.ordered_repos]
-    selected_index = select_menu_option(
-        header_text="Select a repo for the new package:",
-        option_labels=repo_names,
-    )
-    return repo_names[selected_index]
-
-
-def _resolve_edit_repo_config(
-    *,
-    config_path: str | None,
-    repo_query: str | None,
-    json_output: bool,
-    command_label: str,
-    selection_header: str,
-) -> RepoConfig:
-    config = load_manager_config(config_path)
-    exact_repos = [
-        repo_config
-        for repo_config in config.ordered_repos
-        if repo_query is not None and repo_config.name == repo_query
-    ]
-    matching_repos = [
-        repo_config
-        for repo_config in config.ordered_repos
-        if repo_query is None or repo_query.lower() in repo_config.name.lower()
-    ]
-    if repo_query is None and len(matching_repos) == 1:
-        return matching_repos[0]
-
-    repo_names = ", ".join(repo_config.name for repo_config in config.ordered_repos)
-    repo_options = matching_repos or (
-        list(config.ordered_repos) if interactive_mode_enabled(json_output=json_output) else []
-    )
-
-    def repo_option(repo_config) -> ResolverOption:
-        repo_label = style_text(repo_config.name, *MENU_REPO_STYLE)
-        return ResolverOption(
-            display_label=repo_label,
-            display_fields=(repo_label,),
-            match_fields=(repo_config.name,),
-            field_kinds=("repo",),
-        )
-
-    selected_repo = resolve_candidate_match(
-        exact_matches=exact_repos,
-        partial_matches=repo_options if not exact_repos else [],
-        query_text=repo_query or "",
-        interactive=interactive_mode_enabled(json_output=json_output),
-        exact_header_text=selection_header,
-        partial_header_text=selection_header,
-        option_resolver=repo_option,
-        exact_error_text=f"{command_label} '{repo_query}' is ambiguous: "
-        + ", ".join(repo_config.name for repo_config in exact_repos),
-        partial_error_text=(
-            f"{command_label} is required in non-interactive mode: {repo_names}"
-            if repo_query is None
-            else f"{command_label} '{repo_query}' is ambiguous: "
-            + ", ".join(repo_config.name for repo_config in matching_repos)
-        ),
-        not_found_text=(
-            f"{command_label} is required in non-interactive mode: {repo_names}"
-            if repo_query is None
-            else f"{command_label} '{repo_query}' did not match any configured repo: {repo_names}"
-        ),
-        single_partial_mode="menu",
-        single_partial_error_text=(
-            f"{command_label} '{repo_query}' is not exact; use '{matching_repos[0].name}'"
-            if repo_query is not None and len(matching_repos) == 1
-            else None
-        ),
-        rank_matches=repo_query is not None and bool(matching_repos),
-    )
-    return selected_repo
-
-
-def resolve_edit_local_path(
-    *,
-    config_path: str | None,
-    repo_query: str | None,
-    json_output: bool,
-) -> Path:
-    return _resolve_edit_repo_config(
-        config_path=config_path,
-        repo_query=repo_query,
-        json_output=json_output,
-        command_label="edit local repo",
-        selection_header="Select a repo for local overrides:",
-    ).local_override_path
-
-
-def resolve_edit_repo_path(
-    *,
-    config_path: str | None,
-    repo_query: str,
-    json_output: bool,
-) -> Path:
-    return _resolve_edit_repo_config(
-        config_path=config_path,
-        repo_query=repo_query,
-        json_output=json_output,
-        command_label="edit repo",
-        selection_header="Select a repo to edit:",
-    ).path
-
-
-def resolve_add_package_text(
-    engine: DotmanEngine,
-    package_query: str | None,
-    *,
-    json_output: bool,
-) -> tuple[str, str]:
-    interactive = interactive_mode_enabled(json_output=json_output)
-    if package_query is None:
-        if not interactive:
-            raise ValueError("package query is required in non-interactive mode")
-        package_matches = [
-            (engine.get_repo(repo_config.name), package_id)
-            for repo_config in engine.config.ordered_repos
-            for package_id in sorted(engine.get_repo(repo_config.name).packages)
-        ]
-        option_labels = [create_add_option_label(None)] + [
-            render_package_label(
-                repo_name=repo.config.name,
-                package_id=package_id,
-                package_first=True,
-                include_repo_context=True,
-            )
-            for repo, package_id in package_matches
-        ]
-        selected_index = select_menu_option(
-            header_text="Select a package for add:",
-            option_labels=option_labels,
-        )
-        if selected_index == 0:
-            return (
-                prompt_for_add_repo_name(engine, repo_query=None),
-                prompt_for_new_package_id(default_package_id=None),
-            )
-        selected_repo, selected_package = package_matches[selected_index - 1]
-        return selected_repo.config.name, selected_package
-
-    repo_query, package_fragment, exact_matches, partial_matches = find_add_package_matches(engine, package_query)
-    ranked_exact_matches = sorted(
-        exact_matches,
-        key=lambda match: rank_add_package_candidate(match, repo_query=repo_query, package_query=package_fragment),
-    )
-    ranked_partial_matches = sorted(
-        partial_matches,
-        key=lambda match: rank_add_package_candidate(match, repo_query=repo_query, package_query=package_fragment),
-    )
-
-    if len(ranked_exact_matches) == 1:
-        selected_repo, selected_package = ranked_exact_matches[0]
-        return selected_repo.config.name, selected_package
-
-    if interactive:
-        menu_matches = ranked_exact_matches or ranked_partial_matches
-        option_labels = [create_add_option_label(package_query)] + [
-            render_package_label(
-                repo_name=repo.config.name,
-                package_id=package_id,
-                package_first=True,
-                include_repo_context=True,
-            )
-            for repo, package_id in menu_matches
-        ]
-        selected_index = select_menu_option(
-            header_text=f"Select a package for '{package_query}':",
-            option_labels=option_labels,
-        )
-        if selected_index == 0:
-            return (
-                prompt_for_add_repo_name(engine, repo_query=repo_query),
-                prompt_for_new_package_id(default_package_id=package_fragment),
-            )
-        selected_repo, selected_package = menu_matches[selected_index - 1]
-        return selected_repo.config.name, selected_package
-
-    if len(ranked_exact_matches) > 1:
-        raise ValueError(
-            f"package '{package_query}' is ambiguous: "
-            + ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in ranked_exact_matches)
-        )
-    if len(ranked_partial_matches) == 1:
-        selected_repo, selected_package = ranked_partial_matches[0]
-        return selected_repo.config.name, selected_package
-    if len(ranked_partial_matches) > 1:
-        raise ValueError(
-            f"package '{package_query}' is ambiguous: "
-            + ", ".join(f"{repo.config.name}:{package_id}" for repo, package_id in ranked_partial_matches)
-        )
-    if repo_query is None:
-        raise ValueError(
-            f"package '{package_query}' did not match any package; use an explicit repo-qualified query to create one in non-interactive mode"
-        )
-    if repo_query not in engine.config.repos:
-        raise ValueError(
-            f"package '{package_query}' did not match any package and cannot create non-interactively without an exact repo"
-        )
-    validate_package_id(package_fragment)
-    return repo_query, package_fragment
-
-
-def select_non_conflicting_track_profile(
-    engine: DotmanEngine,
-    *,
-    binding: FullSpecSelector,
-    json_output: bool,
-) -> str | None:
-    if not interactive_mode_enabled(json_output=json_output):
-        return None
-    valid_profiles: list[str] = []
-    for candidate_profile in engine.list_profiles(binding.repo):
-        if candidate_profile == binding.profile:
-            continue
-        candidate_binding = binding.with_profile(candidate_profile)
-        try:
-            engine.validate_tracked_package_entry(candidate_binding)
-        except ValueError:
-            continue
-        valid_profiles.append(candidate_profile)
-    if not valid_profiles:
-        return None
-    selected_index = select_menu_option(
-        header_text=f"Select a non-conflicting profile for {binding.repo}:{binding.selector}@{binding.profile}:",
-        option_labels=valid_profiles,
-    )
-    return valid_profiles[selected_index]
 
 
 def collect_pending_selection_items(plans: Sequence) -> list[PendingSelectionItem]:
@@ -3598,37 +2447,26 @@ def run_restore_execution(
     return renderer.render_restore_result(result)
 
 
-def _build_command_handlers() -> cli_commands.CliCommandHandlers:
+def _build_command_handlers(*, interaction: Interaction | None) -> cli_commands.CliCommandHandlers:
+    def emit_resolution_message(message: str) -> None:
+        sys.stdout.write(message)
+
     return cli_commands.CliCommandHandlers(
         run_basic_reconcile=run_basic_reconcile,
         run_jinja_reconcile=run_jinja_reconcile,
         run_jinja_render=run_jinja_render,
         run_patch_capture=run_patch_capture,
-        resolve_track_selector_text=resolve_track_selector_text,
-        ensure_track_package_entry_replacement_confirmed=ensure_track_package_entry_replacement_confirmed,
-        find_recorded_package_entries_for_scope=find_recorded_package_entries_for_scope,
         emit_kept_package_entry=emit_kept_package_entry,
         emit_skipped_tracking=emit_skipped_tracking,
-        prompt_for_conflicting_package_entry=prompt_for_conflicting_package_entry,
-        select_non_conflicting_track_profile=select_non_conflicting_track_profile,
-        ensure_track_package_entry_implicit_overrides_confirmed=ensure_track_package_entry_implicit_overrides_confirmed,
-        find_recorded_package_entry_exact=find_recorded_package_entry_exact,
         emit_tracked_package_entry=emit_tracked_package_entry,
         emit_search_matches=emit_search_matches,
-        resolve_add_package_text=resolve_add_package_text,
-        interactive_mode_enabled=interactive_mode_enabled,
         add_editor_available=add_editor_available,
         review_add_manifest=review_add_manifest,
-        confirm_add_manifest_write=confirm_add_manifest_write,
         emit_add_result=emit_add_result,
         emit_noop_add_result=emit_noop_add_result,
         emit_kept_add_result=emit_kept_add_result,
         open_editor_path=open_editor_path,
-        resolve_edit_query_text=resolve_edit_query_text,
-        resolve_edit_local_path=resolve_edit_local_path,
-        resolve_edit_repo_path=resolve_edit_repo_path,
         resolve_tracked_package_entry_text=resolve_tracked_package_entry_text,
-        resolve_tracked_target_text=resolve_tracked_target_text,
         filter_plans_for_interactive_selection=filter_plans_for_interactive_selection,
         review_plans_for_interactive_diffs=review_plans_for_interactive_diffs,
         emit_interrupt_notice=emit_interrupt_notice,
@@ -3643,7 +2481,6 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_restore_payload=emit_restore_payload,
         run_restore_execution=run_restore_execution,
         emit_untracked_package_entry=emit_untracked_package_entry,
-        find_remaining_tracked_package_after_untrack=find_remaining_tracked_package_after_untrack,
         emit_tracked_packages=emit_tracked_packages,
         emit_trackables=emit_trackables,
         emit_repos=emit_repos,
@@ -3651,7 +2488,6 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_tracked_package_detail=emit_tracked_package_detail,
         resolve_trackable_selector_text=resolve_trackable_selector_text,
         emit_trackable_detail=emit_trackable_detail,
-        resolve_untrack_group_text=resolve_untrack_group_text,
         emit_untracked_package_entries=emit_untracked_package_entries,
         resolve_variable_text=resolve_variable_text,
         emit_variables=emit_variables,
@@ -3659,6 +2495,12 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_snapshot_list=emit_snapshot_list,
         emit_snapshot_detail=emit_snapshot_detail,
         emit_doctor_summary=emit_doctor_summary,
+        interaction=interaction,
+        emit_resolution_error=lambda error: cli_emit.emit_error(
+            error,
+            use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None,
+        ),
+        emit_resolution_message=emit_resolution_message,
     )
 
 
@@ -3695,10 +2537,18 @@ def _rewrite_edit_query_argv(argv: Sequence[str]) -> list[str]:
 
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    interaction: Interaction | None = None,
+) -> int:
     try:
         raw_argv = list(argv) if argv is not None else sys.argv[1:]
         args = build_parser().parse_args(_rewrite_edit_query_argv(raw_argv))
+        active_interaction = interaction
+        stdin_isatty = getattr(sys.stdin, "isatty", None)
+        if active_interaction is None and stdin_isatty is not None and stdin_isatty():
+            active_interaction = TerminalInteraction()
         return cli_commands.dispatch_command(
             args=args,
             engine_factory=lambda config_path: DotmanEngine.from_config_path(
@@ -3706,7 +2556,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file_symlink_mode=args.file_symlink_mode,
                 dir_symlink_mode=args.dir_symlink_mode,
             ),
-            handlers=_build_command_handlers(),
+            handlers=_build_command_handlers(interaction=active_interaction),
         )
     except KeyboardInterrupt:
         emit_interrupt_notice()

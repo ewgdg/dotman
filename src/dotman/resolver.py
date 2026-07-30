@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Sequence
+from typing import TypeVar
+
+
+Match = TypeVar("Match")
 
 
 # `@profile` is intentionally a weaker fallback field, not a peer selector segment.
@@ -222,7 +226,11 @@ def _field_match_rank(*, kind: str, query: str, text: str) -> tuple[int, int, in
     return _segment_match_rank(query, text)
 
 
-def rank_resolver_option(*, query: str, option: ResolverOption) -> tuple[int, int, int, int, str, str]:
+def rank_resolver_option(
+    *,
+    query: str,
+    option: ResolverOption,
+) -> tuple[int, int, int, int, int, str, str]:
     field_kinds = option.field_kinds or ("selector",) * len(option.match_fields)
     if len(field_kinds) != len(option.match_fields):
         raise ValueError("resolver option field kinds must align with match fields")
@@ -231,4 +239,27 @@ def rank_resolver_option(*, query: str, option: ResolverOption) -> tuple[int, in
         if field_rank is None:
             continue
         return (field_index, *field_rank, match_field.lower(), option.display_label.lower())
-    return (len(option.match_fields), 999, 999, 999, "", option.display_label.lower())
+    return (
+        len(option.match_fields),
+        999,
+        999,
+        999,
+        999,
+        "",
+        option.display_label.lower(),
+    )
+
+
+def rank_resolver_matches(
+    matches: Sequence[Match],
+    *,
+    query: str,
+    option_resolver: Callable[[Match], ResolverOption],
+) -> list[Match]:
+    return sorted(
+        matches,
+        key=lambda match: rank_resolver_option(
+            query=query,
+            option=option_resolver(match),
+        ),
+    )

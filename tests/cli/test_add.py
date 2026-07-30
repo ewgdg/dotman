@@ -11,6 +11,7 @@ import dotman.cli as cli
 from dotman.add import AddOperationResult, AddReviewResult, review_add_manifest
 from dotman.cli import main
 from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
+from dotman.interaction import ConfirmationRequest, ScriptedInteraction
 
 from tests.helpers import capture_parser_help, write_named_manager_config
 
@@ -258,7 +259,6 @@ def test_add_cli_interactively_allows_create_when_package_query_is_omitted(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("VISUAL", raising=False)
     monkeypatch.delenv("EDITOR", raising=False)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     live_path = home / ".config" / "foo.conf"
     live_path.parent.mkdir(parents=True)
@@ -268,19 +268,21 @@ def test_add_cli_interactively_allows_create_when_package_query_is_omitted(
     _write_repo(repo_root, {"existing": 'id = "existing"\n'})
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
 
-    answers = iter(["", "1", "newpkg"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(
+        choices=[None, "fixture"],
+        text_inputs=["newpkg"],
+    )
 
     exit_code = main([
         "--config",
         str(config_path),
         "add",
         str(live_path),
-    ])
+    ], interaction=interaction)
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "Select a package for add:" in output
+    assert interaction.requests[0].header_text == "Select a package for add:"
     assert "created package config fixture:newpkg" in output
     assert (repo_root / "packages" / "newpkg" / "package.toml").exists()
 
@@ -357,7 +359,7 @@ def test_add_cli_reports_no_effective_package_config_changes_after_editor_review
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    interaction = ScriptedInteraction()
 
     live_path = home / ".config" / "foo.conf"
     live_path.parent.mkdir(parents=True)
@@ -376,24 +378,17 @@ def test_add_cli_reports_no_effective_package_config_changes_after_editor_review
         return AddReviewResult(exit_code=0, manifest_text=result.before_text)
 
     monkeypatch.setattr(cli, "review_add_manifest", fake_review)
-    prompt_messages: list[str] = []
-    monkeypatch.setattr(
-        cli,
-        "prompt",
-        lambda message: prompt_messages.append(message) or "",
-    )
-
     exit_code = main([
         "--config",
         str(config_path),
         "add",
         str(live_path),
         "fixture:git",
-    ])
+    ], interaction=interaction)
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert prompt_messages == []
+    assert interaction.requests == []
     assert "No package config changes." in output
     assert manifest_path.read_text(encoding="utf-8") == 'id = "git"\n'
 
@@ -407,7 +402,6 @@ def test_add_cli_keeps_manifest_unchanged_when_editor_review_is_declined(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     live_path = home / ".config" / "foo.conf"
     live_path.parent.mkdir(parents=True)
@@ -423,14 +417,11 @@ def test_add_cli_keeps_manifest_unchanged_when_editor_review_is_declined(
         "review_add_manifest",
         lambda result: AddReviewResult(exit_code=0, manifest_text=result.after_text),
     )
-    confirmation_calls: list[dict[str, object]] = []
-
-    def decline_manifest_write(**kwargs: object) -> bool:
-        confirmation_calls.append(kwargs)
-        return False
-
-    monkeypatch.setattr(cli, "confirm_add_manifest_write", decline_manifest_write)
-    monkeypatch.setattr(cli, "prompt", lambda _message: "")
+    interaction = ScriptedInteraction(
+        choices=[None],
+        confirmations=[False],
+        text_inputs=[""],
+    )
 
     exit_code = main([
         "--config",
@@ -438,10 +429,12 @@ def test_add_cli_keeps_manifest_unchanged_when_editor_review_is_declined(
         "add",
         str(live_path),
         "fixture:newpkg",
-    ])
+    ], interaction=interaction)
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert confirmation_calls == [{"repo_name": "fixture", "package_id": "newpkg", "assume_yes": False}]
+    assert interaction.requests[-1] == ConfirmationRequest(
+        prompt="Write package config changes for fixture:newpkg? [y/n] "
+    )
     assert "kept package config unchanged fixture:newpkg" in output
     assert not (repo_root / "packages" / "newpkg" / "package.toml").exists()

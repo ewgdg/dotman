@@ -7,6 +7,7 @@ import dotman.cli as cli
 
 from dotman.cli import main
 from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
+from dotman.interaction import ScriptedInteraction
 
 from tests.helpers import write_named_manager_config
 
@@ -325,11 +326,7 @@ def test_edit_local_cli_interactively_resolves_missing_repo(
     config_path = write_named_manager_config(tmp_path, {"alpha": alpha_root, "beta": beta_root})
     beta_local_path = tmp_path / "xdg-config" / "dotman" / "repos" / "beta" / "local.toml"
 
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-    monkeypatch.setattr(cli, "_fzf_available", lambda: False)
-    answers = iter(["2"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["beta"])
     monkeypatch.setenv("EDITOR", "nvim")
     recorded: dict[str, object] = {}
 
@@ -340,13 +337,13 @@ def test_edit_local_cli_interactively_resolves_missing_repo(
 
     _patch_cli_runtime(monkeypatch, fake_run)
 
-    exit_code = main(["--config", str(config_path), "edit", "local"])
+    exit_code = main(
+        ["--config", str(config_path), "edit", "local"],
+        interaction=interaction,
+    )
 
     assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "Select a repo for local overrides:" in output
-    assert "alpha" in output
-    assert "beta" in output
+    assert interaction.requests[0].header_text == "Select a repo for local overrides:"
     assert recorded["command"] == ["nvim", str(beta_local_path)]
 
 
@@ -362,11 +359,7 @@ def test_edit_local_cli_interactively_prompts_for_unique_partial_repo(
     config_path = write_named_manager_config(tmp_path, {"alpha": alpha_root, "beta": beta_root})
     beta_local_path = tmp_path / "xdg-config" / "dotman" / "repos" / "beta" / "local.toml"
 
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-    monkeypatch.setattr(cli, "_fzf_available", lambda: False)
-    answers = iter(["1"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["beta"])
     monkeypatch.setenv("EDITOR", "nvim")
     recorded: dict[str, object] = {}
 
@@ -377,12 +370,13 @@ def test_edit_local_cli_interactively_prompts_for_unique_partial_repo(
 
     _patch_cli_runtime(monkeypatch, fake_run)
 
-    exit_code = main(["--config", str(config_path), "edit", "local", "bet"])
+    exit_code = main(
+        ["--config", str(config_path), "edit", "local", "bet"],
+        interaction=interaction,
+    )
 
     assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "Select a repo for local overrides:" in output
-    assert "beta" in output
+    assert interaction.requests[0].header_text == "Select a repo for local overrides:"
     assert recorded["command"] == ["nvim", str(beta_local_path)]
 
 
@@ -414,11 +408,7 @@ def test_edit_local_cli_interactively_resolves_ambiguous_repo(
     config_path = write_named_manager_config(tmp_path, {"alpha": alpha_root, "alpine": alpine_root})
     alpine_local_path = tmp_path / "xdg-config" / "dotman" / "repos" / "alpine" / "local.toml"
 
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-    monkeypatch.setattr(cli, "_fzf_available", lambda: False)
-    answers = iter(["2"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    interaction = ScriptedInteraction(choices=["alpine"])
     monkeypatch.setenv("EDITOR", "nvim")
     recorded: dict[str, object] = {}
 
@@ -429,13 +419,13 @@ def test_edit_local_cli_interactively_resolves_ambiguous_repo(
 
     _patch_cli_runtime(monkeypatch, fake_run)
 
-    exit_code = main(["--config", str(config_path), "edit", "local", "al"])
+    exit_code = main(
+        ["--config", str(config_path), "edit", "local", "al"],
+        interaction=interaction,
+    )
 
     assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "Select a repo for local overrides:" in output
-    assert "alpha" in output
-    assert "alpine" in output
+    assert interaction.requests[0].header_text == "Select a repo for local overrides:"
     assert recorded["command"] == ["nvim", str(alpine_local_path)]
 
 
@@ -743,11 +733,8 @@ def test_edit_target_cli_interactively_selects_ambiguous_target(
         bindings=[("git", "basic"), ("altgit", "basic")],
     )
 
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-    monkeypatch.setattr(cli, "_fzf_available", lambda: False)
-    answers = iter(["2"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
+    git_path = repo_root / "packages" / "git" / "files" / "gitconfig"
+    interaction = ScriptedInteraction(choices=[git_path])
     monkeypatch.setenv("EDITOR", "nvim")
     recorded: dict[str, object] = {}
 
@@ -758,13 +745,13 @@ def test_edit_target_cli_interactively_selects_ambiguous_target(
 
     _patch_cli_runtime(monkeypatch, fake_run)
 
-    exit_code = main(["--config", str(config_path), "edit", "target", "gitconfig"])
+    exit_code = main(
+        ["--config", str(config_path), "edit", "target", "gitconfig"],
+        interaction=interaction,
+    )
 
     assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "Select a tracked target for 'gitconfig':" in output
-    assert "fixture:altgit.gitconfig" in output
-    assert "fixture:git.gitconfig" in output
+    assert interaction.requests[0].header_text == "Select a tracked target for 'gitconfig':"
     assert recorded["command"] == ["nvim", str(repo_root / "packages" / "git" / "files" / "gitconfig")]
 
 
