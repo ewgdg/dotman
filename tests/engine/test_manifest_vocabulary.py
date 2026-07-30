@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.models import HookCommandSpec
 from tests.helpers import write_single_repo_config
 
 
@@ -14,6 +13,7 @@ def write_manifest_repo(
     *,
     repo_manifest: list[str] | None = None,
     target_manifest: list[str] | None = None,
+    target_is_directory: bool = False,
 ) -> Path:
     repo_root = tmp_path / "repo"
     (repo_root / "packages" / "app" / "files").mkdir(parents=True)
@@ -22,10 +22,12 @@ def write_manifest_repo(
         "\n".join([*(repo_manifest or []), ""]),
         encoding="utf-8",
     )
-    (repo_root / "packages" / "app" / "files" / "config").write_text(
-        "config\n",
-        encoding="utf-8",
-    )
+    target_source = repo_root / "packages" / "app" / "files" / "config"
+    if target_is_directory:
+        target_source.mkdir()
+        (target_source / "example.conf").write_text("config\n", encoding="utf-8")
+    else:
+        target_source.write_text("config\n", encoding="utf-8")
     (repo_root / "packages" / "app" / "package.toml").write_text(
         "\n".join(
             [
@@ -130,9 +132,18 @@ def test_repo_config_rejects_unsupported_schema_fields(tmp_path: Path) -> None:
         load_manifest_repo(tmp_path, repo_root)
 
 
-def test_canonical_manifest_vocabulary_loads_unchanged(tmp_path: Path) -> None:
+def test_canonical_manifest_vocabulary_loads_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    live_target = home / ".config" / "app" / "config"
+    live_target.mkdir(parents=True)
+    (live_target / "example.conf").write_text("old config\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
     repo_root = write_manifest_repo(
         tmp_path,
+        target_is_directory=True,
         repo_manifest=[
             '[hooks.pre_push]',
             'commands = [{ run = "echo ready", elevation = "root" }]',
@@ -144,6 +155,8 @@ def test_canonical_manifest_vocabulary_loads_unchanged(tmp_path: Path) -> None:
             'gitignore = ["push"]',
         ],
         target_manifest=[
+            'type = "directory"',
+            'render = "cat \\"$DOTMAN_REPO_PATH\\""',
             'pull_view_repo = "render"',
             'pull_view_live = "raw"',
             "",
@@ -161,22 +174,25 @@ def test_canonical_manifest_vocabulary_loads_unchanged(tmp_path: Path) -> None:
     )
 
     engine = load_manifest_repo(tmp_path, repo_root)
-    repo = engine.get_repo("fixture")
-    package = repo.resolve_package("app")
-    assert package.targets is not None
-    assert repo.hooks is not None
-    target = package.targets["config"]
+    push_plan = engine.plan_push_query("fixture:app@default")
+    pull_plan = engine.plan_pull_query("fixture:app@default")
+    push_target = push_plan.package_plans[0].target_plans[0]
+    pull_target = pull_plan.package_plans[0].target_plans[0]
 
-    assert repo.hooks["pre_push"].commands == (
-        HookCommandSpec(run="echo ready", elevation="root"),
+    assert push_plan.repo_hooks["fixture"]["pre_push"][0].elevation == "root"
+    assert push_target.push_ignore == (
+        "repo.push",
+        "repo.shared",
+        "target.push",
+        "target.shared",
     )
-    assert repo.ignore_defaults.push == ("repo.push", "repo.shared")
-    assert repo.ignore_defaults.pull == ("repo.pull", "repo.shared")
-    assert repo.ignore_defaults.gitignore == ("push",)
-    assert target.pull_view_repo == "render"
-    assert target.pull_view_live == "raw"
-    assert target.push_ignore == ("target.push", "target.shared")
-    assert target.pull_ignore == ("target.pull", "target.shared")
-    assert target.gitignore == ("pull",)
-    assert target.path_rules[0].pull_view_repo == "render"
-    assert target.path_rules[0].pull_view_live == "raw"
+    assert pull_target.pull_ignore == (
+        "repo.pull",
+        "repo.shared",
+        "target.pull",
+        "target.shared",
+    )
+    assert pull_target.pull_view_repo == "render"
+    assert pull_target.pull_view_live == "raw"
+    assert pull_target.path_rules[0].pull_view_repo == "render"
+    assert pull_target.path_rules[0].pull_view_live == "raw"

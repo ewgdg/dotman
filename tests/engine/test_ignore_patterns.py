@@ -147,7 +147,7 @@ def test_followed_directory_symlink_with_skip_marker_is_skipped_only_when_follow
 
     assert files == {}
 
-def test_directory_target_push_ignore_uses_gitignore_semantics_for_nested_pycache_files(
+def test_directory_target_ignore_push_uses_gitignore_semantics_for_nested_pycache_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -194,7 +194,7 @@ def test_directory_target_push_ignore_uses_gitignore_semantics_for_nested_pycach
     assert [item.relative_path for item in target.directory_items] == ["visible.conf"]
 
 
-def test_directory_target_push_ignore_preserves_gitignore_style_nested_pycache_files_during_push_cleanup(
+def test_directory_target_ignore_push_preserves_gitignore_style_nested_pycache_files_during_push_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -432,7 +432,7 @@ def test_directory_target_scan_rejects_nested_directory_symlink_loop_when_follow
 
 
 
-def test_directory_target_pull_ignore_hides_both_repo_and_live_children_during_pull(
+def test_directory_target_ignore_pull_hides_both_repo_and_live_children_during_pull(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -4,7 +4,7 @@ import sys
 from collections.abc import Collection
 from dataclasses import MISSING, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from dotman.models import DefaultCommandElevationMode, HookCommandSpec, HookSpec, PackageSpec, TargetPathRule, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
@@ -517,7 +517,7 @@ def read_target_ignore_table(
 def build_target_operation_ignore(
     *,
     ignore_payload: dict[str, Any] | None,
-    operation: str,
+    operation: Literal["push", "pull"],
 ) -> tuple[str, ...] | None:
     if ignore_payload is None:
         return None

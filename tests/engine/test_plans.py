@@ -2425,7 +2425,7 @@ def test_sandbox_nested_directory_and_file_targets_plan_without_collision(
     assert "settings.ini" in gtk3_dir.push_ignore
     assert "settings.ini" in gtk3_dir.pull_ignore
 
-def test_repo_toml_push_ignore_preserves_live_paths_during_push_cleanup(
+def test_repo_toml_ignore_push_preserves_live_paths_during_push_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

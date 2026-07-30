@@ -301,7 +301,6 @@ exit 0
 
 - Supported hook names are `guard_push`, `pre_push`, `post_push`, `guard_pull`, `pre_pull`, and `post_pull`.
 - Directory path-rule `[...path_rules.hooks]` tables support only `guard_push` and `guard_pull`; path-rule pre/post hooks are invalid.
-- `check` is removed; there is no backward-compatibility alias.
 - Hook entries may be a single item, an ordered list, or a table with `commands` and optional metadata.
 - Repo, package, and target pre/post hook tables support `run_noop = true | false`.
 - Pre/post hook command objects support `run_noop = true | false` to make only that command noop-eligible.
