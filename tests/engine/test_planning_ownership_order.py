@@ -153,6 +153,8 @@ def write_nested_collision_repo(repo_root: Path) -> None:
                 'source = "files/shared"',
                 'path = "~/.config/shared"',
                 'type = "directory"',
+                "",
+                "[targets.shared.ignore]",
                 'gitignore = ["push"]',
                 "",
             ]

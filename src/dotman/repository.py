@@ -17,8 +17,8 @@ from dotman.manifest import (
     normalize_string_list,
     normalize_sync_policy,
     patch_remove_and_append,
-    read_schema_alias,
     strip_package_extensions,
+    validate_supported_keys,
     validate_package_id,
 )
 from dotman.models import (
@@ -40,6 +40,8 @@ VALID_HOOK_NAMES = (
     "pre_pull",
     "post_pull",
 )
+REPO_CONFIG_KEYS = frozenset({"default_command_elevation", "hooks", "ignore"})
+REPO_IGNORE_KEYS = frozenset({"gitignore", "pull", "push", "shared", "skip_markers"})
 
 
 def normalize_skip_markers(value: Any, *, repo_config_path: Path) -> tuple[str, ...]:
@@ -93,7 +95,13 @@ class Repository:
         repo_config_path = self.root / "repo.toml"
         if not repo_config_path.exists():
             return {}
-        return load_toml_file(repo_config_path, context="repo config")
+        payload = load_toml_file(repo_config_path, context="repo config")
+        validate_supported_keys(
+            payload,
+            supported_keys=REPO_CONFIG_KEYS,
+            context=f"repo config {repo_config_path}",
+        )
+        return payload
 
     def _load_default_command_elevation(self) -> DefaultCommandElevationMode:
         return normalize_default_command_elevation(
@@ -111,15 +119,20 @@ class Repository:
             return RepoIgnoreDefaults()
         if not isinstance(ignore_payload, dict):
             raise ValueError(f"repo config {repo_config_path} [ignore] must be a table")
+        validate_supported_keys(
+            ignore_payload,
+            supported_keys=REPO_IGNORE_KEYS,
+            context=f"repo config {repo_config_path} [ignore]",
+        )
         shared_ignore = normalize_string_list(ignore_payload.get("shared")) or ()
         gitignore = normalize_gitignore_list(ignore_payload.get("gitignore")) or ()
         return RepoIgnoreDefaults(
             push=merge_ignore_patterns(
-                normalize_string_list(read_schema_alias(ignore_payload, "push", "apply")) or (),
+                normalize_string_list(ignore_payload.get("push")) or (),
                 shared_ignore,
             ),
             pull=merge_ignore_patterns(
-                normalize_string_list(read_schema_alias(ignore_payload, "pull", "import")) or (),
+                normalize_string_list(ignore_payload.get("pull")) or (),
                 shared_ignore,
             ),
             skip_markers=normalize_skip_markers(

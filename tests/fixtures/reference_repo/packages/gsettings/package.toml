@@ -13,13 +13,15 @@ path = "~/.config/gsettings/nautilus.ini"
 source = "files/config/gtk-3.0"
 path = "~/.config/gtk-3.0"
 chmod = "700"
-push_ignore = [
+
+[targets.gtk3_dir.ignore]
+push = [
   "assets/*",
   "bookmarks",
   "*.backup.*",
   "settings.ini",
 ]
-pull_ignore = [
+pull = [
   "assets/*",
   "bookmarks",
   "*.backup.*",
@@ -34,10 +36,12 @@ path = "~/.config/gtk-3.0/settings.ini"
 source = "files/config/gtk-4.0"
 path = "~/.config/gtk-4.0"
 chmod = "700"
-push_ignore = [
+
+[targets.gtk4_dir.ignore]
+push = [
   "settings.ini",
 ]
-pull_ignore = [
+pull = [
   "settings.ini",
 ]
 

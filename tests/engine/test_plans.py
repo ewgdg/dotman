@@ -901,13 +901,6 @@ def test_repo_default_command_elevation_rejects_unsafe_or_unknown_modes(
         ),
         (
             [
-                "[hooks.pre_push]",
-                'commands = [{ run = "echo pre", privileged = true }]',
-            ],
-            r"uses deprecated 'privileged'; use elevation = \"root\" instead",
-        ),
-        (
-            [
                 "[hooks]",
                 'pre_push = ["echo pre", { run = "echo tty", nope = true }]',
             ],
@@ -2155,7 +2148,7 @@ def test_target_preset_values_can_be_overridden(
                 'source = "files/profile"',
                 'path = "~/.profile"',
                 'preset = "jinja-editor"',
-                'import_view_repo = "raw"',
+                'pull_view_repo = "raw"',
                 'reconcile = { run = "jinja", io = "pipe" }',
                 "",
             ]
@@ -3146,12 +3139,14 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
             [
                 'id = "sample"',
                 "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                'push_ignore = ["*.bak", "keep.local"]',
-                'pull_ignore = ["keep.local"]',
-                "",
+                    "[targets.config]",
+                    'source = "files/config"',
+                    'path = "~/.config/sample"',
+                    "",
+                    "[targets.config.ignore]",
+                    'push = ["*.bak", "keep.local"]',
+                    'pull = ["keep.local"]',
+                    "",
             ]
         ),
         encoding="utf-8",

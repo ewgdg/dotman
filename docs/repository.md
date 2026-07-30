@@ -73,7 +73,7 @@ This document captures the current repository structure and configuration schema
 - A package may define `sync_policy = "push-only" | "pull-only" | "both" | "push-only-delete"` to gate target participation by operation.
 - `sync_policy` defaults to `both` when omitted.
 - Target-level `sync_policy` overrides the package default for that target.
-- `push-only-delete` means the target participates only in `push`, and `push` removes the live file path while leaving the repo source untouched. For directory targets, it removes live child files except paths matched by `push_ignore`. Use it to retire live files while keeping repo-side sources as fallback/history.
+- `push-only-delete` means the target participates only in `push`, and `push` removes the live file path while leaving the repo source untouched. For directory targets, it removes live child files except paths matched by `ignore.push`. Use it to retire live files while keeping repo-side sources as fallback/history.
 - Package inheritance should merge `sync_policy` with last-wins behavior, just like other scalar fields.
 - Target and reserved-path collision rules apply across all resolved package instances, including instances that come from the same `multi_instance` package definition.
 - Keep target reuse explicit by splitting shared logic into smaller packages or using normal `depends`; package dependencies stay package/group-only.
@@ -222,8 +222,7 @@ preset = "jinja-patch"
   - `pull = [...]` is operation-scoped: during `pull`, matching repo and live child paths are ignored, so they are not created, updated, or deleted in the repo.
   - `shared = [...]` is appended to both `push` and `pull`.
   - `gitignore = ["push", "pull"]` opts this target into reading repo-source `.gitignore` files for selected operations. Use `gitignore = []` to disable inherited repo defaults for one target.
-- Flat target keys `push_ignore` and `pull_ignore` remain accepted as legacy aliases for target-level `ignore.push` and `ignore.pull`.
-- Patterns follow gitignore semantics: `**`, leading `/`, trailing `/`, and `!` negation are all supported. The old `*/__pycache__/*` workaround is no longer needed.
+- Patterns follow gitignore semantics: `**`, leading `/`, trailing `/`, and `!` negation are all supported.
 - Repos may define repo-wide ignore defaults in `repo.toml`:
   - `[ignore]`
   - `push = [...]`
@@ -236,11 +235,9 @@ preset = "jinja-patch"
 - When `.gitignore` support is enabled for an operation, dotman reads `.gitignore` files from the repo source tree only, not the live tree. Matching repo and live child paths are unmanaged/preserved for that operation, and the `.gitignore` files themselves are treated as control files rather than synced payload. Control files cannot be re-included by `!` negation.
 - `skip_markers` entries are basenames, not patterns. If a scanned directory contains one of these marker names, dotman treats that directory subtree as unmanaged during both `push` and `pull`; marker file contents are ignored.
 - Recommended marker name: `.dotman-skip`. Dotman does not use `.dotmanignore` for this feature.
-- For directory targets, old install-ignore style rules should map to target-level `ignore.push`.
-- For directory targets, old update-ignore style rules should map to target-level `ignore.pull`.
-- For directory targets, `push` should install everything under the source tree except paths matched by `push_ignore`.
-- For directory targets, `push` should also remove stale live paths that are no longer present in the repo source, except paths matched by `push_ignore`.
-- For directory targets, `pull` should update the repo from live paths except paths matched by `pull_ignore`; ignored repo paths are also preserved during pull cleanup.
+- For directory targets, `push` installs everything under the source tree except paths matched by target-level `ignore.push`.
+- For directory targets, `push` also removes stale live paths that are no longer present in the repo source, except paths matched by target-level `ignore.push`.
+- For directory targets, `pull` updates the repo from live paths except paths matched by target-level `ignore.pull`; ignored repo paths are also preserved during pull cleanup.
 - For directory-target child files, `push` and `pull` should plan and apply mode changes only when the executable bit differs. Non-executable permission drift such as `600` vs `644` should not trigger an update because Git does not preserve those bits in the repo.
 - For directory-target child files matched by `path_rules` with `chmod`, `push` should also plan and apply exact live chmod drift for those matching paths.
 - If `type` is omitted, dotman should infer the target kind from either side:
@@ -321,7 +318,7 @@ exit 0
 - `repo.toml` may set `default_command_elevation = "none" | "broker" | "intercept"`. This applies to repo hooks, package hooks, target hooks, and custom reconcile commands that omit explicit `elevation`.
 - `default_command_elevation` does not support `root` or `lease`; set those on specific command objects instead.
 - Explicit command metadata wins over the repo default. Use `elevation = "none"` to opt a command out of a repo default.
-- `default_command_elevation = "intercept"` is a convenience for legacy repos: every command without explicit `elevation` gets the temporary `sudo` shim in `PATH`.
+- `default_command_elevation = "intercept"` gives every command without explicit `elevation` the temporary `sudo` shim in `PATH`.
 
 Elevation modes:
 
@@ -331,7 +328,7 @@ Elevation modes:
 | `root` | Dotman requests sudo and runs the whole command through non-interactive sudo. | Root-only actions such as `systemctl restart ...`. Do not use for AUR helpers such as `yay`. |
 | `lease` | Dotman requests/keeps a sudo lease but runs the command as the user. | User commands that may call sudo later. |
 | `broker` | Dotman exposes a lazy broker to the child through `DOTMAN_ELEVATION_BROKER`; the child calls `dotman elevation request [reason]` only when needed. | Conditional install/setup scripts. |
-| `intercept` | Same broker plus a temporary `sudo` shim first in `PATH`; the shim asks dotman for the lease, then execs real `sudo -n`. | Legacy scripts that cannot be edited. |
+| `intercept` | Same broker plus a temporary `sudo` shim first in `PATH`; the shim asks dotman for the lease, then execs real `sudo -n`. | Commands that must keep direct `sudo` calls. |
 
 Example conditional package installer:
 

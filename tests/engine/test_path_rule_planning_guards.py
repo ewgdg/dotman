@@ -167,7 +167,7 @@ def test_path_rule_activation_excludes_ignored_control_and_skip_marker_paths(
     )
     source_root = _write_directory_package(
         repo_root,
-        target_lines=['push_ignore = ["ignored.txt"]', "", "[targets.config.ignore]", 'gitignore = ["push"]'],
+        target_lines=["[targets.config.ignore]", 'push = ["ignored.txt"]', 'gitignore = ["push"]'],
         path_rule_blocks=[
             _guard_rule(pattern=pattern, operation="push", command=command)
             for pattern in ("keep.txt", "ignored.txt", ".gitignore", "skipped/hidden.txt")

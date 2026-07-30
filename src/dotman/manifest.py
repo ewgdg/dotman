@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Collection
 from dataclasses import MISSING, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotman.models import DefaultCommandElevationMode, HookCommandSpec, HookSpec, PackageSpec, TargetPathRule, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
@@ -15,6 +16,51 @@ VALID_ELEVATION_VALUES = ("none", "root", "lease", "broker", "intercept")
 VALID_DEFAULT_COMMAND_ELEVATION_VALUES = ("none", "broker", "intercept")
 VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both", "push-only-delete")
 VALID_TARGET_TYPE_VALUES = ("file", "directory")
+TARGET_MANIFEST_KEYS = frozenset(
+    {
+        "capture",
+        "chmod",
+        "disabled",
+        "hooks",
+        "ignore",
+        "path",
+        "path_rules",
+        "preset",
+        "probe",
+        "pull_view_live",
+        "pull_view_repo",
+        "reconcile",
+        "render",
+        "source",
+        "sync_policy",
+        "type",
+    }
+)
+TARGET_PATH_RULE_KEYS = frozenset(
+    {
+        "capture",
+        "chmod",
+        "hooks",
+        "pattern",
+        "preset",
+        "pull_view_live",
+        "pull_view_repo",
+        "render",
+    }
+)
+TARGET_IGNORE_KEYS = frozenset({"gitignore", "pull", "push", "shared"})
+
+
+def validate_supported_keys(
+    payload: dict[str, Any],
+    *,
+    supported_keys: Collection[str],
+    context: str,
+) -> None:
+    unsupported_keys = sorted(key for key in payload if key not in supported_keys)
+    if unsupported_keys:
+        unsupported_text = ", ".join(unsupported_keys)
+        raise ValueError(f"{context} has unsupported keys: {unsupported_text}")
 
 
 def validate_package_id(package_id: str) -> None:
@@ -148,20 +194,14 @@ def _build_command_spec(
     default_command_elevation: DefaultCommandElevationMode = "none",
     allow_run_noop: bool = False,
 ) -> HookCommandSpec:
-    if "privileged" in command_payload:
-        raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} {command_label} uses deprecated 'privileged'; "
-            "use elevation = \"root\" instead"
-        )
     supported_keys = {"run", "io", "elevation"}
     if allow_run_noop:
         supported_keys.add("run_noop")
-    unknown_keys = sorted(key for key in command_payload if key not in supported_keys)
-    if unknown_keys:
-        unknown_text = ", ".join(unknown_keys)
-        raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} {command_label} has unsupported keys: {unknown_text}"
-        )
+    validate_supported_keys(
+        command_payload,
+        supported_keys=supported_keys,
+        context=f"{manifest_kind} {manifest_path} {owner_label} {command_label}",
+    )
     if "run" not in command_payload:
         raise ValueError(
             f"{manifest_kind} {manifest_path} {owner_label} {command_label} must define 'run'"
@@ -277,16 +317,6 @@ def sync_policy_deletes_on_push(sync_policy: str) -> bool:
     return sync_policy == "push-only-delete"
 
 
-def read_schema_alias(payload: dict[str, Any], primary_key: str, legacy_key: str) -> Any:
-    primary_value = payload.get(primary_key)
-    legacy_value = payload.get(legacy_key)
-    if primary_value is not None and legacy_value is not None and primary_value != legacy_value:
-        raise ValueError(f"conflicting schema keys '{primary_key}' and legacy '{legacy_key}'")
-    if primary_value is not None:
-        return primary_value
-    return legacy_value
-
-
 def resolve_target_preset(
     *,
     target_payload: dict[str, Any],
@@ -319,21 +349,6 @@ def get_target_value(
     if key in target_payload:
         return target_payload[key]
     return preset_payload.get(key)
-
-
-def read_target_schema_alias(
-    *,
-    target_payload: dict[str, Any],
-    preset_payload: dict[str, Any],
-    primary_key: str,
-    legacy_key: str,
-) -> Any:
-    # Presets are default layer. Resolve explicit aliases first so user can
-    # override preset with current key or legacy schema alias.
-    explicit_value = read_schema_alias(target_payload, primary_key, legacy_key)
-    if explicit_value is not None:
-        return explicit_value
-    return preset_payload.get(primary_key)
 
 
 def normalize_path_rule_hooks(
@@ -386,6 +401,12 @@ def normalize_target_path_rules(
             raise ValueError(
                 f"package manifest {manifest_path} target '{target_name}' path_rules[{index}] must be a table"
             )
+        rule_payload = cast(dict[str, Any], rule_payload)
+        validate_supported_keys(
+            rule_payload,
+            supported_keys=TARGET_PATH_RULE_KEYS,
+            context=f"package manifest {manifest_path} target '{target_name}' path_rules[{index}]",
+        )
         pattern = rule_payload.get("pattern")
         if not isinstance(pattern, str) or not pattern.strip():
             raise ValueError(
@@ -434,21 +455,19 @@ def normalize_target_path_rules(
             raise ValueError(
                 f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].capture must be a string"
             )
-        pull_view_repo = read_target_schema_alias(
+        pull_view_repo = get_target_value(
             target_payload=rule_payload,
             preset_payload=preset_payload,
-            primary_key="pull_view_repo",
-            legacy_key="import_view_repo",
+            key="pull_view_repo",
         )
         if pull_view_repo is not None and not isinstance(pull_view_repo, str):
             raise ValueError(
                 f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pull_view_repo must be a string"
             )
-        pull_view_live = read_target_schema_alias(
+        pull_view_live = get_target_value(
             target_payload=rule_payload,
             preset_payload=preset_payload,
-            primary_key="pull_view_live",
-            legacy_key="import_view_live",
+            key="pull_view_live",
         )
         if pull_view_live is not None and not isinstance(pull_view_live, str):
             raise ValueError(
@@ -487,52 +506,28 @@ def read_target_ignore_table(
         return None
     if not isinstance(ignore_payload, dict):
         raise ValueError(f"package manifest {manifest_path} target '{target_name}' ignore must be a table")
+    validate_supported_keys(
+        ignore_payload,
+        supported_keys=TARGET_IGNORE_KEYS,
+        context=f"package manifest {manifest_path} target '{target_name}' ignore",
+    )
     return ignore_payload
 
 
 def build_target_operation_ignore(
     *,
-    target_payload: dict[str, Any],
-    preset_payload: dict[str, Any],
-    manifest_path: Path,
-    target_name: str,
-    primary_key: str,
-    legacy_key: str,
-    table_key: str,
-    table_legacy_key: str,
+    ignore_payload: dict[str, Any] | None,
+    operation: str,
 ) -> tuple[str, ...] | None:
-    operation_ignore = normalize_string_list(
-        read_target_schema_alias(
-            target_payload=target_payload,
-            preset_payload=preset_payload,
-            primary_key=primary_key,
-            legacy_key=legacy_key,
-        )
-    )
-    ignore_payload = read_target_ignore_table(
-        target_payload=target_payload,
-        preset_payload=preset_payload,
-        manifest_path=manifest_path,
-        target_name=target_name,
-    )
-    table_operation_ignore = (
-        normalize_string_list(read_schema_alias(ignore_payload, table_key, table_legacy_key))
-        if ignore_payload is not None
-        else None
-    )
-    shared_ignore = normalize_string_list(
-        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="shared_ignore")
-    )
-    table_shared_ignore = (
-        normalize_string_list(ignore_payload.get("shared")) if ignore_payload is not None else None
-    )
-    if operation_ignore is None and table_operation_ignore is None and shared_ignore is None and table_shared_ignore is None:
+    if ignore_payload is None:
+        return None
+    operation_ignore = normalize_string_list(ignore_payload.get(operation))
+    shared_ignore = normalize_string_list(ignore_payload.get("shared"))
+    if operation_ignore is None and shared_ignore is None:
         return None
     return merge_ignore_patterns(
         operation_ignore or (),
-        table_operation_ignore or (),
         shared_ignore or (),
-        table_shared_ignore or (),
     )
 
 
@@ -547,6 +542,11 @@ def build_target_spec(
         validate_target_name(target_name)
     except ValueError as exc:
         raise ValueError(f"package manifest {manifest_path}: {exc}") from None
+    validate_supported_keys(
+        target_payload,
+        supported_keys=TARGET_MANIFEST_KEYS,
+        context=f"package manifest {manifest_path} target '{target_name}'",
+    )
     preset_payload = resolve_target_preset(
         target_payload=target_payload,
         manifest_path=manifest_path,
@@ -594,43 +594,29 @@ def build_target_spec(
         owner_label=f"target '{target_name}'",
         default_command_elevation=default_command_elevation,
     )
-    pull_view_repo = read_target_schema_alias(
+    pull_view_repo = get_target_value(
         target_payload=target_payload,
         preset_payload=preset_payload,
-        primary_key="pull_view_repo",
-        legacy_key="import_view_repo",
+        key="pull_view_repo",
     )
-    pull_view_live = read_target_schema_alias(
+    pull_view_live = get_target_value(
         target_payload=target_payload,
         preset_payload=preset_payload,
-        primary_key="pull_view_live",
-        legacy_key="import_view_live",
-    )
-    push_ignore = build_target_operation_ignore(
-        target_payload=target_payload,
-        preset_payload=preset_payload,
-        manifest_path=manifest_path,
-        target_name=target_name,
-        primary_key="push_ignore",
-        legacy_key="apply_ignore",
-        table_key="push",
-        table_legacy_key="apply",
-    )
-    pull_ignore = build_target_operation_ignore(
-        target_payload=target_payload,
-        preset_payload=preset_payload,
-        manifest_path=manifest_path,
-        target_name=target_name,
-        primary_key="pull_ignore",
-        legacy_key="import_ignore",
-        table_key="pull",
-        table_legacy_key="import",
+        key="pull_view_live",
     )
     ignore_payload = read_target_ignore_table(
         target_payload=target_payload,
         preset_payload=preset_payload,
         manifest_path=manifest_path,
         target_name=target_name,
+    )
+    push_ignore = build_target_operation_ignore(
+        ignore_payload=ignore_payload,
+        operation="push",
+    )
+    pull_ignore = build_target_operation_ignore(
+        ignore_payload=ignore_payload,
+        operation="pull",
     )
     gitignore = (
         normalize_gitignore_list(ignore_payload.get("gitignore"))
