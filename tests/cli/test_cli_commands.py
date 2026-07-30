@@ -58,8 +58,6 @@ def test_dispatch_command_uses_parsed_full_path_default() -> None:
         emit_payload=lambda **kwargs: 0,
         effective_execution_mode=lambda **kwargs: "execute",
         prepare_push_plans_for_execution=lambda **kwargs: [],
-        execute_plans=lambda **kwargs: [],
-        emit_execution_result=lambda **kwargs: 0,
         run_execution=lambda **kwargs: 0,
         resolve_snapshot_record=lambda **kwargs: None,
         review_restore_actions_for_interactive_diffs=lambda **kwargs: True,
@@ -132,8 +130,6 @@ def test_dispatch_command_routes_capture_patch_with_render() -> None:
         emit_payload=lambda **kwargs: 0,
         effective_execution_mode=lambda **kwargs: "execute",
         prepare_push_plans_for_execution=lambda **kwargs: [],
-        execute_plans=lambda **kwargs: [],
-        emit_execution_result=lambda **kwargs: 0,
         run_execution=lambda **kwargs: 0,
         resolve_snapshot_record=lambda **kwargs: None,
         review_restore_actions_for_interactive_diffs=lambda **kwargs: True,
@@ -230,8 +226,6 @@ def test_dispatch_command_routes_list_trackables() -> None:
         emit_payload=lambda **kwargs: 0,
         effective_execution_mode=lambda **kwargs: "execute",
         prepare_push_plans_for_execution=lambda **kwargs: [],
-        execute_plans=lambda **kwargs: [],
-        emit_execution_result=lambda **kwargs: 0,
         run_execution=lambda **kwargs: 0,
         resolve_snapshot_record=lambda **kwargs: None,
         review_restore_actions_for_interactive_diffs=lambda **kwargs: True,
@@ -304,8 +298,6 @@ def test_dispatch_command_routes_list_repo(tmp_path) -> None:
         emit_payload=lambda **kwargs: 0,
         effective_execution_mode=lambda **kwargs: "execute",
         prepare_push_plans_for_execution=lambda **kwargs: [],
-        execute_plans=lambda **kwargs: [],
-        emit_execution_result=lambda **kwargs: 0,
         run_execution=lambda **kwargs: 0,
         resolve_snapshot_record=lambda **kwargs: None,
         review_restore_actions_for_interactive_diffs=lambda **kwargs: True,
@@ -354,4 +346,3 @@ def test_dispatch_command_routes_list_repo(tmp_path) -> None:
 def test_parser_rejects_removed_forget_command() -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(["forget", "example:git"])
-

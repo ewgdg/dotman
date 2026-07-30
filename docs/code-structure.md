@@ -26,6 +26,11 @@ Focused CLI responsibilities live in dedicated modules:
 - `cli_commands.py` — per-command handlers
 - `cli_style.py` — labels, colors, and display helpers
 
+Execution presentation is event-driven. `operation_runner.py` owns the push,
+pull, and restore mutation lifecycle and emits typed events. Human and JSON
+renderers in `cli_emit.py` consume those events and final results without
+performing command, privilege, snapshot, or restore work.
+
 If new CLI behavior grows beyond a small helper, prefer adding or extending a focused module instead of rebuilding a large `cli.py` monolith.
 
 ## Engine structure
@@ -65,6 +70,15 @@ That structure keeps repo/package/target hook ordering explicit instead of hidin
 - `MemoryCommandRuntime` supplies deterministic queued outcomes and records requests for behavior tests.
 
 Planning passes the engine's runtime explicitly while evaluating guards, probes, and projections, and binds that same runtime for shared privileged file helpers. Execution binds one runtime for the complete session. Editor, review, and privileged-helper commands use the same active runtime.
+
+## Operation runner
+
+`src/dotman/operation_runner.py` is the operation-level mutation boundary.
+
+- Sync execution builds one session, owns one sudo lease scope, emits ordered repo/package/step events, and preserves command-runtime streaming, TTY, interruption, and exit behavior.
+- Push snapshots are created lazily before the first live mutation, finalized once, and pruned only after final status is durable.
+- Restore executes visible actions in order, stops at the first failure, records successful restore metadata, and emits typed action events/results.
+- Human and JSON output policy is selected at CLI composition. JSON consumes no progress events and emits one final result document.
 
 Planning is package-centric now:
 

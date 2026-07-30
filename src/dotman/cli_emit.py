@@ -8,10 +8,21 @@ from typing import Any, Callable, Sequence
 
 from dotman import cli_style
 from dotman.diff_review import ReviewItem, display_review_path
-from dotman.execution import build_execution_session, execute_session, _preflight_execution_session_sudo
-from dotman.file_access import sudo_session
 from dotman.models import OperationPlan, package_plans_for_operation_plan
-from dotman.snapshot import create_push_snapshot, execute_restore, mark_snapshot_status, prune_snapshots
+from dotman.operation_runner import (
+    RestoreActionFinished,
+    RestoreActionStarted,
+    RestoreExecutionEvent,
+    RestoreOperationFinished,
+    RestoreOperationStarted,
+    SyncExecutionEvent,
+    SyncOperationFinished,
+    SyncOperationStarted,
+    SyncPackageFinished,
+    SyncPackageStarted,
+    SyncStepFinished,
+    SyncStepStarted,
+)
 
 
 @dataclass
@@ -601,130 +612,95 @@ def _step_uses_terminal_passthrough(step: Any) -> bool:
     return getattr(step, "kind", None) == "reconcile" and getattr(reconcile, "io", "pipe") == "tty"
 
 
-def emit_execution_result(*, result: Any, json_output: bool) -> int:
-    if json_output:
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
-    return result.exit_code
+@dataclass(frozen=True)
+class HumanExecutionRenderer:
+    full_paths: bool
+    use_color: bool
+    stream_output: bool = True
 
-
-def execute_plans(
-    *,
-    operation: str,
-    plans: Sequence[Any],
-    json_output: bool,
-    full_paths: bool = False,
-    use_color: bool,
-    run_noop: bool = False,
-    assume_yes: bool = False,
-    snapshot_config: Any | None = None,
-):
-    session = build_execution_session(plans, operation=operation, run_noop=run_noop)
-    snapshot = None
-
-    def ensure_push_snapshot(step: Any) -> None:
-        nonlocal snapshot
-        if operation != "push" or snapshot_config is None or snapshot is not None or step.kind == "hook":
-            return
-        snapshot = create_push_snapshot(plans, snapshot_config)
-
-    def on_step_start(package: Any, step: Any, index: int, total: int) -> None:
-        ensure_push_snapshot(step)
-        if not json_output:
+    def render_sync_event(self, event: SyncExecutionEvent) -> None:
+        if isinstance(event, SyncOperationStarted):
+            _print_execution_header(session=event.session, use_color=self.use_color)
+        elif isinstance(event, SyncPackageStarted):
+            _print_execution_package_start(event.package, use_color=self.use_color)
+        elif isinstance(event, SyncStepStarted):
             _print_execution_step_start(
-                package,
-                step,
-                index,
-                total,
-                full_paths=full_paths,
-                use_color=use_color,
+                event.owner,
+                event.step,
+                event.index,
+                event.total,
+                full_paths=self.full_paths,
+                use_color=self.use_color,
             )
-
-    def finalize_snapshot(execution_result: Any) -> None:
-        nonlocal snapshot
-        if snapshot is None:
+        elif isinstance(event, SyncStepFinished):
+            _print_execution_step_finish(
+                event.owner,
+                event.result,
+                event.index,
+                event.total,
+                use_color=self.use_color,
+            )
+        elif isinstance(event, SyncPackageFinished):
+            _print_execution_package_finish(event.result, use_color=self.use_color)
+        elif isinstance(event, SyncOperationFinished):
             return
-        mark_snapshot_status(snapshot, "applied" if execution_result.exit_code == 0 else "failed")
-        prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
-        snapshot = None
 
-    def attach_planning_diagnostics(execution_result: Any) -> Any:
-        if not isinstance(plans, OperationPlan):
-            return execution_result
-        return replace(execution_result, guard_skips=plans.guard_skips)
-
-    with sudo_session():
-        _preflight_execution_session_sudo(session)
-        if json_output:
-            try:
-                execution_result = execute_session(session, stream_output=False, assume_yes=assume_yes, on_step_start=on_step_start)
-            except Exception:
-                if snapshot is not None:
-                    mark_snapshot_status(snapshot, "failed")
-                    prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
-                raise
-            finalize_snapshot(execution_result)
-            return attach_planning_diagnostics(execution_result)
-        _print_execution_header(session=session, use_color=use_color)
-        if not session.repos:
-            try:
-                execution_result = execute_session(session, stream_output=True, assume_yes=assume_yes, on_step_start=on_step_start)
-            except Exception:
-                if snapshot is not None:
-                    mark_snapshot_status(snapshot, "failed")
-                    prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
-                raise
-            finalize_snapshot(execution_result)
-            return attach_planning_diagnostics(execution_result)
-        try:
-            execution_result = execute_session(
-                session,
-                stream_output=True,
-                assume_yes=assume_yes,
-                on_package_start=lambda package: _print_execution_package_start(package, use_color=use_color),
-                on_step_start=on_step_start,
-                on_step_finish=lambda package, step_result, index, total: _print_execution_step_finish(
-                    package,
-                    step_result,
-                    index,
-                    total,
-                    use_color=use_color,
-                ),
-                on_package_finish=lambda package_result: _print_execution_package_finish(
-                    package_result,
-                    use_color=use_color,
-                ),
+    def render_restore_event(self, event: RestoreExecutionEvent) -> None:
+        if isinstance(event, RestoreOperationStarted):
+            _print_restore_execution_header(
+                snapshot=event.snapshot,
+                action_count=event.action_count,
+                use_color=self.use_color,
             )
-        except Exception:
-            if snapshot is not None:
-                mark_snapshot_status(snapshot, "failed")
-                prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
-            raise
-        finalize_snapshot(execution_result)
-        return attach_planning_diagnostics(execution_result)
+        elif isinstance(event, RestoreActionStarted):
+            _print_restore_execution_step(
+                event.index,
+                event.total,
+                event.action,
+                full_paths=self.full_paths,
+                use_color=self.use_color,
+            )
+        elif isinstance(event, RestoreActionFinished):
+            action_result = event.result
+            if action_result.status == "ok":
+                print(f"      {cli_style.render_execution_status('ok', use_color=self.use_color)}")
+            else:
+                if action_result.error:
+                    print(f"      {action_result.error}")
+                print(f"      {cli_style.render_execution_status(action_result.status, use_color=self.use_color)}")
+        elif isinstance(event, RestoreOperationFinished):
+            return
+
+    @staticmethod
+    def render_sync_result(result: Any) -> int:
+        return result.exit_code
+
+    @staticmethod
+    def render_restore_result(result: Any) -> int:
+        return result.exit_code
 
 
-def run_execution(
-    *,
-    operation: str,
-    plans: Sequence[Any],
-    json_output: bool,
-    full_paths: bool = False,
-    use_color: bool,
-    run_noop: bool = False,
-    assume_yes: bool = False,
-) -> int:
-    return emit_execution_result(
-        result=execute_plans(
-            operation=operation,
-            plans=plans,
-            json_output=json_output,
-            full_paths=full_paths,
-            use_color=use_color,
-            run_noop=run_noop,
-            assume_yes=assume_yes,
-        ),
-        json_output=json_output,
-    )
+@dataclass(frozen=True)
+class JsonExecutionRenderer:
+    stream_output: bool = False
+
+    @staticmethod
+    def render_sync_event(_event: SyncExecutionEvent) -> None:
+        return None
+
+    @staticmethod
+    def render_restore_event(_event: RestoreExecutionEvent) -> None:
+        return None
+
+    @staticmethod
+    def render_sync_result(result: Any) -> int:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return result.exit_code
+
+    @staticmethod
+    def render_restore_result(result: Any) -> int:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return result.exit_code
 
 
 def _render_tracked_issue_label(engine: Any, issue: Any, *, use_color: bool) -> str:
@@ -1661,12 +1637,6 @@ def _print_restore_execution_step(index: int, total: int, action: Any, *, full_p
     )
 
 
-def emit_restore_result(*, result: Any, json_output: bool) -> int:
-    if json_output:
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
-    return result.exit_code
-
-
 def _emit_error_block(*, header_text: str, fields: Sequence[tuple[str, str]], use_color: bool) -> None:
     _print_payload_header(header_text, use_color=use_color, file=sys.stderr)
     for label, value in fields:
@@ -1733,41 +1703,3 @@ def emit_error(error: Exception, *, use_color: bool) -> None:
         fields=_structured_error_fields(error, use_color=use_color),
         use_color=use_color,
     )
-
-
-def run_restore_execution(
-    *,
-    snapshot: Any,
-    actions: Sequence[Any],
-    json_output: bool,
-    full_paths: bool = False,
-    use_color: bool,
-) -> int:
-    visible_actions = visible_restore_actions(actions)
-    if not json_output:
-        _print_restore_execution_header(
-            snapshot=snapshot,
-            action_count=len(visible_actions),
-            use_color=use_color,
-        )
-    if not visible_actions:
-        return 0
-    for index, action in enumerate(visible_actions, start=1):
-        if not json_output:
-            _print_restore_execution_step(
-                index,
-                len(visible_actions),
-                action,
-                full_paths=full_paths,
-                use_color=use_color,
-            )
-    result = execute_restore(snapshot, visible_actions)
-    if not json_output:
-        for action_result in result.actions:
-            if action_result.status == "ok":
-                print(f"      {cli_style.render_execution_status('ok', use_color=use_color)}")
-                continue
-            if action_result.error:
-                print(f"      {action_result.error}")
-            print(f"      {cli_style.render_execution_status(action_result.status, use_color=use_color)}")
-    return emit_restore_result(result=result, json_output=json_output)

@@ -32,6 +32,7 @@ from dotman.config import load_manager_config
 from dotman.collisions import TrackedTargetConflictError
 from dotman.engine import DotmanEngine
 from dotman.package_resolution import parse_full_spec_selector_text, parse_package_ref_text
+from dotman.operation_runner import run_restore_operation, run_sync_operation
 from dotman.models import (
     FullSpecSelector,
     OperationPlan,
@@ -3308,34 +3309,6 @@ def emit_planning_guard_skips(*, plans: Sequence, json_output: bool) -> None:
     )
 
 
-emit_execution_result = cli_emit.emit_execution_result
-
-
-
-def execute_plans(
-    *,
-    operation: str,
-    plans: Sequence,
-    json_output: bool,
-    full_paths: bool | None = None,
-    run_noop: bool = False,
-    assume_yes: bool = False,
-    snapshot_config=None,
-):
-    full_paths = _effective_full_paths(full_paths)
-    return cli_emit.execute_plans(
-        operation=operation,
-        plans=plans,
-        json_output=json_output,
-        full_paths=full_paths,
-        use_color=colors_enabled(),
-        run_noop=run_noop,
-        assume_yes=assume_yes,
-        snapshot_config=snapshot_config,
-    )
-
-
-
 def run_execution(
     *,
     operation: str,
@@ -3344,17 +3317,24 @@ def run_execution(
     full_paths: bool | None = None,
     run_noop: bool = False,
     assume_yes: bool = False,
+    snapshot_config=None,
 ) -> int:
     full_paths = _effective_full_paths(full_paths)
-    return cli_emit.run_execution(
+    renderer = (
+        cli_emit.JsonExecutionRenderer()
+        if json_output
+        else cli_emit.HumanExecutionRenderer(full_paths=full_paths, use_color=colors_enabled())
+    )
+    result = run_sync_operation(
         operation=operation,
         plans=plans,
-        json_output=json_output,
-        full_paths=full_paths,
-        use_color=colors_enabled(),
+        stream_output=renderer.stream_output,
         run_noop=run_noop,
         assume_yes=assume_yes,
+        snapshot_config=snapshot_config,
+        event_sink=renderer.render_sync_event,
     )
+    return renderer.render_sync_result(result)
 
 
 
@@ -3597,10 +3577,6 @@ def emit_restore_payload(
     )
 
 
-emit_restore_result = cli_emit.emit_restore_result
-
-
-
 def run_restore_execution(
     *,
     snapshot: SnapshotRecord,
@@ -3609,13 +3585,17 @@ def run_restore_execution(
     full_paths: bool | None = None,
 ) -> int:
     full_paths = _effective_full_paths(full_paths)
-    return cli_emit.run_restore_execution(
+    renderer = (
+        cli_emit.JsonExecutionRenderer()
+        if json_output
+        else cli_emit.HumanExecutionRenderer(full_paths=full_paths, use_color=colors_enabled())
+    )
+    result = run_restore_operation(
         snapshot=snapshot,
         actions=actions,
-        json_output=json_output,
-        full_paths=full_paths,
-        use_color=colors_enabled(),
+        event_sink=renderer.render_restore_event,
     )
+    return renderer.render_restore_result(result)
 
 
 def _build_command_handlers() -> cli_commands.CliCommandHandlers:
@@ -3657,8 +3637,6 @@ def _build_command_handlers() -> cli_commands.CliCommandHandlers:
         emit_planning_guard_skips=emit_planning_guard_skips,
         effective_execution_mode=effective_execution_mode,
         prepare_push_plans_for_execution=prepare_push_plans_for_execution,
-        execute_plans=execute_plans,
-        emit_execution_result=emit_execution_result,
         run_execution=run_execution,
         resolve_snapshot_record=resolve_snapshot_record,
         review_restore_actions_for_interactive_diffs=review_restore_actions_for_interactive_diffs,

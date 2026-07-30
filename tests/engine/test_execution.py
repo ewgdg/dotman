@@ -1832,6 +1832,24 @@ def test_request_sudo_preserves_authentication_interruption(monkeypatch) -> None
         file_access.request_sudo("write protected path")
 
 
+def test_request_sudo_without_operation_scope_does_not_reuse_a_stale_runtime(monkeypatch) -> None:
+    first_runtime = MemoryCommandRuntime([CommandResult(exit_code=0)])
+    second_runtime = MemoryCommandRuntime([CommandResult(exit_code=0)])
+    active_runtime = [first_runtime]
+    monkeypatch.setattr(file_access.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(file_access, "current_command_runtime", lambda: active_runtime[0])
+
+    try:
+        file_access.request_sudo("first planning command")
+        active_runtime[0] = second_runtime
+        file_access.request_sudo("second planning command")
+    finally:
+        file_access._cleanup_active_sudo_lease()
+
+    assert [request.command.arguments for request in first_runtime.requests] == [("sudo", "-v")]
+    assert [request.command.arguments for request in second_runtime.requests] == [("sudo", "-v")]
+
+
 def test_sudo_lease_keepalive_uses_runtime_captured_on_creation(monkeypatch) -> None:
     runtime = MemoryCommandRuntime([CommandResult(exit_code=0)])
     default_runtime_requests = []

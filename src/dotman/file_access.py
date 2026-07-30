@@ -122,7 +122,13 @@ def _emit_sudo_notice(reason: str | None) -> None:
 
 
 def request_sudo(reason: str | None = None) -> None:
-    _current_sudo_lease().request(reason)
+    try:
+        _current_sudo_lease().request(reason)
+    finally:
+        # A keepalive without an operation scope would retain the runtime that
+        # happened to request elevation and leak it into later operations.
+        if _sudo_lease_depth == 0:
+            _cleanup_active_sudo_lease()
 
 
 

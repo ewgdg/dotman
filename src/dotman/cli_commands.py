@@ -8,7 +8,6 @@ from dotman.add import prepare_add_to_package, write_add_result
 from dotman.config import default_config_path, load_manager_config
 from dotman.collisions import TrackedTargetConflictError
 from dotman.elevation import request_elevation_from_env
-from dotman.file_access import sudo_session
 from dotman.models import package_ref_text
 from dotman.ui_context import ui_config_scope
 
@@ -17,7 +16,6 @@ if TYPE_CHECKING:
 from dotman.snapshot import (
     build_restore_actions,
     list_snapshots,
-    record_snapshot_restore,
 )
 from dotman.progress import make_planning_sink
 
@@ -58,8 +56,6 @@ class CliCommandHandlers:
     emit_payload: Callable[..., int]
     effective_execution_mode: Callable[..., str]
     prepare_push_plans_for_execution: Callable[..., Any]
-    execute_plans: Callable[..., Any]
-    emit_execution_result: Callable[..., int]
     run_execution: Callable[..., int]
     resolve_snapshot_record: Callable[..., Any]
     review_restore_actions_for_interactive_diffs: Callable[..., bool]
@@ -444,115 +440,112 @@ def _finish_all_guard_skipped_operation(
 def _handle_push(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
-    with sudo_session():
-        sink = make_planning_sink(json_output=args.json_output)
-        plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="push", sink=sink)
-        skipped_result = _finish_all_guard_skipped_operation(
-            args=args,
-            handlers=handlers,
-            plans=plans,
-            operation="push",
-            full_paths=full_paths,
-        )
-        if skipped_result is not None:
-            return skipped_result
-        if not handlers.review_plans_for_interactive_diffs(
-            plans=plans,
-            operation="push",
-            json_output=args.json_output,
-            full_paths=full_paths,
-            assume_yes=assume_yes,
-        ):
-            handlers.emit_interrupt_notice()
-            return handlers.interrupted_exit_code
-        filter_kwargs = {
-            "plans": plans,
-            "operation": "push",
-            "json_output": args.json_output,
-            "full_paths": full_paths,
-        }
-        if run_noop:
-            filter_kwargs["run_noop"] = True
-        plans = handlers.filter_plans_for_interactive_selection(**filter_kwargs)
-        if args.dry_run:
-            return handlers.emit_payload(
-                operation="push",
-                plans=plans,
-                json_output=args.json_output,
-                mode=handlers.effective_execution_mode(dry_run_requested=True),
-                full_paths=full_paths,
-            )
-        plans = handlers.prepare_push_plans_for_execution(
-            plans=plans,
-            json_output=args.json_output,
-            full_paths=full_paths,
-            assume_yes=assume_yes,
-        )
-        if plans is None:
-            handlers.emit_interrupt_notice()
-            return handlers.interrupted_exit_code
-        execution_result = handlers.execute_plans(
+    sink = make_planning_sink(json_output=args.json_output)
+    plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="push", sink=sink)
+    skipped_result = _finish_all_guard_skipped_operation(
+        args=args,
+        handlers=handlers,
+        plans=plans,
+        operation="push",
+        full_paths=full_paths,
+    )
+    if skipped_result is not None:
+        return skipped_result
+    if not handlers.review_plans_for_interactive_diffs(
+        plans=plans,
+        operation="push",
+        json_output=args.json_output,
+        full_paths=full_paths,
+        assume_yes=assume_yes,
+    ):
+        handlers.emit_interrupt_notice()
+        return handlers.interrupted_exit_code
+    filter_kwargs = {
+        "plans": plans,
+        "operation": "push",
+        "json_output": args.json_output,
+        "full_paths": full_paths,
+    }
+    if run_noop:
+        filter_kwargs["run_noop"] = True
+    plans = handlers.filter_plans_for_interactive_selection(**filter_kwargs)
+    if args.dry_run:
+        return handlers.emit_payload(
             operation="push",
             plans=plans,
             json_output=args.json_output,
+            mode=handlers.effective_execution_mode(dry_run_requested=True),
             full_paths=full_paths,
-            run_noop=run_noop,
-            assume_yes=assume_yes,
-            snapshot_config=engine.config.snapshots,
         )
-        return handlers.emit_execution_result(result=execution_result, json_output=args.json_output)
+    plans = handlers.prepare_push_plans_for_execution(
+        plans=plans,
+        json_output=args.json_output,
+        full_paths=full_paths,
+        assume_yes=assume_yes,
+    )
+    if plans is None:
+        handlers.emit_interrupt_notice()
+        return handlers.interrupted_exit_code
+    return handlers.run_execution(
+        operation="push",
+        plans=plans,
+        json_output=args.json_output,
+        full_paths=full_paths,
+        run_noop=run_noop,
+        assume_yes=assume_yes,
+        snapshot_config=engine.config.snapshots,
+    )
 
 
 
 def _handle_pull(*, args: Any, engine: Any, handlers: CliCommandHandlers, full_paths: bool) -> int:
     assume_yes = getattr(args, "assume_yes", False)
     run_noop = getattr(args, "run_noop", False)
-    with sudo_session():
-        sink = make_planning_sink(json_output=args.json_output)
-        plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="pull", sink=sink)
-        skipped_result = _finish_all_guard_skipped_operation(
-            args=args,
-            handlers=handlers,
-            plans=plans,
-            operation="pull",
-            full_paths=full_paths,
-        )
-        if skipped_result is not None:
-            return skipped_result
-        if not handlers.review_plans_for_interactive_diffs(
-            plans=plans,
-            operation="pull",
-            json_output=args.json_output,
-            full_paths=full_paths,
-            assume_yes=assume_yes,
-        ):
-            handlers.emit_interrupt_notice()
-            return handlers.interrupted_exit_code
-        filter_kwargs = {
-            "plans": plans,
-            "operation": "pull",
-            "json_output": args.json_output,
-            "full_paths": full_paths,
-        }
-        if run_noop:
-            filter_kwargs["run_noop"] = True
-        plans = handlers.filter_plans_for_interactive_selection(**filter_kwargs)
-        if args.dry_run:
-            return handlers.emit_payload(
-                operation="pull",
-                plans=plans,
-                json_output=args.json_output,
-                mode=handlers.effective_execution_mode(dry_run_requested=True),
-                full_paths=full_paths,
-            )
-        return handlers.run_execution(
+    sink = make_planning_sink(json_output=args.json_output)
+    plans = _plan_operation(args=args, engine=engine, handlers=handlers, operation="pull", sink=sink)
+    skipped_result = _finish_all_guard_skipped_operation(
+        args=args,
+        handlers=handlers,
+        plans=plans,
+        operation="pull",
+        full_paths=full_paths,
+    )
+    if skipped_result is not None:
+        return skipped_result
+    if not handlers.review_plans_for_interactive_diffs(
+        plans=plans,
+        operation="pull",
+        json_output=args.json_output,
+        full_paths=full_paths,
+        assume_yes=assume_yes,
+    ):
+        handlers.emit_interrupt_notice()
+        return handlers.interrupted_exit_code
+    filter_kwargs = {
+        "plans": plans,
+        "operation": "pull",
+        "json_output": args.json_output,
+        "full_paths": full_paths,
+    }
+    if run_noop:
+        filter_kwargs["run_noop"] = True
+    plans = handlers.filter_plans_for_interactive_selection(**filter_kwargs)
+    if args.dry_run:
+        return handlers.emit_payload(
             operation="pull",
             plans=plans,
             json_output=args.json_output,
+            mode=handlers.effective_execution_mode(dry_run_requested=True),
             full_paths=full_paths,
-            run_noop=run_noop,
-            assume_yes=assume_yes,
         )
+    return handlers.run_execution(
+        operation="pull",
+        plans=plans,
+        json_output=args.json_output,
+        full_paths=full_paths,
+        run_noop=run_noop,
+        assume_yes=assume_yes,
+    )
 
 
 
@@ -580,15 +573,12 @@ def _handle_restore(*, args: Any, engine: Any, handlers: CliCommandHandlers, ful
             mode=handlers.effective_execution_mode(dry_run_requested=True),
             full_paths=full_paths,
         )
-    exit_code = handlers.run_restore_execution(
+    return handlers.run_restore_execution(
         snapshot=snapshot,
         actions=restore_actions,
         json_output=args.json_output,
         full_paths=full_paths,
     )
-    if exit_code == 0:
-        record_snapshot_restore(snapshot)
-    return exit_code
 
 
 

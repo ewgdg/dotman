@@ -301,7 +301,7 @@ def test_all_guard_skipped_cli_reports_before_ui_and_returns_without_execution(
 
     monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda **_kwargs: pytest.fail("review must not run"))
     monkeypatch.setattr(cli, "filter_plans_for_interactive_selection", lambda **_kwargs: pytest.fail("selection must not run"))
-    monkeypatch.setattr(cli, "execute_plans", lambda **_kwargs: pytest.fail("execution must not run"))
+    monkeypatch.setattr(cli, "run_execution", lambda **_kwargs: pytest.fail("execution must not run"))
 
     exit_code = cli.main(["--config", str(config_path), "push"])
 

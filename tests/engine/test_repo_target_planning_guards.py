@@ -743,6 +743,6 @@ def test_all_target_guard_skipped_cli_returns_before_review_selection_and_execut
     write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
     monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda **_kwargs: pytest.fail("review must not run"))
     monkeypatch.setattr(cli, "filter_plans_for_interactive_selection", lambda **_kwargs: pytest.fail("selection must not run"))
-    monkeypatch.setattr(cli, "execute_plans", lambda **_kwargs: pytest.fail("execution must not run"))
+    monkeypatch.setattr(cli, "run_execution", lambda **_kwargs: pytest.fail("execution must not run"))
 
     assert cli.main(["--config", str(config_path), "push"]) == 0

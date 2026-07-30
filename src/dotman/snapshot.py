@@ -156,58 +156,62 @@ def create_push_snapshot(plans: Sequence[PackagePlan], snapshot_config: Snapshot
     snapshot_root = snapshot_config.path / snapshot_id
     entries_root = snapshot_root / "entries"
     entries_root.mkdir(parents=True, exist_ok=False)
+    try:
+        entries: list[SnapshotEntry] = []
+        for index, entry in enumerate(pending_entries, start=1):
+            live_path = entry["live_path"]
+            live_path_is_symlink = live_path.is_symlink()
+            if live_path.exists() and live_path.is_dir() and not live_path_is_symlink:
+                raise ValueError(f"snapshot capture expects file path, got directory: {live_path}")
 
-    entries: list[SnapshotEntry] = []
-    for index, entry in enumerate(pending_entries, start=1):
-        live_path = entry["live_path"]
-        live_path_is_symlink = live_path.is_symlink()
-        if live_path.exists() and live_path.is_dir() and not live_path_is_symlink:
-            raise ValueError(f"snapshot capture expects file path, got directory: {live_path}")
+            file_symlink_mode = entry.get("file_symlink_mode", "prompt")
+            restore_path = live_path.resolve(strict=False) if live_path_is_symlink and file_symlink_mode == "follow" else None
+            managed_path = restore_path or live_path
+            current_is_symlink = managed_path.is_symlink()
+            if managed_path.exists() and managed_path.is_dir() and not current_is_symlink:
+                raise ValueError(f"snapshot capture expects file path, got directory: {managed_path}")
 
-        file_symlink_mode = entry.get("file_symlink_mode", "prompt")
-        restore_path = live_path.resolve(strict=False) if live_path_is_symlink and file_symlink_mode == "follow" else None
-        managed_path = restore_path or live_path
-        current_is_symlink = managed_path.is_symlink()
-        if managed_path.exists() and managed_path.is_dir() and not current_is_symlink:
-            raise ValueError(f"snapshot capture expects file path, got directory: {managed_path}")
-
-        preserve_symlink_identity = live_path_is_symlink and file_symlink_mode != "follow"
-        existed_before = managed_path.exists() or (live_path_is_symlink and preserve_symlink_identity)
-        content_path = None
-        mode = None
-        path_kind = "symlink" if live_path_is_symlink else "file"
-        symlink_target = os.readlink(live_path) if live_path_is_symlink else None
-        if existed_before and not preserve_symlink_identity:
-            content_path = Path("entries") / f"{index:04d}.bin"
-            write_bytes_atomic(snapshot_root / content_path, managed_path.read_bytes())
-            mode = stat.S_IMODE(managed_path.stat().st_mode)
-        entries.append(
-            SnapshotEntry(
-                live_path=live_path,
-                existed_before=existed_before,
-                content_path=content_path,
-                mode=mode,
-                push_action=entry["push_action"],
-                path_kind=path_kind,
-                symlink_target=symlink_target,
-                preserve_symlink_identity=preserve_symlink_identity,
-                restore_path=restore_path,
-                repo_name=entry["repo_name"],
-                selection_label=entry["selection_label"],
-                package_id=entry["package_id"],
-                target_name=entry["target_name"],
+            preserve_symlink_identity = live_path_is_symlink and file_symlink_mode != "follow"
+            existed_before = managed_path.exists() or (live_path_is_symlink and preserve_symlink_identity)
+            content_path = None
+            mode = None
+            path_kind = "symlink" if live_path_is_symlink else "file"
+            symlink_target = os.readlink(live_path) if live_path_is_symlink else None
+            if existed_before and not preserve_symlink_identity:
+                content_path = Path("entries") / f"{index:04d}.bin"
+                write_bytes_atomic(snapshot_root / content_path, managed_path.read_bytes())
+                mode = stat.S_IMODE(managed_path.stat().st_mode)
+            entries.append(
+                SnapshotEntry(
+                    live_path=live_path,
+                    existed_before=existed_before,
+                    content_path=content_path,
+                    mode=mode,
+                    push_action=entry["push_action"],
+                    path_kind=path_kind,
+                    symlink_target=symlink_target,
+                    preserve_symlink_identity=preserve_symlink_identity,
+                    restore_path=restore_path,
+                    repo_name=entry["repo_name"],
+                    selection_label=entry["selection_label"],
+                    package_id=entry["package_id"],
+                    target_name=entry["target_name"],
+                )
             )
-        )
 
-    snapshot = SnapshotRecord(
-        snapshot_id=snapshot_id,
-        created_at=created_at,
-        status="prepared",
-        root=snapshot_root,
-        entries=tuple(entries),
-    )
-    _write_snapshot_manifest(snapshot)
-    return snapshot
+        snapshot = SnapshotRecord(
+            snapshot_id=snapshot_id,
+            created_at=created_at,
+            status="prepared",
+            root=snapshot_root,
+            entries=tuple(entries),
+        )
+        _write_snapshot_manifest(snapshot)
+        return snapshot
+    except BaseException:
+        # A generation is valid only after its prepared manifest is durable.
+        shutil.rmtree(snapshot_root, ignore_errors=True)
+        raise
 
 
 def mark_snapshot_status(snapshot: SnapshotRecord, status: str) -> SnapshotRecord:
@@ -426,39 +430,27 @@ def build_restore_actions(snapshot: SnapshotRecord) -> list[RestoreAction]:
     return actions
 
 
-def execute_restore(snapshot: SnapshotRecord, actions: Sequence[RestoreAction]) -> RestoreResult:
-    results: list[RestoreActionResult] = []
-    failed = False
-    for action in actions:
-        if action.action == "noop":
-            continue
-        try:
-            target_path = action.restore_path or action.live_path
-            if action.after_link_target is not None:
-                if action.action in {"create", "update"}:
-                    write_symlink_atomic(target_path, action.after_link_target)
-                elif action.action == "delete":
-                    delete_path_and_prune_empty_parents(target_path, root=target_path.parent)
-                else:
-                    raise ValueError(f"unsupported restore action '{action.action}'")
-            elif action.action in {"create", "update"}:
-                write_bytes_atomic(target_path, action.after_bytes)
-                if action.desired_mode is not None:
-                    target_path.chmod(action.desired_mode)
+def execute_restore_action(action: RestoreAction) -> RestoreActionResult:
+    try:
+        target_path = action.restore_path or action.live_path
+        if action.after_link_target is not None:
+            if action.action in {"create", "update"}:
+                write_symlink_atomic(target_path, action.after_link_target)
             elif action.action == "delete":
                 delete_path_and_prune_empty_parents(target_path, root=target_path.parent)
             else:
                 raise ValueError(f"unsupported restore action '{action.action}'")
-            results.append(RestoreActionResult(action=action, status="ok"))
-        except Exception as exc:  # noqa: BLE001 - restore should report the original failure text.
-            results.append(RestoreActionResult(action=action, status="failed", error=str(exc)))
-            failed = True
-            break
-    return RestoreResult(
-        snapshot=snapshot,
-        actions=tuple(results),
-        status="failed" if failed else "ok",
-    )
+        elif action.action in {"create", "update"}:
+            write_bytes_atomic(target_path, action.after_bytes)
+            if action.desired_mode is not None:
+                target_path.chmod(action.desired_mode)
+        elif action.action == "delete":
+            delete_path_and_prune_empty_parents(target_path, root=target_path.parent)
+        else:
+            raise ValueError(f"unsupported restore action '{action.action}'")
+        return RestoreActionResult(action=action, status="ok")
+    except Exception as exc:  # noqa: BLE001 - restore should report the original failure text.
+        return RestoreActionResult(action=action, status="failed", error=str(exc))
 
 
 def _iter_push_snapshot_entries(plans: Sequence[PackagePlan]):
