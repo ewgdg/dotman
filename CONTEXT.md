@@ -8,6 +8,30 @@ Dotman manages selected package content between canonical repositories and live 
 The smallest file payload that can be independently included in or omitted from a sync operation. A file target is one sync unit; each child file of a directory target is its own sync unit.
 _Avoid_: Package, directory target
 
+**Verification Record**:
+A local observation that a target or Sync Unit satisfied one operation's planning contract at a successful verification boundary. It may be reused while the relevant state and inputs remain unchanged.
+_Avoid_: Last sync timestamp, sync timestamp
+
+**Signature-Verifiable Sync Unit**:
+A sync unit whose relevant repo and live state is completely represented by deterministic filesystem signatures and effective configuration. It does not require a Freshness Window.
+_Avoid_: Simple target, raw target
+
+**Path Rule**:
+A named policy for matching child Sync Units of a directory target. Matching rules compose by priority.
+_Avoid_: Path-rule index, ordered rule
+
+**Freshness Window**:
+The bounded period during which verification of a target with opaque dependencies may be reused. Once it expires, the target requires full verification.
+_Avoid_: Cooldown, probe duration
+
+**Planning Strategy**:
+The policy that determines whether sync planning fully verifies selected work or may reuse valid Verification Records. The supported strategies are full and fast.
+_Avoid_: Mode, execution mode
+
+**Input Fingerprint**:
+The identity of the effective Dotman-controlled inputs that determine how one operation interprets a target or Sync Unit. Opaque external dependencies are excluded and bounded by a Freshness Window.
+_Avoid_: Configuration fingerprint, derivation hash
+
 **Guard**:
 An eligibility rule evaluated before planning work for its repo, package, target, or path-rule scope. An ineligible scope contributes no sync work.
 _Avoid_: Pre-hook, execution safety check
