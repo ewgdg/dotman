@@ -72,9 +72,21 @@ _Avoid_: Home normalization, home path transform
 Forward projection from repository representation toward live representation.
 _Avoid_: Push, transform
 
+**Sync Base**:
+The latest projected state at which Dotman verified that the repository and live representations of a Sync Unit agreed. It is the common ancestor for later three-way Reconciliation.
+_Avoid_: Git HEAD, last deployed file, snapshot
+
 **Capture**:
 Reverse projection from live representation toward repository representation.
 _Avoid_: Pull, transform
+
+**Pull View**:
+A side-specific projection used to compare repository and live representations during Pull planning and review.
+_Avoid_: Write preview, Pull Candidate
+
+**Reconciliation**:
+Resolution of diverged repository and live projections into an accepted result or an explicit conflict.
+_Avoid_: Capture, raw overwrite
 
 **Command Runtime**:
 The internal typed boundary that launches commands and owns environment construction, pipe or terminal I/O, elevation, streaming, and interruption normalization. Callers retain the meaning of command exit statuses.
