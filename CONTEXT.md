@@ -73,11 +73,11 @@ Forward projection from repository representation toward live representation.
 _Avoid_: Push, transform
 
 **Sync Base**:
-The latest projected state at which Dotman verified that the repository and live representations of a Sync Unit agreed. It is the common ancestor for later three-way Reconciliation.
+The repository representation Dotman has most recently acknowledged as shared ancestry between a Sync Unit's repository and live histories. It is the common ancestor for later three-way Reconciliation.
 _Avoid_: Git HEAD, last deployed file, snapshot
 
 **Capture**:
-Reverse projection from live representation toward repository representation.
+Reverse projection of live file state into repository representation before Reconciliation.
 _Avoid_: Pull, transform
 
 **Pull View**:
@@ -85,8 +85,20 @@ A side-specific projection used to compare repository and live representations d
 _Avoid_: Write preview, Pull Candidate
 
 **Reconciliation**:
-Resolution of diverged repository and live projections into an accepted result or an explicit conflict.
+Resolution of current repository state and a Capture result by replacement or, using a Sync Base, three-way merge. It produces a Proposal or an explicit conflict.
 _Avoid_: Capture, raw overwrite
+
+**Proposal**:
+A session-local transactional repository write set produced by Pull Reconciliation, then reviewed, optionally edited, and approved before Apply.
+_Avoid_: Pull View, repository working tree
+
+**Proposal Editor**:
+A configured or built-in action that edits a Proposal's transactional repository sources without directly mutating the repository working tree.
+_Avoid_: Outcome handler, repository editor
+
+**Apply**:
+Atomic mutation of the repository working tree from an approved Proposal.
+_Avoid_: Commit, Capture
 
 **Command Runtime**:
 The internal typed boundary that launches commands and owns environment construction, pipe or terminal I/O, elevation, streaming, and interruption normalization. Callers retain the meaning of command exit statuses.
