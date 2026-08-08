@@ -4,6 +4,7 @@ import io
 import signal
 import sys
 from pathlib import Path
+from threading import Thread
 
 import pytest
 
@@ -122,6 +123,34 @@ def test_production_runtime_tty_mode_inherits_process_streams(capfd: pytest.Capt
     assert result == CommandResult(exit_code=0)
     assert "tty-out" in captured.out
     assert "tty-err" in captured.err
+
+
+def test_production_runtime_tty_mode_from_non_main_thread() -> None:
+    # signal.signal() raises ValueError outside the main thread; tty-mode runs
+    # happen off the main thread when the elevation broker serves a sudo shim
+    # request, so they must not touch process-global signal handlers there.
+    results: list[CommandResult] = []
+    failures: list[BaseException] = []
+
+    def run_tty_command() -> None:
+        try:
+            results.append(
+                ProductionCommandRuntime().run(
+                    CommandRequest(
+                        command=ArgvCommand((sys.executable, "-c", "print('thread-tty')")),
+                        io="tty",
+                    )
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 - surfaced to the test body.
+            failures.append(exc)
+
+    thread = Thread(target=run_tty_command)
+    thread.start()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert failures == []
+    assert results == [CommandResult(exit_code=0)]
 
 
 def test_production_runtime_delegates_elevation_preparation() -> None:

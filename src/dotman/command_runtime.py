@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -267,13 +268,19 @@ class ProductionCommandRuntime:
                 env=environment,
             )
             previous_sigint_handler = signal.getsignal(signal.SIGINT)
+            main_thread = threading.current_thread() is threading.main_thread()
             # The foreground child owns Ctrl-C; ignoring it in Dotman prevents a
             # second interruption path and duplicate UI after the child exits.
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            # Signal handlers are process-global, so this is only safe from the
+            # main thread; off-main-thread runs (e.g. the elevation broker)
+            # must skip it.
+            if main_thread:
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
                 return_code = process.wait()
             finally:
-                signal.signal(signal.SIGINT, previous_sigint_handler)
+                if main_thread:
+                    signal.signal(signal.SIGINT, previous_sigint_handler)
         return CommandResult(exit_code=_normalize_return_code(return_code))
 
 
