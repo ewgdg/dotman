@@ -42,12 +42,14 @@ class StandaloneCommandRunner:
             from dotman.transforms.plist import PlistTransformEngine
             from dotman.transforms.toml import TomlTransformEngine
             from dotman.transforms.xml import XmlTransformEngine
+            from dotman.transforms.yaml import YamlTransformEngine
 
             engines = {
                 "json": JsonTransformEngine,
                 "plist": PlistTransformEngine,
                 "toml": TomlTransformEngine,
                 "xml": XmlTransformEngine,
+                "yaml": YamlTransformEngine,
             }
             return run_parsed_engine(engines[args.transform_format](), args.transform_parser, args)
         if args.command == "elevation" and args.elevation_command == "request":

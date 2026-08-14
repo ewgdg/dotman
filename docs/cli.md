@@ -553,3 +553,17 @@ dotman transform xml live.xml output.xml --mode merge \
 ```
 
 Base or overlay accepts `-` for stdin (at most one). Output `-` or `--stdout` writes stdout. File output inherits base-file permissions.
+
+### `dotman transform yaml`
+
+Transforms YAML mappings without repository configuration. Selectors are optional: with no selectors, cleanup is an identity rewrite and merge overlays the whole base. Unprefixed and `exact:` selectors match exact dotted nested YAML mapping key paths; quote a segment containing a literal dot (`"settings.window".width`). `re:` selectors use Python regex search against complete dotted key paths. Matching a mapping selects its subtree; scalars and lists remain atomic.
+
+Merge partitions the base by selector, then applies the overlay on top. A nested mapping a selector reaches is merged recursively; any mapping no selector reaches, and every scalar or list, is atomic — replaced by the overlay value or kept from the base as a whole. `--compare-file PATH` reuses its exact text when parsed YAML values are semantically equal, including line endings. Only `true` and `false` resolve as booleans; YAML 1.1 words such as `yes`, `no`, `on`, and `off` remain strings and are quoted when emitted for compatibility with YAML 1.1 consumers. Emitted YAML uses block style with insertion order preserved and the detected base/compare indentation (two spaces by default).
+
+```sh
+dotman transform yaml live.yaml output.yaml --mode merge \
+  --overlay-file repo.yaml --selector-type retain \
+  --selectors settings 're:^terminal' --compare-file live.yaml
+```
+
+Both operands accept `-` for stdin (at most one). Output `-` or `--stdout` writes stdout. File output inherits base-file permissions.

@@ -653,4 +653,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     configure_parser(xml_parser, XmlTransformEngine())
     xml_parser.set_defaults(transform_parser=xml_parser)
+
+    yaml_parser = transform_subparsers.add_parser(
+        "yaml", help="Transform YAML mappings", description="Clean up or merge YAML mappings"
+    )
+    from dotman.transforms.yaml import YamlTransformEngine
+
+    configure_parser(yaml_parser, YamlTransformEngine())
+    yaml_parser.set_defaults(transform_parser=yaml_parser)
     return parser
