@@ -31,7 +31,7 @@
     body { margin: 0; background: var(--paper); color: var(--ink); line-height: 1.45; }
     button { font: inherit; color: inherit; cursor: pointer; }
     button:focus-visible { outline: 3px solid rgba(79, 70, 229, .28); outline-offset: 2px; }
-    .shell { width: min(1180px, calc(100% - 36px)); margin: 0 auto; padding: 34px 0 94px; }
+    .shell { width: min(1180px, calc(100% - 36px)); margin: 0 auto; padding: 34px 0 154px; }
     .eyebrow { color: var(--accent-dark); font-size: .72rem; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; }
     h1, h2, h3, p { margin-top: 0; }
     h1 { margin: 8px 0 12px; max-width: 880px; font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.04; letter-spacing: -.045em; }
@@ -69,7 +69,7 @@
     .help strong { color: var(--ink); }
     .keyboard-strip { display: flex; flex-wrap: wrap; gap: 7px 13px; margin-top: 13px; color: var(--muted); font-size: .75rem; }
     .keyboard-strip span { display: inline-flex; gap: 5px; align-items: center; }
-    .switcher { position: fixed; z-index: 5; right: 50%; bottom: 17px; display: flex; gap: 10px; align-items: center; transform: translateX(50%); padding: 8px 11px; border: 1px solid #353c4a; border-radius: 999px; background: #232a36; color: #fff; box-shadow: 0 12px 34px rgba(23,29,41,.25); }
+    .switcher { position: fixed; z-index: 5; top: 14px; right: 18px; display: flex; gap: 10px; align-items: center; padding: 8px 11px; border: 1px solid #353c4a; border-radius: 999px; background: #232a36; color: #fff; box-shadow: 0 12px 34px rgba(23,29,41,.25); }
     .switcher button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: #3d4654; color: white; }
     .switcher button:hover { background: var(--accent); }
     .switcher-label { min-width: 190px; text-align: center; font-size: .76rem; }
@@ -80,7 +80,7 @@
     .deck-head h2 { margin-bottom: 3px; }
     .deck-head p { margin: 0; color: var(--muted); font-size: .84rem; }
     .deck-stats { display: flex; flex-wrap: wrap; gap: 7px; }
-    .command-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; padding: 10px 13px; border: 1px solid #353c4a; border-radius: 11px; background: #232a36; color: white; box-shadow: 0 10px 24px rgba(23,29,41,.16); }
+    .command-bar { position: fixed; z-index: 20; left: 50%; bottom: 14px; display: flex; width: min(1180px, calc(100% - 36px)); flex-wrap: wrap; gap: 8px; align-items: center; transform: translateX(-50%); padding: 10px 13px; border: 1px solid #353c4a; border-radius: 11px; background: #232a36; color: white; box-shadow: 0 10px 24px rgba(23,29,41,.24); }
     .command-bar .button { border-color: #697484; background: #3d4654; color: white; box-shadow: none; }
     .command-bar .button:hover { border-color: #9a9ffb; background: #4b5665; }
     .command-bar .button.primary { border-color: #7771ed; background: var(--accent); }
@@ -130,7 +130,7 @@
     .variant-c .deck-table td { padding-top: 15px; padding-bottom: 15px; }
 
     /* Proposal Review is a separate full-screen view in the TUI model. */
-    .review-shell { min-height: 76vh; display: grid; grid-template-rows: auto auto 1fr auto; }
+    .review-shell { min-height: 76vh; display: grid; grid-template-rows: auto auto 1fr; }
     .review-header { display: flex; flex-wrap: wrap; gap: 13px; align-items: start; justify-content: space-between; padding: 20px 22px 16px; border-bottom: 1px solid var(--line); }
     .review-header h2 { margin: 8px 0 3px; font-size: clamp(1.35rem, 3vw, 2rem); }
     .review-header p { margin: 0; color: var(--muted); font-size: .83rem; }
@@ -147,9 +147,7 @@
     .proposal-box.noop { border-color: var(--line); background: #fbfcfd; }
     .proposal-box h3 { display: flex; gap: 9px; align-items: center; justify-content: space-between; margin: 0; color: var(--ink); font-size: .92rem; letter-spacing: 0; text-transform: none; }
     .proposal-box p { margin: 9px 0 0; color: #4c5666; font-size: .84rem; }
-    .proposal-content, .proposal-diff { margin: 13px 0 0; padding: 13px; overflow: auto; border: 1px solid var(--line); border-radius: 9px; background: #fff; white-space: pre-wrap; font: .78rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .proposal-content { color: #303846; }
-    .proposal-diff { color: #3d4654; }
+    .proposal-diff { margin: 13px 0 0; padding: 13px; overflow: auto; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: #3d4654; white-space: pre-wrap; font: .78rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .proposal-diff .add { color: var(--green); }
     .proposal-diff .remove { color: var(--red); }
     .proposal-empty { color: var(--muted); font-style: italic; }
@@ -163,7 +161,7 @@
     .fact { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfd; }
     .fact-label { color: var(--faint); font-size: .66rem; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
     .fact-value { margin-top: 4px; font-size: .82rem; font-weight: 750; }
-    .review-footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 13px; border-top: 1px solid #353c4a; background: #232a36; color: white; font-size: .76rem; }
+    .review-footer { position: fixed; z-index: 20; left: 50%; bottom: 14px; display: flex; width: min(1180px, calc(100% - 36px)); flex-wrap: wrap; gap: 8px; align-items: center; transform: translateX(-50%); padding: 10px 13px; border: 1px solid #353c4a; border-radius: 11px; background: #232a36; color: white; font-size: .76rem; box-shadow: 0 10px 24px rgba(23,29,41,.24); }
     .review-footer .button { border-color: #697484; background: #3d4654; color: white; box-shadow: none; }
     .review-footer .button:hover { border-color: #9a9ffb; background: #4b5665; }
     .review-footer .return { margin-left: auto; }
@@ -174,14 +172,15 @@
     .editor-stage { margin-top: 15px; padding: 12px; border-radius: 10px; color: var(--accent-dark); background: var(--accent-soft); font-size: .82rem; }
 
     @media (max-width: 760px) {
-      .shell { width: min(100% - 22px, 620px); padding-top: 22px; }
+      .shell { width: min(100% - 22px, 620px); padding-top: 22px; padding-bottom: 190px; }
       .deck-table { display: block; overflow-x: auto; min-width: 680px; }
       .deck-wrap { overflow-x: auto; }
       .review-body { grid-template-columns: 1fr; }
       .review-shell, .editor-shell { min-height: 82vh; }
       .review-footer .return { margin-left: 0; }
       .command-bar .bar-status { margin-left: 0; width: 100%; }
-      .switcher { right: 11px; left: 11px; transform: none; justify-content: space-between; }
+      .switcher { top: 10px; right: 11px; left: auto; transform: none; justify-content: space-between; }
+      .command-bar, .review-footer { width: calc(100% - 22px); bottom: 10px; }
       .switcher-label { min-width: 0; }
     }
   </style>
@@ -379,9 +378,10 @@
       return `<div class="evidence"><details open><summary>Repo Pull View (O)</summary><pre>${escapeHtml(candidate.repoView)}</pre></details><details open><summary>Live Pull View (T)</summary><pre>${escapeHtml(candidate.liveView)}</pre></details><details><summary>Capture result</summary><pre>${escapeHtml(candidate.captureView)}</pre></details></div>`;
     }
     function proposalBox(candidate) {
-      const label = candidate.noop ? "No Proposal required" : candidate.materialized ? "Current Proposal" : "Lazy Proposal";
+      const label = candidate.noop ? "No Proposal required" : candidate.materialized ? "Proposal diff" : "Lazy Proposal";
       const content = proposalText(candidate);
-      return `<section class="proposal-box ${candidate.conflict ? "conflict" : candidate.noop ? "noop" : ""}"><h3><span>${label}</span><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></h3><p>${summary(candidate)}</p>${content ? `<h3 style="margin-top:15px">Proposed repository content</h3><pre class="proposal-content">${escapeHtml(content)}</pre><h3 style="margin-top:15px">Change from current repository source</h3><pre class="proposal-diff">${proposalDiff(candidate.repoView, content)}</pre>` : `<div class="proposal-content proposal-empty">The proposal content is not available yet. Review must materialize it first.</div>`}${candidate.materialized && !candidate.noop ? `<p class="tiny muted"><strong>Write set:</strong> ${candidate.mode === "replace" ? "Capture replacement" : candidate.mode === "edited" ? "transactional Editor result" : "three-way merge"}. <strong>Approval:</strong> ${candidate.approved ? "yes" : "no"}.</p>` : ""}</section>`;
+      const diff = content ? proposalDiff(candidate.repoView, content) : `<span class="proposal-empty">${escapeHtml(summary(candidate))}</span>`;
+      return `<section class="proposal-box ${candidate.conflict ? "conflict" : candidate.noop ? "noop" : ""}"><h3><span>${label}</span><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></h3><pre class="proposal-diff">${diff}</pre>${candidate.materialized && !candidate.noop ? `<p class="tiny muted"><strong>Write set:</strong> ${candidate.mode === "replace" ? "Capture replacement" : candidate.mode === "edited" ? "transactional Editor result" : "three-way merge"}. <strong>Approval:</strong> ${candidate.approved ? "yes" : "no"}.</p>` : ""}</section>`;
     }
     function deckActionButtons() {
       const approved = state.items.filter((candidate) => candidate.approved).length;
@@ -414,14 +414,14 @@
     function renderDeck() {
       const variant = variants.find((candidate) => candidate.key === currentVariant);
       const content = currentVariant === "A" ? renderVariantA() : currentVariant === "B" ? renderVariantB() : renderVariantC();
-      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}${deckActionButtons()}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen and shows the proposed repository content plus its diff. Press <span class="key">r</span> to choose replacement, then <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Space</span> select</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">A</span> approve selected</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
+      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}${deckActionButtons()}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen and shows the Proposal diff. Press <span class="key">r</span> to choose replacement, then <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Space</span> select</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">A</span> approve selected</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
     }
     function renderReview() {
       const candidate = item(state.reviewId);
       const reviewMode = candidate.noop ? "NO-OP" : !candidate.captureOk ? "EXCEPTIONAL" : candidate.conflict ? "MERGE CONFLICT" : candidate.mode === "replace" ? "REPLACEMENT" : candidate.mode === "edited" ? "EDITED PROPOSAL" : "MERGE";
       const reviewTone = candidate.noop ? "gray" : !candidate.captureOk ? "red" : candidate.conflict ? "red" : candidate.mode === "replace" ? "amber" : "blue";
       const canApprove = !candidate.noop && candidate.captureOk && (candidate.cleanProposal || candidate.edited || candidate.mode === "replace");
-      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${candidate.approved ? "approved" : "pending"}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div><p class="proposal-summary">${summary(candidate)}</p>${proposalBox(candidate)}<div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Proposal lifecycle</div><div class="fact-value">${candidate.materialized ? "Materialized in memory" : candidate.noop ? "No Proposal" : "Awaiting Review"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer"><button class="button primary" onclick="approveCurrent()" ${canApprove ? "" : "disabled"}>Approve <span class="key">a</span></button><button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button><button class="button" onclick="toggleEvidence()">${state.showEvidence ? "Hide" : "Show"} evidence <span class="key">v</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
+      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${candidate.approved ? "approved" : "pending"}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div>${proposalBox(candidate)}<div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Proposal lifecycle</div><div class="fact-value">${candidate.materialized ? "Materialized in memory" : candidate.noop ? "No Proposal" : "Awaiting Review"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer"><button class="button primary" onclick="approveCurrent()" ${canApprove ? "" : "disabled"}>Approve <span class="key">a</span></button><button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button><button class="button" onclick="toggleEvidence()">${state.showEvidence ? "Hide" : "Show"} evidence <span class="key">v</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
     }
     function renderEditor() {
       const candidate = item(state.editor.id);
