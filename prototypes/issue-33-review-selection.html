@@ -94,8 +94,12 @@
     .deck-table tbody tr.current { background: var(--accent-soft); }
     .deck-table tbody tr.applied { opacity: .55; }
     .deck-table tbody tr:last-child td { border-bottom: 0; }
-    .deck-table .select-cell { width: 38px; }
+    .deck-table .approval-cell { width: 54px; text-align: center; }
     .deck-table .focus-cell { width: 30px; color: var(--accent); font-size: 1.1rem; }
+    .approval-mark { display: inline-grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; font-weight: 900; }
+    .approval-mark.approved { color: var(--green); background: var(--green-soft); }
+    .approval-mark.pending { color: var(--faint); background: #eef0f3; }
+    .approval-mark.blocked { color: var(--red); background: var(--red-soft); }
     .deck-table strong { font-weight: 800; }
     .check { width: 16px; height: 16px; accent-color: var(--accent); }
     .mode-text { font-weight: 800; }
@@ -201,35 +205,35 @@
       {
         id: "gitconfig", label: "main:git.gitconfig", path: "~/.gitconfig", status: "Observed drift", statusTone: "blue",
         base: "Exact · 8e7a2c1", baseTone: "green", baseDetail: "Clean committed ancestor; payload is available.", capture: "Captured", captureOk: true,
-        canMerge: true, defaultMode: "merge", cleanProposal: true, selected: true,
+        canMerge: true, strategy: "merge", defaultMode: "merge", cleanProposal: true,
         repoView: "[user]\n  name = Xian\n  signingkey = old-key", liveView: "[user]\n  name = Xian\n  signingkey = new-key", captureView: "[user]\n  name = Xian\n  signingkey = new-key",
         mergeSummary: "Keep the repository-only name and take the live signing key.", replaceSummary: "Replace the repository source with the captured live representation.",
       },
       {
         id: "nvim", label: "main:nvim.init", path: "~/.config/nvim/init.lua", status: "Observed drift", statusTone: "blue",
         base: "Missing", baseTone: "amber", baseDetail: "No applicable commit-anchored Sync Base exists.", capture: "Captured", captureOk: true,
-        canMerge: false, defaultMode: "replace", cleanProposal: true, selected: true,
+        canMerge: false, strategy: "replace", defaultMode: "replace", cleanProposal: true,
         repoView: "vim.opt.number = true\nvim.opt.relativenumber = true", liveView: "vim.opt.number = true\nvim.opt.relativenumber = false", captureView: "vim.opt.number = true\nvim.opt.relativenumber = false",
         mergeSummary: "A merge cannot be attempted without an applicable Base.", replaceSummary: "Create a reviewed replacement because this unit has no Base.",
       },
       {
         id: "settings", label: "main:app.settings", path: "~/.config/app/settings.toml", status: "Observed drift", statusTone: "blue",
         base: "Conservative · 5b14f90", baseTone: "amber", baseDetail: "A dirty source established an older conservative ancestor.", capture: "Captured", captureOk: true,
-        canMerge: true, defaultMode: "merge", cleanProposal: false, conflict: true, selected: true,
+        canMerge: true, strategy: "merge", defaultMode: "merge", cleanProposal: false, conflict: true,
         repoView: "theme = \"light\"\nfont_size = 13\nlocal_only = true", liveView: "theme = \"dark\"\nfont_size = 13\nlocal_only = true", captureView: "theme = \"dark\"\nfont_size = 13\nlocal_only = true",
         mergeSummary: "Conflict: repository and live both changed `theme` from the conservative Base.", replaceSummary: "Discard repository-side changes and use the captured live settings.",
       },
       {
         id: "secrets", label: "main:secrets.env", path: "~/.config/app/secrets.env", status: "Capture failed", statusTone: "red",
         base: "Exact · 6d2aa90", baseTone: "green", baseDetail: "Base is intact, but Capture did not produce repository bytes.", capture: "Failed · exit 1", captureOk: false,
-        canMerge: false, defaultMode: null, cleanProposal: false, selected: false,
+        canMerge: false, strategy: null, defaultMode: null, cleanProposal: false,
         repoView: "TOKEN=managed\nROTATION=weekly", liveView: "(unavailable — Capture command failed)", captureView: "(no Capture result)",
         mergeSummary: "No Proposal can be materialized until Capture succeeds or an Editor resolves it.", replaceSummary: "Replacement is unavailable without a retained Capture result.",
       },
       {
         id: "notes", label: "main:notes.txt", path: "~/Documents/notes.txt", status: "Observed agreement", statusTone: "gray",
         base: "Exact · 1c4fe11", baseTone: "green", baseDetail: "Direct Pull Views agree; this unit is a no-op.", capture: "Not needed", captureOk: true,
-        canMerge: false, defaultMode: null, cleanProposal: false, noop: true, selected: false,
+        canMerge: false, strategy: null, defaultMode: null, cleanProposal: false, noop: true,
         repoView: "keep a short list of ideas", liveView: "keep a short list of ideas", captureView: "(not materialized)",
         mergeSummary: "No Proposal is needed. A real no-change Pull may establish exact ancestry.", replaceSummary: "No replacement is needed because the Pull Views already agree.",
       },
@@ -244,7 +248,6 @@
     };
 
     function item(id = state.selectedId) { return state.items.find((candidate) => candidate.id === id); }
-    function selectedItems() { return state.items.filter((candidate) => candidate.selected); }
     function now() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
     function log(message) { state.lastAction = message; state.log.unshift(`${now()} · ${message}`); state.log = state.log.slice(0, 8); }
     function setVariant(key) {
@@ -256,10 +259,10 @@
       setVariant(variants[(index + delta + variants.length) % variants.length].key);
     }
     function focusItem(id) { state.selectedId = id; log(`Focused ${item().label}.`); render(); }
-    function toggleSelected(id) { const candidate = item(id); candidate.selected = !candidate.selected; log(`${candidate.selected ? "Selected" : "Removed"} ${candidate.label} ${candidate.selected ? "for batch work" : "from the batch"}.`); render(); }
     function materialize(candidate) {
       if (candidate.materialized || candidate.noop || !candidate.captureOk) return;
-      candidate.materialized = true; candidate.mode = candidate.defaultMode; candidate.approved = false; candidate.edited = false;
+      candidate.materialized = true; candidate.mode = candidate.strategy || candidate.defaultMode; candidate.approved = false; candidate.edited = false;
+      if (candidate.mode === "merge" && candidate.id === "settings") candidate.conflict = true;
       log(`${candidate.label}: materialized ${candidate.mode === "replace" ? "replacement" : "merge"} Proposal lazily.`);
     }
     function openReview(id = state.selectedId, requestedMode = null) {
@@ -274,17 +277,22 @@
       const candidate = item(state.reviewId || state.selectedId);
       if (candidate.noop) { log(`${candidate.label}: no-op has nothing to replace.`); render(); return; }
       if (!candidate.captureOk) { log(`${candidate.label}: replacement unavailable without a retained Capture result.`); render(); return; }
-      materialize(candidate); candidate.mode = "replace"; candidate.approved = false; candidate.conflict = false;
-      if (shouldLog) log(`${candidate.label}: r selected Capture replacement; approval reset.`);
+      const changed = (candidate.strategy || candidate.mode || candidate.defaultMode) !== "replace";
+      candidate.strategy = "replace";
+      if (candidate.materialized) { candidate.mode = "replace"; candidate.conflict = false; }
+      if (changed) candidate.approved = false;
+      if (shouldLog) log(`${candidate.label}: r selected Capture replacement${changed ? "; approval reset" : "; approval retained"}.`);
       render();
     }
     function chooseMerge() {
       const candidate = item(state.reviewId || state.selectedId);
       if (candidate.noop || !candidate.canMerge) { log(`${candidate.label}: m is unavailable without an applicable Sync Base.`); render(); return; }
       if (!candidate.captureOk) { log(`${candidate.label}: merge unavailable because Capture failed.`); render(); return; }
-      materialize(candidate); candidate.mode = "merge"; candidate.approved = false; candidate.edited = false;
-      if (candidate.id === "settings") candidate.conflict = true;
-      log(`${candidate.label}: m selected merge; approval reset.`); render();
+      const changed = (candidate.strategy || candidate.mode || candidate.defaultMode) !== "merge";
+      candidate.strategy = "merge";
+      if (candidate.materialized) { candidate.mode = "merge"; candidate.edited = false; if (candidate.id === "settings") candidate.conflict = true; }
+      if (changed) candidate.approved = false;
+      log(`${candidate.label}: m selected merge${changed ? "; approval reset" : "; approval retained"}.`); render();
     }
     function approveCurrent() {
       const candidate = item(state.reviewId || state.selectedId);
@@ -293,9 +301,9 @@
       else { materialize(candidate); if (candidate.cleanProposal || candidate.edited || candidate.mode === "replace") { candidate.approved = true; log(`${candidate.label}: approved ${candidate.mode === "replace" ? "replacement" : candidate.mode} Proposal.`); } else log(`${candidate.label}: conflict remains unresolved; use r or e.`); }
       render();
     }
-    function approveSelected() {
+    function approveEligible() {
       let approved = 0;
-      selectedItems().forEach((candidate) => {
+      state.items.forEach((candidate) => {
         if (candidate.noop || !candidate.captureOk) return;
         materialize(candidate);
         if (candidate.cleanProposal || candidate.edited || candidate.mode === "replace") { candidate.approved = true; approved += 1; }
@@ -318,7 +326,7 @@
       const candidate = item(state.editor.id);
       const editedText = document.querySelector("#editor-text")?.value || state.editor.text;
       if (state.editor.exceptional) { candidate.captureOk = true; candidate.capture = "Editor supplied a transactional result"; candidate.materialized = true; }
-      candidate.materialized = true; candidate.edited = true; candidate.editedText = editedText; candidate.mode = "edited"; candidate.cleanProposal = true; candidate.conflict = false; candidate.approved = false;
+      candidate.materialized = true; candidate.edited = true; candidate.editedText = editedText; candidate.strategy = "edited"; candidate.mode = "edited"; candidate.cleanProposal = true; candidate.conflict = false; candidate.approved = false;
       state.reviewId = candidate.id; state.selectedId = candidate.id; state.editor = null; state.view = "review";
       log(`${candidate.label}: Editor returned; adopted transactional edits and reset approval.`); render();
     }
@@ -329,17 +337,26 @@
 
     function modeLabel(candidate) {
       if (candidate.applied) return "Applied";
-      if (candidate.approved) return candidate.mode === "replace" ? "Replacement approved" : "Merge approved";
-      if (!candidate.materialized) return candidate.noop ? "No Proposal" : candidate.captureOk ? "Not reviewed" : "Exceptional";
-      if (candidate.mode === "replace") return "Replacement";
-      if (candidate.mode === "edited") return "Edited Proposal";
-      return candidate.conflict ? "Merge conflict" : "Merge";
+      if (candidate.noop) return "No Proposal";
+      if (!candidate.captureOk) return "Exceptional";
+      const strategy = candidate.strategy || candidate.mode || candidate.defaultMode;
+      if (candidate.approved) return strategy === "replace" ? "Replacement" : strategy === "edited" ? "Edited" : "Merge";
+      if (strategy === "replace") return candidate.materialized ? "Replacement" : "Replacement (not reviewed)";
+      if (strategy === "edited") return "Edited Proposal";
+      if (strategy === "merge") return candidate.materialized && candidate.conflict ? "Merge conflict" : candidate.materialized ? "Merge" : "Merge (not reviewed)";
+      return "Not reviewed";
+    }
+    function approvalMark(candidate) {
+      if (candidate.approved) return `<span class="approval-mark approved" title="Approved">✓</span>`;
+      if (candidate.noop || !candidate.captureOk || candidate.conflict) return `<span class="approval-mark blocked" title="Not approvable">!</span>`;
+      return `<span class="approval-mark pending" title="Not approved">·</span>`;
     }
     function modeTone(candidate) {
       if (candidate.applied || candidate.approved) return "green";
-      if (!candidate.materialized) return candidate.noop ? "gray" : candidate.captureOk ? "blue" : "red";
-      if (candidate.mode === "replace") return "amber";
-      if (candidate.conflict) return "red";
+      if (candidate.noop) return "gray";
+      if (!candidate.captureOk || candidate.conflict) return "red";
+      const strategy = candidate.strategy || candidate.mode || candidate.defaultMode;
+      if (strategy === "replace") return "amber";
       return "blue";
     }
     function summary(candidate) {
@@ -385,22 +402,22 @@
     }
     function deckActionButtons() {
       const approved = state.items.filter((candidate) => candidate.approved).length;
-      return `<div class="command-bar"><button class="button primary" onclick="openReview()">Review focused <span class="key">Enter</span></button><button class="button" onclick="approveSelected()">Approve eligible <span class="key">A</span></button><button class="button primary" onclick="applyApproved()">Apply approved</button><button class="button" onclick="resetDemo()">Reset</button><span class="bar-status">${approved} approved · focused ${item().label}</span></div>`;
+      return `<div class="command-bar"><button class="button primary" onclick="openReview()">Review focused <span class="key">Enter</span></button><button class="button" onclick="approveEligible()">Approve eligible <span class="key">A</span></button><button class="button primary" onclick="applyApproved()">Apply approved</button><button class="button" onclick="resetDemo()">Reset</button><span class="bar-status">${approved} approved · focused ${item().label}</span></div>`;
     }
     function deckHeader(extraClass = "") {
       const changed = state.items.filter((candidate) => !candidate.noop).length;
       const approved = state.items.filter((candidate) => candidate.approved).length;
-      return `<div class="deck-head ${extraClass}"><div><div class="eyebrow">Command Deck · Pull workset</div><h2>Choose work. Open one Proposal at a time.</h2><p>Focused: <strong>${item().label}</strong> · ${changed} changed units · ${selectedItems().length} selected</p></div><div class="deck-stats"><span class="badge blue">${changed} changed</span><span class="badge ${approved ? "green" : "gray"}">${approved} approved</span><span class="badge red">1 exceptional</span></div></div>`;
+      return `<div class="deck-head ${extraClass}"><div><div class="eyebrow">Command Deck · Pull workset</div><h2>Choose work. Open one Proposal at a time.</h2><p>Focused: <strong>${item().label}</strong> · ${changed} changed units</p></div><div class="deck-stats"><span class="badge blue">${changed} changed</span><span class="badge ${approved ? "green" : "gray"}">${approved} approved</span><span class="badge red">1 exceptional</span></div></div>`;
     }
     function row(candidate, index) {
-      return `<tr class="${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="focusItem('${candidate.id}')"><td class="focus-cell">${candidate.id === state.selectedId ? "›" : ""}</td><td class="select-cell"><input class="check" type="checkbox" ${candidate.selected ? "checked" : ""} onclick="event.stopPropagation(); toggleSelected('${candidate.id}')" aria-label="Select ${candidate.label}"></td><td><strong>${candidate.label}</strong><br><span class="tiny muted mono">${candidate.path}</span></td><td><span class="badge ${candidate.statusTone}">${candidate.status}</span></td><td><span class="badge ${candidate.baseTone}">${candidate.base}</span></td><td class="mode-text"><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></td></tr>`;
+      return `<tr class="${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="focusItem('${candidate.id}')"><td class="focus-cell">${candidate.id === state.selectedId ? "›" : ""}</td><td class="approval-cell">${approvalMark(candidate)}</td><td><strong>${candidate.label}</strong><br><span class="tiny muted mono">${candidate.path}</span></td><td><span class="badge ${candidate.statusTone}">${candidate.status}</span></td><td><span class="badge ${candidate.baseTone}">${candidate.base}</span></td><td class="mode-text"><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></td></tr>`;
     }
     function renderVariantA() {
-      return `<section class="panel variant-a"><div class="deck-wrap">${deckHeader()}<table class="deck-table"><thead><tr><th></th><th></th><th class="repo-col">Sync Unit</th><th class="status-col">Observation</th><th class="base-col">Sync Base</th><th class="proposal-col">Proposal</th></tr></thead><tbody>${state.items.map(row).join("")}</tbody></table></div></section>`;
+      return `<section class="panel variant-a"><div class="deck-wrap">${deckHeader()}<table class="deck-table"><thead><tr><th></th><th>Approval</th><th class="repo-col">Sync Unit</th><th class="status-col">Observation</th><th class="base-col">Sync Base</th><th class="proposal-col">Proposal</th></tr></thead><tbody>${state.items.map(row).join("")}</tbody></table></div></section>`;
     }
     function lane(title, tone, candidates) {
       if (!candidates.length) return "";
-      return `<section class="lane"><div class="lane-title"><span class="badge ${tone}">${candidates.length}</span>${title}</div>${candidates.map((candidate) => `<div class="lane-row ${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="focusItem('${candidate.id}')"><span class="lane-focus">${candidate.id === state.selectedId ? "›" : ""}</span><input class="check" type="checkbox" ${candidate.selected ? "checked" : ""} onclick="event.stopPropagation(); toggleSelected('${candidate.id}')" aria-label="Select ${candidate.label}"><span><span class="item-title">${candidate.label}</span><span class="item-path mono">${candidate.path}</span></span><span class="lane-status">${candidate.base}</span><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></div>`).join("")}</section>`;
+      return `<section class="lane"><div class="lane-title"><span class="badge ${tone}">${candidates.length}</span>${title}</div>${candidates.map((candidate) => `<div class="lane-row ${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="focusItem('${candidate.id}')"><span class="lane-focus">${candidate.id === state.selectedId ? "›" : ""}</span><span class="approval-cell">${approvalMark(candidate)}</span><span><span class="item-title">${candidate.label}</span><span class="item-path mono">${candidate.path}</span></span><span class="lane-status">${candidate.base}</span><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></div>`).join("")}</section>`;
     }
     function renderVariantB() {
       const changed = state.items.filter((candidate) => !candidate.noop && candidate.captureOk);
@@ -409,12 +426,12 @@
       return `<section class="panel variant-b">${deckHeader()}<div class="lane-list">${lane("Ready to review", "blue", changed)}${lane("Exceptional / manual handling", "red", exceptional)}${lane("Observed agreement · no-op", "gray", noops)}</div></section>`;
     }
     function renderVariantC() {
-      return `<section class="panel variant-c"><div class="deck-wrap">${deckHeader("variant-c")}<table class="deck-table"><thead><tr><th></th><th></th><th>Target</th><th>Base provenance</th><th>Next command</th><th>State</th></tr></thead><tbody>${state.items.map((candidate) => `<tr class="${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="focusItem('${candidate.id}')"><td class="focus-cell">${candidate.id === state.selectedId ? "›" : ""}</td><td class="select-cell"><input class="check" type="checkbox" ${candidate.selected ? "checked" : ""} onclick="event.stopPropagation(); toggleSelected('${candidate.id}')" aria-label="Select ${candidate.label}"></td><td><strong>${candidate.label}</strong><br><span class="tiny muted mono">${candidate.path}</span></td><td><span class="badge ${candidate.baseTone}">${candidate.base}</span></td><td><span class="key">${candidate.captureOk ? "Enter" : "e"}</span> ${candidate.captureOk ? "open Proposal Review" : "open Editor"}</td><td><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></td></tr>`).join("")}</tbody></table></div></section>`;
+      return `<section class="panel variant-c"><div class="deck-wrap">${deckHeader("variant-c")}<table class="deck-table"><thead><tr><th></th><th>Approval</th><th>Target</th><th>Base provenance</th><th>Next command</th><th>Proposal</th></tr></thead><tbody>${state.items.map((candidate) => `<tr class="${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="focusItem('${candidate.id}')"><td class="focus-cell">${candidate.id === state.selectedId ? "›" : ""}</td><td class="approval-cell">${approvalMark(candidate)}</td><td><strong>${candidate.label}</strong><br><span class="tiny muted mono">${candidate.path}</span></td><td><span class="badge ${candidate.baseTone}">${candidate.base}</span></td><td><span class="key">${candidate.captureOk ? "Enter" : "e"}</span> ${candidate.captureOk ? "open Proposal Review" : "open Editor"}</td><td><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></td></tr>`).join("")}</tbody></table></div></section>`;
     }
     function renderDeck() {
       const variant = variants.find((candidate) => candidate.key === currentVariant);
       const content = currentVariant === "A" ? renderVariantA() : currentVariant === "B" ? renderVariantB() : renderVariantC();
-      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}${deckActionButtons()}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen and shows the Proposal diff. Press <span class="key">r</span> to choose replacement, then <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Space</span> select</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">A</span> approve selected</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
+      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}${deckActionButtons()}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen and shows the Proposal diff. Press <span class="key">r</span> to choose replacement, then <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">m</span> merge</span><span><span class="key">a</span> approve focused</span><span><span class="key">A</span> approve eligible</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
     }
     function renderReview() {
       const candidate = item(state.reviewId);
@@ -453,10 +470,11 @@
       if (event.key === "ArrowRight") { event.preventDefault(); cycleVariant(1); return; }
       if (event.key === "j" || event.key === "ArrowDown") { event.preventDefault(); focusItem(state.items[(index + 1) % state.items.length].id); return; }
       if (event.key === "k" || event.key === "ArrowUp") { event.preventDefault(); focusItem(state.items[(index - 1 + state.items.length) % state.items.length].id); return; }
-      if (event.key === " ") { event.preventDefault(); toggleSelected(state.selectedId); return; }
       if (event.key === "Enter") { event.preventDefault(); openReview(); return; }
-      if (event.key === "r") { event.preventDefault(); openReview(state.selectedId, "replace"); return; }
-      if (event.key === "A") { event.preventDefault(); approveSelected(); return; }
+      if (event.key === "r") { event.preventDefault(); chooseReplacement(); return; }
+      if (event.key === "m") { event.preventDefault(); chooseMerge(); return; }
+      if (event.key === "a") { event.preventDefault(); state.reviewId = state.selectedId; approveCurrent(); state.reviewId = null; return; }
+      if (event.key === "A") { event.preventDefault(); approveEligible(); return; }
       if (event.key === "?") { event.preventDefault(); document.querySelector(".help")?.scrollIntoView({ behavior: "smooth", block: "center" }); }
     });
 
