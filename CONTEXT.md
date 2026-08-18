@@ -73,8 +73,8 @@ Forward projection from repository representation toward live representation.
 _Avoid_: Push, transform
 
 **Sync Base**:
-The repository representation Dotman has most recently acknowledged as shared ancestry between a Sync Unit's repository and live histories. It is the common ancestor for later three-way Reconciliation.
-_Avoid_: Git HEAD, last deployed file, snapshot
+A committed repository representation Dotman established through successful Push or directly verified no-change Pull as known shared ancestry between one Sync Unit's repository and live histories. It is the base for later three-way Reconciliation and may be older than the working-tree representation Push materialized.
+_Avoid_: Current Git HEAD, last deployed file, snapshot
 
 **Capture**:
 Reverse projection of live file state into repository representation before Reconciliation.
