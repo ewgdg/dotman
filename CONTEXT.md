@@ -92,6 +92,14 @@ _Avoid_: Capture, raw overwrite
 A session-local transactional repository write set produced by Pull Reconciliation, then reviewed, optionally edited, and approved before Apply.
 _Avoid_: Pull View, repository working tree
 
+**Command Deck**:
+The persistent Pull workset view used to focus Sync Units, inspect compact status, select batch work, and launch Proposal Review without showing detailed Proposal evidence for every unit.
+_Avoid_: Pull dashboard, Proposal list
+
+**Proposal Review**:
+The focused full-screen view for one Proposal that shows its Pull Views, Sync Base provenance, Capture result, proposed write set, and review actions without mutating repository sources.
+_Avoid_: Proposal window, Apply screen
+
 **Proposal Editor**:
 A configured or built-in action that edits a Proposal's transactional repository sources without directly mutating the repository working tree.
 _Avoid_: Outcome handler, repository editor
