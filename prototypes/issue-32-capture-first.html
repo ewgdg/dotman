@@ -1,0 +1,1968 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dotman #32 — Capture-first reconciliation prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #202631;
+      --muted: #687181;
+      --faint: #8d96a5;
+      --paper: #f5f6f8;
+      --card: #ffffff;
+      --line: #dfe3e9;
+      --line-strong: #c9d0da;
+      --accent: #4f46e5;
+      --accent-dark: #3730a3;
+      --accent-soft: #eef0ff;
+      --green: #147d58;
+      --green-soft: #e8f7f0;
+      --amber: #9a5b00;
+      --amber-soft: #fff5df;
+      --red: #b42318;
+      --red-soft: #fff0ee;
+      --shadow: 0 14px 35px rgba(29, 39, 58, 0.08);
+      --radius: 14px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      line-height: 1.45;
+    }
+    button {
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+    }
+    button:focus-visible {
+      outline: 3px solid rgba(79, 70, 229, 0.28);
+      outline-offset: 2px;
+    }
+    .shell {
+      width: min(1440px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 72px;
+    }
+    .hero {
+      max-width: 1020px;
+      margin-bottom: 28px;
+    }
+    .eyebrow {
+      color: var(--accent-dark);
+      font-size: 0.74rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      margin: 9px 0 12px;
+      max-width: 920px;
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      line-height: 1.04;
+      letter-spacing: -0.045em;
+    }
+    .question {
+      max-width: 1030px;
+      margin-bottom: 16px;
+      color: #454d5b;
+      font-size: 1.08rem;
+    }
+    .notice {
+      display: inline-block;
+      max-width: 840px;
+      margin-bottom: 0;
+      padding: 11px 14px;
+      border: 1px solid #d9dcff;
+      border-radius: 10px;
+      background: var(--accent-soft);
+      color: #343b73;
+      font-size: 0.92rem;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 22px;
+    }
+    .toolbar-label {
+      margin-right: 4px;
+      color: var(--muted);
+      font-size: 0.79rem;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .button {
+      min-height: 36px;
+      padding: 7px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: var(--card);
+      font-size: 0.86rem;
+      font-weight: 700;
+      transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+    }
+    .button:hover { border-color: var(--accent); background: #fafaff; }
+    .button.primary { border-color: var(--accent); background: var(--accent); color: white; }
+    .button.primary:hover { border-color: var(--accent-dark); background: var(--accent-dark); }
+    .button.subtle { color: var(--muted); }
+    .button.danger { color: var(--red); }
+    .button.small { min-height: 31px; padding: 5px 9px; font-size: 0.79rem; }
+    .feedback {
+      min-height: 46px;
+      margin-bottom: 22px;
+      padding: 11px 14px;
+      border-left: 4px solid var(--accent);
+      border-radius: 9px;
+      background: var(--card);
+      box-shadow: 0 3px 12px rgba(29, 39, 58, 0.04);
+    }
+    .feedback strong { display: block; font-size: 0.88rem; }
+    .feedback span { color: var(--muted); font-size: 0.84rem; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.85fr);
+      gap: 20px;
+      align-items: start;
+    }
+    .stack { display: grid; gap: 20px; }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--card);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .card-header h2, .card-header h3 { margin: 0; font-size: 1.04rem; letter-spacing: -0.015em; }
+    .card-header p { margin: 4px 0 0; color: var(--muted); font-size: 0.82rem; }
+    .card-body { padding: 18px 20px 20px; }
+    .state-header { background: linear-gradient(135deg, #fff, #fafaff); }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex: none;
+      padding: 5px 9px;
+      border-radius: 999px;
+      font-size: 0.73rem;
+      font-weight: 800;
+      letter-spacing: 0.035em;
+      text-transform: uppercase;
+    }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .status.neutral { background: #edf0f4; color: #536071; }
+    .status.good { background: var(--green-soft); color: var(--green); }
+    .status.warn { background: var(--amber-soft); color: var(--amber); }
+    .status.bad { background: var(--red-soft); color: var(--red); }
+    .status.accent { background: var(--accent-soft); color: var(--accent-dark); }
+
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .fact {
+      min-width: 0;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfcfd;
+    }
+    .fact-label {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--faint);
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .fact-value {
+      display: block;
+      overflow: hidden;
+      font-size: 0.86rem;
+      font-weight: 750;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .section-label {
+      margin: 0 0 9px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 850;
+      letter-spacing: 0.105em;
+      text-transform: uppercase;
+    }
+    .columns-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 13px;
+    }
+    .columns-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 13px;
+    }
+    .subcard {
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: #fcfcfd;
+    }
+    .subcard h3 {
+      margin-bottom: 6px;
+      font-size: 0.86rem;
+      letter-spacing: -0.01em;
+    }
+    .subcard p { margin-bottom: 8px; color: var(--muted); font-size: 0.78rem; }
+    .meta-list { display: grid; gap: 6px; margin: 0; }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.79rem;
+    }
+    .meta-row dt { color: var(--muted); }
+    .meta-row dd { margin: 0; text-align: right; font-weight: 700; }
+    .mono, code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.78rem;
+    }
+    .file-state {
+      min-height: 58px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #f8fafc;
+      overflow: hidden;
+    }
+    .file-state.missing {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+      background: #f7f8fa;
+      color: var(--muted);
+      font-size: 0.83rem;
+      font-weight: 750;
+    }
+    .missing-mark {
+      display: inline-grid;
+      width: 22px;
+      height: 22px;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      color: var(--faint);
+      font-weight: 900;
+    }
+    .file-state pre {
+      max-height: 180px;
+      margin: 0;
+      padding: 11px 12px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #303846;
+      font-size: 0.76rem;
+      line-height: 1.55;
+    }
+    .file-label {
+      padding: 5px 10px;
+      border-bottom: 1px solid var(--line);
+      color: var(--faint);
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .callout {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 9px;
+      background: var(--accent-soft);
+      color: #3e4370;
+      font-size: 0.79rem;
+    }
+    .callout.good { background: var(--green-soft); color: #166248; }
+    .callout.warn { background: var(--amber-soft); color: #765000; }
+    .callout.bad { background: var(--red-soft); color: #8b2a21; }
+    .callout strong { font-weight: 800; }
+    .proposal-empty {
+      padding: 18px 14px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-align: center;
+    }
+    .proposal-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 11px;
+    }
+    .tag {
+      display: inline-block;
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f7f8fa;
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 800;
+    }
+    .tag.accent { border-color: #d9dcff; background: var(--accent-soft); color: var(--accent-dark); }
+    .tag.good { border-color: #c8eadb; background: var(--green-soft); color: var(--green); }
+    .tag.warn { border-color: #f0dcae; background: var(--amber-soft); color: var(--amber); }
+    .tag.bad { border-color: #f2c8c4; background: var(--red-soft); color: var(--red); }
+    .proposal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .proposal-grid .file-state { min-height: 80px; }
+    .proposal-grid .file-state pre { max-height: 145px; }
+    .write-set {
+      display: grid;
+      gap: 7px;
+      margin-top: 12px;
+    }
+    .write-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      font-size: 0.77rem;
+    }
+    .write-row span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .write-row span:last-child { color: var(--muted); font-weight: 800; text-transform: uppercase; }
+    .trace {
+      max-height: 330px;
+      overflow: auto;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .trace li {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr);
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid #edf0f3;
+      font-size: 0.78rem;
+    }
+    .trace li:last-child { border-bottom: 0; }
+    .trace-time { color: var(--faint); font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.7rem; }
+    .trace-message { color: #444c59; }
+    .trace-message strong { color: var(--ink); }
+    .free-play {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .free-play-group { margin-bottom: 15px; }
+    .free-play-group:last-child { margin-bottom: 0; }
+    .free-play-group h3 { margin-bottom: 8px; font-size: 0.81rem; }
+    .small-note { margin-top: 9px; color: var(--muted); font-size: 0.75rem; }
+
+    .scenario-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 9px 12px 0;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line);
+    }
+    .scenario-tab {
+      flex: none;
+      padding: 9px 10px 10px;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.77rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .scenario-tab:hover { color: var(--ink); }
+    .scenario-tab.active { border-bottom-color: var(--accent); color: var(--accent-dark); }
+    .scenario-body { padding: 17px 20px 20px; }
+    .scenario-body h3 { margin-bottom: 5px; font-size: 1rem; }
+    .scenario-body > p { margin-bottom: 15px; color: var(--muted); font-size: 0.82rem; }
+    .scenario-steps { display: grid; gap: 8px; }
+    .scenario-step {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fbfcfd;
+    }
+    .scenario-step.current { border-color: #bfc3ff; background: #fafaff; box-shadow: inset 3px 0 0 var(--accent); }
+    .scenario-step.done { border-color: #cbe9dc; background: #fbfffd; }
+    .step-number {
+      display: grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      border-radius: 50%;
+      background: #e9edf2;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 850;
+    }
+    .scenario-step.current .step-number { background: var(--accent); color: white; }
+    .scenario-step.done .step-number { background: var(--green); color: white; }
+    .step-copy { min-width: 0; }
+    .step-copy strong { display: block; font-size: 0.8rem; }
+    .step-copy span { display: block; color: var(--muted); font-size: 0.73rem; }
+    .scenario-complete {
+      margin-top: 13px;
+      padding: 10px 12px;
+      border-radius: 9px;
+      background: var(--green-soft);
+      color: #166248;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 15px;
+      margin-top: 13px;
+      color: var(--muted);
+      font-size: 0.74rem;
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
+    .legend i.accent { background: var(--accent); }
+    .legend i.good { background: var(--green); }
+    .legend i.warn { background: var(--amber); }
+    .legend i.bad { background: var(--red); }
+    details {
+      margin-top: 20px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--card);
+    }
+    summary {
+      padding: 12px 14px;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 800;
+    }
+    details .detail-body { padding: 0 14px 14px; color: var(--muted); font-size: 0.8rem; }
+    details ul { margin: 8px 0 0; padding-left: 20px; }
+    .footer-note { margin-top: 20px; color: var(--faint); font-size: 0.75rem; }
+
+    @media (max-width: 1050px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 700px) {
+      .shell { width: min(100% - 24px, 1440px); padding-top: 26px; }
+      .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .columns-2, .columns-3, .proposal-grid { grid-template-columns: 1fr; }
+      .card-header, .card-body, .scenario-body { padding-left: 14px; padding-right: 14px; }
+      .scenario-step { grid-template-columns: 28px minmax(0, 1fr); }
+      .scenario-step .button { grid-column: 2; justify-self: start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div class="eyebrow">Dotman · issue #32 · throwaway logic prototype</div>
+      <h1>Capture first. Reconcile in repository space.</h1>
+      <p class="question">
+        Does a Pull View-gated, lazy Capture combine safely with a commit-anchored isolated-checkout Sync Base and Git-style merge or replacement — while keeping the repository untouched until Apply?
+      </p>
+      <p class="notice"><strong>This is a disposable simulation.</strong> It uses an in-memory one-file Sync Unit. Review, Capture, merge, edit, and approval never mutate the simulated repository; only <strong>Apply</strong> does.</p>
+    </header>
+
+    <div class="toolbar">
+      <span class="toolbar-label">Free play</span>
+      <button class="button primary" data-action="observe">Observe Pull Views</button>
+      <button class="button" data-action="review">Review / materialize</button>
+      <button class="button" data-action="edit">Edit Proposal</button>
+      <button class="button" data-action="replace">Replace with Capture</button>
+      <button class="button" data-action="approve">Approve</button>
+      <button class="button primary" data-action="apply">Apply</button>
+      <button class="button subtle" data-action="reset">Reset scenario</button>
+    </div>
+
+    <div id="feedback" class="feedback" aria-live="polite"></div>
+
+    <div class="grid">
+      <div class="stack">
+        <section class="card">
+          <div class="card-header state-header">
+            <div>
+              <h2>Current state</h2>
+              <p id="state-subtitle">The complete state of the selected Sync Unit.</p>
+            </div>
+            <span id="phase-status" class="status neutral">ready</span>
+          </div>
+          <div class="card-body">
+            <div id="facts" class="facts"></div>
+            <div class="section-label">Repository and live endpoints</div>
+            <div id="endpoints" class="columns-2"></div>
+            <div class="section-label" style="margin-top: 18px">Observation</div>
+            <div id="observation"></div>
+            <div class="section-label" style="margin-top: 18px">Sync Base</div>
+            <div id="base"></div>
+            <div class="section-label" style="margin-top: 18px">Proposal</div>
+            <div id="proposal"></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <h2>Guided walkthroughs</h2>
+              <p>Each tab resets to a known fixture. Press the ordered buttons to drive the awkward case.</p>
+            </div>
+          </div>
+          <div id="scenario-tabs" class="scenario-tabs" role="tablist"></div>
+          <div id="scenario-body" class="scenario-body"></div>
+        </section>
+      </div>
+
+      <aside class="stack">
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <h2>Free-play controls</h2>
+              <p>These change setup state without hiding the consequences.</p>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="free-play-group">
+              <h3>Base and ancestry</h3>
+              <div class="free-play">
+                <button class="button small" data-action="acknowledge-push">Acknowledge Push at HEAD</button>
+                <button class="button small" data-action="establish-no-change-base">Establish exact base from no-change Pull</button>
+                <button class="button small" data-action="toggle-dirty">Toggle relevant Git dirt</button>
+                <button class="button small" data-action="reset-head">Reset HEAD to unrelated branch</button>
+                <button class="button small" data-action="restore-head">Restore original HEAD</button>
+              </div>
+            </div>
+            <div class="free-play-group">
+              <h3>Live state</h3>
+              <div class="free-play">
+                <button class="button small" data-action="change-live">Append a live edit</button>
+              </div>
+            </div>
+            <p class="small-note">A stale commit anchor is discarded only when materialization proves it inapplicable. A changed Pull never advances the authoritative base, even after Apply.</p>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <h2>Execution trace</h2>
+              <p>Newest events are at the bottom. Capture calls and source writes are counted.</p>
+            </div>
+          </div>
+          <div class="card-body">
+            <ul id="trace" class="trace"></ul>
+          </div>
+        </section>
+
+        <details>
+          <summary>How to read the prototype</summary>
+          <div class="detail-body">
+            <ul>
+              <li><strong>Pull Views</strong> decide whether work exists. They are never merge operands.</li>
+              <li><strong>Capture</strong> returns typed repository representation: <em>Missing</em> or <em>Present(bytes)</em>. Raw/default Capture is lazy unless the live Pull View itself is Capture-backed.</li>
+              <li><strong>Sync Base</strong> stores a commit anchor plus the path payload from an isolated checkout. Exact and conservative bases use the same merge algorithm.</li>
+              <li><strong>Proposal</strong> is a transactional draft. Editing it changes only the draft. <strong>Apply</strong> is the sole source mutation seam.</li>
+              <li>After a changed Pull is applied, the base remains unchanged. A later qualifying Push or fresh no-change Pull establishes committed ancestry.</li>
+            </ul>
+          </div>
+        </details>
+      </aside>
+    </div>
+
+    <p class="footer-note">Prototype file: <span class="mono">prototypes/issue-32-capture-first.html</span> · open it directly in a browser; no server or dependencies required.</p>
+  </div>
+
+  <script>
+    /*
+     * The module below is deliberately independent of the page. It is the part
+     * that could be lifted into a real reconciliation module after the design
+     * decision is made. The DOM only renders its returned state and dispatches
+     * named actions.
+     */
+    const DotmanPrototype = (() => {
+      "use strict";
+
+      const PHASE_LABELS = {
+        ready: "ready",
+        observed: "observed",
+        reviewed: "reviewed",
+        approved: "approved",
+        applied: "applied"
+      };
+
+      function clone(value) {
+        return JSON.parse(JSON.stringify(value));
+      }
+
+      function missing() {
+        return { kind: "missing" };
+      }
+
+      function present(text) {
+        return { kind: "present", text: String(text) };
+      }
+
+      function asFile(value) {
+        if (value && typeof value === "object" && (value.kind === "missing" || value.kind === "present")) {
+          return clone(value);
+        }
+        return value === null || value === undefined ? missing() : present(value);
+      }
+
+      function cloneFile(value) {
+        return value.kind === "missing" ? missing() : present(value.text);
+      }
+
+      function fileEquals(left, right) {
+        if (!left || !right || left.kind !== right.kind) return false;
+        return left.kind === "missing" || left.text === right.text;
+      }
+
+      function fileLabel(value) {
+        return value.kind === "missing" ? "Missing" : "Present(bytes)";
+      }
+
+      function appendText(value, suffix) {
+        if (value.kind === "missing") return present(suffix);
+        return present(value.text + suffix);
+      }
+
+      function transformFile(value, config) {
+        if (value.kind === "missing") return missing();
+        if (config.transform === "jinja") {
+          const user = config.variables && config.variables.user ? config.variables.user : "work";
+          return present(value.text.replace(/\{\{\s*user\s*\}\}/g, user));
+        }
+        if (config.transform === "uppercase") return present(value.text.toUpperCase());
+        if (config.transform === "trim-lines") {
+          return present(value.text.split("\n").map(line => line.trim()).join("\n"));
+        }
+        return cloneFile(value);
+      }
+
+      function splitLines(text) {
+        return text.split("\n");
+      }
+
+      /* Small LCS hunk builder. Prototype fixtures are intentionally tiny. */
+      function diffHunks(baseText, nextText) {
+        const base = splitLines(baseText);
+        const next = splitLines(nextText);
+        const rows = base.length + 1;
+        const cols = next.length + 1;
+        const lcs = Array.from({ length: rows }, () => Array(cols).fill(0));
+        for (let i = base.length - 1; i >= 0; i -= 1) {
+          for (let j = next.length - 1; j >= 0; j -= 1) {
+            lcs[i][j] = base[i] === next[j]
+              ? lcs[i + 1][j + 1] + 1
+              : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+          }
+        }
+
+        const hunks = [];
+        let i = 0;
+        let j = 0;
+        while (i < base.length || j < next.length) {
+          if (i < base.length && j < next.length && base[i] === next[j]) {
+            i += 1;
+            j += 1;
+            continue;
+          }
+          const start = i;
+          const replacementStart = j;
+          while (i < base.length || j < next.length) {
+            if (i < base.length && j < next.length && base[i] === next[j]) break;
+            if (i === base.length) {
+              j += 1;
+            } else if (j === next.length) {
+              i += 1;
+            } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+              i += 1;
+            } else {
+              j += 1;
+            }
+          }
+          hunks.push({ start, end: i, replacement: next.slice(replacementStart, j) });
+        }
+        return hunks;
+      }
+
+      function applyHunksToSegment(baseLines, start, end, hunks) {
+        const output = [];
+        let cursor = start;
+        for (const hunk of hunks) {
+          if (hunk.start < start || hunk.end > end) continue;
+          output.push(...baseLines.slice(cursor, hunk.start));
+          output.push(...hunk.replacement);
+          cursor = hunk.end;
+        }
+        output.push(...baseLines.slice(cursor, end));
+        return output;
+      }
+
+      function mergePresentText(baseText, oursText, theirsText) {
+        if (oursText === theirsText) return { status: "clean", state: present(oursText) };
+        if (oursText === baseText) return { status: "clean", state: present(theirsText) };
+        if (theirsText === baseText) return { status: "clean", state: present(oursText) };
+
+        const baseLines = splitLines(baseText);
+        const oursHunks = diffHunks(baseText, oursText);
+        const theirsHunks = diffHunks(baseText, theirsText);
+        const allHunks = [
+          ...oursHunks.map(hunk => ({ ...hunk, side: "ours" })),
+          ...theirsHunks.map(hunk => ({ ...hunk, side: "capture" }))
+        ].sort((left, right) => left.start - right.start || left.end - right.end);
+
+        const output = [];
+        let cursor = 0;
+        let index = 0;
+        let hadConflict = false;
+
+        while (index < allHunks.length) {
+          const first = allHunks[index];
+          if (first.start > cursor) output.push(...baseLines.slice(cursor, first.start));
+
+          const groupStart = first.start;
+          let groupEnd = first.end;
+          let groupIndex = index + 1;
+          const overlapsGroup = (hunk, start, end) => {
+            const rangesOverlap = hunk.start < end && hunk.end > start;
+            const sameInsertion = start === end && hunk.start === hunk.end && hunk.start === start;
+            const sharedInsertionStart = hunk.start === hunk.end && hunk.start === start;
+            return rangesOverlap || sameInsertion || sharedInsertionStart;
+          };
+          while (groupIndex < allHunks.length && overlapsGroup(allHunks[groupIndex], groupStart, groupEnd)) {
+            groupEnd = Math.max(groupEnd, allHunks[groupIndex].end);
+            groupIndex += 1;
+          }
+
+          const baseSegment = baseLines.slice(groupStart, groupEnd);
+          const oursSegment = applyHunksToSegment(
+            baseLines,
+            groupStart,
+            groupEnd,
+            oursHunks.filter(hunk => overlapsGroup(hunk, groupStart, groupEnd))
+          );
+          const theirsSegment = applyHunksToSegment(
+            baseLines,
+            groupStart,
+            groupEnd,
+            theirsHunks.filter(hunk => overlapsGroup(hunk, groupStart, groupEnd))
+          );
+
+          if (JSON.stringify(oursSegment) === JSON.stringify(theirsSegment)) {
+            output.push(...oursSegment);
+          } else if (JSON.stringify(oursSegment) === JSON.stringify(baseSegment)) {
+            output.push(...theirsSegment);
+          } else if (JSON.stringify(theirsSegment) === JSON.stringify(baseSegment)) {
+            output.push(...oursSegment);
+          } else {
+            hadConflict = true;
+            output.push(
+              "<<<<<<< ours",
+              ...oursSegment,
+              "||||||| sync base",
+              ...baseSegment,
+              "=======",
+              ...theirsSegment,
+              ">>>>>>> capture"
+            );
+          }
+
+          cursor = groupEnd;
+          index = groupIndex;
+        }
+        output.push(...baseLines.slice(cursor));
+        return {
+          status: hadConflict ? "content-conflict" : "clean",
+          state: present(output.join("\n"))
+        };
+      }
+
+      function mergeFileStates(base, ours, theirs) {
+        if (fileEquals(ours, theirs)) return { status: "clean", state: cloneFile(ours) };
+        if (fileEquals(ours, base)) return { status: "clean", state: cloneFile(theirs) };
+        if (fileEquals(theirs, base)) return { status: "clean", state: cloneFile(ours) };
+
+        if (base.kind === "present" && ours.kind === "present" && theirs.kind === "present") {
+          return mergePresentText(base.text, ours.text, theirs.text);
+        }
+
+        /* Missing is a real value. Modify/delete is structural conflict, not empty text. */
+        return {
+          status: "structural-conflict",
+          state: cloneFile(theirs),
+          diagnostic: "modify/delete cannot be resolved by the text merger; Capture replacement remains available."
+        };
+      }
+
+      function isAncestor(ancestor, descendant, commits) {
+        let cursor = descendant;
+        const visited = new Set();
+        while (cursor && !visited.has(cursor)) {
+          if (cursor === ancestor) return true;
+          visited.add(cursor);
+          const commit = commits[cursor];
+          cursor = commit ? commit.parent : null;
+        }
+        return false;
+      }
+
+      function baseAssessment(state) {
+        if (!state.base) return { kind: "missing", label: "no Sync Base" };
+        const commit = state.commits[state.base.commit];
+        if (!commit) return { kind: "stale", label: "stale: commit is unavailable", reason: "the frozen commit is no longer available" };
+        if (state.base.fingerprint !== state.fingerprint) {
+          return { kind: "stale", label: "stale: fingerprint changed", reason: "effective reconciliation inputs changed" };
+        }
+        if (!isAncestor(state.base.commit, state.head, state.commits)) {
+          return { kind: "stale", label: "stale: anchor is not an ancestor", reason: `HEAD ${state.head} no longer descends from ${state.base.commit}` };
+        }
+        if (!fileEquals(state.base.payload, commit.payload)) {
+          return { kind: "stale", label: "stale: checkout payload mismatch", reason: "the persisted payload does not match isolated checkout materialization" };
+        }
+        return { kind: "applicable", label: `${state.base.provenance} base at ${state.base.commit}` };
+      }
+
+      function projectRepoView(state) {
+        if (state.config.repoView === "render") return transformFile(state.repo, state.config);
+        return cloneFile(state.repo);
+      }
+
+      function projectLiveRaw(state) {
+        return cloneFile(state.live);
+      }
+
+      function captureOutput(state) {
+        if (state.config.capture === "fail") {
+          return {
+            status: "failed",
+            diagnostic: state.config.captureFailure || "Capture command exited with status 100."
+          };
+        }
+        if (state.config.capture === "jinja-patch") {
+          const rawRepo = state.repo;
+          const reviewRepo = projectRepoView(state);
+          const reviewLive = projectLiveRaw(state);
+          if (rawRepo.kind === "missing" || reviewRepo.kind === "missing" || reviewLive.kind === "missing") {
+            return { status: "failed", diagnostic: "Jinja patch Capture requires present UTF-8 review inputs." };
+          }
+          const rawLines = splitLines(rawRepo.text);
+          const reviewRepoLines = splitLines(reviewRepo.text);
+          if (rawLines.length !== reviewRepoLines.length) {
+            return { status: "failed", diagnostic: "Jinja patch Capture rejected a raw/review line-count mismatch." };
+          }
+          const candidateLines = rawLines.slice();
+          const hunks = diffHunks(reviewRepo.text, reviewLive.text);
+          for (let index = hunks.length - 1; index >= 0; index -= 1) {
+            const hunk = hunks[index];
+            candidateLines.splice(hunk.start, hunk.end - hunk.start, ...hunk.replacement);
+          }
+          const candidate = present(candidateLines.join("\n"));
+          const projected = transformFile(candidate, state.config);
+          if (!fileEquals(projected, reviewLive)) {
+            return { status: "failed", diagnostic: "Jinja patch Capture failed its forward reprojection check." };
+          }
+          return {
+            status: "captured",
+            value: candidate,
+            label: "Jinja patch Capture",
+            diagnostic: "Patched raw source, then verified render(candidate) equals the reviewed live bytes."
+          };
+        }
+        return {
+          status: "captured",
+          value: cloneFile(state.live),
+          label: state.config.explicitCapture ? "configured raw Capture" : "default raw live fallback",
+          diagnostic: "Capture owns the repository-representation contract; no generic inverse transform is assumed."
+        };
+      }
+
+      function note(state, message, detail) {
+        state.lastAction = message;
+        state.lastDetail = detail || "";
+        state.log.push({ message, detail: detail || "" });
+        if (state.log.length > 36) state.log.shift();
+      }
+
+      function invalidatePlanning(state) {
+        state.observation = null;
+        state.captureResult = null;
+        state.proposal = null;
+        state.phase = "ready";
+      }
+
+      function ensureCapture(state, reason) {
+        if (state.captureResult) return state.captureResult;
+        const result = captureOutput(state);
+        state.captureCount += 1;
+        state.captureResult = result;
+        if (result.status === "captured") {
+          note(state, `Capture ran (${reason})`, `${result.label}; result retained for later proposal work.`);
+        } else {
+          note(state, `Capture failed (${reason})`, result.diagnostic);
+        }
+        return result;
+      }
+
+      function makeWriteSet(state, before, after) {
+        let change = "noop";
+        if (before.kind === "missing" && after.kind === "present") change = "create";
+        else if (before.kind === "present" && after.kind === "missing") change = "delete";
+        else if (!fileEquals(before, after)) change = "update";
+        return [{
+          path: state.unit.repoPath,
+          change,
+          before: cloneFile(before),
+          after: cloneFile(after)
+        }];
+      }
+
+      function proposalFor(state, details) {
+        const before = cloneFile(details.before || state.repo);
+        const after = cloneFile(details.after || before);
+        const writeSet = makeWriteSet(state, before, after);
+        const isNoop = writeSet.every(entry => entry.change === "noop");
+        let status = details.status || "clean";
+        if (status === "clean" && isNoop) status = "noop";
+        return {
+          label: details.label || "repository proposal",
+          status,
+          strategy: details.strategy || "three-way merge",
+          before,
+          after,
+          context: clone(details.context || {}),
+          diagnostics: (details.diagnostics || []).slice(),
+          writeSet,
+          approved: false,
+          edited: false,
+          applied: false,
+          replaceAvailable: Boolean(details.replaceAvailable),
+          conflictType: details.conflictType || null
+        };
+      }
+
+      function failureProposal(state, diagnostic) {
+        return proposalFor(state, {
+          label: "capture/reconciliation failure",
+          status: "failed",
+          strategy: "none",
+          after: state.repo,
+          context: { ours: state.repo, captured: null, base: null },
+          diagnostics: [diagnostic],
+          replaceAvailable: false
+        });
+      }
+
+      function materialize(state) {
+        let next = clone(state);
+        if (!next.observation) next = observe(next);
+        if (!next.observation) return next;
+
+        if (next.observation.status === "in-sync") {
+          next.proposal = null;
+          next.phase = "observed";
+          note(next, "No proposal needed", "Pull Views agree; this Sync Unit is omitted from changed Pull work.");
+          return next;
+        }
+
+        if (next.observation.status === "observation-failed") {
+          next.proposal = failureProposal(next, next.observation.diagnostic);
+          next.phase = "reviewed";
+          note(next, "Failure retained as an unapprovable proposal", "Fix Capture or use an explicit manual Proposal Editor path.");
+          return next;
+        }
+
+        const capture = ensureCapture(next, "proposal materialization");
+        if (capture.status !== "captured") {
+          next.proposal = failureProposal(next, capture.diagnostic);
+          next.phase = "reviewed";
+          note(next, "Proposal materialization stopped after Capture failure", "No merge or replacement was attempted.");
+          return next;
+        }
+
+        const assessment = baseAssessment(next);
+        if (assessment.kind !== "applicable") {
+          if (next.base) {
+            next.staleBase = { record: clone(next.base), reason: assessment.reason || "no applicable base" };
+            next.base = null;
+            note(next, "Discarded an inapplicable Sync Base", assessment.reason || "base was not applicable");
+          }
+          next.proposal = proposalFor(next, {
+            label: assessment.kind === "missing" ? "replacement (no Sync Base)" : "replacement (stale Sync Base)",
+            strategy: "Capture replacement",
+            status: "replacement",
+            after: capture.value,
+            context: { base: null, ours: next.repo, captured: capture.value, baseAssessment: assessment },
+            diagnostics: [assessment.kind === "missing" ? "No applicable Sync Base exists; review the captured repository representation as a replacement." : assessment.reason],
+            replaceAvailable: true
+          });
+          next.phase = "reviewed";
+          note(next, "Materialized a Capture replacement", next.proposal.label);
+          return next;
+        }
+
+        const merge = mergeFileStates(next.base.payload, next.repo, capture.value);
+        const context = {
+          base: next.base,
+          ours: next.repo,
+          captured: capture.value,
+          mergeStatus: merge.status
+        };
+        if (merge.status === "clean") {
+          next.proposal = proposalFor(next, {
+            label: "clean three-way merge",
+            strategy: "Git-style file merge",
+            status: "clean",
+            after: merge.state,
+            context
+          });
+          next.phase = "reviewed";
+          note(next, "Materialized a clean repository-space merge", next.proposal.writeSet[0].change === "noop" ? "The merged result is a repository noop." : "Proposal is ready for review.");
+          return next;
+        }
+
+        if (merge.status === "content-conflict") {
+          next.proposal = proposalFor(next, {
+            label: "content conflict",
+            strategy: "Git-style file merge",
+            status: "conflict",
+            after: merge.state,
+            context,
+            diagnostics: ["The text merger produced conflict markers. Resolve with Edit Proposal or choose Replace with Capture."],
+            replaceAvailable: true,
+            conflictType: "content"
+          });
+          next.phase = "reviewed";
+          note(next, "Materialized a content-conflict proposal", "It is not approvable until the conflict is explicitly resolved.");
+          return next;
+        }
+
+        next.proposal = proposalFor(next, {
+          label: "structural conflict → capture replacement",
+          strategy: "Capture replacement fallback",
+          status: "conflict",
+          after: capture.value,
+          context,
+          diagnostics: [merge.diagnostic || "Structural merge conflict."],
+          replaceAvailable: true,
+          conflictType: "structural"
+        });
+        next.phase = "reviewed";
+        note(next, "Materialized a structural-conflict proposal", "Capture remains available as an explicit replacement.");
+        return next;
+      }
+
+      function observe(state) {
+        const next = clone(state);
+        next.observation = null;
+        next.captureResult = null;
+        next.proposal = null;
+        next.phase = "observed";
+        const repoView = projectRepoView(next);
+        let liveView;
+        if (next.config.liveView === "capture") {
+          const capture = ensureCapture(next, "Capture-backed live Pull View");
+          if (capture.status !== "captured") {
+            next.observation = {
+              status: "observation-failed",
+              repoView,
+              liveView: null,
+              diagnostic: capture.diagnostic
+            };
+            note(next, "Observation failed", "A Capture-backed Pull View could not establish observed drift.");
+            return next;
+          }
+          liveView = cloneFile(capture.value);
+        } else {
+          liveView = projectLiveRaw(next);
+        }
+        const status = fileEquals(repoView, liveView) ? "in-sync" : "observed-drift";
+        next.observation = {
+          status,
+          repoView,
+          liveView,
+          diagnostic: status === "in-sync" ? "Pull Views agree." : "Pull Views differ; Capture remains lazy until proposal work needs it."
+        };
+        note(next, status === "in-sync" ? "Observed InSync" : "Observed drift", next.observation.diagnostic);
+        return next;
+      }
+
+      function refreshProposal(next, after, details) {
+        const current = next.proposal;
+        if (!current) return next;
+        const writeSet = makeWriteSet(next, current.before, after);
+        const isNoop = writeSet.every(entry => entry.change === "noop");
+        next.proposal = {
+          ...current,
+          label: details.label || current.label,
+          strategy: details.strategy || current.strategy,
+          status: details.status || (isNoop ? "noop" : "clean"),
+          after: cloneFile(after),
+          writeSet,
+          approved: false,
+          edited: Boolean(details.edited),
+          applied: false,
+          diagnostics: details.diagnostics || current.diagnostics,
+          replaceAvailable: details.replaceAvailable === undefined ? current.replaceAvailable : details.replaceAvailable
+        };
+        next.phase = "reviewed";
+        return next;
+      }
+
+      function editProposal(state) {
+        let next = clone(state);
+        if (!next.proposal) next = materialize(next);
+        if (!next.proposal) return next;
+        if (next.proposal.status === "failed") {
+          const manual = next.config.editorResult ? present(next.config.editorResult) : appendText(next.repo, "\n# manually resolved in proposal\n");
+          refreshProposal(next, manual, {
+            label: "manually edited proposal",
+            strategy: "Proposal Editor",
+            status: "clean",
+            edited: true,
+            diagnostics: ["The editor supplied a repository representation after Capture failed."]
+          });
+          note(next, "Edited a failed proposal transactionally", "The managed source is still unchanged.");
+          return next;
+        }
+        let edited;
+        if (next.config.editorResult) {
+          edited = present(next.config.editorResult);
+        } else if (next.proposal.after.kind === "present") {
+          edited = appendText(next.proposal.after, "\n# manually edited in proposal");
+        } else {
+          edited = present("# manually created in proposal\n");
+        }
+        refreshProposal(next, edited, {
+          label: "manually edited proposal",
+          strategy: "Proposal Editor",
+          status: "clean",
+          edited: true,
+          diagnostics: ["Proposal Editor changed the transactional copy; Apply is still required."]
+        });
+        note(next, "Edited Proposal transactionally", "Proposal approval was reset; the managed source is unchanged.");
+        return next;
+      }
+
+      function replaceWithCapture(state) {
+        let next = clone(state);
+        if (!next.proposal) next = materialize(next);
+        if (!next.proposal) return next;
+        const capture = ensureCapture(next, "explicit replacement");
+        if (capture.status !== "captured") {
+          note(next, "Replacement unavailable", capture.diagnostic);
+          return next;
+        }
+        refreshProposal(next, capture.value, {
+          label: "explicit replacement with Capture",
+          strategy: "Capture replacement",
+          status: "replacement",
+          diagnostics: ["Replacement was chosen explicitly; merge conflict context is retained."],
+          replaceAvailable: true
+        });
+        note(next, "Selected Capture replacement", "Approval is still required before Apply.");
+        return next;
+      }
+
+      function approve(state) {
+        let next = clone(state);
+        if (!next.proposal) next = materialize(next);
+        if (!next.proposal) return next;
+        const entry = next.proposal.writeSet[0];
+        const canApprove = ["clean", "replacement"].includes(next.proposal.status) && entry && entry.change !== "noop";
+        if (!canApprove) {
+          note(next, "Approval withheld", next.proposal.status === "noop" ? "Observed-drift noop and failure-derived noop proposals are not approvable." : "Resolve the conflict or create a clean replacement first.");
+          return next;
+        }
+        next.proposal.approved = true;
+        next.phase = "approved";
+        note(next, "Proposal approved in memory", "No repository source has been written.");
+        return next;
+      }
+
+      function apply(state) {
+        const next = clone(state);
+        if (!next.proposal || !next.proposal.approved) {
+          note(next, "Apply refused", "Only an approved Proposal may reach the repository mutation seam.");
+          return next;
+        }
+        if (!["clean", "replacement"].includes(next.proposal.status)) {
+          note(next, "Apply refused", "Unresolved, failed, or noop proposals are never written.");
+          return next;
+        }
+        if (!fileEquals(next.repo, next.proposal.before)) {
+          next.proposal.approved = false;
+          note(next, "Apply refused", "The working tree changed after materialization; the Proposal must be recomputed.");
+          return next;
+        }
+        const change = next.proposal.writeSet[0].change;
+        if (change === "noop") {
+          note(next, "Apply refused", "Changed Pulls do not use ancestry-only noop Apply.");
+          return next;
+        }
+        next.repo = cloneFile(next.proposal.after);
+        next.sourceMutationCount += 1;
+        next.sourceMutations.push({ change, path: next.unit.repoPath });
+        next.proposal.applied = true;
+        next.proposal.status = "applied";
+        next.phase = "applied";
+        note(next, "Applied Proposal atomically", `Repository source changed by ${change}; Sync Base remains ${next.base ? next.base.commit : "missing"}.`);
+        return next;
+      }
+
+      function acknowledgePush(state) {
+        const next = clone(state);
+        const commit = next.commits[next.head];
+        if (!commit) {
+          note(next, "Push acknowledgement unavailable", `HEAD ${next.head} is not materializable.`);
+          return next;
+        }
+        next.base = {
+          commit: next.head,
+          payload: cloneFile(commit.payload),
+          fingerprint: next.fingerprint,
+          provenance: next.relevantStatus === "clean" ? "exact" : "conservative",
+          materializedFrom: "isolated checkout"
+        };
+        next.staleBase = null;
+        note(next, `Acknowledged Push at ${next.head}`, `${next.base.provenance} Sync Base recorded from isolated checkout; no Pull source was changed.`);
+        return next;
+      }
+
+      function establishNoChangeBase(state) {
+        const next = clone(state);
+        if (!next.observation || next.observation.status !== "in-sync") {
+          note(next, "No-change base not established", "Fresh Pull View equality is required.");
+          return next;
+        }
+        if (next.relevantStatus !== "clean") {
+          note(next, "No-change base not established", "Relevant Git inputs must be clean for exact ancestry.");
+          return next;
+        }
+        const commit = next.commits[next.head];
+        if (!commit) {
+          note(next, "No-change base not established", `HEAD ${next.head} cannot be materialized.`);
+          return next;
+        }
+        next.base = {
+          commit: next.head,
+          payload: cloneFile(commit.payload),
+          fingerprint: next.fingerprint,
+          provenance: "exact",
+          materializedFrom: "isolated checkout"
+        };
+        next.staleBase = null;
+        note(next, `Established exact base from no-change Pull at ${next.head}`, "Pull Views were freshly equal and relevant Git inputs were clean.");
+        return next;
+      }
+
+      function toggleDirty(state) {
+        const next = clone(state);
+        next.relevantStatus = next.relevantStatus === "clean" ? "dirty" : "clean";
+        invalidatePlanning(next);
+        note(next, `Relevant Git status is now ${next.relevantStatus}`, next.relevantStatus === "dirty" ? "A qualifying Push would record conservative provenance." : "A qualifying Push could record exact provenance.");
+        return next;
+      }
+
+      function resetHead(state) {
+        const next = clone(state);
+        next.head = next.alternateHead;
+        invalidatePlanning(next);
+        note(next, `HEAD moved to unrelated ${next.head}`, "Any base anchored only on the original branch is now inapplicable.");
+        return next;
+      }
+
+      function restoreHead(state) {
+        const next = clone(state);
+        next.head = next.originalHead;
+        invalidatePlanning(next);
+        note(next, `HEAD restored to ${next.head}`, "Planning state was cleared; the Sync Base record itself was retained until proven stale.");
+        return next;
+      }
+
+      function changeLive(state) {
+        const next = clone(state);
+        next.live = appendText(next.live, next.live.kind === "missing" ? "live edit\n" : "\nlive edit");
+        invalidatePlanning(next);
+        note(next, "Appended a live edit", "A fresh Pull View is required before proposal work.");
+        return next;
+      }
+
+      function dispatch(state, action) {
+        switch (action.type) {
+          case "observe": return observe(state);
+          case "review": return materialize(state);
+          case "edit": return editProposal(state);
+          case "replace": return replaceWithCapture(state);
+          case "approve": return approve(state);
+          case "apply": return apply(state);
+          case "acknowledge-push": return acknowledgePush(state);
+          case "establish-no-change-base": return establishNoChangeBase(state);
+          case "toggle-dirty": return toggleDirty(state);
+          case "reset-head": return resetHead(state);
+          case "restore-head": return restoreHead(state);
+          case "change-live": return changeLive(state);
+          default: {
+            const next = clone(state);
+            note(next, "Unknown action", action.type || "missing action type");
+            return next;
+          }
+        }
+      }
+
+      const FIXTURES = [
+        {
+          id: "raw-merge",
+          title: "Raw/default · clean merge",
+          description: "Pull Views use raw repository and live bytes. Capture is the default raw live fallback and stays lazy until Review needs a repository representation.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "clean",
+          repoPath: "packages/core/files/config",
+          repo: "alpha\nrepo edit\n",
+          live: "live edit\nshared\n",
+          commits: {
+            A: { parent: null, payload: "alpha\nshared\n" },
+            SIDE: { parent: null, payload: "alpha\nshared\n" }
+          },
+          base: { commit: "A", provenance: "exact" },
+          config: {
+            repoView: "raw",
+            liveView: "raw",
+            capture: "raw",
+            explicitCapture: false,
+            transform: null,
+            variables: {}
+          },
+          steps: [
+            { label: "Observe the raw Pull Views", hint: "See drift without running Capture.", action: "observe" },
+            { label: "Review the proposal", hint: "Run raw Capture once, then merge B/O/T.", action: "review" },
+            { label: "Approve the clean merge", hint: "Approval is still in memory only.", action: "approve" },
+            { label: "Apply the write set", hint: "Only now does the repository source change.", action: "apply" }
+          ]
+        },
+        {
+          id: "jinja-patch",
+          title: "Jinja patch Capture",
+          description: "The Pull View compares rendered repository output to raw live bytes. Patch Capture returns a raw template source, then generic repository-space merge runs separately.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "dirty",
+          repoPath: "packages/core/files/config.tmpl",
+          repo: "# managed\nname = \"{{ user }}\"\ncolor = \"blue\"\ntheme = \"dark\"\n",
+          live: "# managed\nname = \"work\"\ncolor = \"green\"\n",
+          commits: {
+            A: { parent: null, payload: "# managed\nname = \"{{ user }}\"\ncolor = \"blue\"\n" },
+            SIDE: { parent: null, payload: "# managed\nname = \"{{ user }}\"\ncolor = \"blue\"\n" }
+          },
+          base: { commit: "A", provenance: "conservative" },
+          config: {
+            repoView: "render",
+            liveView: "raw",
+            capture: "jinja-patch",
+            explicitCapture: true,
+            transform: "jinja",
+            variables: { user: "work" }
+          },
+          steps: [
+            { label: "Observe rendered-vs-raw drift", hint: "Pull Views differ; Capture has not run.", action: "observe" },
+            { label: "Review and run patch Capture", hint: "Patch raw source and verify the forward render.", action: "review" },
+            { label: "Approve the merged template source", hint: "The result stays repository representation.", action: "approve" },
+            { label: "Apply the proposal", hint: "The template source changes only at Apply.", action: "apply" }
+          ]
+        },
+        {
+          id: "transform-fallback",
+          title: "Transformed · raw fallback",
+          description: "A deterministic render exists, but no reverse Capture is configured. The default Capture intentionally copies raw live bytes; it does not invent an inverse transform.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "clean",
+          repoPath: "packages/core/files/settings",
+          repo: "one\nrepo\n",
+          live: "ONE\nLIVE\n",
+          commits: {
+            A: { parent: null, payload: "one\ntwo\n" },
+            SIDE: { parent: null, payload: "one\ntwo\n" }
+          },
+          base: { commit: "A", provenance: "exact" },
+          config: {
+            repoView: "render",
+            liveView: "raw",
+            capture: "raw",
+            explicitCapture: false,
+            transform: "uppercase",
+            variables: {}
+          },
+          steps: [
+            { label: "Observe transformed Pull View drift", hint: "Rendered repo output differs from raw live output.", action: "observe" },
+            { label: "Review the raw fallback", hint: "Capture returns raw live bytes; merge may expose representation conflict.", action: "review" },
+            { label: "Choose explicit replacement", hint: "Make the raw fallback a deliberate repository proposal.", action: "replace" },
+            { label: "Approve replacement", hint: "Replacement is clean after the explicit choice.", action: "approve" },
+            { label: "Apply replacement", hint: "The source receives exactly the captured raw bytes.", action: "apply" }
+          ]
+        },
+        {
+          id: "missing-base",
+          title: "Missing base · replacement",
+          description: "Capture succeeds, but no applicable Sync Base exists. The first proposal is directly labeled replacement (no Sync Base); there is no hidden HEAD fallback.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "clean",
+          repoPath: "packages/core/files/new.conf",
+          repo: "old repository value\n",
+          live: "new live value\n",
+          commits: {
+            A: { parent: null, payload: "old repository value\n" },
+            SIDE: { parent: null, payload: "old repository value\n" }
+          },
+          base: null,
+          config: {
+            repoView: "raw",
+            liveView: "raw",
+            capture: "raw",
+            explicitCapture: false,
+            transform: null,
+            variables: {}
+          },
+          steps: [
+            { label: "Observe drift", hint: "No base is consulted during observation.", action: "observe" },
+            { label: "Review the no-base replacement", hint: "Capture is the proposed repository representation.", action: "review" },
+            { label: "Approve replacement", hint: "The proposal is a normal write after review.", action: "approve" },
+            { label: "Apply", hint: "Base remains missing after changed Pull Apply.", action: "apply" }
+          ]
+        },
+        {
+          id: "capture-failure",
+          title: "Capture failure · manual editor",
+          description: "A changed Pull whose Capture fails cannot be merged or replaced automatically. The failure remains visible and unapprovable until a Proposal Editor supplies repository bytes transactionally.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "clean",
+          repoPath: "packages/core/files/failing.conf",
+          repo: "base\nrepo edit\n",
+          live: "base\nlive edit\n",
+          commits: {
+            A: { parent: null, payload: "base\nbase\n" },
+            SIDE: { parent: null, payload: "base\nbase\n" }
+          },
+          base: { commit: "A", provenance: "exact" },
+          config: {
+            repoView: "raw",
+            liveView: "raw",
+            capture: "fail",
+            explicitCapture: true,
+            captureFailure: "Capture command exited with status 100 (representative failure).",
+            transform: null,
+            variables: {},
+            editorResult: "base\nmanual resolution\n"
+          },
+          steps: [
+            { label: "Observe drift", hint: "The failed Capture has not run yet.", action: "observe" },
+            { label: "Review the Capture failure", hint: "Failure becomes an unapprovable noop proposal.", action: "review" },
+            { label: "Edit with Proposal Editor", hint: "Supply repository bytes in a transactional copy.", action: "edit" },
+            { label: "Approve the edited proposal", hint: "Editing resets approval before this step.", action: "approve" },
+            { label: "Apply", hint: "Only the resolved proposal can mutate the source.", action: "apply" }
+          ]
+        },
+        {
+          id: "content-conflict",
+          title: "Content conflict · edit",
+          description: "Ours and Capture change the same base line. Git-style conflict markers are visible in the Proposal; editing the transactional copy is the explicit resolution.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "clean",
+          repoPath: "packages/core/files/color.conf",
+          repo: "color = red\nkeep = yes\n",
+          live: "color = blue\nkeep = yes\n",
+          commits: {
+            A: { parent: null, payload: "color = base\nkeep = yes\n" },
+            SIDE: { parent: null, payload: "color = base\nkeep = yes\n" }
+          },
+          base: { commit: "A", provenance: "exact" },
+          config: {
+            repoView: "raw",
+            liveView: "raw",
+            capture: "raw",
+            explicitCapture: false,
+            transform: null,
+            variables: {},
+            editorResult: "color = purple\nkeep = yes\n"
+          },
+          steps: [
+            { label: "Observe conflict drift", hint: "Capture still waits.", action: "observe" },
+            { label: "Review conflict markers", hint: "The Proposal is unapprovable while unresolved.", action: "review" },
+            { label: "Edit the transactional Proposal", hint: "Choose an explicit resolved repository value.", action: "edit" },
+            { label: "Approve the resolved Proposal", hint: "Approval happens after editing and resets cleanly.", action: "approve" },
+            { label: "Apply the resolution", hint: "Only the approved draft mutates the source.", action: "apply" }
+          ]
+        },
+        {
+          id: "missing-structural",
+          title: "Missing live file · structural conflict",
+          description: "Missing is a typed state, not empty bytes. A repository edit against a live deletion becomes a structural conflict with Capture replacement available.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "clean",
+          repoPath: "packages/core/files/removed.conf",
+          repo: "repository edit\n",
+          live: null,
+          commits: {
+            A: { parent: null, payload: "managed value\n" },
+            SIDE: { parent: null, payload: "managed value\n" }
+          },
+          base: { commit: "A", provenance: "exact" },
+          config: {
+            repoView: "raw",
+            liveView: "raw",
+            capture: "raw",
+            explicitCapture: false,
+            transform: null,
+            variables: {}
+          },
+          steps: [
+            { label: "Observe the typed deletion", hint: "Live Pull View is Missing.", action: "observe" },
+            { label: "Review structural conflict", hint: "Merge keeps context and proposes Capture replacement.", action: "review" },
+            { label: "Choose deletion replacement", hint: "Make Missing the explicit repository result.", action: "replace" },
+            { label: "Approve the deletion", hint: "The write set is a typed delete, not empty bytes.", action: "approve" },
+            { label: "Apply", hint: "Only Apply removes the repository source.", action: "apply" }
+          ]
+        },
+        {
+          id: "no-change-base",
+          title: "No-change Pull · exact base",
+          description: "A fresh, directly evaluated no-change Pull with clean relevant Git inputs may establish an exact commit-anchored base without running Capture.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "clean",
+          repoPath: "packages/core/files/in-sync.conf",
+          repo: "same\n",
+          live: "same\n",
+          commits: {
+            A: { parent: null, payload: "same\n" },
+            SIDE: { parent: null, payload: "same\n" }
+          },
+          base: null,
+          config: {
+            repoView: "raw",
+            liveView: "raw",
+            capture: "raw",
+            explicitCapture: false,
+            transform: null,
+            variables: {}
+          },
+          steps: [
+            { label: "Observe InSync", hint: "No Capture is needed to prove equality.", action: "observe" },
+            { label: "Establish exact base", hint: "Use the isolated checkout payload at the clean HEAD.", action: "establish-no-change-base" }
+          ]
+        },
+        {
+          id: "capture-backed-view",
+          title: "Capture-backed Pull View",
+          description: "When the live Pull View itself is Capture, observation must run Capture once and retain the result. Review reuses it instead of invoking Capture again.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "clean",
+          repoPath: "packages/core/files/captured.conf",
+          repo: "same\n",
+          live: "same\nchanged\n",
+          commits: {
+            A: { parent: null, payload: "same\n" },
+            SIDE: { parent: null, payload: "same\n" }
+          },
+          base: { commit: "A", provenance: "exact" },
+          config: {
+            repoView: "raw",
+            liveView: "capture",
+            capture: "raw",
+            explicitCapture: true,
+            transform: null,
+            variables: {}
+          },
+          steps: [
+            { label: "Observe the Capture-backed View", hint: "Capture count becomes 1 during observation.", action: "observe" },
+            { label: "Review the proposal", hint: "The retained Capture result is reused.", action: "review" },
+            { label: "Review again", hint: "Capture count must stay at 1.", action: "review" }
+          ]
+        },
+        {
+          id: "ancestry",
+          title: "Conservative then stale ancestry",
+          description: "A dirty Push can establish a conservative committed base. The same merge works. Moving HEAD to an unrelated branch proves the anchor stale and forces reviewed replacement.",
+          head: "A",
+          alternateHead: "SIDE",
+          relevantStatus: "dirty",
+          repoPath: "packages/core/files/ancestry.conf",
+          repo: "base\nrepo dirty\n",
+          live: "live change\nbase\n",
+          commits: {
+            A: { parent: null, payload: "base\nbase\n" },
+            SIDE: { parent: null, payload: "base\nbase\n" }
+          },
+          base: { commit: "A", provenance: "conservative" },
+          config: {
+            repoView: "raw",
+            liveView: "raw",
+            capture: "raw",
+            explicitCapture: false,
+            transform: null,
+            variables: {}
+          },
+          steps: [
+            { label: "Observe with conservative base", hint: "The provenance is visible but merge semantics stay the same.", action: "observe" },
+            { label: "Review the conservative merge", hint: "Use the isolated-checkout payload as B.", action: "review" },
+            { label: "Reset HEAD to unrelated branch", hint: "The prior commit anchor becomes stale.", action: "reset-head" },
+            { label: "Observe again", hint: "Pull Views still detect drift.", action: "observe" },
+            { label: "Review stale-anchor replacement", hint: "The stale base is discarded; no arbitrary HEAD merge occurs.", action: "review" }
+          ]
+        }
+      ];
+
+      function create(fixtureId) {
+        const fixture = FIXTURES.find(item => item.id === fixtureId) || FIXTURES[0];
+        const commits = {};
+        for (const [id, commit] of Object.entries(fixture.commits)) {
+          commits[id] = { parent: commit.parent, payload: asFile(commit.payload) };
+        }
+        const base = fixture.base ? {
+          commit: fixture.base.commit,
+          payload: cloneFile(commits[fixture.base.commit].payload),
+          fingerprint: fixture.base.fingerprint || "v1",
+          provenance: fixture.base.provenance,
+          materializedFrom: "isolated checkout"
+        } : null;
+        const state = {
+          scenarioId: fixture.id,
+          scenarioTitle: fixture.title,
+          unit: {
+            identity: "demo:core.config",
+            repoPath: fixture.repoPath
+          },
+          repo: asFile(fixture.repo),
+          live: asFile(fixture.live),
+          head: fixture.head,
+          originalHead: fixture.head,
+          alternateHead: fixture.alternateHead,
+          commits,
+          relevantStatus: fixture.relevantStatus,
+          fingerprint: "v1",
+          config: clone(fixture.config),
+          base,
+          staleBase: null,
+          observation: null,
+          captureResult: null,
+          captureCount: 0,
+          proposal: null,
+          phase: "ready",
+          lastAction: "Scenario loaded",
+          lastDetail: fixture.description,
+          sourceMutationCount: 0,
+          sourceMutations: [],
+          log: [{ message: "Scenario loaded", detail: fixture.description }]
+        };
+        return state;
+      }
+
+      function scenario(fixtureId) {
+        return FIXTURES.find(item => item.id === fixtureId) || FIXTURES[0];
+      }
+
+      return {
+        create,
+        dispatch,
+        scenario,
+        scenarios: FIXTURES.map(item => ({ id: item.id, title: item.title, description: item.description, steps: item.steps })) ,
+        assessBase: baseAssessment,
+        projectRepoView,
+        fileLabel,
+        phaseLabels: PHASE_LABELS
+      };
+    })();
+
+    const ACTION_LABELS = {
+      observe: "Observe Pull Views",
+      review: "Review / materialize",
+      edit: "Edit Proposal",
+      replace: "Replace with Capture",
+      approve: "Approve",
+      apply: "Apply",
+      "acknowledge-push": "Acknowledge Push at HEAD",
+      "establish-no-change-base": "Establish exact base from no-change Pull",
+      "toggle-dirty": "Toggle relevant Git dirt",
+      "reset-head": "Reset HEAD to unrelated branch",
+      "restore-head": "Restore original HEAD",
+      "change-live": "Append a live edit"
+    };
+
+    let state = DotmanPrototype.create("raw-merge");
+    let activeScenarioId = "raw-merge";
+    let walkthroughStep = 0;
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function statusClass(status) {
+      if (["clean", "in-sync", "approved", "applied"].includes(status)) return "good";
+      if (["observed-drift", "reviewed", "replacement", "conservative", "stale"].includes(status)) return "warn";
+      if (["conflict", "content-conflict", "structural-conflict", "failed", "observation-failed"].includes(status)) return "bad";
+      if (["captured", "exact"].includes(status)) return "accent";
+      return "neutral";
+    }
+
+    function statusPill(label, status) {
+      return `<span class="status ${statusClass(status)}">${escapeHtml(label)}</span>`;
+    }
+
+    function tag(label, kind = "") {
+      return `<span class="tag ${kind}">${escapeHtml(label)}</span>`;
+    }
+
+    function renderFile(value, label) {
+      if (!value) return `<div class="file-state missing"><span class="missing-mark">?</span>Unavailable</div>`;
+      if (value.kind === "missing") {
+        return `<div class="file-state missing"><span class="missing-mark">∅</span><span>${escapeHtml(label || "Missing")}</span></div>`;
+      }
+      return `<div class="file-state"><div class="file-label">${escapeHtml(label || "Present(bytes)")}</div><pre>${escapeHtml(value.text)}</pre></div>`;
+    }
+
+    function renderFacts() {
+      const assessment = DotmanPrototype.assessBase(state);
+      const captureLabel = state.captureResult
+        ? (state.captureResult.status === "captured" ? state.captureResult.label : "Capture failed")
+        : "not run";
+      return [
+        ["Sync Unit", state.unit.identity],
+        ["HEAD", state.head],
+        ["Git inputs", state.relevantStatus],
+        ["Capture calls", String(state.captureCount)],
+        ["Capture state", captureLabel],
+        ["Base", assessment.kind === "applicable" ? state.base.provenance : assessment.label],
+        ["Source writes", String(state.sourceMutationCount)],
+        ["Phase", DotmanPrototype.phaseLabels[state.phase] || state.phase]
+      ].map(([label, value]) => `<div class="fact"><span class="fact-label">${escapeHtml(label)}</span><span class="fact-value" title="${escapeHtml(value)}">${escapeHtml(value)}</span></div>`).join("");
+    }
+
+    function renderEndpoints() {
+      const repoView = state.config.repoView === "render" ? "render" : "raw";
+      const liveView = state.config.liveView === "capture" ? "capture" : "raw";
+      return `
+        <div class="subcard">
+          <h3>Repository working tree</h3>
+          <p class="mono">${escapeHtml(state.unit.repoPath)}</p>
+          ${renderFile(state.repo, "current repository representation")}
+          <dl class="meta-list" style="margin-top: 10px">
+            <div class="meta-row"><dt>Pull View</dt><dd>${tag(repoView, repoView === "render" ? "accent" : "")}</dd></div>
+            <div class="meta-row"><dt>Render</dt><dd>${escapeHtml(state.config.transform || "none")}</dd></div>
+          </dl>
+        </div>
+        <div class="subcard">
+          <h3>Live filesystem</h3>
+          <p class="mono">~/.config/demo/config</p>
+          ${renderFile(state.live, "current live representation")}
+          <dl class="meta-list" style="margin-top: 10px">
+            <div class="meta-row"><dt>Pull View</dt><dd>${tag(liveView, liveView === "capture" ? "accent" : "")}</dd></div>
+            <div class="meta-row"><dt>Capture path</dt><dd>${escapeHtml(state.config.capture === "raw" ? (state.config.explicitCapture ? "raw" : "default raw") : state.config.capture)}</dd></div>
+          </dl>
+        </div>`;
+    }
+
+    function renderObservation() {
+      if (!state.observation) return `<div class="proposal-empty">Not observed yet. Pull Views are evaluated before Capture or reconciliation.</div>`;
+      const observation = state.observation;
+      const status = observation.status;
+      let callout = observation.diagnostic;
+      if (status === "observed-drift") callout += " Capture is still lazy unless this live View was Capture-backed.";
+      return `
+        <div class="subcard">
+          <div class="proposal-top">${statusPill(status.replaceAll("-", " "), status)} ${tag(`repo view: ${state.config.repoView}`)} ${tag(`live view: ${state.config.liveView}`)}</div>
+          <div class="columns-2">
+            <div><h3>Repository Pull View</h3>${renderFile(observation.repoView, "view used for comparison")}</div>
+            <div><h3>Live Pull View</h3>${renderFile(observation.liveView, "view used for comparison")}</div>
+          </div>
+          <div class="callout ${statusClass(status)}">${escapeHtml(callout)}</div>
+          ${state.captureResult ? `<div class="callout ${state.captureResult.status === "captured" ? "good" : "bad"}"><strong>${escapeHtml(state.captureResult.status === "captured" ? "Retained Capture" : "Capture diagnostic")}</strong><br>${escapeHtml(state.captureResult.status === "captured" ? `${state.captureResult.label}: ${state.captureResult.diagnostic}` : state.captureResult.diagnostic)}</div>` : ""}
+        </div>`;
+    }
+
+    function renderBase() {
+      const assessment = DotmanPrototype.assessBase(state);
+      if (!state.base) {
+        const stale = state.staleBase
+          ? `<div class="callout warn"><strong>Discarded stale record:</strong> ${escapeHtml(state.staleBase.record.commit)} · ${escapeHtml(state.staleBase.reason)}</div>`
+          : "";
+        return `<div class="subcard"><div class="proposal-top">${statusPill("no applicable Sync Base", "stale")}</div><p>There is no merge ancestor. A changed Pull becomes a reviewed Capture replacement.</p>${stale}</div>`;
+      }
+      const commit = state.commits[state.base.commit];
+      return `
+        <div class="subcard">
+          <div class="proposal-top">${statusPill(assessment.label, assessment.kind === "applicable" ? state.base.provenance : "stale")} ${tag("commit-anchored")} ${tag("isolated checkout", "accent")}</div>
+          <div class="columns-2">
+            <div>
+              <dl class="meta-list">
+                <div class="meta-row"><dt>Anchor</dt><dd class="mono">${escapeHtml(state.base.commit)}</dd></div>
+                <div class="meta-row"><dt>Current HEAD</dt><dd class="mono">${escapeHtml(state.head)}</dd></div>
+                <div class="meta-row"><dt>Fingerprint</dt><dd>${escapeHtml(state.base.fingerprint)}</dd></div>
+                <div class="meta-row"><dt>Provenance</dt><dd>${escapeHtml(state.base.provenance)}</dd></div>
+                <div class="meta-row"><dt>Applicability</dt><dd>${escapeHtml(assessment.kind)}</dd></div>
+              </dl>
+            </div>
+            <div>${renderFile(state.base.payload, `checkout ${state.base.commit} payload · merge B`)}</div>
+          </div>
+          ${assessment.kind !== "applicable" ? `<div class="callout bad"><strong>${escapeHtml(assessment.label)}:</strong> ${escapeHtml(assessment.reason || "base cannot be used")}</div>` : `<div class="callout">The commit is ancestry provenance. The isolated-checkout payload above, not current HEAD output, is the merge Base.</div>`}
+        </div>`;
+    }
+
+    function renderProposal() {
+      const proposal = state.proposal;
+      if (!proposal) return `<div class="proposal-empty">No proposal materialized. Review creates a transactional repository write set.</div>`;
+      const entry = proposal.writeSet[0];
+      const proposalStatus = proposal.status === "applied" ? "applied" : proposal.status;
+      const approvalTag = proposal.approved ? tag("approved in memory", "good") : tag("not approved");
+      const diagnostic = proposal.diagnostics.length ? `<div class="callout ${statusClass(proposal.status)}">${proposal.diagnostics.map(item => escapeHtml(item)).join("<br>")}</div>` : "";
+      const context = proposal.context || {};
+      return `
+        <div class="subcard">
+          <div class="proposal-top">${statusPill(proposal.label, proposalStatus)} ${tag(proposal.strategy, "accent")} ${approvalTag}${proposal.edited ? tag("edited", "accent") : ""}</div>
+          <div class="proposal-grid">
+            <div><h3>Before · current source</h3>${renderFile(proposal.before, "proposal precondition")}</div>
+            <div><h3>After · transactional draft</h3>${renderFile(proposal.after, "proposal candidate")}</div>
+          </div>
+          <div class="write-set">
+            ${proposal.writeSet.map(write => `<div class="write-row"><span class="mono">${escapeHtml(write.path)}</span><span>${escapeHtml(write.change)}</span></div>`).join("")}
+          </div>
+          <div class="callout ${proposal.approved ? "good" : ""}"><strong>${proposal.applied ? "Applied." : proposal.approved ? "Approved, waiting for Apply." : "Not applied."}</strong> ${proposal.applied ? "The source mutation happened at the sole Apply seam. The authoritative Sync Base did not advance." : "Review, Capture, editing, and approval do not mutate the managed source."}</div>
+          ${diagnostic}
+          <details style="margin-top: 12px"><summary>Show merge context</summary><div class="detail-body">
+            <div class="columns-3">
+              <div><h3>Base (B)</h3>${renderFile(context.base && context.base.payload ? context.base.payload : missing(), "Sync Base operand")}</div>
+              <div><h3>Ours (O)</h3>${renderFile(context.ours || proposal.before, "current repository")}</div>
+              <div><h3>Theirs (T)</h3>${renderFile(context.captured || missing(), "retained Capture")}</div>
+            </div>
+          </div></details>
+        </div>`;
+    }
+
+    function renderTrace() {
+      return state.log.map((event, index) => `<li><span class="trace-time">${String(index + 1).padStart(2, "0")}</span><span class="trace-message"><strong>${escapeHtml(event.message)}</strong>${event.detail ? `<br><span>${escapeHtml(event.detail)}</span>` : ""}</span></li>`).join("");
+    }
+
+    function renderScenarios() {
+      const scenarios = DotmanPrototype.scenarios;
+      const currentScenario = DotmanPrototype.scenario(activeScenarioId);
+      document.getElementById("scenario-tabs").innerHTML = scenarios.map(item => `<button class="scenario-tab ${item.id === activeScenarioId ? "active" : ""}" data-scenario="${escapeHtml(item.id)}" role="tab" aria-selected="${item.id === activeScenarioId}">${escapeHtml(item.title)}</button>`).join("");
+      const completed = walkthroughStep >= currentScenario.steps.length;
+      document.getElementById("scenario-body").innerHTML = `
+        <h3>${escapeHtml(currentScenario.title)}</h3>
+        <p>${escapeHtml(currentScenario.description)}</p>
+        <div class="scenario-steps">
+          ${currentScenario.steps.map((step, index) => {
+            const done = index < walkthroughStep;
+            const current = index === walkthroughStep;
+            return `<div class="scenario-step ${done ? "done" : current ? "current" : ""}">
+              <span class="step-number">${done ? "✓" : index + 1}</span>
+              <span class="step-copy"><strong>${escapeHtml(step.label)}</strong><span>${escapeHtml(step.hint)}</span></span>
+              <button class="button small ${current ? "primary" : ""}" data-step="${index}" ${done || !current ? "disabled" : ""}>${escapeHtml(ACTION_LABELS[step.action])}</button>
+            </div>`;
+          }).join("")}
+        </div>
+        ${completed ? `<div class="scenario-complete">Walkthrough complete. Inspect the final state, then choose another tab or Reset scenario to run it again.</div>` : ""}
+        <div class="legend"><span><i class="accent"></i> retained / proposal input</span><span><i class="good"></i> clean or applied</span><span><i class="warn"></i> replacement / conservative</span><span><i class="bad"></i> failure / conflict</span></div>`;
+    }
+
+    function render() {
+      const assessment = DotmanPrototype.assessBase(state);
+      const phaseLabel = DotmanPrototype.phaseLabels[state.phase] || state.phase;
+      document.getElementById("state-subtitle").textContent = `${state.scenarioTitle} · ${state.unit.identity}`;
+      document.getElementById("phase-status").outerHTML = `<span id="phase-status" class="status ${statusClass(state.phase)}">${escapeHtml(phaseLabel)}</span>`;
+      document.getElementById("facts").innerHTML = renderFacts();
+      document.getElementById("endpoints").innerHTML = renderEndpoints();
+      document.getElementById("observation").innerHTML = renderObservation();
+      document.getElementById("base").innerHTML = renderBase();
+      document.getElementById("proposal").innerHTML = renderProposal();
+      document.getElementById("trace").innerHTML = renderTrace();
+      document.getElementById("feedback").innerHTML = `<strong>${escapeHtml(state.lastAction)}</strong><span>${escapeHtml(state.lastDetail || "")}</span>`;
+      renderScenarios();
+      void assessment;
+    }
+
+    function resetScenario(id = activeScenarioId) {
+      activeScenarioId = id;
+      walkthroughStep = 0;
+      state = DotmanPrototype.create(id);
+      render();
+    }
+
+    document.addEventListener("click", event => {
+      const scenarioButton = event.target.closest("[data-scenario]");
+      if (scenarioButton) {
+        resetScenario(scenarioButton.dataset.scenario);
+        return;
+      }
+      const stepButton = event.target.closest("[data-step]");
+      if (stepButton) {
+        const scenario = DotmanPrototype.scenario(activeScenarioId);
+        const index = Number(stepButton.dataset.step);
+        if (index !== walkthroughStep || !scenario.steps[index]) return;
+        state = DotmanPrototype.dispatch(state, { type: scenario.steps[index].action });
+        walkthroughStep += 1;
+        render();
+        return;
+      }
+      const actionButton = event.target.closest("[data-action]");
+      if (actionButton) {
+        const action = actionButton.dataset.action;
+        if (action === "reset") resetScenario();
+        else {
+          state = DotmanPrototype.dispatch(state, { type: action });
+          render();
+        }
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>
