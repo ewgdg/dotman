@@ -80,7 +80,12 @@
     .deck-head h2 { margin-bottom: 3px; }
     .deck-head p { margin: 0; color: var(--muted); font-size: .84rem; }
     .deck-stats { display: flex; flex-wrap: wrap; gap: 7px; }
-    .deck-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 13px 20px; border-bottom: 1px solid var(--line); }
+    .command-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; padding: 10px 13px; border: 1px solid #353c4a; border-radius: 11px; background: #232a36; color: white; box-shadow: 0 10px 24px rgba(23,29,41,.16); }
+    .command-bar .button { border-color: #697484; background: #3d4654; color: white; box-shadow: none; }
+    .command-bar .button:hover { border-color: #9a9ffb; background: #4b5665; }
+    .command-bar .button.primary { border-color: #7771ed; background: var(--accent); }
+    .command-bar .button.primary:hover { background: var(--accent-dark); }
+    .command-bar .bar-status { margin-left: auto; color: #b7c0ce; font-size: .76rem; }
     .deck-table { width: 100%; border-collapse: collapse; }
     .deck-table th { padding: 11px 14px; border-bottom: 1px solid var(--line-strong); color: var(--faint); font-size: .66rem; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
     .deck-table td { padding: 13px 14px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: .81rem; }
@@ -119,9 +124,7 @@
     .variant-c .deck-head p { color: #b7c0ce; }
     .variant-c .deck-head .eyebrow { color: #bfc3ff; }
     .variant-c .deck-head .badge { background: #3d4654; color: #e8eaff; }
-    .variant-c .deck-actions { background: #303947; border-bottom-color: #4b5665; }
-    .variant-c .deck-actions .button { border-color: #697484; background: #3d4654; color: white; }
-    .variant-c .deck-actions .button.primary { border-color: #7771ed; background: var(--accent); }
+    .variant-c .command-bar { margin-top: 0; border-color: #4b5665; border-radius: 0 0 13px 13px; background: #303947; }
     .variant-c .deck-table th { background: #f0f1f4; }
     .variant-c .deck-table .focus-cell { font-size: .95rem; }
     .variant-c .deck-table td { padding-top: 15px; padding-bottom: 15px; }
@@ -144,6 +147,12 @@
     .proposal-box.noop { border-color: var(--line); background: #fbfcfd; }
     .proposal-box h3 { display: flex; gap: 9px; align-items: center; justify-content: space-between; margin: 0; color: var(--ink); font-size: .92rem; letter-spacing: 0; text-transform: none; }
     .proposal-box p { margin: 9px 0 0; color: #4c5666; font-size: .84rem; }
+    .proposal-content, .proposal-diff { margin: 13px 0 0; padding: 13px; overflow: auto; border: 1px solid var(--line); border-radius: 9px; background: #fff; white-space: pre-wrap; font: .78rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .proposal-content { color: #303846; }
+    .proposal-diff { color: #3d4654; }
+    .proposal-diff .add { color: var(--green); }
+    .proposal-diff .remove { color: var(--red); }
+    .proposal-empty { color: var(--muted); font-style: italic; }
     .review-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 17px; }
     .review-actions .button { min-width: 126px; text-align: left; }
     .evidence { display: grid; gap: 10px; }
@@ -154,7 +163,9 @@
     .fact { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfd; }
     .fact-label { color: var(--faint); font-size: .66rem; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
     .fact-value { margin-top: 4px; font-size: .82rem; font-weight: 750; }
-    .review-footer { display: flex; flex-wrap: wrap; gap: 9px 18px; align-items: center; padding: 13px 22px; border-top: 1px solid var(--line); background: #fbfcfd; color: var(--muted); font-size: .76rem; }
+    .review-footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 13px; border-top: 1px solid #353c4a; background: #232a36; color: white; font-size: .76rem; }
+    .review-footer .button { border-color: #697484; background: #3d4654; color: white; box-shadow: none; }
+    .review-footer .button:hover { border-color: #9a9ffb; background: #4b5665; }
     .review-footer .return { margin-left: auto; }
 
     /* Proposal Editor handoff simulation. */
@@ -169,6 +180,7 @@
       .review-body { grid-template-columns: 1fr; }
       .review-shell, .editor-shell { min-height: 82vh; }
       .review-footer .return { margin-left: 0; }
+      .command-bar .bar-status { margin-left: 0; width: 100%; }
       .switcher { right: 11px; left: 11px; transform: none; justify-content: space-between; }
       .switcher-label { min-width: 0; }
     }
@@ -305,8 +317,9 @@
     }
     function saveEditor() {
       const candidate = item(state.editor.id);
+      const editedText = document.querySelector("#editor-text")?.value || state.editor.text;
       if (state.editor.exceptional) { candidate.captureOk = true; candidate.capture = "Editor supplied a transactional result"; candidate.materialized = true; }
-      candidate.materialized = true; candidate.edited = true; candidate.mode = "edited"; candidate.cleanProposal = true; candidate.conflict = false; candidate.approved = false;
+      candidate.materialized = true; candidate.edited = true; candidate.editedText = editedText; candidate.mode = "edited"; candidate.cleanProposal = true; candidate.conflict = false; candidate.approved = false;
       state.reviewId = candidate.id; state.selectedId = candidate.id; state.editor = null; state.view = "review";
       log(`${candidate.label}: Editor returned; adopted transactional edits and reset approval.`); render();
     }
@@ -331,10 +344,34 @@
       return "blue";
     }
     function summary(candidate) {
-      if (!candidate.materialized) return candidate.mergeSummary;
+      if (!candidate.materialized) return candidate.noop ? "No Proposal is needed because the Pull Views agree." : candidate.captureOk ? "Open Review to materialize the proposed repository change." : candidate.mergeSummary;
       if (candidate.mode === "replace") return candidate.replaceSummary;
       if (candidate.mode === "edited") return "Transactional Editor result; review it again before approval.";
       return candidate.mergeSummary;
+    }
+    function proposalText(candidate) {
+      if (!candidate.materialized || candidate.noop || !candidate.captureOk) return "";
+      if (candidate.mode === "replace") return candidate.captureView;
+      if (candidate.mode === "edited") return candidate.editedText || candidate.captureView;
+      if (candidate.id === "settings" && candidate.conflict) return `theme = <<<<<<< repository\n\"light\"\n=======\n\"dark\"\n>>>>>>> live\nfont_size = 13\nlocal_only = true`;
+      return candidate.captureView;
+    }
+    function proposalDiff(before, after) {
+      if (!after) return `<span class="proposal-empty">No proposed repository content.</span>`;
+      const beforeLines = String(before).split("\n");
+      const afterLines = String(after).split("\n");
+      const rows = [];
+      const length = Math.max(beforeLines.length, afterLines.length);
+      for (let index = 0; index < length; index += 1) {
+        const oldLine = beforeLines[index];
+        const newLine = afterLines[index];
+        if (oldLine === newLine) rows.push(`  ${escapeHtml(oldLine ?? "")}`);
+        else {
+          if (oldLine !== undefined) rows.push(`<span class="remove">- ${escapeHtml(oldLine)}</span>`);
+          if (newLine !== undefined) rows.push(`<span class="add">+ ${escapeHtml(newLine)}</span>`);
+        }
+      }
+      return rows.join("\n") || `<span class="proposal-empty">No repository-source change.</span>`;
     }
     function badges(candidate) { return `<span class="badge ${candidate.statusTone}">${candidate.status}</span><span class="badge ${candidate.baseTone}">${candidate.base}</span>`; }
     function evidence(candidate) {
@@ -343,11 +380,12 @@
     }
     function proposalBox(candidate) {
       const label = candidate.noop ? "No Proposal required" : candidate.materialized ? "Current Proposal" : "Lazy Proposal";
-      return `<section class="proposal-box ${candidate.conflict ? "conflict" : candidate.noop ? "noop" : ""}"><h3><span>${label}</span><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></h3><p>${summary(candidate)}</p>${candidate.materialized && !candidate.noop ? `<p class="tiny muted"><strong>Write set:</strong> ${candidate.mode === "replace" ? "Capture replacement" : candidate.mode === "edited" ? "transactional Editor result" : "three-way merge"}. <strong>Approval:</strong> ${candidate.approved ? "yes" : "no"}.</p>` : ""}</section>`;
+      const content = proposalText(candidate);
+      return `<section class="proposal-box ${candidate.conflict ? "conflict" : candidate.noop ? "noop" : ""}"><h3><span>${label}</span><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></h3><p>${summary(candidate)}</p>${content ? `<h3 style="margin-top:15px">Proposed repository content</h3><pre class="proposal-content">${escapeHtml(content)}</pre><h3 style="margin-top:15px">Change from current repository source</h3><pre class="proposal-diff">${proposalDiff(candidate.repoView, content)}</pre>` : `<div class="proposal-content proposal-empty">The proposal content is not available yet. Review must materialize it first.</div>`}${candidate.materialized && !candidate.noop ? `<p class="tiny muted"><strong>Write set:</strong> ${candidate.mode === "replace" ? "Capture replacement" : candidate.mode === "edited" ? "transactional Editor result" : "three-way merge"}. <strong>Approval:</strong> ${candidate.approved ? "yes" : "no"}.</p>` : ""}</section>`;
     }
     function deckActionButtons() {
       const approved = state.items.filter((candidate) => candidate.approved).length;
-      return `<div class="deck-actions"><button class="button primary" onclick="openReview()">Review focused <span class="key">Enter</span></button><button class="button" onclick="approveSelected()">Approve eligible <span class="key">A</span></button><button class="button primary" onclick="applyApproved()">Apply approved <span class="key">Apply</span></button><button class="button" onclick="resetDemo()">Reset</button><span class="badge ${approved ? "green" : "gray"}">${approved} approved</span></div>`;
+      return `<div class="command-bar"><button class="button primary" onclick="openReview()">Review focused <span class="key">Enter</span></button><button class="button" onclick="approveSelected()">Approve eligible <span class="key">A</span></button><button class="button primary" onclick="applyApproved()">Apply approved</button><button class="button" onclick="resetDemo()">Reset</button><span class="bar-status">${approved} approved · focused ${item().label}</span></div>`;
     }
     function deckHeader(extraClass = "") {
       const changed = state.items.filter((candidate) => !candidate.noop).length;
@@ -358,7 +396,7 @@
       return `<tr class="${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="focusItem('${candidate.id}')"><td class="focus-cell">${candidate.id === state.selectedId ? "›" : ""}</td><td class="select-cell"><input class="check" type="checkbox" ${candidate.selected ? "checked" : ""} onclick="event.stopPropagation(); toggleSelected('${candidate.id}')" aria-label="Select ${candidate.label}"></td><td><strong>${candidate.label}</strong><br><span class="tiny muted mono">${candidate.path}</span></td><td><span class="badge ${candidate.statusTone}">${candidate.status}</span></td><td><span class="badge ${candidate.baseTone}">${candidate.base}</span></td><td class="mode-text"><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></td></tr>`;
     }
     function renderVariantA() {
-      return `<section class="panel variant-a"><div class="deck-wrap">${deckHeader()}${deckActionButtons()}<table class="deck-table"><thead><tr><th></th><th></th><th class="repo-col">Sync Unit</th><th class="status-col">Observation</th><th class="base-col">Sync Base</th><th class="proposal-col">Proposal</th></tr></thead><tbody>${state.items.map(row).join("")}</tbody></table></div></section>`;
+      return `<section class="panel variant-a"><div class="deck-wrap">${deckHeader()}<table class="deck-table"><thead><tr><th></th><th></th><th class="repo-col">Sync Unit</th><th class="status-col">Observation</th><th class="base-col">Sync Base</th><th class="proposal-col">Proposal</th></tr></thead><tbody>${state.items.map(row).join("")}</tbody></table></div></section>`;
     }
     function lane(title, tone, candidates) {
       if (!candidates.length) return "";
@@ -368,26 +406,26 @@
       const changed = state.items.filter((candidate) => !candidate.noop && candidate.captureOk);
       const exceptional = state.items.filter((candidate) => !candidate.captureOk);
       const noops = state.items.filter((candidate) => candidate.noop);
-      return `<section class="panel variant-b">${deckHeader()}${deckActionButtons()}<div class="lane-list">${lane("Ready to review", "blue", changed)}${lane("Exceptional / manual handling", "red", exceptional)}${lane("Observed agreement · no-op", "gray", noops)}</div></section>`;
+      return `<section class="panel variant-b">${deckHeader()}<div class="lane-list">${lane("Ready to review", "blue", changed)}${lane("Exceptional / manual handling", "red", exceptional)}${lane("Observed agreement · no-op", "gray", noops)}</div></section>`;
     }
     function renderVariantC() {
-      return `<section class="panel variant-c"><div class="deck-wrap">${deckHeader("variant-c")}${deckActionButtons()}<table class="deck-table"><thead><tr><th></th><th></th><th>Target</th><th>Base provenance</th><th>Next command</th><th>State</th></tr></thead><tbody>${state.items.map((candidate) => `<tr class="${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="focusItem('${candidate.id}')"><td class="focus-cell">${candidate.id === state.selectedId ? "›" : ""}</td><td class="select-cell"><input class="check" type="checkbox" ${candidate.selected ? "checked" : ""} onclick="event.stopPropagation(); toggleSelected('${candidate.id}')" aria-label="Select ${candidate.label}"></td><td><strong>${candidate.label}</strong><br><span class="tiny muted mono">${candidate.path}</span></td><td><span class="badge ${candidate.baseTone}">${candidate.base}</span></td><td><span class="key">${candidate.captureOk ? "Enter" : "e"}</span> ${candidate.captureOk ? "open Proposal Review" : "open Editor"}</td><td><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></td></tr>`).join("")}</tbody></table></div></section>`;
+      return `<section class="panel variant-c"><div class="deck-wrap">${deckHeader("variant-c")}<table class="deck-table"><thead><tr><th></th><th></th><th>Target</th><th>Base provenance</th><th>Next command</th><th>State</th></tr></thead><tbody>${state.items.map((candidate) => `<tr class="${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="focusItem('${candidate.id}')"><td class="focus-cell">${candidate.id === state.selectedId ? "›" : ""}</td><td class="select-cell"><input class="check" type="checkbox" ${candidate.selected ? "checked" : ""} onclick="event.stopPropagation(); toggleSelected('${candidate.id}')" aria-label="Select ${candidate.label}"></td><td><strong>${candidate.label}</strong><br><span class="tiny muted mono">${candidate.path}</span></td><td><span class="badge ${candidate.baseTone}">${candidate.base}</span></td><td><span class="key">${candidate.captureOk ? "Enter" : "e"}</span> ${candidate.captureOk ? "open Proposal Review" : "open Editor"}</td><td><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></td></tr>`).join("")}</tbody></table></div></section>`;
     }
     function renderDeck() {
       const variant = variants.find((candidate) => candidate.key === currentVariant);
       const content = currentVariant === "A" ? renderVariantA() : currentVariant === "B" ? renderVariantB() : renderVariantC();
-      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen. Press <span class="key">r</span> to choose replacement, then <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Space</span> select</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">A</span> approve selected</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
+      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}${deckActionButtons()}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen and shows the proposed repository content plus its diff. Press <span class="key">r</span> to choose replacement, then <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Space</span> select</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">A</span> approve selected</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
     }
     function renderReview() {
       const candidate = item(state.reviewId);
       const reviewMode = candidate.noop ? "NO-OP" : !candidate.captureOk ? "EXCEPTIONAL" : candidate.conflict ? "MERGE CONFLICT" : candidate.mode === "replace" ? "REPLACEMENT" : candidate.mode === "edited" ? "EDITED PROPOSAL" : "MERGE";
       const reviewTone = candidate.noop ? "gray" : !candidate.captureOk ? "red" : candidate.conflict ? "red" : candidate.mode === "replace" ? "amber" : "blue";
       const canApprove = !candidate.noop && candidate.captureOk && (candidate.cleanProposal || candidate.edited || candidate.mode === "replace");
-      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span><button class="button" onclick="returnDeck()">Back to Command Deck <span class="key">Esc</span></button></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${candidate.approved ? "approved" : "pending"}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div><p class="proposal-summary">${summary(candidate)}</p>${proposalBox(candidate)}<div class="review-actions"><button class="button primary" onclick="approveCurrent()" ${canApprove ? "" : "disabled"}>Approve <span class="key">a</span></button><button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Use replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Use merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button></div><div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Proposal lifecycle</div><div class="fact-value">${candidate.materialized ? "Materialized in memory" : candidate.noop ? "No Proposal" : "Awaiting Review"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer"><span><span class="key">r</span> replacement</span><span><span class="key">m</span> merge</span><span><span class="key">a</span> approve</span><span><span class="key">e</span> suspend → Editor</span><span><span class="key">v</span> evidence</span><span class="return"><span class="key">Esc</span> Command Deck</span></footer></section></div>`;
+      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${candidate.approved ? "approved" : "pending"}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div><p class="proposal-summary">${summary(candidate)}</p>${proposalBox(candidate)}<div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Proposal lifecycle</div><div class="fact-value">${candidate.materialized ? "Materialized in memory" : candidate.noop ? "No Proposal" : "Awaiting Review"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer"><button class="button primary" onclick="approveCurrent()" ${canApprove ? "" : "disabled"}>Approve <span class="key">a</span></button><button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button><button class="button" onclick="toggleEvidence()">${state.showEvidence ? "Hide" : "Show"} evidence <span class="key">v</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
     }
     function renderEditor() {
       const candidate = item(state.editor.id);
-      return `<div class="shell"><section class="panel editor-shell"><div class="eyebrow">Proposal Editor · terminal handoff</div><h1 style="font-size:clamp(1.8rem,4vw,2.7rem)">TUI suspended.</h1><p class="lede">The Proposal Editor owns the terminal now. Returning with Save adopts a transactional write set and resumes Proposal Review. Cancel simulates exit 100 and preserves the prior Proposal/status.</p><div class="editor-stage"><strong>${candidate.label}</strong><br>${state.editor.exceptional ? "Exceptional Capture failure — prepare a manual transactional result." : "Edit the Proposal buffer, not the repository working tree."}</div><textarea id="editor-text">${escapeHtml(state.editor.text)}</textarea><div class="toolbar"><button class="button primary" onclick="saveEditor()">Return and adopt edits</button><button class="button" onclick="cancelEditor()">Cancel Editor <span class="key">Esc</span></button></div></section></div>`;
+      return `<div class="shell"><section class="panel editor-shell"><div class="eyebrow">Proposal Editor · terminal handoff</div><h1 style="font-size:clamp(1.8rem,4vw,2.7rem)">TUI suspended.</h1><p class="lede">The Proposal Editor owns the terminal now. Returning with Save adopts a transactional write set and resumes Proposal Review. Cancel simulates exit 100 and preserves the prior Proposal/status.</p><div class="editor-stage"><strong>${candidate.label}</strong><br>${state.editor.exceptional ? "Exceptional Capture failure — prepare a manual transactional result." : "Edit the Proposal buffer, not the repository working tree."}</div><textarea id="editor-text">${escapeHtml(state.editor.text)}</textarea><div class="command-bar"><button class="button primary" onclick="saveEditor()">Return and adopt edits</button><button class="button" onclick="cancelEditor()">Cancel Editor <span class="key">Esc</span></button></div></section></div>`;
     }
     function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character])); }
     function render() {
