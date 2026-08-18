@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dotman — Pull review and selection prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #202631;
+      --muted: #687181;
+      --faint: #8d96a5;
+      --paper: #f5f6f8;
+      --card: #ffffff;
+      --line: #dfe3e9;
+      --line-strong: #c7ced9;
+      --accent: #4f46e5;
+      --accent-dark: #3730a3;
+      --accent-soft: #eef0ff;
+      --green: #147d58;
+      --green-soft: #e8f7f0;
+      --amber: #9a5b00;
+      --amber-soft: #fff5df;
+      --red: #b42318;
+      --red-soft: #fff0ee;
+      --shadow: 0 16px 38px rgba(29, 39, 58, 0.09);
+      --radius: 14px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); line-height: 1.45; }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    button:focus-visible { outline: 3px solid rgba(79, 70, 229, .28); outline-offset: 2px; }
+    .shell { width: min(1480px, calc(100% - 42px)); margin: 0 auto; padding: 36px 0 100px; }
+    .eyebrow { color: var(--accent-dark); font-size: .72rem; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin: 8px 0 12px; max-width: 850px; font-size: clamp(2rem, 4vw, 3.25rem); line-height: 1.04; letter-spacing: -.045em; }
+    h2 { margin-bottom: 5px; font-size: 1.15rem; letter-spacing: -.02em; }
+    h3 { margin-bottom: 4px; font-size: .98rem; }
+    .lede { max-width: 920px; color: #454d5b; font-size: 1.07rem; }
+    .prototype-note { display: inline-flex; gap: 8px; align-items: center; margin: 0 0 24px; padding: 7px 10px; border: 1px solid #c9c5ff; border-radius: 999px; color: var(--accent-dark); background: var(--accent-soft); font-size: .79rem; font-weight: 750; }
+    .prototype-note::before { content: "PROTOTYPE"; letter-spacing: .1em; font-size: .65rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 22px 0 18px; }
+    .button { border: 1px solid var(--line-strong); border-radius: 9px; padding: 8px 12px; background: var(--card); box-shadow: 0 2px 5px rgba(29, 39, 58, .04); }
+    .button:hover { border-color: var(--accent); background: #fbfbff; }
+    .button.primary { border-color: var(--accent); background: var(--accent); color: white; }
+    .button.primary:hover { background: var(--accent-dark); }
+    .button.danger { border-color: #e4bbb6; color: var(--red); background: #fffafa; }
+    .button:disabled { cursor: not-allowed; opacity: .42; }
+    .key { display: inline-flex; min-width: 1.55em; justify-content: center; padding: 1px 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: #fff; color: #3d4654; font: 700 .78em ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); }
+    .panel.pad { padding: 18px; }
+    .panel-header { display: flex; gap: 12px; align-items: start; justify-content: space-between; padding: 16px 18px 13px; border-bottom: 1px solid var(--line); }
+    .panel-header p { margin: 0; color: var(--muted); font-size: .86rem; }
+    .muted { color: var(--muted); }
+    .faint { color: var(--faint); }
+    .small { font-size: .82rem; }
+    .tiny { font-size: .73rem; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 4px 8px; font-size: .71rem; font-weight: 800; white-space: nowrap; }
+    .badge.blue { color: var(--accent-dark); background: var(--accent-soft); }
+    .badge.green { color: var(--green); background: var(--green-soft); }
+    .badge.amber { color: var(--amber); background: var(--amber-soft); }
+    .badge.red { color: var(--red); background: var(--red-soft); }
+    .badge.gray { color: #596273; background: #eef0f3; }
+    .stack { display: grid; gap: 12px; }
+    .row { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+    .divider { height: 1px; background: var(--line); margin: 15px 0; }
+    .status-line { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+    .item-title { font-weight: 800; }
+    .item-path { margin-top: 2px; color: var(--muted); font-size: .78rem; }
+    .queue-list { display: grid; gap: 6px; padding: 10px; }
+    .queue-item { width: 100%; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 11px 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; text-align: left; }
+    .queue-item:hover { background: #fafaff; }
+    .queue-item.current { border-color: #bbb8f7; background: var(--accent-soft); }
+    .queue-item.applied { opacity: .65; }
+    .queue-check { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--accent); }
+    .queue-state { align-self: center; }
+    .queue-footer { padding: 13px 18px 17px; border-top: 1px solid var(--line); color: var(--muted); font-size: .78rem; }
+    .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 14px; }
+    .meta { padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: #fbfcfd; }
+    .meta-label { color: var(--faint); font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .meta-value { margin-top: 3px; font-size: .85rem; font-weight: 700; }
+    .view-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+    .view { min-height: 120px; padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfd; }
+    .view h3 { display: flex; justify-content: space-between; color: #434c5a; font-size: .75rem; letter-spacing: .07em; text-transform: uppercase; }
+    .view pre { max-height: 130px; margin: 9px 0 0; overflow: auto; white-space: pre-wrap; color: #3e4755; font: .76rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .proposal { padding: 14px; border: 1px solid #c8c5fa; border-radius: 11px; background: #fafaff; }
+    .proposal.conflict { border-color: #e4bbb6; background: #fffafa; }
+    .proposal.noop { border-color: var(--line); background: #fbfcfd; }
+    .proposal h3 { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+    .proposal-summary { margin: 8px 0 0; color: #4c5666; font-size: .86rem; }
+    .action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+    .action-grid .button { width: 100%; text-align: left; }
+    .action-grid .wide { grid-column: 1 / -1; }
+    .log { max-height: 190px; overflow: auto; padding: 0; list-style: none; }
+    .log li { padding: 7px 0; border-bottom: 1px solid #eef0f3; color: #596273; font-size: .76rem; }
+    .log li:last-child { border-bottom: 0; }
+    .log time { color: var(--faint); }
+    .key-strip { display: flex; flex-wrap: wrap; gap: 7px 12px; margin-top: 14px; color: var(--muted); font-size: .75rem; }
+    .key-strip span { display: inline-flex; align-items: center; gap: 5px; }
+    .shortcut-bar { position: fixed; z-index: 5; right: 50%; bottom: 18px; display: flex; gap: 10px; align-items: center; transform: translateX(50%); padding: 8px 11px; border: 1px solid #353c4a; border-radius: 999px; background: #232a36; color: white; box-shadow: 0 12px 34px rgba(23, 29, 41, .25); }
+    .shortcut-bar button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: #3d4654; color: white; }
+    .shortcut-bar button:hover { background: var(--accent); }
+    .shortcut-label { min-width: 185px; text-align: center; font-size: .76rem; }
+    .shortcut-label strong { color: #dfe3ff; }
+    .help { margin-top: 14px; padding: 11px 13px; border: 1px dashed var(--line-strong); border-radius: 10px; background: #fbfcfd; color: var(--muted); font-size: .78rem; }
+    .help strong { color: var(--ink); }
+    .editor-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(31, 38, 49, .45); }
+    .editor-card { width: min(820px, 100%); max-height: min(760px, 92vh); overflow: auto; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); box-shadow: 0 30px 80px rgba(20, 25, 35, .28); }
+    .editor-card textarea { width: 100%; min-height: 260px; margin: 14px 0; padding: 12px; border: 1px solid var(--line-strong); border-radius: 9px; resize: vertical; font: .83rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .editor-stage { margin: 14px 0; padding: 12px; border-radius: 10px; color: var(--accent-dark); background: var(--accent-soft); font-size: .82rem; }
+
+    /* Variant A — queue, evidence, and action rail. */
+    .layout-a { display: grid; grid-template-columns: minmax(235px, .72fr) minmax(360px, 1.4fr) minmax(270px, .78fr); gap: 14px; align-items: start; }
+    .layout-a .queue-panel { position: sticky; top: 18px; }
+    .layout-a .inspector-panel { min-width: 0; }
+    .layout-a .rail { position: sticky; top: 18px; }
+
+    /* Variant B — one focused proposal with a horizontal queue. */
+    .layout-b { display: grid; gap: 14px; }
+    .queue-strip { display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap: 8px; }
+    .strip-item { min-height: 89px; padding: 11px; border: 1px solid var(--line); border-radius: 11px; background: var(--card); text-align: left; box-shadow: var(--shadow); }
+    .strip-item.current { border: 2px solid var(--accent); padding: 10px; background: var(--accent-soft); }
+    .strip-item .item-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; }
+    .focus-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(270px, .7fr); gap: 14px; align-items: start; }
+    .focus-card { padding: 22px; }
+    .focus-card .big-mode { margin: 18px 0 8px; color: var(--accent-dark); font-size: clamp(1.4rem, 3vw, 2.1rem); font-weight: 850; letter-spacing: -.04em; }
+    .focus-card .big-summary { max-width: 740px; color: #4b5565; font-size: 1rem; }
+    .evidence-drawer { display: grid; gap: 9px; margin-top: 22px; }
+    .evidence-drawer details { border: 1px solid var(--line); border-radius: 10px; background: #fbfcfd; }
+    .evidence-drawer summary { padding: 10px 12px; cursor: pointer; color: #4b5565; font-size: .8rem; font-weight: 800; }
+    .evidence-drawer pre { margin: 0; padding: 0 12px 12px; white-space: pre-wrap; font: .76rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .progress-list { display: grid; gap: 0; padding: 13px 18px 18px; }
+    .progress-step { display: grid; grid-template-columns: 24px 1fr; gap: 9px; min-height: 47px; }
+    .progress-dot { width: 21px; height: 21px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--muted); font-size: .7rem; }
+    .progress-step.done .progress-dot { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+    .progress-step.active .progress-dot { border-color: var(--accent); color: white; background: var(--accent); }
+    .progress-step p { margin: 1px 0 0; color: #4c5666; font-size: .78rem; }
+    .progress-step p strong { color: var(--ink); }
+
+    /* Variant C — compact command deck with an explicit keyboard rail. */
+    .deck { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(290px, .7fr); gap: 14px; align-items: start; }
+    .deck-table { overflow: hidden; }
+    .deck-table table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+    .deck-table th { padding: 12px 14px; border-bottom: 1px solid var(--line-strong); color: var(--faint); font-size: .67rem; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
+    .deck-table td { padding: 13px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .deck-table tr { cursor: pointer; }
+    .deck-table tr:hover { background: #fafaff; }
+    .deck-table tr.current { background: var(--accent-soft); }
+    .deck-table tr.applied { opacity: .55; }
+    .deck-table tr:last-child td { border-bottom: 0; }
+    .deck-table .select-cell { width: 38px; }
+    .mode-cell { font-weight: 800; }
+    .deck-side { position: sticky; top: 18px; display: grid; gap: 14px; }
+    .command-rail { padding: 18px; }
+    .command-rail .command { display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid #eef0f3; font-size: .8rem; }
+    .command-rail .command:last-child { border-bottom: 0; }
+    .command-rail .key { justify-self: start; }
+    .deck-inspector { padding: 18px; }
+
+    @media (max-width: 1120px) {
+      .layout-a { grid-template-columns: minmax(215px, .72fr) minmax(0, 1.4fr); }
+      .layout-a .rail { grid-column: 1 / -1; position: static; }
+      .layout-a .rail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+      .queue-strip { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+    }
+    @media (max-width: 780px) {
+      .shell { width: min(100% - 24px, 680px); padding-top: 24px; }
+      .layout-a, .focus-grid, .deck { grid-template-columns: 1fr; }
+      .layout-a .queue-panel, .layout-a .rail, .deck-side { position: static; }
+      .layout-a .rail-grid { grid-template-columns: 1fr; }
+      .queue-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .view-grid, .meta-grid { grid-template-columns: 1fr; }
+      .shortcut-bar { right: 12px; left: 12px; transform: none; justify-content: space-between; }
+      .shortcut-label { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main id="app"></main>
+
+  <script>
+    // Prototype question: does Pull feel safer when every changed item starts with a
+    // merge proposal, while `r` changes only the focused proposal to Capture replacement?
+    // This is a throwaway in-memory simulation. It never touches repository files.
+
+    const variantDefinitions = [
+      { key: "A", name: "Queue + evidence" },
+      { key: "B", name: "Focused proposal" },
+      { key: "C", name: "Command deck" },
+    ];
+    const seedItems = [
+      {
+        id: "gitconfig",
+        label: "main:git.gitconfig",
+        path: "~/.gitconfig",
+        kind: "file",
+        status: "Observed drift",
+        statusTone: "blue",
+        base: "Exact · 8e7a2c1",
+        baseTone: "green",
+        baseDetail: "Clean committed ancestor; payload is available.",
+        capture: "Captured",
+        captureOk: true,
+        canMerge: true,
+        defaultMode: "merge",
+        cleanProposal: true,
+        selected: true,
+        repoView: "[user]\n  name = Xian\n  signingkey = old-key",
+        liveView: "[user]\n  name = Xian\n  signingkey = new-key",
+        captureView: "[user]\n  name = Xian\n  signingkey = new-key",
+        mergeSummary: "Keep the repository-only name and take the live signing key.",
+        replaceSummary: "Replace the repository source with the captured live representation.",
+      },
+      {
+        id: "nvim",
+        label: "main:nvim.init",
+        path: "~/.config/nvim/init.lua",
+        kind: "file",
+        status: "Observed drift",
+        statusTone: "blue",
+        base: "Missing",
+        baseTone: "amber",
+        baseDetail: "No applicable commit-anchored Sync Base exists.",
+        capture: "Captured",
+        captureOk: true,
+        canMerge: false,
+        defaultMode: "replace",
+        cleanProposal: true,
+        selected: true,
+        repoView: "vim.opt.number = true\nvim.opt.relativenumber = true",
+        liveView: "vim.opt.number = true\nvim.opt.relativenumber = false",
+        captureView: "vim.opt.number = true\nvim.opt.relativenumber = false",
+        mergeSummary: "A merge cannot be attempted without an applicable Base.",
+        replaceSummary: "Create a reviewed replacement because this unit has no Base.",
+      },
+      {
+        id: "settings",
+        label: "main:app.settings",
+        path: "~/.config/app/settings.toml",
+        kind: "file",
+        status: "Observed drift",
+        statusTone: "blue",
+        base: "Conservative · 5b14f90",
+        baseTone: "amber",
+        baseDetail: "A dirty source established an older conservative ancestor.",
+        capture: "Captured",
+        captureOk: true,
+        canMerge: true,
+        defaultMode: "merge",
+        cleanProposal: false,
+        conflict: true,
+        selected: true,
+        repoView: "theme = \"light\"\nfont_size = 13\nlocal_only = true",
+        liveView: "theme = \"dark\"\nfont_size = 13\nlocal_only = true",
+        captureView: "theme = \"dark\"\nfont_size = 13\nlocal_only = true",
+        mergeSummary: "Conflict: both repository and live changed `theme` from the conservative Base.",
+        replaceSummary: "Discard repository-side changes and use the captured live settings.",
+      },
+      {
+        id: "secrets",
+        label: "main:secrets.env",
+        path: "~/.config/app/secrets.env",
+        kind: "file",
+        status: "Capture failed",
+        statusTone: "red",
+        base: "Exact · 6d2aa90",
+        baseTone: "green",
+        baseDetail: "Base is intact, but Capture did not produce repository bytes.",
+        capture: "Failed · exit 1",
+        captureOk: false,
+        canMerge: false,
+        defaultMode: null,
+        cleanProposal: false,
+        selected: false,
+        repoView: "TOKEN=managed\nROTATION=weekly",
+        liveView: "(unavailable — capture command failed)",
+        captureView: "(no Capture result)",
+        mergeSummary: "No proposal can be materialized until Capture succeeds or an Editor resolves it.",
+        replaceSummary: "Replacement is unavailable because there is no retained Capture result.",
+      },
+      {
+        id: "notes",
+        label: "main:notes.txt",
+        path: "~/Documents/notes.txt",
+        kind: "file",
+        status: "Observed agreement",
+        statusTone: "gray",
+        base: "Exact · 1c4fe11",
+        baseTone: "green",
+        baseDetail: "Direct Pull Views agree; this item is a no-op.",
+        capture: "Not needed",
+        captureOk: true,
+        canMerge: false,
+        defaultMode: null,
+        cleanProposal: false,
+        noop: true,
+        selected: false,
+        repoView: "keep a short list of ideas",
+        liveView: "keep a short list of ideas",
+        captureView: "(not materialized)",
+        mergeSummary: "No proposal is needed. A real no-change Pull may establish exact ancestry.",
+        replaceSummary: "No replacement is needed because the Pull Views already agree.",
+      },
+    ];
+
+    const params = new URLSearchParams(window.location.search);
+    let currentVariant = (params.get("variant") || "A").toUpperCase();
+    if (!variantDefinitions.some((variant) => variant.key === currentVariant)) currentVariant = "A";
+    const state = {
+      selectedId: "gitconfig",
+      items: structuredClone(seedItems),
+      showViews: true,
+      editor: null,
+      log: ["Pull Views observed: 3 changed units, 1 capture failure, 1 no-op."],
+      lastAction: "Initial observation — no repository files changed.",
+    };
+
+    function selectedItem() {
+      return state.items.find((item) => item.id === state.selectedId);
+    }
+    function selectedItems() {
+      return state.items.filter((item) => item.selected);
+    }
+    function now() {
+      return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+    function log(message) {
+      state.lastAction = message;
+      state.log.unshift(`${now()} · ${message}`);
+      state.log = state.log.slice(0, 9);
+    }
+    function setVariant(key) {
+      currentVariant = key;
+      const next = new URL(window.location.href);
+      next.searchParams.set("variant", key);
+      history.replaceState(null, "", next);
+      render();
+    }
+    function cycleVariant(delta) {
+      const index = variantDefinitions.findIndex((variant) => variant.key === currentVariant);
+      const next = (index + delta + variantDefinitions.length) % variantDefinitions.length;
+      setVariant(variantDefinitions[next].key);
+    }
+    function selectItem(id) {
+      state.selectedId = id;
+      const item = selectedItem();
+      log(`Focused ${item.label}.`);
+      render();
+    }
+    function toggleSelected(id) {
+      const item = state.items.find((candidate) => candidate.id === id);
+      item.selected = !item.selected;
+      log(`${item.selected ? "Selected" : "Removed"} ${item.label} ${item.selected ? "for review" : "from the batch"}.`);
+      render();
+    }
+    function materialize(item) {
+      if (item.materialized || item.noop || !item.captureOk) return false;
+      item.materialized = true;
+      item.mode = item.defaultMode;
+      item.approved = false;
+      item.edited = false;
+      log(`${item.label}: materialized ${item.mode === "replace" ? "replacement" : "merge"} proposal lazily.`);
+      return true;
+    }
+    function reviewCurrent() {
+      const item = selectedItem();
+      if (item.noop) {
+        log(`${item.label}: no-op; no proposal to review.`);
+      } else if (!item.captureOk) {
+        log(`${item.label}: Capture failed; opening exceptional item for Editor/manual handling.`);
+      } else {
+        materialize(item);
+        log(`${item.label}: proposal is visible but remains unapproved.`);
+      }
+      render();
+    }
+    function approveCurrent() {
+      const item = selectedItem();
+      if (item.noop) {
+        log(`${item.label}: no-op is not approvable in this changed-work review.`);
+      } else if (!item.captureOk) {
+        log(`${item.label}: cannot approve while Capture has failed.`);
+      } else {
+        materialize(item);
+        if (item.cleanProposal || item.edited || item.mode === "replace") {
+          item.approved = true;
+          log(`${item.label}: approved ${item.mode === "replace" ? "replacement" : "merge"} proposal.`);
+        } else {
+          log(`${item.label}: conflict remains unresolved; use r or e before approval.`);
+        }
+      }
+      render();
+    }
+    function replaceCurrent() {
+      const item = selectedItem();
+      if (item.noop) {
+        log(`${item.label}: no-op has nothing to replace.`);
+      } else if (!item.captureOk) {
+        log(`${item.label}: replacement unavailable without a retained Capture result.`);
+      } else {
+        materialize(item);
+        item.mode = "replace";
+        item.approved = false;
+        item.conflict = false;
+        log(`${item.label}: r changed the proposal to Capture replacement; approval reset.`);
+      }
+      render();
+    }
+    function mergeCurrent() {
+      const item = selectedItem();
+      if (item.noop || !item.canMerge) {
+        log(`${item.label}: merge is unavailable without an applicable Sync Base.`);
+      } else if (!item.captureOk) {
+        log(`${item.label}: merge is unavailable because Capture failed.`);
+      } else {
+        materialize(item);
+        item.mode = "merge";
+        item.approved = false;
+        item.edited = false;
+        if (item.id === "settings") item.conflict = true;
+        log(`${item.label}: m restored the default merge proposal; approval reset.`);
+      }
+      render();
+    }
+    function editCurrent() {
+      const item = selectedItem();
+      if (item.noop) {
+        log(`${item.label}: no-op has no Proposal Editor session.`);
+      } else if (!item.captureOk) {
+        state.editor = { id: item.id, exceptional: true, text: "Editor could inspect the Capture failure and prepare a transactional write set here." };
+        log(`${item.label}: suspended TUI and handed the terminal to the Proposal Editor.`);
+      } else {
+        materialize(item);
+        state.editor = { id: item.id, exceptional: false, text: item.mode === "replace" ? item.captureView : `${item.repoView}\n\n# proposal edits\n` };
+        log(`${item.label}: suspended TUI and handed the terminal to the Proposal Editor.`);
+      }
+      render();
+    }
+    function saveEditor() {
+      const item = state.items.find((candidate) => candidate.id === state.editor.id);
+      if (!state.editor.exceptional) {
+        item.materialized = true;
+        item.edited = true;
+        item.mode = "edited";
+        item.conflict = false;
+        item.cleanProposal = true;
+        item.approved = false;
+        log(`${item.label}: Editor returned; adopted transactional edits and reset approval.`);
+      } else {
+        item.captureOk = true;
+        item.capture = "Editor supplied a transactional result";
+        item.materialized = true;
+        item.edited = true;
+        item.mode = "edited";
+        item.cleanProposal = true;
+        item.approved = false;
+        log(`${item.label}: Editor returned a transactional result; Capture failure is resolved.`);
+      }
+      state.editor = null;
+      render();
+    }
+    function cancelEditor() {
+      const item = state.items.find((candidate) => candidate.id === state.editor.id);
+      log(`${item.label}: Editor cancelled with exit 100; prior proposal/status retained.`);
+      state.editor = null;
+      render();
+    }
+    function approveSelected() {
+      const candidates = selectedItems();
+      let approved = 0;
+      for (const item of candidates) {
+        if (item.noop || !item.captureOk) continue;
+        materialize(item);
+        if (item.cleanProposal || item.edited || item.mode === "replace") {
+          item.approved = true;
+          approved += 1;
+        }
+      }
+      log(`Approve eligible: ${approved} proposal${approved === 1 ? "" : "s"} approved; conflicts and failures remain unapproved.`);
+      render();
+    }
+    function applyApproved() {
+      const approved = state.items.filter((item) => item.approved);
+      if (!approved.length) {
+        log("Apply found no approved proposals; no repository files changed.");
+      } else {
+        approved.forEach((item) => { item.applied = true; item.approved = false; });
+        log(`Apply committed ${approved.length} approved proposal${approved.length === 1 ? "" : "s"} atomically in the simulation.`);
+      }
+      render();
+    }
+    function toggleViews() {
+      state.showViews = !state.showViews;
+      log(`${state.showViews ? "Showing" : "Hiding"} Pull View evidence.`);
+      render();
+    }
+    function resetDemo() {
+      state.selectedId = "gitconfig";
+      state.items = structuredClone(seedItems);
+      state.showViews = true;
+      state.editor = null;
+      state.log = ["Reset: Pull Views observed again; no repository files changed."];
+      state.lastAction = "Reset simulation.";
+      render();
+    }
+
+    function modeLabel(item) {
+      if (!item.materialized) return item.noop ? "No proposal" : item.captureOk ? "Not materialized" : "Exceptional";
+      if (item.mode === "replace") return "Replacement";
+      if (item.mode === "edited") return "Edited proposal";
+      return item.conflict ? "Merge conflict" : "Merge proposal";
+    }
+    function modeTone(item) {
+      if (item.applied) return "green";
+      if (!item.materialized) return item.noop ? "gray" : item.captureOk ? "blue" : "red";
+      if (item.mode === "replace") return "amber";
+      if (item.conflict) return "red";
+      return "blue";
+    }
+    function proposalSummary(item) {
+      if (!item.materialized) return item.mergeSummary;
+      if (item.mode === "replace") return item.replaceSummary;
+      if (item.mode === "edited") return "Proposal was edited in a transactional buffer; it is ready for fresh review and approval.";
+      return item.mergeSummary;
+    }
+    function itemBadges(item) {
+      return `<span class="badge ${item.statusTone}">${item.status}</span><span class="badge ${item.baseTone}">${item.base}</span>`;
+    }
+    function proposalBlock(item) {
+      const status = item.applied ? `<span class="badge green">Applied</span>` : item.approved ? `<span class="badge green">Approved</span>` : `<span class="badge ${modeTone(item)}">${modeLabel(item)}</span>`;
+      const proposalClass = item.conflict ? "proposal conflict" : item.noop ? "proposal noop" : "proposal";
+      return `<section class="${proposalClass}">
+        <h3><span>${item.noop ? "No proposal required" : item.materialized ? "Current proposal" : "Lazy proposal"}</span>${status}</h3>
+        <p class="proposal-summary">${proposalSummary(item)}</p>
+        ${item.materialized && !item.noop ? `<p class="tiny muted"><strong>Write set:</strong> ${item.mode === "replace" ? "replace repository source from Capture" : item.mode === "edited" ? "transactional editor result" : "merge repository and Capture"}; <strong>approval:</strong> ${item.approved ? "yes" : "no"}.</p>` : ""}
+      </section>`;
+    }
+    function actionButtons(item) {
+      const canProposal = !item.noop && item.captureOk;
+      return `<div class="action-grid">
+        <button class="button" onclick="reviewCurrent()">Review <span class="key">Enter</span></button>
+        <button class="button primary" onclick="approveCurrent()" ${item.noop || !item.captureOk ? "disabled" : ""}>Approve <span class="key">a</span></button>
+        <button class="button" onclick="replaceCurrent()" ${!canProposal ? "disabled" : ""}>Replace proposal <span class="key">r</span></button>
+        <button class="button" onclick="mergeCurrent()" ${!item.canMerge || !item.captureOk ? "disabled" : ""}>Use merge <span class="key">m</span></button>
+        <button class="button wide" onclick="editCurrent()" ${item.noop ? "disabled" : ""}>Open Proposal Editor <span class="key">e</span></button>
+      </div>`;
+    }
+    function viewEvidence(item) {
+      if (!state.showViews) return `<div class="help">Pull View evidence is hidden. Press <span class="key">v</span> to show it again.</div>`;
+      return `<div class="view-grid">
+        <div class="view"><h3>Repo Pull View <span class="faint">O</span></h3><pre>${escapeHtml(item.repoView)}</pre></div>
+        <div class="view"><h3>Live Pull View <span class="faint">T</span></h3><pre>${escapeHtml(item.liveView)}</pre></div>
+        <div class="view"><h3>Capture result</h3><pre>${escapeHtml(item.captureView)}</pre></div>
+        <div class="view"><h3>Sync Base <span class="faint">B</span></h3><pre>${escapeHtml(item.baseDetail)}</pre></div>
+      </div>`;
+    }
+    function inspector(item, includeActions = true) {
+      return `<div class="panel pad">
+        <div class="status-line">${itemBadges(item)}</div>
+        <h2 style="margin-top:12px">${item.label}</h2>
+        <p class="item-path mono">${item.path}</p>
+        <div class="meta-grid">
+          <div class="meta"><div class="meta-label">Sync Unit</div><div class="meta-value">${item.kind}</div></div>
+          <div class="meta"><div class="meta-label">Capture</div><div class="meta-value">${item.capture}</div></div>
+          <div class="meta"><div class="meta-label">Base provenance</div><div class="meta-value">${item.baseTone === "amber" ? "Conservative" : item.baseTone === "green" ? "Exact" : "Unavailable"}</div></div>
+          <div class="meta"><div class="meta-label">Selection</div><div class="meta-value">${item.selected ? "Included" : "Excluded"}</div></div>
+        </div>
+        ${includeActions ? `<div class="divider"></div>${proposalBlock(item)}${actionButtons(item)}` : ""}
+        ${viewEvidence(item)}
+      </div>`;
+    }
+    function queue(item) {
+      return `<button class="queue-item ${item.id === state.selectedId ? "current" : ""} ${item.applied ? "applied" : ""}" onclick="selectItem('${item.id}')">
+        <input class="queue-check" type="checkbox" ${item.selected ? "checked" : ""} onclick="event.stopPropagation(); toggleSelected('${item.id}')" aria-label="Select ${item.label}">
+        <span><span class="item-title">${item.label}</span><span class="item-path mono">${item.path}</span></span>
+        <span class="queue-state badge ${modeTone(item)}">${modeLabel(item)}</span>
+      </button>`;
+    }
+    function queuePanel() {
+      const selectedCount = selectedItems().length;
+      return `<section class="panel queue-panel"><div class="panel-header"><div><h2>Review queue</h2><p>${selectedCount} selected · focus one proposal</p></div><span class="badge blue">${state.items.length} units</span></div><div class="queue-list">${state.items.map(queue).join("")}</div><div class="queue-footer">Space selects a unit. The focused row is the only row changed by <span class="key">r</span> or <span class="key">m</span>.</div></section>`;
+    }
+    function sessionRail() {
+      const approved = state.items.filter((item) => item.approved).length;
+      const applied = state.items.filter((item) => item.applied).length;
+      return `<div class="rail-grid">
+        <section class="panel pad"><div class="row"><div><h2>Batch actions</h2><p class="small muted">Explicit actions only</p></div><span class="badge ${approved ? "green" : "gray"}">${approved} approved</span></div><div class="action-grid"><button class="button" onclick="approveSelected()">Approve eligible <span class="key">A</span></button><button class="button primary" onclick="applyApproved()">Apply approved <span class="key">↵</span></button><button class="button wide" onclick="toggleViews()">${state.showViews ? "Hide" : "Show"} Pull Views <span class="key">v</span></button></div></section>
+        <section class="panel pad"><div class="row"><div><h2>Session state</h2><p class="small muted">Always in memory until Apply</p></div><span class="badge ${applied ? "green" : "gray"}">${applied} applied</span></div><div class="meta-grid"><div class="meta"><div class="meta-label">Last action</div><div class="meta-value small">${state.lastAction}</div></div><div class="meta"><div class="meta-label">Repository writes</div><div class="meta-value">${applied ? "Simulated" : "None"}</div></div></div></section>
+        <section class="panel pad"><h2>Event log</h2><ul class="log">${state.log.map((entry) => `<li>${entry}</li>`).join("")}</ul></section>
+      </div>`;
+    }
+    function renderA() {
+      const item = selectedItem();
+      return `<div class="layout-a"><div>${queuePanel()}</div><div class="inspector-panel">${inspector(item)}</div><aside class="rail">${sessionRail()}</aside></div>`;
+    }
+    function renderB() {
+      const item = selectedItem();
+      return `<div class="layout-b">
+        <section class="queue-strip">${state.items.map((candidate) => `<button class="strip-item ${candidate.id === state.selectedId ? "current" : ""}" onclick="selectItem('${candidate.id}')"><span class="item-title">${candidate.label}</span><span class="item-path mono">${candidate.path}</span><span class="status-line" style="margin-top:8px"><span class="badge ${candidate.statusTone}">${candidate.status}</span></span></button>`).join("")}</section>
+        <div class="focus-grid">
+          <section class="panel focus-card">
+            <div class="status-line">${itemBadges(item)}</div>
+            <h2 style="margin-top:15px">Focused proposal</h2>
+            <p class="item-path mono">${item.label} · ${item.path}</p>
+            <div class="big-mode">${modeLabel(item)}</div>
+            <p class="big-summary">${proposalSummary(item)}</p>
+            ${proposalBlock(item)}
+            ${actionButtons(item)}
+            <div class="evidence-drawer">
+              <details open><summary>Pull View evidence</summary>${viewEvidence(item)}</details>
+              <details><summary>Sync Base provenance</summary><p class="small muted" style="padding:0 12px 12px;margin:0">${item.baseDetail} The Base remains unchanged until a qualifying operation says otherwise.</p></details>
+            </div>
+          </section>
+          <aside class="stack">
+            <section class="panel"><div class="panel-header"><div><h2>Progress</h2><p>Observation → Apply</p></div></div><div class="progress-list">
+              ${progressStep("Observed", "Pull Views are already evaluated", true, true)}
+              ${progressStep("Materialize", item.materialized ? "Proposal is in memory" : "Review or Approve loads it lazily", item.materialized, !item.materialized)}
+              ${progressStep("Approve", item.approved ? "Selected for Apply" : "Only clean proposals qualify", item.approved, false)}
+              ${progressStep("Apply", item.applied ? "Repository mutation simulated" : "Apply is the sole write seam", item.applied, false)}
+            </div></section>
+            ${sessionRail()}
+          </aside>
+        </div>
+      </div>`;
+    }
+    function progressStep(label, text, done, active) {
+      return `<div class="progress-step ${done ? "done" : ""} ${active ? "active" : ""}"><span class="progress-dot">${done ? "✓" : "·"}</span><p><strong>${label}</strong><br>${text}</p></div>`;
+    }
+    function renderC() {
+      const item = selectedItem();
+      return `<div class="deck">
+        <section class="panel deck-table"><div class="panel-header"><div><h2>Pull workset</h2><p>Keyboard-first table; focus never implies approval</p></div><div class="status-line"><span class="badge blue">${selectedItems().length} selected</span><button class="button" onclick="resetDemo()">Reset</button></div></div>
+          <table><thead><tr><th></th><th>Sync Unit</th><th>Observation</th><th>Base</th><th>Proposal</th></tr></thead><tbody>${state.items.map((candidate) => `<tr class="${candidate.id === state.selectedId ? "current" : ""} ${candidate.applied ? "applied" : ""}" onclick="selectItem('${candidate.id}')"><td class="select-cell"><input class="queue-check" type="checkbox" ${candidate.selected ? "checked" : ""} onclick="event.stopPropagation(); toggleSelected('${candidate.id}')" aria-label="Select ${candidate.label}"></td><td><strong>${candidate.label}</strong><br><span class="tiny muted mono">${candidate.path}</span></td><td><span class="badge ${candidate.statusTone}">${candidate.status}</span></td><td><span class="badge ${candidate.baseTone}">${candidate.base}</span></td><td class="mode-cell"><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span><br><span class="tiny muted">${candidate.approved ? "approved" : candidate.applied ? "applied" : "not approved"}</span></td></tr>`).join("")}</tbody></table></section>
+        <aside class="deck-side"><section class="panel command-rail"><div class="row"><div><h2>Command rail</h2><p class="small muted">Focused: ${item.label}</p></div></div>${command("Enter", "review focused proposal")} ${command("r", "replace focused proposal")} ${command("m", "restore focused merge")} ${command("e", "suspend TUI → Proposal Editor")} ${command("a", "approve focused proposal")} ${command("A", "approve eligible batch")} ${command("↵", "Apply approved proposals")} ${command("v", "toggle Pull Views")}</section><section class="panel deck-inspector">${proposalBlock(item)}<div class="divider"></div>${viewEvidence(item)}</section>${sessionRail()}</aside>
+      </div>`;
+    }
+    function command(key, label) { return `<div class="command"><span class="key">${key}</span><span>${label}</span></div>`; }
+    function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character])); }
+    function render() {
+      const variant = variantDefinitions.find((candidate) => candidate.key === currentVariant);
+      const content = currentVariant === "A" ? renderA() : currentVariant === "B" ? renderB() : renderC();
+      document.querySelector("#app").innerHTML = `<div class="shell">
+        <div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div>
+        <h1>Review the proposal, not the working tree.</h1>
+        <p class="lede">This throwaway demo tests one decision: every changed Sync Unit starts with the safest available merge proposal, while <span class="key">r</span> changes only the focused proposal to an explicit Capture replacement. Review and approval are lazy; Apply is the only simulated repository write.</p>
+        <div class="prototype-note">No files are changed. Try the awkward cases, then switch layouts.</div>
+        <div class="toolbar"><button class="button primary" onclick="reviewCurrent()">Review focused proposal <span class="key">Enter</span></button><button class="button" onclick="approveSelected()">Approve eligible batch <span class="key">A</span></button><button class="button" onclick="applyApproved()">Apply approved <span class="key">↵</span></button><button class="button" onclick="resetDemo()">Reset simulation</button></div>
+        ${content}
+        <div class="help"><strong>Try this path:</strong> focus <span class="mono">main:git.gitconfig</span>, press <span class="key">Enter</span>, then <span class="key">r</span>. The proposal changes from merge to replacement and approval resets. Next focus <span class="mono">main:app.settings</span>; its conflict stays unapprovable until <span class="key">r</span> or <span class="key">e</span>. The missing-Base item demonstrates reviewed replacement without pretending a merge was possible.</div>
+        <div class="key-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Space</span> select</span><span><span class="key">r</span> replace current</span><span><span class="key">m</span> merge current</span><span><span class="key">e</span> Proposal Editor</span><span><span class="key">a</span> approve</span><span><span class="key">A</span> approve selected</span><span><span class="key">Enter</span> review</span><span><span class="key">v</span> Pull Views</span><span><span class="key">←</span>/<span class="key">→</span> layout</span><span><span class="key">?</span> help</span></div>
+      </div>
+      <nav class="shortcut-bar" aria-label="Prototype layout switcher"><button onclick="cycleVariant(-1)" aria-label="Previous layout">←</button><span class="shortcut-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next layout">→</button></nav>
+      ${state.editor ? editorModal() : ""}`;
+    }
+    function editorModal() {
+      const item = state.items.find((candidate) => candidate.id === state.editor.id);
+      return `<div class="editor-backdrop"><section class="editor-card" role="dialog" aria-modal="true" aria-label="Proposal Editor"><div class="eyebrow">Terminal handoff · suspended TUI</div><h2>Proposal Editor</h2><p class="muted">The review workspace is paused while the editor owns the terminal. Returning with <strong>Save</strong> adopts a transactional proposal; <strong>Cancel</strong> simulates exit 100 and preserves the prior status.</p><div class="editor-stage"><strong>${item.label}</strong><br>${state.editor.exceptional ? "Exceptional Capture failure — prepare a replacement or manual write set." : "Edit the proposal buffer, not the repository source."}</div><textarea id="editor-text">${escapeHtml(state.editor.text)}</textarea><div class="toolbar"><button class="button primary" onclick="saveEditor()">Return and adopt edits</button><button class="button" onclick="cancelEditor()">Cancel editor</button></div></section></div>`;
+    }
+
+    document.addEventListener("keydown", (event) => {
+      if (state.editor) {
+        if (event.key === "Escape") { event.preventDefault(); cancelEditor(); }
+        return;
+      }
+      const active = document.activeElement;
+      if (active && (active.matches("input, textarea, [contenteditable='true']"))) return;
+      const index = state.items.findIndex((item) => item.id === state.selectedId);
+      if (event.key === "ArrowLeft") { event.preventDefault(); cycleVariant(-1); return; }
+      if (event.key === "ArrowRight") { event.preventDefault(); cycleVariant(1); return; }
+      if (event.key === "j" || event.key === "ArrowDown") { event.preventDefault(); selectItem(state.items[(index + 1) % state.items.length].id); return; }
+      if (event.key === "k" || event.key === "ArrowUp") { event.preventDefault(); selectItem(state.items[(index - 1 + state.items.length) % state.items.length].id); return; }
+      if (event.key === " ") { event.preventDefault(); toggleSelected(state.selectedId); return; }
+      if (event.key === "Enter") { event.preventDefault(); reviewCurrent(); return; }
+      if (event.key === "r") { event.preventDefault(); replaceCurrent(); return; }
+      if (event.key === "m") { event.preventDefault(); mergeCurrent(); return; }
+      if (event.key === "e") { event.preventDefault(); editCurrent(); return; }
+      if (event.key === "a") { event.preventDefault(); approveCurrent(); return; }
+      if (event.key === "A") { event.preventDefault(); approveSelected(); return; }
+      if (event.key === "v") { event.preventDefault(); toggleViews(); return; }
+      if (event.key === "?") { event.preventDefault(); document.querySelector(".help")?.scrollIntoView({ behavior: "smooth", block: "center" }); }
+    });
+
+    render();
+  </script>
+</body>
+</html>
