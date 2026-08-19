@@ -449,11 +449,12 @@
       return `<div class="evidence"><details open><summary>Repo Pull View (O)</summary><pre>${escapeHtml(candidate.repoView)}</pre></details><details open><summary>Live Pull View (T)</summary><pre>${escapeHtml(candidate.liveView)}</pre></details><details><summary>Capture result</summary><pre>${escapeHtml(candidate.captureView)}</pre></details></div>`;
     }
     function proposalBox(candidate) {
-      const label = candidate.noopProposal ? "No repository-source change" : candidate.noop ? "No Proposal required" : candidate.materialized ? "Proposal diff" : "Lazy Proposal";
+      const exceptional = !candidate.captureOk;
+      const label = exceptional ? "Exceptional" : candidate.noopProposal ? "No repository-source change" : candidate.noop ? "No Proposal required" : candidate.materialized ? "Proposal diff" : "Lazy Proposal";
       const content = proposalText(candidate);
-      const diff = candidate.noopProposal ? `<span class="proposal-empty">No repository-source change.</span>` : content ? proposalDiff(candidate.repoView, content) : `<span class="proposal-empty">Proposal content appears after Enter opens Review.</span>`;
-      const boxTone = candidate.conflict ? "conflict" : candidate.noop || candidate.noopProposal ? "noop" : "";
-      const lifecycle = candidate.noopProposal ? `<p class="tiny muted">No repository mutation. Choose another strategy or open the Editor to create a write-bearing Proposal.</p>` : candidate.materialized && !candidate.noop ? `<p class="tiny muted"><strong>Write set:</strong> ${candidate.mode === "replace" ? "Capture replacement" : candidate.mode === "edited" ? "transactional Editor result" : "three-way merge"}. <strong>Approval:</strong> ${candidate.approved ? "yes" : "no"}.</p>` : "";
+      const diff = exceptional ? `<span class="proposal-empty">Capture failed; no Proposal is available.</span>` : candidate.noopProposal ? `<span class="proposal-empty">No repository-source change.</span>` : content ? proposalDiff(candidate.repoView, content) : `<span class="proposal-empty">Proposal content appears after Enter opens Review.</span>`;
+      const boxTone = exceptional || candidate.conflict ? "conflict" : candidate.noop || candidate.noopProposal ? "noop" : "";
+      const lifecycle = exceptional ? `<p class="tiny muted">Use the Proposal Editor for manual transactional handling; approval is unavailable until it returns a result.</p>` : candidate.noopProposal ? `<p class="tiny muted">No repository mutation. Choose another strategy or open the Editor to create a write-bearing Proposal.</p>` : candidate.materialized && !candidate.noop ? `<p class="tiny muted"><strong>Write set:</strong> ${candidate.mode === "replace" ? "Capture replacement" : candidate.mode === "edited" ? "transactional Editor result" : "three-way merge"}. <strong>Approval:</strong> ${candidate.approved ? "yes" : "no"}.</p>` : "";
       return `<section class="proposal-box ${boxTone}"><h3><span>${label}</span><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></h3><pre class="proposal-diff">${diff}</pre>${lifecycle}</section>`;
     }
     function deckActionButtons() {
