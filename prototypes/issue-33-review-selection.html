@@ -214,7 +214,7 @@
         base: "Missing", baseTone: "amber", baseDetail: "No applicable commit-anchored Sync Base exists.", capture: "Captured", captureOk: true,
         canMerge: false, strategy: "replace", defaultMode: "replace", cleanProposal: true,
         repoView: "vim.opt.number = true\nvim.opt.relativenumber = true", liveView: "vim.opt.number = true\nvim.opt.relativenumber = false", captureView: "vim.opt.number = true\nvim.opt.relativenumber = false",
-        mergeSummary: "A merge cannot be attempted without an applicable Base.", replaceSummary: "Create a reviewed replacement because this unit has no Base.",
+        mergeSummary: "A merge cannot be attempted without an applicable Base.", replaceSummary: "Create a replacement proposal because this unit has no Base.",
       },
       {
         id: "settings", label: "main:app.settings", path: "~/.config/app/settings.toml", status: "Observed drift", statusTone: "blue",
@@ -294,12 +294,33 @@
       if (changed) candidate.approved = false;
       log(`${candidate.label}: m selected merge${changed ? "; approval reset" : "; approval retained"}.`); render();
     }
-    function approveCurrent() {
+    function approvalAllowed(candidate) {
+      const strategy = candidate.strategy || candidate.mode;
+      return candidate.approved || (!candidate.noop && candidate.captureOk && (candidate.cleanProposal || candidate.edited || candidate.mode === "replace" || strategy === "replace"));
+    }
+    function toggleApproval() {
       const candidate = item(state.reviewId || state.selectedId);
-      if (candidate.noop) log(`${candidate.label}: no-op is not approvable in changed-work review.`);
-      else if (!candidate.captureOk) log(`${candidate.label}: Capture failed; use e for Editor/manual handling.`);
-      else { materialize(candidate); if (candidate.cleanProposal || candidate.edited || candidate.mode === "replace") { candidate.approved = true; log(`${candidate.label}: approved ${candidate.mode === "replace" ? "replacement" : candidate.mode} Proposal.`); } else log(`${candidate.label}: conflict remains unresolved; use r or e.`); }
+      if (candidate.approved) {
+        candidate.approved = false;
+        log(`${candidate.label}: approval removed.`);
+      } else if (candidate.noop) {
+        log(`${candidate.label}: no-op is not approvable in changed-work review.`);
+      } else if (!candidate.captureOk) {
+        log(`${candidate.label}: Capture failed; use e for Editor/manual handling.`);
+      } else if (!approvalAllowed(candidate)) {
+        log(`${candidate.label}: conflict remains unresolved; use r or e.`);
+      } else {
+        materialize(candidate);
+        candidate.approved = true;
+        log(`${candidate.label}: approved ${candidate.mode === "replace" ? "replacement" : candidate.mode} Proposal.`);
+      }
       render();
+    }
+    function toggleFocusedApproval() {
+      const reviewId = state.reviewId;
+      state.reviewId = state.selectedId;
+      toggleApproval();
+      state.reviewId = reviewId;
     }
     function approveEligible() {
       let approved = 0;
@@ -341,10 +362,10 @@
       if (!candidate.captureOk) return "Exceptional";
       const strategy = candidate.strategy || candidate.mode || candidate.defaultMode;
       if (candidate.approved) return strategy === "replace" ? "Replacement" : strategy === "edited" ? "Edited" : "Merge";
-      if (strategy === "replace") return candidate.materialized ? "Replacement" : "Replacement (not reviewed)";
+      if (strategy === "replace") return "Replacement";
       if (strategy === "edited") return "Edited Proposal";
-      if (strategy === "merge") return candidate.materialized && candidate.conflict ? "Merge conflict" : candidate.materialized ? "Merge" : "Merge (not reviewed)";
-      return "Not reviewed";
+      if (strategy === "merge") return candidate.materialized && candidate.conflict ? "Merge conflict" : "Merge";
+      return "Unavailable";
     }
     function approvalMark(candidate) {
       if (candidate.approved) return `<span class="approval-mark approved" title="Approved">✓</span>`;
@@ -397,12 +418,13 @@
     function proposalBox(candidate) {
       const label = candidate.noop ? "No Proposal required" : candidate.materialized ? "Proposal diff" : "Lazy Proposal";
       const content = proposalText(candidate);
-      const diff = content ? proposalDiff(candidate.repoView, content) : `<span class="proposal-empty">${escapeHtml(summary(candidate))}</span>`;
+      const diff = content ? proposalDiff(candidate.repoView, content) : `<span class="proposal-empty">Proposal content appears after Enter opens Review.</span>`;
       return `<section class="proposal-box ${candidate.conflict ? "conflict" : candidate.noop ? "noop" : ""}"><h3><span>${label}</span><span class="badge ${modeTone(candidate)}">${modeLabel(candidate)}</span></h3><pre class="proposal-diff">${diff}</pre>${candidate.materialized && !candidate.noop ? `<p class="tiny muted"><strong>Write set:</strong> ${candidate.mode === "replace" ? "Capture replacement" : candidate.mode === "edited" ? "transactional Editor result" : "three-way merge"}. <strong>Approval:</strong> ${candidate.approved ? "yes" : "no"}.</p>` : ""}</section>`;
     }
     function deckActionButtons() {
+      const focused = item();
       const approved = state.items.filter((candidate) => candidate.approved).length;
-      return `<div class="command-bar"><button class="button primary" onclick="openReview()">Review focused <span class="key">Enter</span></button><button class="button" onclick="approveEligible()">Approve eligible <span class="key">A</span></button><button class="button primary" onclick="applyApproved()">Apply approved</button><button class="button" onclick="resetDemo()">Reset</button><span class="bar-status">${approved} approved · focused ${item().label}</span></div>`;
+      return `<div class="command-bar"><button class="button primary" onclick="openReview()">Review focused <span class="key">Enter</span></button><button class="button" onclick="toggleFocusedApproval()" ${approvalAllowed(focused) ? "" : "disabled"}>${focused.approved ? "Unapprove focused" : "Approve focused"} <span class="key">a</span></button><button class="button" onclick="approveEligible()">Approve eligible <span class="key">A</span></button><button class="button primary" onclick="applyApproved()">Apply approved</button><button class="button" onclick="resetDemo()">Reset</button><span class="bar-status">${approved} approved · focused ${focused.label}</span></div>`;
     }
     function deckHeader(extraClass = "") {
       const changed = state.items.filter((candidate) => !candidate.noop).length;
@@ -437,8 +459,8 @@
       const candidate = item(state.reviewId);
       const reviewMode = candidate.noop ? "NO-OP" : !candidate.captureOk ? "EXCEPTIONAL" : candidate.conflict ? "MERGE CONFLICT" : candidate.mode === "replace" ? "REPLACEMENT" : candidate.mode === "edited" ? "EDITED PROPOSAL" : "MERGE";
       const reviewTone = candidate.noop ? "gray" : !candidate.captureOk ? "red" : candidate.conflict ? "red" : candidate.mode === "replace" ? "amber" : "blue";
-      const canApprove = !candidate.noop && candidate.captureOk && (candidate.cleanProposal || candidate.edited || candidate.mode === "replace");
-      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${candidate.approved ? "approved" : "pending"}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div>${proposalBox(candidate)}<div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Proposal lifecycle</div><div class="fact-value">${candidate.materialized ? "Materialized in memory" : candidate.noop ? "No Proposal" : "Awaiting Review"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer"><button class="button primary" onclick="approveCurrent()" ${canApprove ? "" : "disabled"}>Approve <span class="key">a</span></button><button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button><button class="button" onclick="toggleEvidence()">${state.showEvidence ? "Hide" : "Show"} evidence <span class="key">v</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
+      const canToggleApproval = approvalAllowed(candidate);
+      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${candidate.approved ? "approved" : "pending"}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div>${proposalBox(candidate)}<div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Materialization</div><div class="fact-value">${candidate.materialized ? "In memory" : candidate.noop ? "No Proposal" : "On Enter"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer"><button class="button primary" onclick="toggleApproval()" ${canToggleApproval ? "" : "disabled"}>${candidate.approved ? "Unapprove" : "Approve"} <span class="key">a</span></button><button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button><button class="button" onclick="toggleEvidence()">${state.showEvidence ? "Hide" : "Show"} evidence <span class="key">v</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
     }
     function renderEditor() {
       const candidate = item(state.editor.id);
@@ -460,7 +482,7 @@
         if (event.key === "Escape") { event.preventDefault(); returnDeck(); return; }
         if (event.key === "r") { event.preventDefault(); chooseReplacement(); return; }
         if (event.key === "m") { event.preventDefault(); chooseMerge(); return; }
-        if (event.key === "a") { event.preventDefault(); approveCurrent(); return; }
+        if (event.key === "a") { event.preventDefault(); toggleApproval(); return; }
         if (event.key === "e") { event.preventDefault(); enterEditor(); return; }
         if (event.key === "v") { event.preventDefault(); toggleEvidence(); return; }
         return;
@@ -473,7 +495,7 @@
       if (event.key === "Enter") { event.preventDefault(); openReview(); return; }
       if (event.key === "r") { event.preventDefault(); chooseReplacement(); return; }
       if (event.key === "m") { event.preventDefault(); chooseMerge(); return; }
-      if (event.key === "a") { event.preventDefault(); state.reviewId = state.selectedId; approveCurrent(); state.reviewId = null; return; }
+      if (event.key === "a") { event.preventDefault(); toggleFocusedApproval(); return; }
       if (event.key === "A") { event.preventDefault(); approveEligible(); return; }
       if (event.key === "?") { event.preventDefault(); document.querySelector(".help")?.scrollIntoView({ behavior: "smooth", block: "center" }); }
     });
