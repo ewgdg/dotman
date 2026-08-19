@@ -266,12 +266,21 @@
       refreshNoopProposal(candidate);
       log(`${candidate.label}: materialized ${candidate.mode === "replace" ? "replacement" : "merge"} Proposal lazily.`);
     }
-    function openReview(id = state.selectedId, requestedMode = null) {
+    // A strategy switch invalidates only derived reconciliation state; retained Pull/Capture evidence stays reusable.
+    function deferMaterialization(candidate) {
+      candidate.materialized = false; candidate.mode = null; candidate.noopProposal = false; candidate.conflict = false; candidate.edited = false; candidate.editedText = null; candidate.approved = false;
+    }
+    function openReview(id = state.selectedId) {
       const candidate = item(id);
       state.selectedId = id; state.reviewId = id; state.view = "review";
       if (!candidate.noop && candidate.captureOk) materialize(candidate);
-      if (requestedMode === "replace") chooseReplacement(false);
       log(`${candidate.label}: opened Proposal Review full-screen in the same TUI.`);
+      render();
+    }
+    function materializeCurrent() {
+      const candidate = item(state.reviewId || state.selectedId);
+      if (candidate.noop || !candidate.captureOk) { log(`${candidate.label}: Proposal cannot be materialized before Capture succeeds.`); render(); return; }
+      if (!candidate.materialized) materialize(candidate);
       render();
     }
     function chooseReplacement(shouldLog = true) {
@@ -280,8 +289,7 @@
       if (!candidate.captureOk) { log(`${candidate.label}: replacement unavailable without a retained Capture result.`); render(); return; }
       const changed = (candidate.strategy || candidate.mode || candidate.defaultMode) !== "replace";
       candidate.strategy = "replace";
-      if (candidate.materialized) { candidate.mode = "replace"; candidate.conflict = false; refreshNoopProposal(candidate); }
-      if (changed) candidate.approved = false;
+      if (changed) deferMaterialization(candidate);
       if (shouldLog) log(`${candidate.label}: r selected Capture replacement${changed ? "; approval reset" : "; approval retained"}.`);
       render();
     }
@@ -291,8 +299,7 @@
       if (!candidate.captureOk) { log(`${candidate.label}: merge unavailable because Capture failed.`); render(); return; }
       const changed = (candidate.strategy || candidate.mode || candidate.defaultMode) !== "merge";
       candidate.strategy = "merge";
-      if (candidate.materialized) { candidate.mode = "merge"; candidate.edited = false; if (candidate.id === "settings") candidate.conflict = true; refreshNoopProposal(candidate); }
-      if (changed) candidate.approved = false;
+      if (changed) deferMaterialization(candidate);
       log(`${candidate.label}: m selected merge${changed ? "; approval reset" : "; approval retained"}.`); render();
     }
     function approvalAllowed(candidate) {
@@ -351,7 +358,8 @@
     function enterEditor() {
       const candidate = item(state.reviewId || state.selectedId);
       if (candidate.noop) { log(`${candidate.label}: no-op has no Proposal Editor session.`); render(); return; }
-      state.editor = { id: candidate.id, exceptional: !candidate.captureOk, text: candidate.captureOk ? (candidate.mode === "replace" ? candidate.captureView : `${candidate.repoView}\n\n# proposal edits\n`) : "Editor can inspect the Capture failure and prepare a transactional write set here." };
+      const selectedMode = candidate.mode || candidate.strategy || candidate.defaultMode;
+      state.editor = { id: candidate.id, exceptional: !candidate.captureOk, text: candidate.captureOk ? (selectedMode === "replace" ? candidate.captureView : `${candidate.repoView}\n\n# proposal edits\n`) : "Editor can inspect the Capture failure and prepare a transactional write set here." };
       state.view = "editor"; log(`${candidate.label}: suspended Proposal Review and handed the terminal to the Proposal Editor.`); render();
     }
     function saveEditor() {
@@ -371,7 +379,8 @@
       candidate.noopProposal = Boolean(candidate.materialized && !candidate.noop && candidate.captureOk && proposalText(candidate) === candidate.repoView);
     }
     function proposalStrategyLabel(candidate) {
-      return candidate.mode === "replace" ? "Replacement" : candidate.mode === "edited" ? "Edited" : "Merge";
+      const strategy = candidate.mode || candidate.strategy || candidate.defaultMode;
+      return strategy === "replace" ? "Replacement" : strategy === "edited" ? "Edited" : "Merge";
     }
     function approvalLabel(candidate) {
       return candidate.approved ? "approved" : candidate.noop || candidate.noopProposal ? "not applicable" : "pending";
@@ -403,7 +412,7 @@
       return "blue";
     }
     function summary(candidate) {
-      if (!candidate.materialized) return candidate.noop ? "No Proposal is needed because the Pull Views agree." : candidate.captureOk ? "Open Review to materialize the proposed repository change." : candidate.mergeSummary;
+      if (!candidate.materialized) return candidate.noop ? "No Proposal is needed because the Pull Views agree." : candidate.captureOk ? "Materialize the selected strategy to inspect the repository result." : candidate.mergeSummary;
       if (candidate.noopProposal) return `${proposalStrategyLabel(candidate)} produced no repository change; choose another strategy or edit if this drift should be retained.`;
       if (candidate.mode === "replace") return candidate.replaceSummary;
       if (candidate.mode === "edited") return "Transactional Editor result; review it again before approval.";
@@ -478,14 +487,17 @@
     function renderDeck() {
       const variant = variants.find((candidate) => candidate.key === currentVariant);
       const content = currentVariant === "A" ? renderVariantA() : currentVariant === "B" ? renderVariantB() : renderVariantC();
-      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}${deckActionButtons()}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen and shows the Proposal diff. Press <span class="key">r</span> to choose replacement, then <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">m</span> merge</span><span><span class="key">a</span> approve focused</span><span><span class="key">A</span> approve eligible</span><span><span class="key">U</span> unapprove all</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
+      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}${deckActionButtons()}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen and shows the Proposal diff. Press <span class="key">r</span> to choose replacement, then <span class="key">Enter</span> to materialize it; press <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">m</span> merge</span><span><span class="key">a</span> approve focused</span><span><span class="key">A</span> approve eligible</span><span><span class="key">U</span> unapprove all</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
     }
     function renderReview() {
       const candidate = item(state.reviewId);
-      const reviewMode = candidate.noop ? "NO PROPOSAL" : candidate.noopProposal ? `${proposalStrategyLabel(candidate).toUpperCase()} · NO CHANGE` : !candidate.captureOk ? "EXCEPTIONAL" : candidate.conflict ? "MERGE CONFLICT" : candidate.mode === "replace" ? "REPLACEMENT" : candidate.mode === "edited" ? "EDITED PROPOSAL" : "MERGE";
-      const reviewTone = candidate.noop || candidate.noopProposal ? "gray" : !candidate.captureOk ? "red" : candidate.conflict ? "red" : candidate.mode === "replace" ? "amber" : "blue";
+      const reviewMode = candidate.noop ? "NO PROPOSAL" : candidate.noopProposal ? `${proposalStrategyLabel(candidate).toUpperCase()} · NO CHANGE` : !candidate.captureOk ? "EXCEPTIONAL" : candidate.conflict ? "MERGE CONFLICT" : proposalStrategyLabel(candidate).toUpperCase();
+      const reviewTone = candidate.noop || candidate.noopProposal ? "gray" : !candidate.captureOk ? "red" : candidate.conflict ? "red" : proposalStrategyLabel(candidate) === "Replacement" ? "amber" : "blue";
       const canToggleApproval = approvalAllowed(candidate);
-      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${approvalLabel(candidate)}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div>${proposalBox(candidate)}<div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Materialization</div><div class="fact-value">${candidate.materialized ? "In memory" : candidate.noop ? "No Proposal" : "On Enter"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer"><button class="button primary" onclick="toggleApproval()" ${canToggleApproval ? "" : "disabled"}>${candidate.approved ? "Unapprove" : "Approve"} <span class="key">a</span></button><button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button><button class="button" onclick="toggleEvidence()">${state.showEvidence ? "Hide" : "Show"} evidence <span class="key">v</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
+      const primaryAction = !candidate.materialized && !candidate.noop && candidate.captureOk
+        ? `<button class="button primary" onclick="materializeCurrent()">Materialize Proposal <span class="key">Enter</span></button>`
+        : `<button class="button primary" onclick="toggleApproval()" ${canToggleApproval ? "" : "disabled"}>${candidate.approved ? "Unapprove" : "Approve"} <span class="key">a</span></button>`;
+      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${approvalLabel(candidate)}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div>${proposalBox(candidate)}<div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Materialization</div><div class="fact-value">${candidate.materialized ? "In memory" : candidate.noop ? "No Proposal" : "Deferred"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer">${primaryAction}<button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button><button class="button" onclick="toggleEvidence()">${state.showEvidence ? "Hide" : "Show"} evidence <span class="key">v</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
     }
     function renderEditor() {
       const candidate = item(state.editor.id);
@@ -505,6 +517,7 @@
       if (state.view === "editor") { if (event.key === "Escape") { event.preventDefault(); cancelEditor(); } return; }
       if (state.view === "review") {
         if (event.key === "Escape") { event.preventDefault(); returnDeck(); return; }
+        if (event.key === "Enter") { event.preventDefault(); materializeCurrent(); return; }
         if (event.key === "r") { event.preventDefault(); chooseReplacement(); return; }
         if (event.key === "m") { event.preventDefault(); chooseMerge(); return; }
         if (event.key === "a") { event.preventDefault(); toggleApproval(); return; }
