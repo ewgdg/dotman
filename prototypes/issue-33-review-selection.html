@@ -331,6 +331,12 @@
       });
       log(`Approve eligible: ${approved} Proposal${approved === 1 ? "" : "s"} approved; conflicts and failures remain unapproved.`); render();
     }
+    function unapproveAll() {
+      const approved = state.items.filter((candidate) => candidate.approved);
+      if (!approved.length) log("Unapprove all found no approved Proposals.");
+      else { approved.forEach((candidate) => { candidate.approved = false; }); log(`Unapproved ${approved.length} Proposal${approved.length === 1 ? "" : "s"}; strategies and Proposal content were preserved.`); }
+      render();
+    }
     function applyApproved() {
       const approved = state.items.filter((candidate) => candidate.approved);
       if (!approved.length) log("Apply found no approved Proposals; no repository files changed.");
@@ -424,7 +430,7 @@
     function deckActionButtons() {
       const focused = item();
       const approved = state.items.filter((candidate) => candidate.approved).length;
-      return `<div class="command-bar"><button class="button primary" onclick="openReview()">Review focused <span class="key">Enter</span></button><button class="button" onclick="toggleFocusedApproval()" ${approvalAllowed(focused) ? "" : "disabled"}>${focused.approved ? "Unapprove focused" : "Approve focused"} <span class="key">a</span></button><button class="button" onclick="approveEligible()">Approve eligible <span class="key">A</span></button><button class="button primary" onclick="applyApproved()">Apply approved</button><button class="button" onclick="resetDemo()">Reset</button><span class="bar-status">${approved} approved · focused ${focused.label}</span></div>`;
+      return `<div class="command-bar"><button class="button primary" onclick="openReview()">Review focused <span class="key">Enter</span></button><button class="button" onclick="toggleFocusedApproval()" ${approvalAllowed(focused) ? "" : "disabled"}>${focused.approved ? "Unapprove focused" : "Approve focused"} <span class="key">a</span></button><button class="button" onclick="approveEligible()">Approve eligible <span class="key">A</span></button>${approved ? `<button class="button" onclick="unapproveAll()">Unapprove all <span class="key">U</span></button>` : ""}<button class="button primary" onclick="applyApproved()">Apply approved</button><button class="button" onclick="resetDemo()">Reset</button><span class="bar-status">${approved} approved · focused ${focused.label}</span></div>`;
     }
     function deckHeader(extraClass = "") {
       const changed = state.items.filter((candidate) => !candidate.noop).length;
@@ -453,7 +459,7 @@
     function renderDeck() {
       const variant = variants.find((candidate) => candidate.key === currentVariant);
       const content = currentVariant === "A" ? renderVariantA() : currentVariant === "B" ? renderVariantB() : renderVariantC();
-      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}${deckActionButtons()}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen and shows the Proposal diff. Press <span class="key">r</span> to choose replacement, then <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">m</span> merge</span><span><span class="key">a</span> approve focused</span><span><span class="key">A</span> approve eligible</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
+      return `<div class="shell"><div class="eyebrow">Dotman Pull reconciliation · issue 33 prototype</div><h1>Command Deck first. Proposal Review second.</h1><p class="lede">The Command Deck stays compact at any terminal width. <span class="key">Enter</span> opens a separate full-screen Proposal Review in the same TUI. No Proposal details live permanently beside the workset.</p><div class="prototype-note">No files are changed. This is an in-memory behavior prototype.</div>${content}${deckActionButtons()}<div class="help"><strong>Try this:</strong> focus <span class="mono">main:git.gitconfig</span> and press <span class="key">Enter</span>. Proposal Review opens full-screen and shows the Proposal diff. Press <span class="key">r</span> to choose replacement, then <span class="key">m</span> to return to merge. Press <span class="key">Esc</span> to return to the deck.</div><div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Enter</span> review</span><span><span class="key">r</span> replacement</span><span><span class="key">m</span> merge</span><span><span class="key">a</span> approve focused</span><span><span class="key">A</span> approve eligible</span><span><span class="key">U</span> unapprove all</span><span><span class="key">Apply</span> apply approved</span><span><span class="key">←</span>/<span class="key">→</span> deck layout</span><span><span class="key">?</span> help</span></div><nav class="switcher"><button onclick="cycleVariant(-1)" aria-label="Previous deck layout">←</button><span class="switcher-label"><strong>${variant.key}</strong> — ${variant.name}</span><button onclick="cycleVariant(1)" aria-label="Next deck layout">→</button></nav></div>`;
     }
     function renderReview() {
       const candidate = item(state.reviewId);
@@ -497,6 +503,7 @@
       if (event.key === "m") { event.preventDefault(); chooseMerge(); return; }
       if (event.key === "a") { event.preventDefault(); toggleFocusedApproval(); return; }
       if (event.key === "A") { event.preventDefault(); approveEligible(); return; }
+      if (event.key === "U") { event.preventDefault(); unapproveAll(); return; }
       if (event.key === "?") { event.preventDefault(); document.querySelector(".help")?.scrollIntoView({ behavior: "smooth", block: "center" }); }
     });
 
