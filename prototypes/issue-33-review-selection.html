@@ -406,7 +406,7 @@
       const strategy = candidate.strategy || candidate.mode || candidate.defaultMode;
       if (candidate.approved) return strategy === "replace" ? "Replacement" : strategy === "edited" ? "Edited" : "Merge";
       if (strategy === "replace") return "Replacement";
-      if (strategy === "edited") return "Edited Proposal";
+      if (strategy === "edited") return "Edited";
       if (strategy === "merge") return candidate.materialized && candidate.conflict ? "Merge conflict" : "Merge";
       return "Unavailable";
     }
