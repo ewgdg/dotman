@@ -370,9 +370,16 @@
     function refreshNoopProposal(candidate) {
       candidate.noopProposal = Boolean(candidate.materialized && !candidate.noop && candidate.captureOk && proposalText(candidate) === candidate.repoView);
     }
+    function proposalStrategyLabel(candidate) {
+      return candidate.mode === "replace" ? "Replacement" : candidate.mode === "edited" ? "Edited" : "Merge";
+    }
+    function approvalLabel(candidate) {
+      return candidate.approved ? "approved" : candidate.noop || candidate.noopProposal ? "not applicable" : "pending";
+    }
     function modeLabel(candidate) {
       if (candidate.applied) return "Applied";
-      if (candidate.noop || candidate.noopProposal) return "No Proposal";
+      if (candidate.noopProposal) return `${proposalStrategyLabel(candidate)} · no change`;
+      if (candidate.noop) return "No Proposal";
       if (!candidate.captureOk) return "Exceptional";
       const strategy = candidate.strategy || candidate.mode || candidate.defaultMode;
       if (candidate.approved) return strategy === "replace" ? "Replacement" : strategy === "edited" ? "Edited" : "Merge";
@@ -397,7 +404,7 @@
     }
     function summary(candidate) {
       if (!candidate.materialized) return candidate.noop ? "No Proposal is needed because the Pull Views agree." : candidate.captureOk ? "Open Review to materialize the proposed repository change." : candidate.mergeSummary;
-      if (candidate.noopProposal) return `${candidate.mode === "replace" ? "Replacement" : candidate.mode === "edited" ? "Editor" : "Merge"} produced no repository change; choose another strategy or edit if this drift should be retained.`;
+      if (candidate.noopProposal) return `${proposalStrategyLabel(candidate)} produced no repository change; choose another strategy or edit if this drift should be retained.`;
       if (candidate.mode === "replace") return candidate.replaceSummary;
       if (candidate.mode === "edited") return "Transactional Editor result; review it again before approval.";
       return candidate.mergeSummary;
@@ -433,7 +440,7 @@
       return `<div class="evidence"><details open><summary>Repo Pull View (O)</summary><pre>${escapeHtml(candidate.repoView)}</pre></details><details open><summary>Live Pull View (T)</summary><pre>${escapeHtml(candidate.liveView)}</pre></details><details><summary>Capture result</summary><pre>${escapeHtml(candidate.captureView)}</pre></details></div>`;
     }
     function proposalBox(candidate) {
-      const label = candidate.noop || candidate.noopProposal ? "No Proposal" : candidate.materialized ? "Proposal diff" : "Lazy Proposal";
+      const label = candidate.noopProposal ? "No repository-source change" : candidate.noop ? "No Proposal required" : candidate.materialized ? "Proposal diff" : "Lazy Proposal";
       const content = proposalText(candidate);
       const diff = candidate.noopProposal ? `<span class="proposal-empty">No repository-source change.</span>` : content ? proposalDiff(candidate.repoView, content) : `<span class="proposal-empty">Proposal content appears after Enter opens Review.</span>`;
       const boxTone = candidate.conflict ? "conflict" : candidate.noop || candidate.noopProposal ? "noop" : "";
@@ -475,10 +482,10 @@
     }
     function renderReview() {
       const candidate = item(state.reviewId);
-      const reviewMode = candidate.noop || candidate.noopProposal ? "NO PROPOSAL" : !candidate.captureOk ? "EXCEPTIONAL" : candidate.conflict ? "MERGE CONFLICT" : candidate.mode === "replace" ? "REPLACEMENT" : candidate.mode === "edited" ? "EDITED PROPOSAL" : "MERGE";
+      const reviewMode = candidate.noop ? "NO PROPOSAL" : candidate.noopProposal ? `${proposalStrategyLabel(candidate).toUpperCase()} · NO CHANGE` : !candidate.captureOk ? "EXCEPTIONAL" : candidate.conflict ? "MERGE CONFLICT" : candidate.mode === "replace" ? "REPLACEMENT" : candidate.mode === "edited" ? "EDITED PROPOSAL" : "MERGE";
       const reviewTone = candidate.noop || candidate.noopProposal ? "gray" : !candidate.captureOk ? "red" : candidate.conflict ? "red" : candidate.mode === "replace" ? "amber" : "blue";
       const canToggleApproval = approvalAllowed(candidate);
-      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${candidate.approved ? "approved" : "pending"}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div>${proposalBox(candidate)}<div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Materialization</div><div class="fact-value">${candidate.materialized ? "In memory" : candidate.noop ? "No Proposal" : "On Enter"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer"><button class="button primary" onclick="toggleApproval()" ${canToggleApproval ? "" : "disabled"}>${candidate.approved ? "Unapprove" : "Approve"} <span class="key">a</span></button><button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button><button class="button" onclick="toggleEvidence()">${state.showEvidence ? "Hide" : "Show"} evidence <span class="key">v</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
+      return `<div class="shell"><section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · same TUI, full-screen view</div><h2>${candidate.label}</h2><p class="mono">${candidate.path}</p></div><div class="review-header-actions"><span class="badge ${reviewTone}">${reviewMode}</span></div></header><div class="review-banner"><span><strong>Observation:</strong> ${candidate.status}</span><span><strong>Base:</strong> ${candidate.base}</span><span><strong>Capture:</strong> ${candidate.capture}</span><span><strong>Approval:</strong> ${approvalLabel(candidate)}</span></div><div class="review-body"><main class="review-main"><h3>Focused Proposal</h3><div class="proposal-title ${candidate.conflict ? "conflict" : ""}">${reviewMode}</div>${proposalBox(candidate)}<div class="divider"></div><h3>Pull View evidence</h3>${evidence(candidate)}</main><aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base provenance</div><div class="fact-value">${candidate.base}</div><p class="tiny muted" style="margin:6px 0 0">${candidate.baseDetail}</p></div><div class="fact"><div class="fact-label">Materialization</div><div class="fact-value">${candidate.materialized ? "In memory" : candidate.noop ? "No Proposal" : "On Enter"}</div><p class="tiny muted" style="margin:6px 0 0">Review and approval never mutate repository sources. Apply remains the write seam.</p></div><div class="fact"><div class="fact-label">Last action</div><div class="fact-value small">${state.lastAction}</div></div></aside></div><footer class="review-footer"><button class="button primary" onclick="toggleApproval()" ${canToggleApproval ? "" : "disabled"}>${candidate.approved ? "Unapprove" : "Approve"} <span class="key">a</span></button><button class="button" onclick="chooseReplacement()" ${candidate.noop || !candidate.captureOk ? "disabled" : ""}>Replacement <span class="key">r</span></button><button class="button" onclick="chooseMerge()" ${!candidate.canMerge || !candidate.captureOk ? "disabled" : ""}>Merge <span class="key">m</span></button><button class="button" onclick="enterEditor()" ${candidate.noop ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button><button class="button" onclick="toggleEvidence()">${state.showEvidence ? "Hide" : "Show"} evidence <span class="key">v</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
     }
     function renderEditor() {
       const candidate = item(state.editor.id);
