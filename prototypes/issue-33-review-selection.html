@@ -217,7 +217,7 @@
       {
         id: "settings", label: "main:app.settings", path: "~/.config/app/settings.toml", status: "Observed drift", statusTone: "blue",
         base: "Conservative · 5b14f90", baseTone: "amber", baseDetail: "A dirty source established an older conservative ancestor.", capture: "Captured", captureOk: true,
-        canMerge: true, strategy: "merge", defaultMode: "merge", cleanProposal: false, conflict: true,
+        canMerge: true, strategy: "merge", defaultMode: "merge", cleanProposal: false, conflict: false,
         repoView: "theme = \"light\"\nfont_size = 13\nlocal_only = true", liveView: "theme = \"dark\"\nfont_size = 13\nlocal_only = true", captureView: "theme = \"dark\"\nfont_size = 13\nlocal_only = true",
         mergeSummary: "Conflict: repository and live both changed `theme` from the conservative Base.", replaceSummary: "Discard repository-side changes and use the captured live settings.",
       },
@@ -293,8 +293,10 @@
       log(`${candidate.label}: m selected merge${changed ? "; approval reset" : "; approval retained"}.`); render();
     }
     function approvalAllowed(candidate) {
-      const strategy = candidate.strategy || candidate.mode;
-      return candidate.approved || (!candidate.noop && candidate.captureOk && (candidate.cleanProposal || candidate.edited || candidate.mode === "replace" || strategy === "replace"));
+      if (candidate.approved) return true;
+      if (candidate.noop || !candidate.captureOk) return false;
+      if (!candidate.materialized) return true;
+      return candidate.cleanProposal || candidate.edited || candidate.mode === "replace";
     }
     function toggleApproval() {
       const candidate = item(state.reviewId || state.selectedId);
@@ -305,12 +307,12 @@
         log(`${candidate.label}: no-op is not approvable in changed-work review.`);
       } else if (!candidate.captureOk) {
         log(`${candidate.label}: Capture failed; use e for Editor/manual handling.`);
-      } else if (!approvalAllowed(candidate)) {
-        log(`${candidate.label}: conflict remains unresolved; use r or e.`);
       } else {
         materialize(candidate);
-        candidate.approved = true;
-        log(`${candidate.label}: approved ${candidate.mode === "replace" ? "replacement" : candidate.mode} Proposal.`);
+        if (candidate.cleanProposal || candidate.edited || candidate.mode === "replace") {
+          candidate.approved = true;
+          log(`${candidate.label}: approved ${candidate.mode === "replace" ? "replacement" : candidate.mode} Proposal.`);
+        } else log(`${candidate.label}: materialized a merge conflict; use r or e before approval.`);
       }
       render();
     }
