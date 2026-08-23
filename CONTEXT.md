@@ -101,7 +101,7 @@ The focused full-screen view for one Proposal that shows its Pull Views, Sync Ba
 _Avoid_: Proposal window, Apply screen
 
 **Proposal Editor**:
-A configured or built-in action that edits a Proposal's transactional repository sources without directly mutating the repository working tree.
+A configured or default action that edits a Proposal's transactional repository sources without directly mutating the repository working tree.
 _Avoid_: Outcome handler, repository editor
 
 **Apply**:
