@@ -89,7 +89,7 @@ Resolution of current repository state and a Capture result by replacement or, u
 _Avoid_: Capture, raw overwrite
 
 **Proposal**:
-A session-local transactional repository write set produced by Pull Reconciliation, then reviewed, optionally edited, and approved before Apply.
+A session-local repository write set produced by Pull Reconciliation, then reviewed, optionally edited, and approved as one unit before Apply.
 _Avoid_: Pull View, repository working tree
 
 **Command Deck**:
@@ -105,7 +105,7 @@ A configured or default action that edits a Proposal's transactional repository 
 _Avoid_: Outcome handler, repository editor
 
 **Apply**:
-Atomic mutation of the repository working tree from an approved Proposal.
+Mutation of the repository working tree from an approved Proposal. Each file is replaced atomically, but a multi-file Apply may partially complete.
 _Avoid_: Commit, Capture
 
 **Command Runtime**:
