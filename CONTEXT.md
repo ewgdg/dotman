@@ -88,24 +88,40 @@ _Avoid_: Write preview, Pull Candidate
 Resolution of current repository state and a Capture result by replacement or, using a Sync Base, three-way merge. It produces a Proposal or an explicit conflict.
 _Avoid_: Capture, raw overwrite
 
+**Primary Source**:
+The exclusive repository source whose representation one Sync Unit reconciles. A repository path may be the Primary Source of at most one Pull Sync Unit.
+_Avoid_: Additional Source
+
+**Additional Source**:
+A declared or dependency-discovered repository component staged with a Proposal because its Primary Source depends on it. It may be shared by multiple Sync Units but cannot also be a Primary Source.
+_Avoid_: Primary Source, extra file
+
+**Source Change**:
+A session-local staged mutation of one normalized repository-relative source path that exists only while staged state differs from its frozen preimage. It is independently approved by generation, shared by referencing Editors, and written at most once by Apply.
+_Avoid_: Proposal, Sync Unit, editable copy
+
 **Proposal**:
-A session-local repository write set produced by Pull Reconciliation, then reviewed, optionally edited, and approved as one unit before Apply.
-_Avoid_: Pull View, repository working tree
+The session-local reconciliation and review context for one Sync Unit. It references staged Source Changes, which may also be referenced by other Proposals.
+_Avoid_: Pull View, Source Change
 
 **Command Deck**:
-The persistent Pull workset view used to focus Sync Units, inspect compact status, select batch work, and launch Proposal Review without showing detailed Proposal evidence for every unit.
+The persistent Pull workset view with Proposal rows for Primary Source Changes and a canonical Additional Changes section. It focuses reconciliation context, launches detailed review, and owns Source Change batch approval and Apply actions.
 _Avoid_: Pull dashboard, Proposal list
 
 **Proposal Review**:
-The focused full-screen view for one Proposal that shows its Pull Views, Sync Base provenance, Capture result, proposed write set, and review actions without mutating repository sources.
+The focused full-screen view for one Proposal that shows its Pull Views, Sync Base provenance, Capture result, reconciliation evidence, Primary Source Change approval, and referenced Additional Source Changes without mutating repository sources.
 _Avoid_: Proposal window, Apply screen
+
+**Source Change Review**:
+The focused full-screen view for one Additional Source Change that shows its frozen-preimage diff, referencing Proposals, and approval action.
+_Avoid_: Proposal Review, repository editor
 
 **Proposal Editor**:
 A configured or default action that edits a Proposal's transactional repository sources without directly mutating the repository working tree.
 _Avoid_: Outcome handler, repository editor
 
 **Apply**:
-Mutation of the repository working tree from an approved Proposal. Each file is replaced atomically, but a multi-file Apply may partially complete.
+Mutation of the repository working tree from independently approved Source Changes. Each file is replaced atomically, but a multi-file Apply may partially complete.
 _Avoid_: Commit, Capture
 
 **Command Runtime**:
