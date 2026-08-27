@@ -140,8 +140,13 @@ const SourceChangeLogic = (() => {
           if (template.kind === "primary") proposal.editedPrimary = update.value;
         });
         proposal.strategy = "edited"; proposal.materialized = true; updateReferences(state);
+        const origin = state.editorOrigin || { view: "deck", reviewId: null };
         state.editorOrigin = null;
-        state.view = "proposal"; state.reviewId = proposal.id; state.lastAction = `${proposal.label}: Editor saved. Changed sources became pending; unchanged sources kept approval.`; break;
+        // Preserve the caller's workflow instead of forcing every deck shortcut through Review.
+        if (origin.view === "proposal") { state.view = "proposal"; state.reviewId = origin.reviewId; }
+        else if (origin.view === "source" && state.sources[origin.reviewId]) { state.view = "source"; state.reviewId = origin.reviewId; }
+        else { state.view = "deck"; state.reviewId = null; if (state.focus.type === "source" && !state.sources[state.focus.id]) state.focus = { type: "proposal", id: proposal.id }; }
+        state.lastAction = `${proposal.label}: Editor saved. Changed sources became pending; unchanged sources kept approval.`; break;
       }
       case "APPLY": {
         const approved = Object.values(state.sources).filter((source) => source.approval === "approved");
