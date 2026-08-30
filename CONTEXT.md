@@ -20,6 +20,10 @@ _Avoid_: Simple target, raw target
 A named policy for matching child Sync Units of a directory target. Matching rules compose by priority.
 _Avoid_: Path-rule index, ordered rule
 
+**Sync Policy**:
+The effective rule that constrains automatic state flow for a Sync Unit to repository-to-live, live-to-repository, both directions, or repository-directed live deletion. It does not prohibit deliberate repository changes made through the Proposal Editor. Package, target, and Path Rule configuration establish the policy; directional Guards may only narrow it.
+_Avoid_: Ignore, Guard, file ownership
+
 **Freshness Window**:
 The bounded period during which verification of a target with opaque dependencies may be reused. Once it expires, the target requires full verification.
 _Avoid_: Cooldown, probe duration
@@ -33,8 +37,8 @@ The identity of the effective Dotman-controlled inputs that determine how one op
 _Avoid_: Configuration fingerprint, derivation hash
 
 **Guard**:
-An eligibility rule evaluated before planning work for its repo, package, target, or path-rule scope. An ineligible scope contributes no sync work.
-_Avoid_: Pre-hook, execution safety check
+A directional eligibility rule evaluated before planning work for its repository, package, target, or Path Rule scope. During Sync, `guard_push` and `guard_pull` narrow repository-to-live and live-to-repository capabilities respectively without widening the configured Sync Policy.
+_Avoid_: Pre-hook, execution safety check, Sync Policy
 
 **Effective Work**:
 Sync actions or noop-eligible pre/post hooks still belonging to a scope after earlier eligibility decisions and exclusions.
@@ -43,6 +47,10 @@ _Avoid_: Diff, guard execution
 **Potential Work**:
 Statically selected operation-eligible targets, probes, or noop-eligible hooks that may produce effective work after planning.
 _Avoid_: Planned action, confirmed diff
+
+**Probe Work**:
+An active probe target presented by Sync as selectable auxiliary work that may activate applicable hooks. It has no repository/live payload, Resolution Intent, Proposal, Sync Base acknowledgment, or Converged result.
+_Avoid_: Sync Unit, Proposal
 
 **Structured Transform**:
 Format-aware partitioning and recomposition of document content.
@@ -73,15 +81,27 @@ Forward projection from repository representation toward live representation.
 _Avoid_: Push, transform
 
 **Sync Base**:
-A committed repository representation Dotman established through successful Push or directly verified no-change Pull as known shared ancestry between one Sync Unit's repository and live histories. It is the base for later three-way Reconciliation and may be older than the working-tree representation Push materialized.
+A committed repository representation Dotman established through successful Sync convergence, Push, or directly verified no-change Pull as known shared ancestry between one Sync Unit's repository and live histories. It is the base for later three-way Reconciliation and may be older than the working-tree representation Push materialized.
 _Avoid_: Current Git HEAD, last deployed file, snapshot
+
+**Observation**:
+The frozen classification of a selected, policy-eligible Sync Unit as Directly InSync, Drifted, or Observation Failed from its policy-defined repository and live comparison states. Typed missing endpoints are evidence within the classification, not separate workflow states.
+_Avoid_: Proposal, Reconciliation
+
+**Directly InSync**:
+An Observation result for a Sync Unit whose policy-defined repository and live comparison states agree before Dotman materializes a drift resolution. A drifted unit with a no-write resolution is not Directly InSync.
+_Avoid_: Noop, unchanged
+
+**Converged**:
+A completion result for a drifted Sync Unit whose approved Proposal effects succeeded and whose Sync Base acknowledgment persisted.
+_Avoid_: Applied, Directly InSync
 
 **Capture**:
 Reverse projection of live file state into repository representation before Reconciliation.
 _Avoid_: Pull, transform
 
 **Pull View**:
-A side-specific projection used to compare repository and live representations during Pull planning and review.
+A side-specific projection configured under `compare` and used to compare repository and live representations during Pull or live-to-repository-capable Sync observation and review.
 _Avoid_: Write preview, Pull Candidate
 
 **Reconciliation**:
@@ -97,16 +117,24 @@ A declared or dependency-discovered repository component staged with a Proposal 
 _Avoid_: Primary Source, extra file
 
 **Source Change**:
-A session-local staged mutation of one normalized repository-relative source path that exists only while staged state differs from its frozen preimage. It is independently approved by generation, shared by referencing Editors, and written at most once by Apply.
+A session-local staged mutation of one normalized repository-relative source path that exists only while staged state differs from its frozen preimage. It may be shared by referencing Editors; an Additional Source Change has one canonical Command Deck row and is written at most once by Apply. Approval behavior belongs to the active command workflow rather than Source Change identity.
 _Avoid_: Proposal, Sync Unit, editable copy
 
+**Resolution Intent**:
+The session-local choice of `Use repository`, `Use live`, or `Merge` for one drifted Sync Unit before Dotman materializes a Proposal. Changing it discards the prior Proposal for rematerialization but preserves Approval; returning to an earlier intent does not revive its prior frozen outcome.
+_Avoid_: Proposal, applied resolution
+
 **Proposal**:
-The session-local reconciliation and review context for one Sync Unit. It references staged Source Changes, which may also be referenced by other Proposals.
+The session-local candidate for resolving one drifted Sync Unit. Pull materializes its fixed live-to-repository outcome directly. Sync begins with a Resolution Intent and lazily freezes the repository outcome, policy-derived live outcome, and planned effects. A Proposal's change and effect sets may be empty.
 _Avoid_: Pull View, Source Change
 
+**Approval**:
+The Command Deck state that authorizes a Proposal or Additional Source Change for execution. Approval is independent of Proposal generation: changing Resolution Intent or editing rematerializes effects without changing the existing state; an explicit toggle or materialization failure changes it. Pull is opt-out, so eligible rows begin approved.
+_Avoid_: Inspection status, execution result
+
 **Command Deck**:
-The persistent Pull workset view with Proposal rows for Primary Source Changes and a canonical Additional Changes section. It focuses reconciliation context, launches detailed review, and owns Source Change batch approval and Apply actions.
-_Avoid_: Pull dashboard, Proposal list
+An operation's persistent workset view. It combines row-level actions, selection, and focused review while preserving the user's place in the workset. Pull and Sync may use different row states and actions; the name does not imply Proposals or Approval.
+_Avoid_: Standalone selection menu, Proposal list
 
 **Proposal Review**:
 The focused full-screen view for one Proposal that shows its Pull Views, Sync Base provenance, Capture result, reconciliation evidence, Primary Source Change approval, and referenced Additional Source Changes without mutating repository sources.
@@ -117,7 +145,7 @@ The focused full-screen view for one Additional Source Change that shows its fro
 _Avoid_: Proposal Review, repository editor
 
 **Proposal Editor**:
-A configured or default action that edits a Proposal's transactional repository sources without directly mutating the repository working tree.
+A configured or default action that edits the current Proposal through its transactional repository sources without directly mutating the repository working tree. If materialization produced no Proposal, it starts from the current repository sources as `Use repository` would; saving produces an `Edited` Proposal.
 _Avoid_: Outcome handler, repository editor
 
 **Apply**:
