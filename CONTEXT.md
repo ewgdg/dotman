@@ -93,7 +93,7 @@ An Observation result for a Sync Unit whose policy-defined repository and live c
 _Avoid_: Noop, unchanged
 
 **Converged**:
-A completion result for a drifted Sync Unit whose approved Proposal effects succeeded and whose Sync Base acknowledgment persisted.
+A completion result for a drifted Sync Unit whose own final-preview Primary and live effects succeeded and whose Sync Base acknowledgment persisted. Independently executed Additional Source Changes do not gate this result.
 _Avoid_: Applied, Directly InSync
 
 **Capture**:
@@ -129,7 +129,7 @@ The session-local candidate for resolving one drifted Sync Unit. Pull materializ
 _Avoid_: Pull View, Source Change
 
 **Approval**:
-The Command Deck state that authorizes a Proposal or Additional Source Change for execution. Approval is independent of Proposal generation: changing Resolution Intent or editing rematerializes effects without changing the existing state; an explicit toggle or materialization failure changes it. Pull is opt-out, so eligible rows begin approved.
+The Command Deck state that authorizes a Proposal or Additional Source Change for execution. For Sync, Proposal Approval is standing authorization to execute the current successfully materialized unit outcome, including its exclusive Primary Source Change, policy-derived live effects, and Sync Base acknowledgment. Additional Source Change Approval independently authorizes its repository write, even when no approved Proposal references it. Its execution result never gates a Proposal's Converged result or Sync Base acknowledgment, even when that Proposal was materialized using the candidate bytes. An unapproved Additional Source Change remains staged for review, but its candidate bytes are excluded from referencing Proposal inputs; approved referencing Proposals rematerialize immediately from the frozen repository preimage, while unapproved ones discard stale previews and rematerialize lazily. Successful rematerialization preserves Proposal Approval; failure clears only the affected Proposal Approval. Approval is independent of Proposal generation: changing Resolution Intent or editing rematerializes effects without changing the existing state; an explicit toggle or materialization failure changes it. Approval for an Additional Source path survives while no Source Change exists and returns if the row reappears. Batch actions establish every row's final Approval state before Proposals materialize against that state. Sync is opt-in, including for one-sided and no-write Proposals; Pull is opt-out.
 _Avoid_: Inspection status, execution result
 
 **Command Deck**:
