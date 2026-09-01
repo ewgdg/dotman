@@ -80,8 +80,12 @@ _Avoid_: Home normalization, home path transform
 Forward projection from repository representation toward live representation.
 _Avoid_: Push, transform
 
+**Base-Eligible Sync Unit**:
+A Sync Unit whose configured Sync Policy permits live-to-repository flow: `pull-only` or `both`. Directional Guards do not change Base eligibility.
+_Avoid_: Effective-policy unit, mergeable unit
+
 **Sync Base**:
-A committed repository representation Dotman established through successful Sync convergence, Push, or directly verified no-change Pull as known shared ancestry between one Sync Unit's repository and live histories. It is the base for later three-way Reconciliation and may be older than the working-tree representation Push materialized.
+A committed repository representation Dotman established for a Base-Eligible Sync Unit through successful Sync convergence, successful Push publication, or directly observed agreement during a real Push, Pull, or Sync. It is known shared ancestry between the Sync Unit's repository and live histories, forms the base for later three-way Reconciliation, and may be older than the working-tree representation Dotman materialized.
 _Avoid_: Current Git HEAD, last deployed file, snapshot
 
 **Observation**:
@@ -93,7 +97,7 @@ An Observation result for a Sync Unit whose policy-defined repository and live c
 _Avoid_: Noop, unchanged
 
 **Converged**:
-A completion result for a drifted Sync Unit whose own final-preview Primary and live effects succeeded and whose Sync Base acknowledgment persisted. Independently executed Additional Source Changes do not gate this result.
+A completion result for a drifted Sync Unit after its required final-preview Primary Source Change was applied, its required Publication Effects succeeded, and, when the unit is Base-Eligible, its Sync Base acknowledgment persisted. Independently executed Additional Source Changes do not gate this result.
 _Avoid_: Applied, Directly InSync
 
 **Capture**:
@@ -125,11 +129,11 @@ The session-local choice of `Use repository`, `Use live`, or `Merge` for one dri
 _Avoid_: Proposal, applied resolution
 
 **Proposal**:
-The session-local candidate for resolving one drifted Sync Unit. Pull materializes its fixed live-to-repository outcome directly. Sync begins with a Resolution Intent and lazily freezes the repository outcome, policy-derived live outcome, and planned effects. A Proposal's change and effect sets may be empty.
+The session-local candidate for resolving one drifted Sync Unit. Pull materializes its fixed live-to-repository outcome directly. Sync begins with a Resolution Intent and lazily freezes the repository outcome, policy-derived live outcome, Primary Source Change, and Publication Effects. A Proposal's Source Change and Publication Effect sets may be empty.
 _Avoid_: Pull View, Source Change
 
 **Approval**:
-The Command Deck state that authorizes a Proposal or Additional Source Change for execution. For Sync, Proposal Approval is standing authorization to execute the current successfully materialized unit outcome, including its exclusive Primary Source Change, policy-derived live effects, and Sync Base acknowledgment. Additional Source Change Approval independently authorizes its repository write, even when no approved Proposal references it. Its execution result never gates a Proposal's Converged result or Sync Base acknowledgment, even when that Proposal was materialized using the candidate bytes. An unapproved Additional Source Change remains staged for review, but its candidate bytes are excluded from referencing Proposal inputs; approved referencing Proposals rematerialize immediately from the frozen repository preimage, while unapproved ones discard stale previews and rematerialize lazily. Successful rematerialization preserves Proposal Approval; failure clears only the affected Proposal Approval. Approval is independent of Proposal generation: changing Resolution Intent or editing rematerializes effects without changing the existing state; an explicit toggle or materialization failure changes it. Approval for an Additional Source path survives while no Source Change exists and returns if the row reappears. Batch actions establish every row's final Approval state before Proposals materialize against that state. Sync is opt-in, including for one-sided and no-write Proposals; Pull is opt-out.
+The Command Deck state that authorizes a Proposal or Additional Source Change for execution. For Sync, Proposal Approval is standing authorization to execute the current successfully materialized unit outcome, including its exclusive Primary Source Change, policy-derived Publication Effects, and, for a Base-Eligible Sync Unit, Sync Base acknowledgment. Additional Source Change Approval independently authorizes its repository write, even when no approved Proposal references it. Its execution result never gates a Proposal's Converged result or Sync Base acknowledgment, even when that Proposal was materialized using the candidate bytes. An unapproved Additional Source Change remains staged for review, but its candidate bytes are excluded from referencing Proposal inputs; approved referencing Proposals rematerialize immediately from the frozen repository preimage, while unapproved ones discard stale previews and rematerialize lazily. Successful rematerialization preserves Proposal Approval; failure clears only the affected Proposal Approval. Approval is independent of Proposal generation: changing Resolution Intent or editing rematerializes effects without changing the existing state; an explicit toggle or materialization failure changes it. Approval for an Additional Source path survives while no Source Change exists and returns if the row reappears. Batch actions establish every row's final Approval state before Proposals materialize against that state. Sync is opt-in, including for one-sided and no-write Proposals; Pull is opt-out.
 _Avoid_: Inspection status, execution result
 
 **Command Deck**:
@@ -151,6 +155,18 @@ _Avoid_: Outcome handler, repository editor
 **Apply**:
 Mutation of the repository working tree from independently approved Source Changes. Each file is replaced atomically, but a multi-file Apply may partially complete.
 _Avoid_: Commit, Capture
+
+**Repository Apply**:
+Sync's operation-wide repository-destination stage. It applies approved Additional Source Changes before Proposal-owned Primary Source Changes and uses pull hooks for retained repository work.
+_Avoid_: Pull, applying a Proposal
+
+**Live Publication**:
+Sync's operation-wide live-destination stage. It follows successful Repository Apply, executes frozen Publication Effects, and uses push hooks for retained publication work.
+_Avoid_: Push, Render
+
+**Publication Effect**:
+A frozen write, deletion, or mode change to one Sync Unit's live target, executed during Live Publication.
+_Avoid_: Live effect, Push
 
 **Command Runtime**:
 The internal typed boundary that launches commands and owns environment construction, pipe or terminal I/O, elevation, streaming, and interruption normalization. Callers retain the meaning of command exit statuses.
