@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dotman: Sync Command Deck prototype</title>
+<style>
+:root{color-scheme:light;--ink:#202631;--muted:#687181;--faint:#8d96a5;--paper:#f5f6f8;--card:#fff;--line:#dfe3e9;--line-strong:#c7ced9;--accent:#4f46e5;--accent-dark:#3730a3;--accent-soft:#eef0ff;--green:#147d58;--green-soft:#e8f7f0;--amber:#9a5b00;--amber-soft:#fff5df;--red:#b42318;--red-soft:#fff0ee;--shadow:0 16px 38px rgba(29,39,58,.09);--radius:14px;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);line-height:1.45}button{font:inherit;color:inherit;cursor:pointer}button:focus-visible{outline:3px solid rgba(79,70,229,.28);outline-offset:2px}.shell{width:min(1180px,calc(100% - 36px));margin:0 auto;padding:30px 0 154px}.eyebrow{color:var(--accent-dark);font-size:.72rem;font-weight:850;letter-spacing:.14em;text-transform:uppercase}h1,h2,h3,p{margin-top:0}h1{margin:8px 0 12px;max-width:940px;font-size:clamp(2rem,4vw,3.2rem);line-height:1.04;letter-spacing:-.045em}h2{margin-bottom:5px;font-size:1.12rem;letter-spacing:-.02em}h3{margin-bottom:5px;font-size:.96rem}.lede{max-width:960px;color:#454d5b;font-size:1.02rem}.prototype-note{display:inline-flex;gap:8px;align-items:center;margin:0 0 20px;padding:7px 10px;border:1px solid #c9c5ff;border-radius:999px;color:var(--accent-dark);background:var(--accent-soft);font-size:.79rem;font-weight:750}.prototype-note:before{content:"PROTOTYPE";letter-spacing:.1em;font-size:.65rem}.button{border:1px solid var(--line-strong);border-radius:9px;padding:8px 12px;background:var(--card);box-shadow:0 2px 5px rgba(29,39,58,.04)}.button:hover{border-color:var(--accent);background:#fbfbff}.button.primary{border-color:var(--accent);background:var(--accent);color:#fff}.button.primary:hover{background:var(--accent-dark)}.button:disabled{cursor:not-allowed;opacity:.42}.key{display:inline-flex;min-width:1.5em;justify-content:center;padding:1px 5px;border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:5px;background:#fff;color:#3d4654;font:700 .78em ui-monospace,SFMono-Regular,Menlo,monospace}.panel{border:1px solid var(--line);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow)}.pad{padding:18px}.muted{color:var(--muted)}.faint{color:var(--faint)}.small{font-size:.82rem}.tiny{font-size:.73rem}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.row{display:flex;gap:10px;align-items:center;justify-content:space-between}.status-line{display:flex;flex-wrap:wrap;gap:7px;align-items:center}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;font-size:.71rem;font-weight:800;white-space:nowrap}.badge.blue{color:var(--accent-dark);background:var(--accent-soft)}.badge.green{color:var(--green);background:var(--green-soft)}.badge.amber{color:var(--amber);background:var(--amber-soft)}.badge.red{color:var(--red);background:var(--red-soft)}.badge.gray{color:#596273;background:#eef0f3}.divider{height:1px;margin:15px 0;background:var(--line)}.help{margin-top:15px;padding:11px 13px;border:1px dashed var(--line-strong);border-radius:10px;background:#fbfcfd;color:var(--muted);font-size:.78rem}.help strong{color:var(--ink)}.keyboard-strip{display:flex;flex-wrap:wrap;gap:7px 13px;margin-top:13px;color:var(--muted);font-size:.75rem}.keyboard-strip span{display:inline-flex;gap:5px;align-items:center}
+.question{margin:16px 0 22px;padding:15px 17px;border-left:4px solid var(--accent);border-radius:10px;background:#fff;color:#303746}.question strong{display:block;margin-bottom:4px;color:var(--accent-dark);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase}.deck-head{display:flex;flex-wrap:wrap;gap:14px;align-items:end;justify-content:space-between;padding:20px 20px 15px;border-bottom:1px solid var(--line)}.deck-head h2{margin-bottom:3px}.deck-head p{margin:0;color:var(--muted);font-size:.84rem}.deck-stats{display:flex;flex-wrap:wrap;gap:7px}.deck-table{width:100%;min-width:1080px;border-collapse:collapse;table-layout:fixed}.deck-table th{padding:11px 12px;border-bottom:1px solid var(--line-strong);color:var(--faint);font-size:.66rem;letter-spacing:.1em;text-align:left;text-transform:uppercase}.deck-table td{padding:13px 12px;border-bottom:1px solid var(--line);vertical-align:top;font-size:.81rem}.deck-table tr{cursor:pointer}.deck-table tbody tr:hover{background:#fafaff}.deck-table tbody tr.current{background:var(--accent-soft)}.deck-table tbody tr:last-child td{border-bottom:0}.deck-table .focus-col{width:30px}.deck-table .approval-col{width:74px}.deck-table .focus-cell{width:30px;color:var(--accent);font-size:1.1rem}.deck-table .approval-cell{width:74px;text-align:center}.deck-table .work-col{width:20%}.deck-table .source-col{width:18%}.deck-table .context-col{width:22%}.deck-table .status-col{width:14%}.deck-table .base-col{width:14%}.deck-table .proposal-col{width:12%}.approval-mark{display:inline-grid;width:22px;height:22px;place-items:center;border-radius:50%;font-weight:900}.approval-mark.approved{color:var(--green);background:var(--green-soft)}.approval-mark.pending{color:var(--faint);background:#eef0f3}.approval-mark.blocked{color:var(--red);background:var(--red-soft)}.deck-table strong{font-weight:800}.section-label{padding:15px 18px 8px;border-top:1px solid var(--line);color:#4c5666;font-size:.72rem;font-weight:850;letter-spacing:.1em;text-transform:uppercase}.section-label:first-child{border-top:0}.command-bar{position:fixed;z-index:20;left:50%;bottom:14px;display:flex;width:min(1180px,calc(100% - 36px));flex-wrap:wrap;gap:8px;align-items:center;transform:translateX(-50%);padding:10px 13px;border:1px solid #353c4a;border-radius:11px;background:#232a36;color:#fff;box-shadow:0 10px 24px rgba(23,29,41,.24)}.command-bar .button{border-color:#697484;background:#3d4654;color:#fff;box-shadow:none}.command-bar .button:hover{border-color:#9a9ffb;background:#4b5665}.command-bar .button.primary{border-color:#7771ed;background:var(--accent)}.command-bar .button.primary:hover{background:var(--accent-dark)}
+.state-panel{margin-top:18px}.state-panel h2{margin-bottom:0}.state-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:13px}.fact{padding:12px;border:1px solid var(--line);border-radius:10px;background:#fbfcfd}.fact-label{color:var(--faint);font-size:.66rem;font-weight:850;letter-spacing:.09em;text-transform:uppercase}.fact-value{margin-top:4px;font-size:.82rem;font-weight:750}.state-list{display:grid;gap:8px;margin-top:13px}.state-item{padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fff;font-size:.79rem}.state-item .line{display:flex;flex-wrap:wrap;gap:7px;align-items:center;justify-content:space-between}.log{margin-top:13px;padding:11px 12px;border-radius:9px;background:#232a36;color:#e6e9ef;font-size:.76rem}.log div+div{margin-top:4px;color:#adb6c4}
+.scenarios{margin-top:18px}.scenarios + .review-shell,.scenarios + .editor-shell{margin-top:18px}.scenario-tabs{display:flex;flex-wrap:wrap;gap:7px;padding:13px 16px 0}.scenario-tab{border:1px solid var(--line-strong);border-bottom:0;border-radius:9px 9px 0 0;padding:8px 11px;background:#f5f6f8;color:var(--muted);font-size:.77rem;font-weight:750}.scenario-tab.active{border-color:#c8c5fa;background:var(--accent-soft);color:var(--accent-dark)}.scenario-body{padding:15px 16px;border-top:1px solid var(--line)}.scenario-body p{margin-bottom:12px;color:#4c5666;font-size:.82rem}.scenario-actions{display:flex;flex-wrap:wrap;gap:8px}.scenario-step.done{border-color:var(--green);color:var(--green)}
+.review-shell{min-height:76vh;display:grid;grid-template-rows:auto auto 1fr}.review-header{display:flex;flex-wrap:wrap;gap:13px;align-items:start;justify-content:space-between;padding:20px 22px 16px;border-bottom:1px solid var(--line)}.review-header h2{margin:8px 0 3px;font-size:clamp(1.35rem,3vw,2rem)}.review-header p{margin:0;color:var(--muted);font-size:.83rem}.review-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,.42fr);gap:20px;padding:22px}.review-main{min-width:0}.review-main h3{font-size:.77rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}.review-title{margin:8px 0 7px;color:var(--accent-dark);font-size:clamp(1.4rem,3vw,2.2rem);font-weight:850;letter-spacing:-.04em}.review-title.red{color:var(--red)}.diff{margin:13px 0;padding:13px;overflow:auto;border:1px solid var(--line);border-radius:9px;background:#fff;color:#3d4654;white-space:pre-wrap;font:.78rem/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.diff .add{color:var(--green)}.diff .remove{color:var(--red)}.empty{color:var(--muted);font-style:italic}.review-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:17px}.refs{display:grid;gap:8px}.ref-row{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:#fbfcfd;font-size:.78rem}.ref-row button{border:0;background:none;color:var(--accent-dark);text-align:left;font-weight:750}.review-facts{display:grid;gap:10px;align-content:start}.review-footer{position:fixed;z-index:20;left:50%;bottom:14px;display:flex;width:min(1180px,calc(100% - 36px));flex-wrap:wrap;gap:8px;align-items:center;transform:translateX(-50%);padding:10px 13px;border:1px solid #353c4a;border-radius:11px;background:#232a36;color:#fff;font-size:.76rem;box-shadow:0 10px 24px rgba(23,29,41,.24)}.review-footer .button{border-color:#697484;background:#3d4654;color:#fff;box-shadow:none}.review-footer .button:hover{border-color:#9a9ffb;background:#4b5665}.review-footer .return{margin-left:auto}.editor-shell{min-height:76vh;padding:23px}.editor-source{margin-top:15px;padding:13px;border:1px solid var(--line);border-radius:10px;background:#fbfcfd}.editor-source h3{display:flex;justify-content:space-between;gap:8px}.editor-source textarea{width:100%;min-height:120px;margin:10px 0 5px;padding:11px;border:1px solid var(--line-strong);border-radius:8px;resize:vertical;font:.8rem/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.editor-source label{display:flex;gap:7px;align-items:center;color:var(--muted);font-size:.77rem}.editor-add{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:13px}.editor-add input{min-width:220px;padding:8px;border:1px solid var(--line-strong);border-radius:8px;font:inherit}.terminal{padding:19px;border-radius:12px;background:#232a36;color:#edf0f5}.terminal h2{color:#fff}.terminal .ok{color:#8fe0b8}.terminal .warn{color:#ffd187}.terminal ul{margin:8px 0 0;padding-left:20px}.terminal .button{margin-top:15px}
+@media(max-width:760px){.shell{width:min(100% - 22px,620px);padding-top:22px;padding-bottom:190px}.deck-table{display:block;overflow-x:auto;min-width:760px}.deck-wrap{overflow-x:auto}.state-grid{grid-template-columns:1fr}.review-body{grid-template-columns:1fr}.review-shell{min-height:82vh}.review-footer .return{margin-left:0}.command-bar,.review-footer{width:calc(100% - 22px);bottom:10px}}
+
+/* Issue 46 Sync Command Deck additions. The base visual language is intentionally
+   inherited from the validated issue 42 Dense Command Deck prototype. */
+.shell.wide{width:min(1460px,calc(100% - 28px))}.deck-table{min-width:1370px}.deck-table .target-col{width:15%}.deck-table .policy-col{width:11%}.deck-table .repo-col{width:19%}.deck-table .live-col{width:16%}.deck-table .observation-col{width:9%}.deck-table .base-col{width:8%}.deck-table .resolution-col{width:15%}.deck-table td{padding-top:11px;padding-bottom:11px}.path{overflow-wrap:anywhere}.micro{display:block;margin-top:5px;color:var(--muted);font-size:.67rem;line-height:1.3}.micro.inline{display:inline;margin-top:0}.amber-text{color:var(--amber)}.diagnostic-row{background:#fffafa}.selection-mark{display:inline-grid;width:22px;height:22px;place-items:center;border:0;border-radius:50%;background:#eef0f3;color:var(--faint);font-weight:900}.selection-mark.selected{background:var(--green-soft);color:var(--green)}.aux-row td{background:#fbfcfd}.intent-strip{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;padding:13px 22px;border-bottom:1px solid var(--line);background:#fbfcfd}.intent-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}.selected-intent{border-color:var(--accent)!important;background:var(--accent-soft)!important;color:var(--accent-dark)!important;font-weight:800}.confirm-shell{display:grid;place-items:center;min-height:80vh}.confirm-card{width:min(720px,100%);padding:28px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:var(--shadow)}.confirm-card h1{font-size:clamp(2rem,5vw,3rem)}.count-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:23px 0}.count-grid div{padding:15px 10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfd;text-align:center}.count-grid strong{display:block;color:var(--accent-dark);font-size:1.8rem}.count-grid span{display:block;color:var(--muted);font-size:.72rem}.confirm-actions{display:flex;flex-wrap:wrap;gap:9px}.terminal-stages,.terminal-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}.terminal-stages>div,.terminal-summary>div{padding:15px;border:1px solid #3e4858;border-radius:10px;background:#2a3240}.terminal ol,.terminal ul{margin:9px 0 0;padding-left:22px}.terminal li+li{margin-top:6px}.terminal .stage-title{color:#bfc3ff;font-weight:800}.status-line .approval-mark{margin-right:2px}@media(max-width:900px){.shell.wide{width:min(100% - 18px,760px)}.count-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.terminal-stages,.terminal-summary{grid-template-columns:1fr}}@media(max-width:520px){.count-grid{grid-template-columns:1fr 1fr}}
+
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+/*
+  THROWAWAY PROTOTYPE QUESTION
+  Does a revised Dense Command Deck preserve the fast workset flow while combining
+  policy-constrained Sync resolutions, repository and live paths, Primary and
+  canonical Additional Source Changes, standing convergence Approval, Editor-driven
+  invalidation, batch actions, compact confirmation, and two-stage execution?
+
+  This is an in-memory interaction prototype. It never reads or writes real files.
+*/
+
+// Portable state module: pure state transitions, no DOM or rendering knowledge.
+const SyncDeckLogic = (() => {
+  const clone = (value) => structuredClone(value);
+  const intentLabel = (intent) => ({ repo: "Use repository", live: "Use live", merge: "Merge" }[intent] || "No route");
+  const changed = (source) => source.current !== source.frozen;
+  const proposalById = (state, id) => state.proposals.find((proposal) => proposal.id === id);
+
+  function currentAdditionalInputs(state, proposal) {
+    return proposal.additionalIds
+      .map((id) => state.additional[id])
+      .filter((source) => source && source.approved && changed(source))
+      .map((source) => source.path);
+  }
+
+  function materialize(state, proposal, reason = "Materialized") {
+    if (!proposal || proposal.blocked) return false;
+
+    const includedAdditional = currentAdditionalInputs(state, proposal);
+    const outcome = proposal.outcomes[proposal.intent];
+    const repositoryOutcome = proposal.editedPrimary ?? outcome.repository;
+    const liveOutcome = proposal.effectivePolicy === "push-only-delete"
+      ? "(missing)"
+      : proposal.intent === "repo" && proposal.editedPrimary !== null && proposal.effectivePolicy !== "pull-only"
+        ? proposal.editedPrimary
+        : outcome.live;
+
+    proposal.materialized = true;
+    proposal.materialization += 1;
+    proposal.includedAdditional = includedAdditional;
+    proposal.repositoryOutcome = repositoryOutcome;
+    proposal.liveOutcome = liveOutcome;
+    proposal.primaryEffect = repositoryOutcome === proposal.repositoryFrozen ? "none" : proposal.repositoryFrozen === "(missing)" ? "create" : repositoryOutcome === "(missing)" ? "delete" : "update";
+    proposal.liveEffect = liveOutcome === proposal.liveFrozen ? "none" : proposal.liveFrozen === "(missing)" ? "create" : liveOutcome === "(missing)" ? "delete" : "update";
+    proposal.invalidReason = null;
+    proposal.lastMaterialization = `${reason}; ${includedAdditional.length ? "included approved Additional candidates" : "used frozen Additional preimages"}.`;
+    return true;
+  }
+
+  function alignReferencingProposals(state, sourceId, reason, currentProposalId = null) {
+    const source = state.additional[sourceId];
+    if (!source) return { eager: [], lazy: [] };
+    const eager = [], lazy = [];
+    source.references.forEach((proposalId) => {
+      const proposal = proposalById(state, proposalId);
+      if (!proposal || proposal.blocked) return;
+      if (proposalId === currentProposalId || proposal.approved) {
+        materialize(state, proposal, reason);
+        eager.push(proposal.label);
+      } else {
+        proposal.materialized = false;
+        proposal.invalidReason = reason;
+        proposal.includedAdditional = [];
+        lazy.push(proposal.label);
+      }
+    });
+    return { eager, lazy };
+  }
+
+  function approvalSummary(state) {
+    return {
+      proposals: state.proposals.filter((proposal) => proposal.approved).length,
+      additional: Object.values(state.additional).filter((source) => changed(source) && source.approved).length,
+    };
+  }
+
+  function freezeExecution(state) {
+    state.proposals.filter((proposal) => proposal.approved).forEach((proposal) => {
+      if (!proposal.materialized) materialize(state, proposal, "Final materialization");
+    });
+    const approvedProposals = state.proposals.filter((proposal) => proposal.approved && proposal.materialized && !proposal.blocked);
+    const approvedAdditional = Object.values(state.additional)
+      .filter((source) => changed(source) && source.approved)
+      .sort((a, b) => a.path.localeCompare(b.path));
+    const repositoryChanges = approvedAdditional.length + approvedProposals.filter((proposal) => proposal.primaryEffect !== "none").length;
+    const liveWrites = approvedProposals.filter((proposal) => proposal.liveEffect === "create" || proposal.liveEffect === "update").length;
+    const liveDeletes = approvedProposals.filter((proposal) => proposal.liveEffect === "delete").length;
+    state.frozenExecution = {
+      approvedProposalIds: approvedProposals.map((proposal) => proposal.id),
+      approvedAdditionalIds: approvedAdditional.map((source) => source.id),
+      repositoryChanges,
+      liveWrites,
+      liveDeletes,
+      auxiliary: state.auxiliary.filter((item) => item.selected).map((item) => item.id),
+    };
+  }
+
+  function buildExecutionReport(state) {
+    const frozen = state.frozenExecution;
+    const proposals = frozen.approvedProposalIds.map((id) => proposalById(state, id));
+    const additions = frozen.approvedAdditionalIds.map((id) => state.additional[id]);
+    const repositoryLines = ["Repository Apply · pull hook family"];
+    const hasOwnedRepositoryWork = proposals.some((proposal) => proposal.primaryEffect !== "none");
+    if (hasOwnedRepositoryWork) repositoryLines.push("pre-pull hooks · retained repository/package/target scopes");
+    additions.forEach((source) => repositoryLines.push(`Additional once · ${source.repo}:${source.path}`));
+
+    proposals.forEach((proposal) => {
+      if (proposal.primaryEffect !== "none") repositoryLines.push(`Primary ${proposal.primaryEffect} · ${proposal.primaryPath}`);
+      if (proposal.liveEffect === "none") {
+        repositoryLines.push(proposal.baseEligible
+          ? `Acknowledge Sync Base · ${proposal.label}`
+          : `Complete without Sync Base · ${proposal.label}`);
+        repositoryLines.push(`Converged · ${proposal.label}`);
+      }
+    });
+
+    if (hasOwnedRepositoryWork) repositoryLines.push("post-pull hooks · successful retained scopes");
+
+    const publicationLines = ["Live Publication · push hook family"];
+    const selectedAuxiliary = state.auxiliary.filter((item) => frozen.auxiliary.includes(item.id));
+    const needsLiveMutation = proposals.some((proposal) => proposal.liveEffect !== "none") || selectedAuxiliary.some((item) => item.kind === "root");
+    selectedAuxiliary.filter((item) => item.kind === "probe").forEach((item) => {
+      publicationLines.push(`Selected Probe Work retains ${item.hooks} · ${item.label}`);
+    });
+    if (needsLiveMutation || selectedAuxiliary.some((item) => item.kind === "probe")) publicationLines.push("pre-push hooks · retained scopes");
+    if (needsLiveMutation) publicationLines.push("Snapshot frozen live publication paths before first mutation");
+    selectedAuxiliary.filter((item) => item.kind === "root").forEach((item) => {
+      publicationLines.push(`Directory Root Work · ${item.effect}`);
+    });
+    proposals.forEach((proposal) => {
+      if (proposal.liveEffect === "none") return;
+      publicationLines.push(`Live ${proposal.liveEffect} · ${proposal.livePath}`);
+      publicationLines.push(proposal.baseEligible
+        ? `Acknowledge Sync Base · ${proposal.label}`
+        : `Complete without Sync Base · ${proposal.label}`);
+      publicationLines.push(`Converged · ${proposal.label}`);
+    });
+    if (needsLiveMutation || selectedAuxiliary.some((item) => item.kind === "probe")) publicationLines.push("post-push hooks · successful retained scopes");
+
+    const pending = [
+      ...state.proposals.filter((proposal) => !proposal.approved && !proposal.blocked).map((proposal) => `Proposal · ${proposal.label}`),
+      ...Object.values(state.additional).filter((source) => changed(source) && !source.approved).map((source) => `Additional · ${source.repo}:${source.path}`),
+    ];
+    const blocked = state.proposals.filter((proposal) => proposal.blocked).map((proposal) => proposal.label);
+    state.executionReport = {
+      repositoryLines,
+      publicationLines,
+      pending,
+      blocked,
+      status: blocked.length ? "Approved work converged; one Guard diagnostic remains (exit 1)." : "Approved work converged (exit 0).",
+    };
+  }
+
+  function dispatch(input, action) {
+    const state = clone(input);
+    if (state.sessionEnded && action.type !== "RESET") return state;
+
+    switch (action.type) {
+      case "RESET":
+        return clone(action.state);
+      case "FOCUS":
+        state.focus = action.focus;
+        state.lastAction = `Focused ${action.label}.`;
+        break;
+      case "OPEN_PROPOSAL": {
+        const proposal = proposalById(state, action.id);
+        if (!proposal) break;
+        if (!proposal.materialized && !proposal.blocked) materialize(state, proposal, "Review materialization");
+        state.view = "proposal";
+        state.reviewId = proposal.id;
+        state.lastAction = proposal.blocked
+          ? `${proposal.label}: opened the frozen Guard diagnostic; no convergence route survives.`
+          : `${proposal.label}: opened Proposal Review; Approval covers the complete unit outcome.`;
+        break;
+      }
+      case "OPEN_SOURCE": {
+        const source = state.additional[action.id];
+        if (!source || !changed(source)) break;
+        state.view = "source";
+        state.reviewId = source.id;
+        state.lastAction = `${source.repo}:${source.path}: opened its one canonical Source Change Review.`;
+        break;
+      }
+      case "SET_INTENT": {
+        const proposal = proposalById(state, action.id);
+        if (!proposal || !proposal.allowed.includes(action.intent)) break;
+        if (proposal.intent === action.intent && proposal.editedPrimary === null) {
+          state.lastAction = `${proposal.label}: ${intentLabel(action.intent)} was already selected.`;
+          break;
+        }
+        const approvalWasStanding = proposal.approved;
+        proposal.intent = action.intent;
+        proposal.editedPrimary = null;
+        proposal.materialized = false;
+        proposal.invalidReason = "Resolution Intent changed";
+        if (proposal.approved) materialize(state, proposal, "Intent-change rematerialization");
+        state.lastAction = `${proposal.label}: selected ${intentLabel(action.intent)}. ${approvalWasStanding ? "Standing Approval was preserved after rematerialization." : "The unapproved outcome will materialize on review or Approval."}`;
+        break;
+      }
+      case "TOGGLE_PROPOSAL_APPROVAL": {
+        const proposal = proposalById(state, action.id);
+        if (!proposal || proposal.blocked) {
+          state.lastAction = proposal ? `${proposal.label}: blocked rows cannot be approved.` : "No Proposal is focused.";
+          break;
+        }
+        if (proposal.approved) {
+          proposal.approved = false;
+          state.lastAction = `${proposal.label}: Approval removed; its valid frozen Proposal remains available.`;
+        } else {
+          const ok = proposal.materialized || materialize(state, proposal, "Approval materialization");
+          proposal.approved = Boolean(ok);
+          state.lastAction = ok
+            ? `${proposal.label}: Proposal materialized and the complete unit outcome is now approved.`
+            : `${proposal.label}: materialization failed, so Approval stayed off.`;
+        }
+        break;
+      }
+      case "TOGGLE_ADDITIONAL_APPROVAL": {
+        const source = state.additional[action.id];
+        if (!source || !changed(source)) break;
+        source.approved = !source.approved;
+        const aligned = alignReferencingProposals(
+          state,
+          source.id,
+          `${source.path} ${source.approved ? "entered" : "left"} the approved input set`,
+        );
+        state.lastAction = `${source.repo}:${source.path}: ${source.approved ? "approved" : "unapproved"}. ${aligned.eager.length} approved/current Proposal${aligned.eager.length === 1 ? "" : "s"} rematerialized now; ${aligned.lazy.length} unapproved Proposal${aligned.lazy.length === 1 ? " is" : "s are"} lazy.`;
+        break;
+      }
+      case "BATCH_APPROVE": {
+        Object.values(state.additional).forEach((source) => { if (changed(source)) source.approved = true; });
+        state.proposals.forEach((proposal) => { if (!proposal.blocked) proposal.approved = true; });
+        state.proposals.forEach((proposal) => {
+          if (!proposal.blocked && !materialize(state, proposal, "Batch final-state materialization")) proposal.approved = false;
+        });
+        const totals = approvalSummary(state);
+        state.lastAction = `Approve eligible established every final Approval first, then materialized ${totals.proposals} Proposals once against ${totals.additional} approved Additional Changes.`;
+        break;
+      }
+      case "UNAPPROVE_ALL": {
+        state.proposals.forEach((proposal) => { proposal.approved = false; });
+        Object.values(state.additional).forEach((source) => { source.approved = false; });
+        state.proposals.forEach((proposal) => {
+          if (proposal.additionalIds.some((id) => state.additional[id] && changed(state.additional[id]))) {
+            proposal.materialized = false;
+            proposal.invalidReason = "Batch unapproval changed Additional inputs";
+            proposal.includedAdditional = [];
+          }
+        });
+        state.lastAction = "Unapprove all established the final all-off state, then discarded stale dependent previews without eagerly rematerializing them.";
+        break;
+      }
+      case "EDITOR_SAVE": {
+        const proposal = proposalById(state, action.proposalId);
+        if (!proposal || proposal.blocked) break;
+        const touchedSources = [];
+        const intendedRepositoryOutcome = proposal.outcomes[proposal.intent].repository;
+        if (action.primary !== proposal.repositoryOutcome) touchedSources.push(proposal.primaryPath);
+        // Track a deliberate Primary edit separately from Additional-only Editor changes.
+        proposal.editedPrimary = action.primary === intendedRepositoryOutcome ? null : action.primary;
+        const changedAdditionalIds = [];
+        action.additional.forEach((update) => {
+          let source = state.additional[update.id];
+          if (!source) {
+            source = {
+              id: update.id,
+              repo: update.repo,
+              path: update.path,
+              frozen: "(missing)",
+              current: "(missing)",
+              approved: false,
+              references: [proposal.id],
+            };
+            state.additional[source.id] = source;
+          }
+          if (!source.references.includes(proposal.id)) source.references.push(proposal.id);
+          if (!proposal.additionalIds.includes(source.id)) proposal.additionalIds.push(source.id);
+          if (source.current !== update.current) {
+            source.current = update.current;
+            changedAdditionalIds.push(source.id);
+            touchedSources.push(`${source.repo}:${source.path}`);
+          }
+        });
+        materialize(state, proposal, "Editor save rematerialization");
+        changedAdditionalIds.forEach((sourceId) => {
+          alignReferencingProposals(state, sourceId, `${state.additional[sourceId].path} changed in Editor`, proposal.id);
+        });
+        const origin = state.editorOrigin || { view: "deck", reviewId: null };
+        state.editorOrigin = null;
+        if (origin.view === "proposal") {
+          state.view = "proposal";
+          state.reviewId = origin.reviewId;
+        } else if (origin.view === "source" && state.additional[origin.reviewId] && changed(state.additional[origin.reviewId])) {
+          state.view = "source";
+          state.reviewId = origin.reviewId;
+        } else {
+          state.view = "deck";
+          state.reviewId = null;
+          if (state.focus.type === "source" && (!state.additional[state.focus.id] || !changed(state.additional[state.focus.id]))) {
+            state.focus = { type: "proposal", id: proposal.id };
+          }
+        }
+        state.lastAction = `${proposal.label}: Editor saved ${touchedSources.length || "no byte"} change${touchedSources.length === 1 ? "" : "s"}. Standing Approvals stayed; affected Proposals were rematerialized now or marked lazy.`;
+        break;
+      }
+      case "TOGGLE_AUXILIARY": {
+        const item = state.auxiliary.find((candidate) => candidate.id === action.id);
+        if (!item) break;
+        item.selected = !item.selected;
+        state.lastAction = `${item.label}: ${item.selected ? "selected" : "excluded"} auxiliary work; this is selection, not Proposal Approval.`;
+        break;
+      }
+      case "OPEN_CONFIRM": {
+        freezeExecution(state);
+        state.view = "confirm";
+        const frozen = state.frozenExecution;
+        state.lastAction = `Frozen compact confirmation: ${frozen.approvedProposalIds.length} units, ${frozen.repositoryChanges} repository changes, ${frozen.liveWrites} live writes, ${frozen.liveDeletes} live deletions.`;
+        break;
+      }
+      case "CANCEL_CONFIRM":
+        state.view = "deck";
+        state.frozenExecution = null;
+        state.lastAction = "Cancelled confirmation; returned to the Command Deck with session state unchanged.";
+        break;
+      case "CONFIRM_EXECUTION":
+        if (!state.frozenExecution) freezeExecution(state);
+        buildExecutionReport(state);
+        state.view = "terminal";
+        state.sessionEnded = true;
+        state.lastAction = state.executionReport.status;
+        break;
+      default:
+        break;
+    }
+    return state;
+  }
+
+  return { dispatch, intentLabel, changed, proposalById };
+})();
+
+const initialState = () => {
+  const proposals = [
+    {
+      id: "p-git", label: "main:git.gitconfig", primaryPath: "main:packages/git/files/gitconfig", livePath: "~/.gitconfig",
+      configuredPolicy: "both", effectivePolicy: "both", guard: "both directions", allowed: ["repo", "live", "merge"], intent: "merge",
+      observation: "Drifted", baseShort: "Exact", baseDetail: "Exact · 8e7a2c1 · clean Primary Source", baseEligible: true,
+      repositoryFrozen: "[user]\n  name = Xian\n  signingkey = old-key", liveFrozen: "[user]\n  name = Xian\n  signingkey = laptop-key",
+      outcomes: {
+        repo: { repository: "[user]\n  name = Xian\n  signingkey = old-key", live: "[user]\n  name = Xian\n  signingkey = old-key" },
+        live: { repository: "[user]\n  name = Xian\n  signingkey = laptop-key", live: "[user]\n  name = Xian\n  signingkey = laptop-key" },
+        merge: { repository: "[user]\n  name = Xian\n  signingkey = merged-key", live: "[user]\n  name = Xian\n  signingkey = merged-key" },
+      },
+      additionalIds: ["main|scripts/shared.sh", "main|config/theme.css"], approved: false, blocked: false, materialized: false, materialization: 0, editedPrimary: null,
+    },
+    {
+      id: "p-nvim", label: "main:nvim.config/init.lua", primaryPath: "main:packages/nvim/files/config/nvim/init.lua.tmpl", livePath: "~/.config/nvim/init.lua",
+      configuredPolicy: "both", effectivePolicy: "both", guard: "both directions", allowed: ["repo", "live"], intent: "live",
+      observation: "Drifted", baseShort: "Missing", baseDetail: "No applicable Sync Base · Use live fallback is visibly selected", baseEligible: true,
+      repositoryFrozen: "vim.opt.number = true", liveFrozen: "vim.opt.number = true",
+      outcomes: {
+        repo: { repository: "vim.opt.number = true", live: "vim.opt.number = true" },
+        live: { repository: "vim.opt.number = true", live: "vim.opt.number = true" },
+      },
+      additionalIds: ["main|scripts/shared.sh"], approved: false, blocked: false, materialized: false, materialization: 0, editedPrimary: null, fallback: true,
+    },
+    {
+      id: "p-ssh", label: "main:ssh.config", primaryPath: "main:packages/ssh/files/config/ssh/config", livePath: "~/.ssh/config",
+      configuredPolicy: "push-only", effectivePolicy: "push-only", guard: "push capability", allowed: ["repo"], intent: "repo",
+      observation: "Drifted", baseShort: "N/A", baseDetail: "Not Base-Eligible under configured push-only policy", baseEligible: false,
+      repositoryFrozen: "Host *\n  ServerAliveInterval 30", liveFrozen: "Host *\n  ServerAliveInterval 10",
+      outcomes: { repo: { repository: "Host *\n  ServerAliveInterval 30", live: "Host *\n  ServerAliveInterval 30" } },
+      additionalIds: [], approved: false, blocked: false, materialized: false, materialization: 0, editedPrimary: null,
+    },
+    {
+      id: "p-history", label: "main:shell.history", primaryPath: "main:packages/shell/files/history", livePath: "~/.local/share/shell/history",
+      configuredPolicy: "pull-only", effectivePolicy: "pull-only", guard: "pull capability", allowed: ["live"], intent: "live",
+      observation: "Drifted", baseShort: "Conservative", baseDetail: "Conservative · 5b14f90 · dirty Primary Source", baseEligible: true,
+      repositoryFrozen: "git status\nrg TODO", liveFrozen: "git status\nrg TODO\njust test",
+      outcomes: { live: { repository: "git status\nrg TODO\njust test", live: "git status\nrg TODO\njust test" } },
+      additionalIds: [], approved: false, blocked: false, materialized: false, materialization: 0, editedPrimary: null,
+    },
+    {
+      id: "p-retired", label: "main:legacy.credentials", primaryPath: "main:packages/legacy/files/credentials", livePath: "~/.config/legacy/credentials",
+      configuredPolicy: "push-only-delete", effectivePolicy: "push-only-delete", guard: "push capability", allowed: ["repo"], intent: "repo",
+      observation: "Drifted", baseShort: "N/A", baseDetail: "Not Base-Eligible; retained repository source is not ancestry", baseEligible: false,
+      repositoryFrozen: "fallback=true", liveFrozen: "secret=old",
+      outcomes: { repo: { repository: "fallback=true", live: "(missing)" } },
+      additionalIds: [], approved: false, blocked: false, materialized: false, materialization: 0, editedPrimary: null,
+    },
+    {
+      id: "p-secrets", label: "main:secrets.agent", primaryPath: "main:packages/secrets/files/agent.conf", livePath: "~/.config/agent/secrets.conf",
+      configuredPolicy: "both", effectivePolicy: "no route", guard: "guard_push=100 · guard_pull=100", allowed: [], intent: null,
+      observation: "Drifted", baseShort: "Exact", baseDetail: "Exact Base retained; Guards do not change Base eligibility", baseEligible: true,
+      repositoryFrozen: "token=repo", liveFrozen: "token=live", outcomes: {}, additionalIds: [], approved: false, blocked: true,
+      blockedReason: "Both directional Guards removed their capabilities. The unit remains visible as a non-approvable diagnostic.", materialized: false, materialization: 0, editedPrimary: null,
+    },
+  ];
+
+  const state = {
+    view: "deck",
+    focus: { type: "proposal", id: "p-git" },
+    reviewId: null,
+    editorOrigin: null,
+    proposals,
+    additional: {
+      "main|scripts/shared.sh": {
+        id: "main|scripts/shared.sh", repo: "main", path: "scripts/shared.sh",
+        frozen: "#!/bin/sh\nlog() { printf '%s\\n' \"$1\"; }",
+        current: "#!/bin/sh\nlog() { printf '%s\\n' \"$1\"; }\nshared=true",
+        approved: false, references: ["p-git", "p-nvim"],
+      },
+      "main|config/theme.css": {
+        id: "main|config/theme.css", repo: "main", path: "config/theme.css",
+        frozen: ":root { --accent: blue; }", current: ":root { --accent: indigo; }",
+        approved: false, references: ["p-git"],
+      },
+    },
+    auxiliary: [
+      { id: "probe-packages", kind: "probe", label: "main:packages.refresh", policy: "push-only", selected: true, status: "Active", hooks: "push hooks" },
+      { id: "root-nvim", kind: "root", label: "main:nvim.config", policy: "both", selected: true, status: "Mode drift", effect: "chmod ~/.config/nvim to 0700" },
+    ],
+    frozenExecution: null,
+    executionReport: null,
+    sessionEnded: false,
+    lastAction: "Observed six drifted Sync Units. Directly InSync units are absent; no real files changed.",
+    log: [],
+  };
+  // Every newly observed drifted Proposal and Additional Source Change starts unapproved.
+  state.lastAction = "Observed six drifted Sync Units. All begin unapproved; Directly InSync units are absent.";
+  return state;
+};
+
+let state = initialState();
+let activeScenario = "policy";
+
+const scenarios = {
+  policy: {
+    title: "Policy-constrained rows",
+    description: "Compare the same dense row shape across both, one-sided, delete, fallback, and Guard-blocked outcomes. Watch the allowed intents and effect summaries change without losing either path.",
+    steps: ["Reset this scenario", "Review missing-Base fallback", "Review push-only-delete", "Review no-route diagnostic"],
+  },
+  editor: {
+    title: "Standing Approval + Editor",
+    description: "Edit an already-approved Proposal and its shared Additional Source. The approved current Proposal rematerializes immediately, the unapproved dependent becomes lazy, and standing Approvals survive.",
+    steps: ["Reset this scenario", "Establish standing approvals", "Open approved git Proposal", "Open Proposal Editor", "Save changed Primary + shared source"],
+  },
+  additional: {
+    title: "Additional alignment",
+    description: "Toggle one canonical Additional Change. Approved referencing Proposals align immediately; unapproved ones discard stale previews and wait. Candidate bytes never appear in an outcome that will not write them.",
+    steps: ["Reset this scenario", "Establish standing approvals", "Focus shared Additional", "Unapprove shared source", "Open aligned git Proposal", "Reapprove shared source"],
+  },
+  batch: {
+    title: "Batch final state",
+    description: "Batch commands set every final Approval first, then materialize Proposals once. Row order cannot change which Additional candidates feed the outcomes.",
+    steps: ["Reset this scenario", "Unapprove all", "Approve eligible", "Open compact confirmation"],
+  },
+  execute: {
+    title: "Two-stage convergence",
+    description: "Approve a mixed subset, freeze it behind compact counts, then inspect terminal execution: one canonical Additional, no-write Base acknowledgment, live write/delete, and healthy pending rows reported rather than silently discarded.",
+    steps: ["Reset this scenario", "Approve mixed subset", "Open compact confirmation", "Confirm and execute"],
+  },
+};
+
+function html(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
+}
+function now() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+function proposal(id) { return SyncDeckLogic.proposalById(state, id); }
+function source(id) { return state.additional[id]; }
+function intentLabel(intent) { return SyncDeckLogic.intentLabel(intent); }
+function dispatch(action) {
+  state = SyncDeckLogic.dispatch(state, action);
+  state.log.unshift(`${now()} · ${state.lastAction}`);
+  state.log = state.log.slice(0, 6);
+  render();
+}
+function effectLabel(effect) {
+  return effect === "none" ? "No write" : effect === "create" ? "Create" : effect === "delete" ? "Delete" : "Update";
+}
+function effectTone(effect) { return effect === "none" ? "gray" : effect === "delete" ? "red" : effect === "create" ? "green" : "blue"; }
+function approvalMark(approved, blocked = false) {
+  if (blocked) return '<span class="approval-mark blocked" title="Not approvable">!</span>';
+  return approved ? '<span class="approval-mark approved" title="Approved">✓</span>' : '<span class="approval-mark pending" title="Unapproved">·</span>';
+}
+function policyMarkup(item) {
+  if (item.blocked) return '<span class="badge red">both → no route</span><span class="micro">both Guards skipped</span>';
+  const narrowed = item.configuredPolicy !== item.effectivePolicy;
+  return `<span class="badge ${narrowed ? "amber" : "gray"}">${html(narrowed ? `${item.configuredPolicy} → ${item.effectivePolicy}` : item.effectivePolicy)}</span><span class="micro">${html(item.guard)}</span>`;
+}
+function resolutionMarkup(item) {
+  if (item.blocked) return '<span class="badge red">Guard diagnostic</span>';
+  const label = item.editedPrimary !== null ? `${intentLabel(item.intent)} · Edited` : intentLabel(item.intent);
+  const materialization = item.materialized ? "Ready" : "Not materialized";
+  const fallback = item.fallback ? '<span class="micro amber-text">Fallback: Merge unavailable</span>' : "";
+  return `<span class="badge ${item.materialized ? "blue" : "gray"}">${html(label)}</span><span class="micro">${materialization}</span>${fallback}`;
+}
+function sourceChangeMarkup(item) {
+  if (item.blocked) return '<span class="muted">—</span>';
+  if (!item.materialized) return '<span class="muted">Not materialized</span>';
+  return `<span class="badge ${effectTone(item.primaryEffect)}">${effectLabel(item.primaryEffect)}</span>`;
+}
+function liveChangeMarkup(item) {
+  if (item.blocked) return '<span class="muted">—</span>';
+  if (!item.materialized) return '<span class="muted">Not materialized</span>';
+  return `<span class="badge ${effectTone(item.liveEffect)}">${effectLabel(item.liveEffect)}</span>`;
+}
+function focusedLabel() {
+  if (state.focus.type === "proposal") return proposal(state.focus.id)?.label || "Proposal";
+  const focusedSource = source(state.focus.id);
+  return focusedSource ? `${focusedSource.repo}:${focusedSource.path}` : "Additional Change";
+}
+function focusProposal(id) { dispatch({ type: "FOCUS", focus: { type: "proposal", id }, label: proposal(id).label }); }
+function focusSource(id) { dispatch({ type: "FOCUS", focus: { type: "source", id }, label: `${source(id).repo}:${source(id).path}` }); }
+function proposalRow(item) {
+  const focused = state.focus.type === "proposal" && state.focus.id === item.id;
+  return `<tr class="${focused ? "current" : ""} ${item.blocked ? "diagnostic-row" : ""}" onclick="focusProposal('${item.id}')">
+    <td class="focus-cell">${focused ? "›" : ""}</td>
+    <td class="approval-cell">${approvalMark(item.approved, item.blocked)}</td>
+    <td><strong>${html(item.label)}</strong></td>
+    <td>${policyMarkup(item)}</td>
+    <td><strong class="mono path">${html(item.primaryPath)}</strong><span class="micro">${sourceChangeMarkup(item)}</span></td>
+    <td><strong class="mono path">${html(item.livePath)}</strong><span class="micro">${liveChangeMarkup(item)}</span></td>
+    <td><span class="badge ${item.blocked ? "red" : "amber"}">${html(item.observation)}</span></td>
+    <td><span class="badge ${item.baseShort === "Exact" ? "green" : item.baseShort === "N/A" ? "gray" : "amber"}">${html(item.baseShort)}</span></td>
+    <td>${resolutionMarkup(item)}</td>
+  </tr>`;
+}
+function additionalRow(item) {
+  const focused = state.focus.type === "source" && state.focus.id === item.id;
+  const kind = item.frozen === "(missing)" ? "Create" : item.current === "(missing)" ? "Delete" : "Update";
+  return `<tr class="${focused ? "current" : ""}" onclick="focusSource('${item.id}')">
+    <td class="focus-cell">${focused ? "›" : ""}</td>
+    <td class="approval-cell">${approvalMark(item.approved)}</td>
+    <td colspan="4"><strong class="mono path">${html(item.repo)}:${html(item.path)}</strong></td>
+    <td colspan="2"><span class="badge ${kind === "Delete" ? "red" : kind === "Create" ? "green" : "blue"}">${kind}</span></td>
+    <td><span class="micro inline">${item.references.length} referencing Proposal${item.references.length === 1 ? "" : "s"}</span></td>
+  </tr>`;
+}
+function auxiliaryRows() {
+  return state.auxiliary.map((item) => `<tr class="aux-row">
+    <td class="focus-cell"></td>
+    <td class="approval-cell"><button class="selection-mark ${item.selected ? "selected" : ""}" onclick="event.stopPropagation();dispatch({type:'TOGGLE_AUXILIARY',id:'${item.id}'})" title="${item.selected ? "Selected" : "Excluded"}">${item.selected ? "✓" : "·"}</button></td>
+    <td><strong>${html(item.label)}</strong></td>
+    <td><span class="badge gray">${html(item.policy)}</span></td>
+    <td colspan="2" class="muted">${item.kind === "probe" ? "No repository/live payload" : html(item.effect)}</td>
+    <td colspan="2"><span class="badge ${item.kind === "probe" ? "green" : "amber"}">${html(item.status)}</span></td>
+    <td><span class="micro inline">Selection, not Approval</span></td>
+  </tr>`).join("");
+}
+function scenarioPanel() {
+  const scenario = scenarios[activeScenario];
+  return `<section class="panel scenarios">
+    <div class="scenario-tabs">${Object.entries(scenarios).map(([key, item]) => `<button class="scenario-tab ${key === activeScenario ? "active" : ""}" onclick="selectScenario('${key}')">${html(item.title)}</button>`).join("")}</div>
+    <div class="scenario-body"><p><strong>Guided walkthrough:</strong> ${html(scenario.description)}</p>
+      <div class="scenario-actions">${scenario.steps.map((step, index) => `<button class="button ${index === 0 ? "primary" : ""}" onclick="scenarioStep('${activeScenario}',${index})">${index + 1}. ${html(step)}</button>`).join("")}</div>
+    </div>
+  </section>`;
+}
+function stateLog() {
+  return `<section class="panel state-panel"><div class="pad"><div class="row"><h2>Session state</h2><span class="badge gray">in memory only</span></div>
+    <div class="log"><div>${html(state.lastAction)}</div>${state.log.slice(1).map((line) => `<div>${html(line)}</div>`).join("")}</div>
+  </div></section>`;
+}
+function deck() {
+  const additions = Object.values(state.additional).filter(SyncDeckLogic.changed).sort((a, b) => a.path.localeCompare(b.path));
+  const approved = state.proposals.filter((item) => item.approved).length;
+  const columns = '<colgroup><col class="focus-col"><col class="approval-col"><col class="target-col"><col class="policy-col"><col class="repo-col"><col class="live-col"><col class="observation-col"><col class="base-col"><col class="resolution-col"></colgroup>';
+  return `<div class="shell wide">
+    <div class="eyebrow">Dotman Sync convergence · issue 46 throwaway prototype</div>
+    <h1>One workset. Whole-unit Approval. Two destination stages.</h1>
+    <p class="lede">The preserved Dense Command Deck now shows policy-constrained Resolution Intents and effects while keeping repository and live paths visible. Primary changes stay inside their Proposal row; shared Additional changes stay canonical.</p>
+    <div class="prototype-note">No repository or live files are changed</div>
+    <div class="question"><strong>Prototype question</strong>Does this revised deck preserve the fast workset flow while making the complete Sync convergence contract legible?</div>
+    <section class="panel">
+      <div class="deck-head"><div><div class="eyebrow">Command Deck · complete Sync workset</div><h2>Approve outcomes, not isolated Primary writes.</h2><p>Focused: <strong>${html(focusedLabel())}</strong> · Directly InSync units are intentionally absent.</p></div>
+      <div class="deck-stats"><span class="badge blue">${state.proposals.length} drifted</span><span class="badge amber">${additions.length} Additional</span><span class="badge green">${approved} units approved</span><span class="badge red">${state.proposals.filter((item) => item.blocked).length} blocked</span></div></div>
+      <div class="deck-wrap">
+        <div class="section-label">Sync Unit Proposals · Approval covers Primary, live effects, and conditional Base acknowledgment</div>
+        <table class="deck-table">${columns}<thead><tr><th></th><th>Approval</th><th>Target</th><th>Effective policy</th><th>Primary source</th><th>Live path</th><th>Observation</th><th>Sync Base</th><th>Resolution</th></tr></thead><tbody>${state.proposals.map(proposalRow).join("")}</tbody></table>
+        <div class="section-label">Additional Changes · independent repository writes</div>
+        ${additions.length ? `<table class="deck-table additional-table">${columns}<thead><tr><th></th><th>Approval</th><th colspan="4">Additional source</th><th colspan="2">Change</th><th>Context</th></tr></thead><tbody>${additions.map(additionalRow).join("")}</tbody></table>` : '<div class="pad muted small">No Additional Source Changes are staged.</div>'}
+        <div class="section-label">Auxiliary work · selection without Proposal Approval</div>
+        <table class="deck-table auxiliary-table">${columns}<tbody>${auxiliaryRows()}</tbody></table>
+      </div>
+    </section>
+    ${scenarioPanel()}${stateLog()}${deckButtons()}
+    <div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Enter</span> review</span><span><span class="key">e</span> Editor</span><span><span class="key">r</span> Use repository</span><span><span class="key">l</span> Use live</span><span><span class="key">m</span> Merge</span><span><span class="key">a</span> Approval</span><span><span class="key">A</span> approve eligible</span><span><span class="key">U</span> unapprove all</span></div>
+  </div>`;
+}
+function focusedEntity() {
+  return state.focus.type === "proposal" ? proposal(state.focus.id) : source(state.focus.id);
+}
+function deckButtons() {
+  const entity = focusedEntity();
+  const isProposal = state.focus.type === "proposal";
+  const blocked = isProposal && entity?.blocked;
+  const approved = Boolean(entity?.approved);
+  const allowed = isProposal ? entity.allowed : [];
+  return `<div class="command-bar">
+    <button class="button primary" onclick="openFocused()">Review focused <span class="key">Enter</span></button>
+    <button class="button" onclick="openEditorFocused()" ${!isProposal || blocked ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button>
+    <button class="button" onclick="setFocusedIntent('repo')" ${!allowed.includes("repo") ? "disabled" : ""}>Use repository <span class="key">r</span></button>
+    <button class="button" onclick="setFocusedIntent('live')" ${!allowed.includes("live") ? "disabled" : ""}>Use live <span class="key">l</span></button>
+    <button class="button" onclick="setFocusedIntent('merge')" ${!allowed.includes("merge") ? "disabled" : ""}>Merge <span class="key">m</span></button>
+    <button class="button" onclick="toggleFocusedApproval()" ${blocked ? "disabled" : ""}>${approved ? "Unapprove" : "Approve"} focused <span class="key">a</span></button>
+    <button class="button" onclick="dispatch({type:'BATCH_APPROVE'})">Approve eligible <span class="key">A</span></button>
+    <button class="button" onclick="dispatch({type:'UNAPPROVE_ALL'})">Unapprove all <span class="key">U</span></button>
+    <button class="button primary" onclick="dispatch({type:'OPEN_CONFIRM'})">Converge approved</button>
+  </div>`;
+}
+function diff(before, after) {
+  if (before === after) return '<span class="empty">No filesystem write in this destination.</span>';
+  const left = String(before).split("\n"), right = String(after).split("\n"), lines = [];
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    if (left[index] === right[index]) lines.push(`  ${html(left[index] ?? "")}`);
+    else {
+      if (left[index] !== undefined) lines.push(`<span class="remove">- ${html(left[index])}</span>`);
+      if (right[index] !== undefined) lines.push(`<span class="add">+ ${html(right[index])}</span>`);
+    }
+  }
+  return lines.join("\n");
+}
+function intentButtons(item) {
+  return ["repo", "live", "merge"].map((intent) => `<button class="button ${item.intent === intent ? "selected-intent" : ""}" onclick="setIntent('${item.id}','${intent}')" ${!item.allowed.includes(intent) ? "disabled" : ""}>${intentLabel(intent)}${item.intent === intent ? " ✓" : ""}</button>`).join("");
+}
+function proposalReview() {
+  const item = proposal(state.reviewId);
+  if (!item) return deck();
+  const additional = item.additionalIds.map(source).filter((candidate) => candidate && SyncDeckLogic.changed(candidate));
+  if (item.blocked) {
+    return `<div class="shell">${scenarioPanel()}<section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · frozen diagnostic</div><h2>${html(item.label)}</h2><p class="mono">Repository: ${html(item.primaryPath)}<br>Live: ${html(item.livePath)}</p></div><span class="badge red">Not approvable</span></header>
+      <div class="review-body"><main class="review-main"><h3>Why resolution is blocked</h3><div class="review-title red">No convergence route survives</div><p>${html(item.blockedReason)}</p><pre class="diff">configured policy  ${html(item.configuredPolicy)}\nguard_push        exit 100\nguard_pull        exit 100\neffective policy no route</pre></main>
+      <aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base</div><div class="fact-value">${html(item.baseDetail)}</div></div><div class="fact"><div class="fact-label">Editor</div><div class="fact-value">Unavailable</div><p class="tiny muted">Editor is available only while at least one convergence route survives.</p></div></aside></div>
+      <footer class="review-footer"><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
+  }
+  const primaryAfter = item.materialized ? item.repositoryOutcome : item.repositoryFrozen;
+  const liveAfter = item.materialized ? item.liveOutcome : item.liveFrozen;
+  return `<div class="shell">${scenarioPanel()}<section class="panel review-shell">
+    <header class="review-header"><div><div class="eyebrow">Proposal Review · same terminal interaction</div><h2>${html(item.label)}</h2><p class="mono">Repository: ${html(item.primaryPath)}<br>Live: ${html(item.livePath)}</p></div><div class="status-line">${approvalMark(item.approved)}<span class="badge ${item.materialized ? "green" : "gray"}">${item.materialized ? "Materialized" : "Lazy"}</span></div></header>
+    <div class="intent-strip"><div><div class="fact-label">Resolution Intent</div><div class="intent-actions">${intentButtons(item)}</div></div><div>${policyMarkup(item)}</div></div>
+    <div class="review-body"><main class="review-main">
+      <h3>Primary Source Change</h3><div class="review-title">${item.editedPrimary !== null ? "Edited" : intentLabel(item.intent)}</div><pre class="diff">${item.materialized ? diff(item.repositoryFrozen, primaryAfter) : '<span class="empty">Not materialized. Review or Approval will produce the frozen Proposal.</span>'}</pre>
+      <h3>Policy-derived Publication Effect</h3><pre class="diff">${item.materialized ? diff(item.liveFrozen, liveAfter) : '<span class="empty">Not materialized.</span>'}</pre>
+      <div class="divider"></div><h3>Referenced Additional Changes · canonical approval lives in Source Change Review</h3>
+      <div class="refs">${additional.length ? additional.map((candidate) => `<div class="ref-row"><button onclick="openSource('${candidate.id}')">${html(candidate.repo)}:${html(candidate.path)}<br><span class="tiny muted">${candidate.approved ? "Approved candidate included" : "Unapproved candidate excluded; frozen preimage used"}</span></button>${approvalMark(candidate.approved)}</div>`).join("") : '<p class="empty">No staged Additional Changes.</p>'}</div>
+    </main><aside class="review-facts">
+      <div class="fact"><div class="fact-label">Whole-unit Approval</div><div class="fact-value">${item.approved ? "Standing authorization" : "Not approved"}</div><p class="tiny muted">Covers this Proposal's Primary effect, live effects, and conditional Sync Base acknowledgment.</p></div>
+      <div class="fact"><div class="fact-label">Sync Base</div><div class="fact-value">${html(item.baseDetail)}</div></div>
+      <div class="fact"><div class="fact-label">Frozen effects</div><div class="fact-value">Repository: ${item.materialized ? effectLabel(item.primaryEffect) : "pending"}<br>Live: ${item.materialized ? effectLabel(item.liveEffect) : "pending"}</div></div>
+      <div class="fact"><div class="fact-label">Latest alignment</div><div class="fact-value small">${html(item.lastMaterialization || item.invalidReason || "Not materialized yet")}</div></div>
+    </aside></div>
+    <footer class="review-footer"><button class="button primary" onclick="openEditorProposal('${item.id}')">Proposal Editor <span class="key">e</span></button><button class="button" onclick="dispatch({type:'TOGGLE_PROPOSAL_APPROVAL',id:'${item.id}'})">${item.approved ? "Unapprove" : "Approve"} unit <span class="key">a</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer>
+  </section></div>`;
+}
+function sourceReview() {
+  const item = source(state.reviewId);
+  if (!item || !SyncDeckLogic.changed(item)) return deck();
+  return `<div class="shell">${scenarioPanel()}<section class="panel review-shell">
+    <header class="review-header"><div><div class="eyebrow">Source Change Review · canonical Additional row</div><h2>${html(item.path)}</h2><p class="mono">${html(item.repo)} repository · frozen-preimage diff</p></div><div class="status-line">${approvalMark(item.approved)}<span class="badge ${item.approved ? "green" : "amber"}">${item.approved ? "Approved independently" : "Unapproved"}</span></div></header>
+    <div class="review-body"><main class="review-main"><h3>Frozen-preimage diff</h3><div class="review-title">Additional Source Change</div><pre class="diff">${diff(item.frozen, item.current)}</pre>
+      <div class="review-actions"><button class="button primary" onclick="dispatch({type:'TOGGLE_ADDITIONAL_APPROVAL',id:'${item.id}'})">${item.approved ? "Unapprove" : "Approve"} Additional Change <span class="key">a</span></button></div>
+      <div class="divider"></div><h3>Referencing Proposals</h3><div class="refs">${item.references.map((id) => { const ref = proposal(id); return `<div class="ref-row"><button onclick="openProposal('${id}')">${html(ref.label)}<br><span class="tiny muted">${ref.approved ? "Approved: aligns immediately" : "Unapproved: stale preview becomes lazy"}</span></button>${approvalMark(ref.approved, ref.blocked)}</div>`; }).join("")}</div>
+    </main><aside class="review-facts"><div class="fact"><div class="fact-label">Approval contract</div><div class="fact-value">Independent repository write</div><p class="tiny muted">Its success never gates a Proposal's Converged result or Base acknowledgment.</p></div><div class="fact"><div class="fact-label">Alignment contract</div><div class="fact-value">Unapproved candidate bytes are excluded</div><p class="tiny muted">Dependent Proposals use the frozen preimage instead.</p></div><div class="fact"><div class="fact-label">Repository Apply</div><div class="fact-value">Written once before all Primaries</div></div></aside></div>
+    <footer class="review-footer"><button class="button primary" onclick="openEditorProposal('${item.references[0]}')">Edit via referencing Proposal <span class="key">e</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer>
+  </section></div>`;
+}
+function editor() {
+  const item = proposal(state.reviewId);
+  const additional = item.additionalIds.map(source).filter(Boolean);
+  return `<div class="shell">${scenarioPanel()}<section class="panel editor-shell"><div class="eyebrow">Proposal Editor · transactional terminal handoff</div><h1 style="font-size:clamp(1.8rem,4vw,2.7rem)">Edit the Proposal's repository sources.</h1>
+    <p class="lede">The Editor may deliberately change repository sources under every surviving policy. Save rematerializes aligned effects; it never writes the working tree.</p>
+    <div class="editor-source"><h3><span>Primary · <span class="mono">${html(item.primaryPath)}</span></span><span class="badge blue">exclusive</span></h3><textarea data-primary>${html(item.repositoryOutcome)}</textarea><p class="tiny muted">Changing this produces an Edited Proposal. Standing Proposal Approval remains if rematerialization succeeds.</p></div>
+    ${additional.map((candidate) => `<div class="editor-source"><h3><span>Additional · <span class="mono">${html(candidate.repo)}:${html(candidate.path)}</span></span><span class="badge amber">canonical shared path</span></h3><textarea data-additional-id="${html(candidate.id)}" data-repo="${html(candidate.repo)}" data-path="${html(candidate.path)}">${html(candidate.current)}</textarea><p class="tiny muted">Approval is path-scoped and standing. Changed bytes invalidate every dependent Proposal, then align them eagerly or lazily.</p></div>`).join("")}
+    <div class="editor-add"><input id="new-additional-path" placeholder="new Additional path"><button class="button" onclick="addEditorField()">Add Additional source</button></div>
+    <div class="command-bar"><button class="button primary" onclick="saveEditor('${item.id}')">Return and adopt edits</button><button class="button" onclick="cancelEditor()">Cancel Editor <span class="key">Esc</span></button></div>
+  </section></div>`;
+}
+function confirmation() {
+  const frozen = state.frozenExecution;
+  return `<div class="shell confirm-shell">${scenarioPanel()}<section class="confirm-card"><div class="eyebrow">Compact final confirmation · frozen set</div><h1>Converge approved work?</h1><p>Editing and Approval toggles are closed only after confirmation. Execution will not Capture, Render, reconcile, observe, or replan.</p>
+    <div class="count-grid"><div><strong>${frozen.approvedProposalIds.length}</strong><span>approved units</span></div><div><strong>${frozen.repositoryChanges}</strong><span>repository changes</span></div><div><strong>${frozen.liveWrites}</strong><span>live writes</span></div><div><strong>${frozen.liveDeletes}</strong><span>live deletions</span></div></div>
+    <div class="confirm-actions"><button class="button primary" onclick="dispatch({type:'CONFIRM_EXECUTION'})" ${frozen.approvedProposalIds.length + frozen.approvedAdditionalIds.length === 0 ? "disabled" : ""}>Confirm convergence <span class="key">Enter</span></button><button class="button" onclick="dispatch({type:'CANCEL_CONFIRM'})">Back to Command Deck <span class="key">Esc</span></button></div>
+    <p class="tiny muted">No detailed final-effect screen: those effects were already reviewed in the deck and focused Reviews.</p></section></div>`;
+}
+function terminal() {
+  const report = state.executionReport;
+  return `<div class="shell">${scenarioPanel()}<section class="terminal"><div class="eyebrow" style="color:#bfc3ff">Simulated terminal execution · frozen artifacts only</div><h1 style="font-size:clamp(1.8rem,4vw,2.7rem);color:#fff">${html(report.status)}</h1>
+    <div class="terminal-stages"><div><h2>1 · Repository Apply</h2><ol>${report.repositoryLines.map((line, index) => `<li class="${index === 0 ? "stage-title" : "ok"}">${html(line)}</li>`).join("")}</ol></div><div><h2>2 · Live Publication</h2><ol>${report.publicationLines.map((line, index) => `<li class="${index === 0 ? "stage-title" : "ok"}">${html(line)}</li>`).join("")}</ol></div></div>
+    <div class="terminal-summary"><div><h2>Healthy rows left unapproved</h2><ul>${report.pending.length ? report.pending.map((label) => `<li class="warn">${html(label)}</li>`).join("") : '<li class="ok">None</li>'}</ul></div><div><h2>Blocked diagnostics</h2><ul>${report.blocked.length ? report.blocked.map((label) => `<li class="warn">${html(label)} · not executed</li>`).join("") : '<li class="ok">None</li>'}</ul></div></div>
+    <p class="tiny" style="margin-top:18px;color:#adb6c4">Additional Source Changes execute independently once, but never gate Proposal convergence. Each Base-Eligible unit acknowledges only after its own effects; push-only units complete without a fake Base.</p>
+    <button class="button" onclick="resetDemo(activeScenario)">Start another simulated Sync</button>
+  </section></div>`;
+}
+function render() {
+  document.querySelector("#app").innerHTML = state.view === "deck" ? deck()
+    : state.view === "proposal" ? proposalReview()
+    : state.view === "source" ? sourceReview()
+    : state.view === "editor" ? editor()
+    : state.view === "confirm" ? confirmation()
+    : terminal();
+}
+function returnDeck() {
+  state.view = "deck";
+  state.reviewId = null;
+  state.lastAction = "Returned to Command Deck; the in-memory session state is unchanged.";
+  state.log.unshift(`${now()} · ${state.lastAction}`);
+  state.log = state.log.slice(0, 6);
+  render();
+}
+function openFocused() {
+  if (state.focus.type === "proposal") dispatch({ type: "OPEN_PROPOSAL", id: state.focus.id });
+  else dispatch({ type: "OPEN_SOURCE", id: state.focus.id });
+}
+function openProposal(id) { dispatch({ type: "OPEN_PROPOSAL", id }); }
+function openSource(id) { dispatch({ type: "OPEN_SOURCE", id }); }
+function toggleFocusedApproval() {
+  if (state.focus.type === "proposal") dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: state.focus.id });
+  else dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: state.focus.id });
+}
+function setIntent(id, intent) { dispatch({ type: "SET_INTENT", id, intent }); }
+function setFocusedIntent(intent) { if (state.focus.type === "proposal") setIntent(state.focus.id, intent); }
+function openEditorProposal(id) {
+  const item = proposal(id);
+  if (!item || item.blocked) return;
+  const origin = { view: state.view, reviewId: state.reviewId };
+  if (!item.materialized) state = SyncDeckLogic.dispatch(state, { type: "OPEN_PROPOSAL", id });
+  state.editorOrigin = origin;
+  state.view = "editor";
+  state.reviewId = id;
+  state.lastAction = `${item.label}: Editor received the Primary followed by referenced Additional Sources.`;
+  render();
+}
+function openEditorFocused() { if (state.focus.type === "proposal") openEditorProposal(state.focus.id); }
+function cancelEditor() {
+  const origin = state.editorOrigin || { view: "deck", reviewId: null };
+  state.editorOrigin = null;
+  state.view = origin.view === "proposal" || origin.view === "source" ? origin.view : "deck";
+  state.reviewId = origin.reviewId;
+  state.lastAction = "Editor cancelled; no candidate bytes, materializations, or Approvals changed.";
+  state.log.unshift(`${now()} · ${state.lastAction}`);
+  render();
+}
+function saveEditor(id) {
+  const primary = document.querySelector("[data-primary]").value;
+  const additional = [...document.querySelectorAll("[data-additional-id]")].map((node) => ({
+    id: node.dataset.additionalId,
+    repo: node.dataset.repo,
+    path: node.dataset.path,
+    current: node.value,
+  }));
+  dispatch({ type: "EDITOR_SAVE", proposalId: id, primary, additional });
+}
+function addEditorField() {
+  const input = document.querySelector("#new-additional-path");
+  const path = input.value.trim();
+  if (!path) return;
+  const id = `main|${path}`;
+  if (document.querySelector(`[data-additional-id="${CSS.escape(id)}"]`)) return;
+  const block = document.createElement("div");
+  block.className = "editor-source";
+  block.innerHTML = `<h3><span>Additional · <span class="mono">main:${html(path)}</span></span><span class="badge amber">new path · starts unapproved</span></h3><textarea data-additional-id="${html(id)}" data-repo="main" data-path="${html(path)}"></textarea><p class="tiny muted">Missing frozen preimage. Saving non-empty bytes creates one canonical Additional Change.</p>`;
+  input.closest(".editor-add").before(block);
+  input.value = "";
+}
+function resetDemo(scenario = activeScenario) {
+  state = initialState();
+  activeScenario = scenario;
+  state.log = [`${now()} · Reset simulation; no real files changed.`];
+  render();
+}
+function selectScenario(key) { activeScenario = key; render(); }
+function scenarioStep(key, index) {
+  const steps = {
+    policy: [
+      () => resetDemo(key),
+      () => openProposal("p-nvim"),
+      () => openProposal("p-retired"),
+      () => openProposal("p-secrets"),
+    ],
+    editor: [
+      () => resetDemo(key),
+      () => { dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: "p-git" }); dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: "main|scripts/shared.sh" }); },
+      () => openProposal("p-git"),
+      () => openEditorProposal("p-git"),
+      () => dispatch({
+        type: "EDITOR_SAVE", proposalId: "p-git", primary: "[user]\n  name = Xian\n  signingkey = editor-key",
+        additional: [
+          { id: "main|scripts/shared.sh", repo: "main", path: "scripts/shared.sh", current: "#!/bin/sh\nlog() { printf '%s\\n' \"$1\"; }\nshared=edited" },
+          { id: "main|config/theme.css", repo: "main", path: "config/theme.css", current: ":root { --accent: indigo; }" },
+        ],
+      }),
+    ],
+    additional: [
+      () => resetDemo(key),
+      () => { dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: "p-git" }); dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: "main|scripts/shared.sh" }); },
+      () => { state.view = "deck"; state.focus = { type: "source", id: "main|scripts/shared.sh" }; state.lastAction = "Focused the one canonical shared.sh row."; render(); },
+      () => dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: "main|scripts/shared.sh" }),
+      () => openProposal("p-git"),
+      () => dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: "main|scripts/shared.sh" }),
+    ],
+    batch: [
+      () => resetDemo(key),
+      () => dispatch({ type: "UNAPPROVE_ALL" }),
+      () => dispatch({ type: "BATCH_APPROVE" }),
+      () => dispatch({ type: "OPEN_CONFIRM" }),
+    ],
+    execute: [
+      () => resetDemo(key),
+      () => {
+        dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: "p-git" });
+        dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: "p-nvim" });
+        dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: "p-retired" });
+        dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: "main|scripts/shared.sh" });
+      },
+      () => dispatch({ type: "OPEN_CONFIRM" }),
+      () => dispatch({ type: "CONFIRM_EXECUTION" }),
+    ],
+  };
+  steps[key]?.[index]?.();
+}
+
+document.addEventListener("keydown", (event) => {
+  const active = document.activeElement;
+  if (active && active.matches("textarea,input,select,[contenteditable]")) {
+    if (event.key === "Escape" && state.view === "editor") { event.preventDefault(); cancelEditor(); }
+    return;
+  }
+  if (state.view === "terminal") return;
+  if (state.view === "confirm") {
+    if (event.key === "Escape") { event.preventDefault(); dispatch({ type: "CANCEL_CONFIRM" }); }
+    else if (event.key === "Enter") { event.preventDefault(); dispatch({ type: "CONFIRM_EXECUTION" }); }
+    return;
+  }
+  if (state.view === "editor") {
+    if (event.key === "Escape") { event.preventDefault(); cancelEditor(); }
+    return;
+  }
+  if (event.key === "Escape") { event.preventDefault(); returnDeck(); return; }
+  if (state.view === "proposal") {
+    if (event.key === "a") dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: state.reviewId });
+    else if (event.key === "e") openEditorProposal(state.reviewId);
+    else if (event.key === "r") setIntent(state.reviewId, "repo");
+    else if (event.key === "l") setIntent(state.reviewId, "live");
+    else if (event.key === "m") setIntent(state.reviewId, "merge");
+    return;
+  }
+  if (state.view === "source") {
+    if (event.key === "a") dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: state.reviewId });
+    else if (event.key === "e") openEditorProposal(source(state.reviewId).references[0]);
+    return;
+  }
+  const list = [
+    ...state.proposals.map((item) => ({ type: "proposal", id: item.id })),
+    ...Object.values(state.additional).filter(SyncDeckLogic.changed).sort((a, b) => a.path.localeCompare(b.path)).map((item) => ({ type: "source", id: item.id })),
+  ];
+  const index = list.findIndex((item) => item.type === state.focus.type && item.id === state.focus.id);
+  if (event.key === "j" || event.key === "ArrowDown") {
+    event.preventDefault(); const next = list[(index + 1) % list.length]; state.focus = next; state.lastAction = `Focused ${focusedLabel()}.`; render();
+  } else if (event.key === "k" || event.key === "ArrowUp") {
+    event.preventDefault(); const next = list[(index - 1 + list.length) % list.length]; state.focus = next; state.lastAction = `Focused ${focusedLabel()}.`; render();
+  } else if (event.key === "Enter") { event.preventDefault(); openFocused(); }
+  else if (event.key === "a") { event.preventDefault(); toggleFocusedApproval(); }
+  else if (event.key === "A") { event.preventDefault(); dispatch({ type: "BATCH_APPROVE" }); }
+  else if (event.key === "U") { event.preventDefault(); dispatch({ type: "UNAPPROVE_ALL" }); }
+  else if (event.key === "e") { event.preventDefault(); openEditorFocused(); }
+  else if (event.key === "r") { event.preventDefault(); setFocusedIntent("repo"); }
+  else if (event.key === "l") { event.preventDefault(); setFocusedIntent("live"); }
+  else if (event.key === "m") { event.preventDefault(); setFocusedIntent("merge"); }
+});
+
+render();
+
+</script>
+</body>
+</html>
