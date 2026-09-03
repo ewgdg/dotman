@@ -66,7 +66,7 @@ const SyncDeckLogic = (() => {
     proposal.primaryEffect = repositoryOutcome === proposal.repositoryFrozen ? "none" : proposal.repositoryFrozen === "(missing)" ? "create" : repositoryOutcome === "(missing)" ? "delete" : "update";
     proposal.liveEffect = liveOutcome === proposal.liveFrozen ? "none" : proposal.liveFrozen === "(missing)" ? "create" : liveOutcome === "(missing)" ? "delete" : "update";
     proposal.invalidReason = null;
-    proposal.lastMaterialization = `${reason}; ${includedAdditional.length ? "included approved Additional candidates" : "used frozen Additional preimages"}.`;
+    proposal.lastMaterialization = `${reason}; ${includedAdditional.length ? "included selected Additional candidates" : "used frozen Additional preimages"}.`;
     return true;
   }
 
@@ -170,7 +170,7 @@ const SyncDeckLogic = (() => {
       publicationLines,
       pending,
       blocked,
-      status: blocked.length ? "Approved work converged; one Guard-blocked unit remains (exit 1)." : "Approved work converged (exit 0).",
+      status: blocked.length ? "Selected work converged; one Guard-blocked unit remains (exit 1)." : "Selected work converged (exit 0).",
     };
   }
 
@@ -193,7 +193,7 @@ const SyncDeckLogic = (() => {
         state.reviewId = proposal.id;
         state.lastAction = proposal.blocked
           ? `${proposal.label}: opened the blocked-by-Guard details; no convergence route survives.`
-          : `${proposal.label}: opened Proposal Review; Approval covers the complete unit outcome.`;
+          : `${proposal.label}: opened Proposal Review; Selection covers the complete unit outcome.`;
         break;
       }
       case "OPEN_SOURCE": {
@@ -211,30 +211,30 @@ const SyncDeckLogic = (() => {
           state.lastAction = `${proposal.label}: ${intentLabel(action.intent)} was already selected.`;
           break;
         }
-        const approvalWasStanding = proposal.approved;
+        const selectionWasStanding = proposal.approved;
         proposal.intent = action.intent;
         proposal.editedPrimary = null;
         proposal.materialized = false;
         proposal.invalidReason = "Resolution Intent changed";
         if (proposal.approved) materialize(state, proposal, "Intent-change rematerialization");
-        state.lastAction = `${proposal.label}: selected ${intentLabel(action.intent)}. ${approvalWasStanding ? "Standing Approval was preserved after rematerialization." : "The unapproved outcome will materialize on review or Approval."}`;
+        state.lastAction = `${proposal.label}: chose ${intentLabel(action.intent)}. ${selectionWasStanding ? "Standing Selection was preserved after rematerialization." : "The unselected outcome will materialize on review or Selection."}`;
         break;
       }
       case "TOGGLE_PROPOSAL_APPROVAL": {
         const proposal = proposalById(state, action.id);
         if (!proposal || proposal.blocked) {
-          state.lastAction = proposal ? `${proposal.label}: blocked rows cannot be approved.` : "No Proposal is focused.";
+          state.lastAction = proposal ? `${proposal.label}: blocked rows cannot be selected.` : "No Proposal is focused.";
           break;
         }
         if (proposal.approved) {
           proposal.approved = false;
-          state.lastAction = `${proposal.label}: Approval removed; its valid frozen Proposal remains available.`;
+          state.lastAction = `${proposal.label}: Selection removed; its valid frozen Proposal remains available.`;
         } else {
-          const ok = proposal.materialized || materialize(state, proposal, "Approval materialization");
+          const ok = proposal.materialized || materialize(state, proposal, "Selection materialization");
           proposal.approved = Boolean(ok);
           state.lastAction = ok
-            ? `${proposal.label}: Proposal materialized and the complete unit outcome is now approved.`
-            : `${proposal.label}: materialization failed, so Approval stayed off.`;
+            ? `${proposal.label}: Proposal materialized and the complete unit outcome is now selected.`
+            : `${proposal.label}: materialization failed, so Selection stayed off.`;
         }
         break;
       }
@@ -245,32 +245,34 @@ const SyncDeckLogic = (() => {
         const aligned = alignReferencingProposals(
           state,
           source.id,
-          `${source.path} ${source.approved ? "entered" : "left"} the approved input set`,
+          `${source.path} ${source.approved ? "entered" : "left"} the selected input set`,
         );
-        state.lastAction = `${source.repo}:${source.path}: ${source.approved ? "approved" : "unapproved"}. ${aligned.eager.length} approved/current Proposal${aligned.eager.length === 1 ? "" : "s"} rematerialized now; ${aligned.lazy.length} unapproved Proposal${aligned.lazy.length === 1 ? " is" : "s are"} lazy.`;
+        state.lastAction = `${source.repo}:${source.path}: ${source.approved ? "selected" : "unselected"}. ${aligned.eager.length} selected/current Proposal${aligned.eager.length === 1 ? "" : "s"} rematerialized now; ${aligned.lazy.length} unselected Proposal${aligned.lazy.length === 1 ? " is" : "s are"} lazy.`;
         break;
       }
       case "BATCH_APPROVE": {
         Object.values(state.additional).forEach((source) => { if (changed(source)) source.approved = true; });
         state.proposals.forEach((proposal) => { if (!proposal.blocked) proposal.approved = true; });
+        state.auxiliary.forEach((item) => { item.selected = true; });
         state.proposals.forEach((proposal) => {
           if (!proposal.blocked && !materialize(state, proposal, "Batch final-state materialization")) proposal.approved = false;
         });
         const totals = approvalSummary(state);
-        state.lastAction = `Approve eligible established every final Approval first, then materialized ${totals.proposals} Proposals once against ${totals.additional} approved Additional Changes.`;
+        state.lastAction = `Select eligible established every final Selection first, then materialized ${totals.proposals} Proposals once against ${totals.additional} selected Additional Changes.`;
         break;
       }
       case "UNAPPROVE_ALL": {
         state.proposals.forEach((proposal) => { proposal.approved = false; });
         Object.values(state.additional).forEach((source) => { source.approved = false; });
+        state.auxiliary.forEach((item) => { item.selected = false; });
         state.proposals.forEach((proposal) => {
           if (proposal.additionalIds.some((id) => state.additional[id] && changed(state.additional[id]))) {
             proposal.materialized = false;
-            proposal.invalidReason = "Batch unapproval changed Additional inputs";
+            proposal.invalidReason = "Batch unselection changed Additional inputs";
             proposal.includedAdditional = [];
           }
         });
-        state.lastAction = "Unapprove all established the final all-off state, then discarded stale dependent previews without eagerly rematerializing them.";
+        state.lastAction = "Unselect all established the final all-off state, then discarded stale dependent previews without eagerly rematerializing them.";
         break;
       }
       case "EDITOR_SAVE": {
@@ -323,14 +325,14 @@ const SyncDeckLogic = (() => {
             state.focus = { type: "proposal", id: proposal.id };
           }
         }
-        state.lastAction = `${proposal.label}: Editor saved ${touchedSources.length || "no byte"} change${touchedSources.length === 1 ? "" : "s"}. Standing Approvals stayed; affected Proposals were rematerialized now or marked lazy.`;
+        state.lastAction = `${proposal.label}: Editor saved ${touchedSources.length || "no byte"} change${touchedSources.length === 1 ? "" : "s"}. Standing Selections stayed; affected Proposals were rematerialized now or marked lazy.`;
         break;
       }
       case "TOGGLE_AUXILIARY": {
         const item = state.auxiliary.find((candidate) => candidate.id === action.id);
         if (!item) break;
         item.selected = !item.selected;
-        state.lastAction = `${item.label}: ${item.selected ? "selected" : "excluded"} auxiliary work; this is selection, not Proposal Approval.`;
+        state.lastAction = `${item.label}: ${item.selected ? "selected" : "unselected"} auxiliary work.`;
         break;
       }
       case "OPEN_CONFIRM": {
@@ -448,8 +450,8 @@ const initialState = () => {
     lastAction: "Observed six drifted Sync Units. Directly InSync units are absent; no real files changed.",
     log: [],
   };
-  // Every newly observed drifted Proposal and Additional Source Change starts unapproved.
-  state.lastAction = "Observed six drifted Sync Units. All begin unapproved; Directly InSync units are absent.";
+  // Every newly observed drifted Proposal and Additional Source Change starts unselected.
+  state.lastAction = "Observed six drifted Sync Units. All begin unselected; Directly InSync units are absent.";
   return state;
 };
 
@@ -463,24 +465,24 @@ const scenarios = {
     steps: ["Reset this scenario", "Review missing Sync Base", "Review push-only-delete", "Review no-route diagnostic"],
   },
   editor: {
-    title: "Standing Approval + Editor",
-    description: "Edit an already-approved Proposal and its shared Additional Source. The approved current Proposal rematerializes immediately, the unapproved dependent becomes lazy, and standing Approvals survive.",
-    steps: ["Reset this scenario", "Establish standing approvals", "Open approved git Proposal", "Open Proposal Editor", "Save changed Primary + shared source"],
+    title: "Standing Selection + Editor",
+    description: "Edit an already-selected Proposal and its shared Additional Source. The selected current Proposal rematerializes immediately, the unselected dependent becomes lazy, and standing Selections survive.",
+    steps: ["Reset this scenario", "Establish standing selections", "Open selected git Proposal", "Open Proposal Editor", "Save changed Primary + shared source"],
   },
   additional: {
     title: "Additional alignment",
-    description: "Toggle one canonical Additional Change. Approved referencing Proposals align immediately; unapproved ones discard stale previews and wait. Candidate bytes never appear in an outcome that will not write them.",
-    steps: ["Reset this scenario", "Establish standing approvals", "Focus shared Additional", "Unapprove shared source", "Open aligned git Proposal", "Reapprove shared source"],
+    description: "Toggle one canonical Additional Change. Selected referencing Proposals align immediately; unselected ones discard stale previews and wait. Candidate bytes never appear in an outcome that will not write them.",
+    steps: ["Reset this scenario", "Establish standing selections", "Focus shared Additional", "Unselect shared source", "Open aligned git Proposal", "Reselect shared source"],
   },
   batch: {
     title: "Batch final state",
-    description: "Batch commands set every final Approval first, then materialize Proposals once. Row order cannot change which Additional candidates feed the outcomes.",
-    steps: ["Reset this scenario", "Unapprove all", "Approve eligible", "Open compact confirmation"],
+    description: "Batch commands set every final Selection first, then materialize Proposals once. Row order cannot change which Additional candidates feed the outcomes.",
+    steps: ["Reset this scenario", "Unselect all", "Select eligible", "Open compact confirmation"],
   },
   execute: {
     title: "Two-stage convergence",
-    description: "Approve a mixed subset, freeze it behind compact counts, then inspect terminal execution: one canonical Additional, no-write Base acknowledgment, live write/delete, and healthy pending rows reported rather than silently discarded.",
-    steps: ["Reset this scenario", "Approve mixed subset", "Open compact confirmation", "Confirm and execute"],
+    description: "Select a mixed subset, freeze it behind compact counts, then inspect terminal execution: one canonical Additional, no-write Base acknowledgment, live write/delete, and healthy pending rows reported rather than silently discarded.",
+    steps: ["Reset this scenario", "Select mixed subset", "Open compact confirmation", "Confirm and execute"],
   },
 };
 
@@ -500,9 +502,9 @@ function dispatch(action) {
 function effectLabel(effect) {
   return effect === "none" ? "No write" : effect === "create" ? "Create" : effect === "delete" ? "Delete" : "Update";
 }
-function approvalMark(approved, blocked = false) {
-  if (blocked) return '<span class="approval-mark blocked" title="Not approvable">!</span>';
-  return approved ? '<span class="approval-mark approved" title="Approved">✓</span>' : '<span class="approval-mark pending" title="Unapproved">·</span>';
+function selectionMark(selected, blocked = false) {
+  if (blocked) return '<span class="approval-mark blocked" title="Not selectable">!</span>';
+  return selected ? '<span class="approval-mark approved" title="Selected">✓</span>' : '<span class="approval-mark pending" title="Unselected">·</span>';
 }
 function policyLabel(policy) {
   return ({
@@ -544,7 +546,7 @@ function proposalRow(item) {
   const focused = state.focus.type === "proposal" && state.focus.id === item.id;
   return `<tr class="${focused ? "current" : ""} ${item.blocked ? "diagnostic-row" : ""}" onclick="focusProposal('${item.id}')">
     <td class="focus-cell">${focused ? "›" : ""}</td>
-    <td class="approval-cell">${approvalMark(item.approved, item.blocked)}</td>
+    <td class="approval-cell">${selectionMark(item.approved, item.blocked)}</td>
     <td><strong>${html(item.label)}</strong></td>
     <td>${policyMarkup(item)}</td>
     <td><strong class="mono path">${html(item.livePath)}</strong></td>
@@ -557,7 +559,7 @@ function additionalRow(item) {
   const kind = item.frozen === "(missing)" ? "Create" : item.current === "(missing)" ? "Delete" : "Update";
   return `<tr class="${focused ? "current" : ""}" onclick="focusSource('${item.id}')">
     <td class="focus-cell">${focused ? "›" : ""}</td>
-    <td class="approval-cell">${approvalMark(item.approved)}</td>
+    <td class="approval-cell">${selectionMark(item.approved)}</td>
     <td><strong class="mono path">${html(item.repo)}:${html(item.path)}</strong></td>
     <td><span class="badge ${kind === "Delete" ? "red" : kind === "Create" ? "green" : "blue"}">${kind}</span></td>
     <td>${item.references.length} Proposal${item.references.length === 1 ? "" : "s"}</td>
@@ -568,7 +570,7 @@ function auxiliaryRows() {
     const focused = state.focus.type === "auxiliary" && state.focus.id === item.id;
     return `<tr class="aux-row ${focused ? "current" : ""}" onclick="focusAuxiliary('${item.id}')">
       <td class="focus-cell">${focused ? "›" : ""}</td>
-      <td class="approval-cell"><button class="selection-mark ${item.selected ? "selected" : ""}" onclick="event.stopPropagation();toggleAuxiliary('${item.id}')" title="${item.selected ? "Selected" : "Excluded"}">${item.selected ? "✓" : "·"}</button></td>
+      <td class="approval-cell"><button class="selection-mark ${item.selected ? "selected" : ""}" onclick="event.stopPropagation();toggleAuxiliary('${item.id}')" title="${item.selected ? "Selected" : "Unselected"}">${item.selected ? "✓" : "·"}</button></td>
       <td><strong>${html(item.label)}</strong></td>
       <td><span class="badge gray">${html(policyLabel(item.policy))}</span></td>
       <td class="muted">${html(item.effect)}</td>
@@ -591,30 +593,30 @@ function stateLog() {
 }
 function deck() {
   const additions = Object.values(state.additional).filter(SyncDeckLogic.changed).sort((a, b) => a.path.localeCompare(b.path));
-  const approved = state.proposals.filter((item) => item.approved).length;
+  const selected = state.proposals.filter((item) => item.approved).length;
   const proposalColumns = '<colgroup><col class="focus-col"><col class="approval-col"><col class="target-col"><col class="policy-col"><col class="live-col"><col class="base-col"><col class="resolution-col"></colgroup>';
   const additionalColumns = '<colgroup><col class="focus-col"><col class="approval-col"><col class="additional-source-col"><col class="additional-change-col"><col class="references-col"></colgroup>';
   const auxiliaryColumns = '<colgroup><col class="focus-col"><col class="selection-col"><col class="aux-work-col"><col class="aux-policy-col"><col class="aux-effect-col"></colgroup>';
   return `<div class="shell wide">
     <div class="eyebrow">Dotman Sync convergence · issue 46 throwaway prototype</div>
-    <h1>One workset. Whole-unit Approval. Two destination stages.</h1>
+    <h1>One workset. Whole-unit Selection. Two destination stages.</h1>
     <p class="lede">The preserved Dense Command Deck keeps policy-constrained Resolution Intents and live destinations scannable. Primary Source paths and effects move into focused Review; shared Additional changes stay canonical.</p>
     <div class="prototype-note">No repository or live files are changed</div>
     <div class="question"><strong>Prototype question</strong>Does this revised deck preserve the fast workset flow while making the complete Sync convergence contract legible?</div>
     <section class="panel">
-      <div class="deck-head"><div><div class="eyebrow">Command Deck · complete Sync workset</div><h2>Approve outcomes, not isolated Primary writes.</h2><p>Focused: <strong>${html(focusedLabel())}</strong> · Directly InSync units are intentionally absent.</p></div>
-      <div class="deck-stats"><span class="badge blue">${state.proposals.length} drifted</span><span class="badge amber">${additions.length} Additional</span><span class="badge green">${approved} units approved</span><span class="badge red">${state.proposals.filter((item) => item.blocked).length} blocked</span></div></div>
+      <div class="deck-head"><div><div class="eyebrow">Command Deck · complete Sync workset</div><h2>Select complete outcomes.</h2><p>Focused: <strong>${html(focusedLabel())}</strong> · Directly InSync units are intentionally absent.</p></div>
+      <div class="deck-stats"><span class="badge blue">${state.proposals.length} drifted</span><span class="badge amber">${additions.length} Additional</span><span class="badge green">${selected} units selected</span><span class="badge red">${state.proposals.filter((item) => item.blocked).length} blocked</span></div></div>
       <div class="deck-wrap">
         <div class="section-label">Sync Unit Proposals</div>
-        <table class="deck-table">${proposalColumns}<thead><tr><th></th><th>Approval</th><th>Target</th><th>Policy</th><th>Live path</th><th>Sync Base</th><th>Resolution</th></tr></thead><tbody>${state.proposals.map(proposalRow).join("")}</tbody></table>
+        <table class="deck-table">${proposalColumns}<thead><tr><th></th><th>Selection</th><th>Target</th><th>Policy</th><th>Live path</th><th>Sync Base</th><th>Resolution</th></tr></thead><tbody>${state.proposals.map(proposalRow).join("")}</tbody></table>
         <div class="section-label">Additional Changes</div>
-        ${additions.length ? `<table class="deck-table additional-table">${additionalColumns}<thead><tr><th></th><th>Approval</th><th>Additional source</th><th>Change</th><th>References</th></tr></thead><tbody>${additions.map(additionalRow).join("")}</tbody></table>` : '<div class="pad muted small">No Additional Source Changes are staged.</div>'}
+        ${additions.length ? `<table class="deck-table additional-table">${additionalColumns}<thead><tr><th></th><th>Selection</th><th>Additional source</th><th>Change</th><th>References</th></tr></thead><tbody>${additions.map(additionalRow).join("")}</tbody></table>` : '<div class="pad muted small">No Additional Source Changes are staged.</div>'}
         <div class="section-label">Auxiliary Work</div>
         <table class="deck-table auxiliary-table">${auxiliaryColumns}<thead><tr><th></th><th>Selection</th><th>Work</th><th>Policy</th><th>Effect</th></tr></thead><tbody>${auxiliaryRows()}</tbody></table>
       </div>
     </section>
     ${scenarioPanel()}${stateLog()}${deckButtons()}
-    <div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Enter</span> review</span><span><span class="key">Space</span> auxiliary selection</span><span><span class="key">e</span> Editor</span><span><span class="key">r</span> Use repository</span><span><span class="key">l</span> Use live</span><span><span class="key">m</span> Merge</span><span><span class="key">a</span> Approval</span><span><span class="key">A</span> approve eligible</span><span><span class="key">U</span> unapprove all</span></div>
+    <div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Space</span> toggle selection</span><span><span class="key">Enter</span> review</span><span><span class="key">e</span> Editor</span><span><span class="key">r</span> Use repository</span><span><span class="key">l</span> Use live</span><span><span class="key">m</span> Merge</span><span><span class="key">S</span> select eligible</span><span><span class="key">U</span> unselect all</span></div>
   </div>`;
 }
 function focusedEntity() {
@@ -627,21 +629,18 @@ function deckButtons() {
   const isProposal = state.focus.type === "proposal";
   const isAuxiliary = state.focus.type === "auxiliary";
   const blocked = isProposal && entity?.blocked;
-  const approved = Boolean(entity?.approved);
+  const selected = isAuxiliary ? entity.selected : Boolean(entity?.approved);
   const allowed = isProposal ? entity.allowed : [];
-  const focusedAction = isAuxiliary
-    ? `<button class="button" onclick="toggleFocusedApproval()">${entity.selected ? "Exclude" : "Select"} focused <span class="key">Space</span></button>`
-    : `<button class="button" onclick="toggleFocusedApproval()" ${blocked ? "disabled" : ""}>${approved ? "Unapprove" : "Approve"} focused <span class="key">a</span></button>`;
   return `<div class="command-bar">
     <button class="button primary" onclick="openFocused()" ${isAuxiliary ? "disabled" : ""}>Review focused <span class="key">Enter</span></button>
     <button class="button" onclick="openEditorFocused()" ${!isProposal || blocked ? "disabled" : ""}>Proposal Editor <span class="key">e</span></button>
     <button class="button" onclick="setFocusedIntent('repo')" ${!allowed.includes("repo") ? "disabled" : ""}>Use repository <span class="key">r</span></button>
     <button class="button" onclick="setFocusedIntent('live')" ${!allowed.includes("live") ? "disabled" : ""}>Use live <span class="key">l</span></button>
     <button class="button" onclick="setFocusedIntent('merge')" ${!allowed.includes("merge") ? "disabled" : ""}>Merge <span class="key">m</span></button>
-    ${focusedAction}
-    <button class="button" onclick="dispatch({type:'BATCH_APPROVE'})">Approve eligible <span class="key">A</span></button>
-    <button class="button" onclick="dispatch({type:'UNAPPROVE_ALL'})">Unapprove all <span class="key">U</span></button>
-    <button class="button primary" onclick="dispatch({type:'OPEN_CONFIRM'})">Converge approved</button>
+    <button class="button" onclick="toggleFocusedSelection()" ${blocked ? "disabled" : ""}>${selected ? "Unselect" : "Select"} focused <span class="key">Space</span></button>
+    <button class="button" onclick="dispatch({type:'BATCH_APPROVE'})">Select eligible <span class="key">S</span></button>
+    <button class="button" onclick="dispatch({type:'UNAPPROVE_ALL'})">Unselect all <span class="key">U</span></button>
+    <button class="button primary" onclick="dispatch({type:'OPEN_CONFIRM'})">Converge selected</button>
   </div>`;
 }
 function diff(before, after) {
@@ -664,7 +663,7 @@ function proposalReview() {
   if (!item) return deck();
   const additional = item.additionalIds.map(source).filter((candidate) => candidate && SyncDeckLogic.changed(candidate));
   if (item.blocked) {
-    return `<div class="shell">${scenarioPanel()}<section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · frozen diagnostic</div><h2>${html(item.label)}</h2><p class="mono">Repository: ${html(item.primaryPath)}<br>Live: ${html(item.livePath)}</p></div><span class="badge red">Not approvable</span></header>
+    return `<div class="shell">${scenarioPanel()}<section class="panel review-shell"><header class="review-header"><div><div class="eyebrow">Proposal Review · frozen diagnostic</div><h2>${html(item.label)}</h2><p class="mono">Repository: ${html(item.primaryPath)}<br>Live: ${html(item.livePath)}</p></div><span class="badge red">Not selectable</span></header>
       <div class="review-body"><main class="review-main"><h3>Why resolution is blocked</h3><div class="review-title red">No convergence route survives</div><p>${html(item.blockedReason)}</p><pre class="diff">configured policy  ${html(item.configuredPolicy)}\nguard_push        exit 100\nguard_pull        exit 100\neffective policy no route</pre></main>
       <aside class="review-facts"><div class="fact"><div class="fact-label">Sync Base</div><div class="fact-value">${html(item.baseDetail)}</div></div><div class="fact"><div class="fact-label">Editor</div><div class="fact-value">Unavailable</div><p class="tiny muted">Editor is available only while at least one convergence route survives.</p></div></aside></div>
       <footer class="review-footer"><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer></section></div>`;
@@ -672,31 +671,31 @@ function proposalReview() {
   const primaryAfter = item.materialized ? item.repositoryOutcome : item.repositoryFrozen;
   const liveAfter = item.materialized ? item.liveOutcome : item.liveFrozen;
   return `<div class="shell">${scenarioPanel()}<section class="panel review-shell">
-    <header class="review-header"><div><div class="eyebrow">Proposal Review · same terminal interaction</div><h2>${html(item.label)}</h2><p class="mono">Repository: ${html(item.primaryPath)}<br>Live: ${html(item.livePath)}</p></div><div class="status-line">${approvalMark(item.approved)}<span class="badge ${item.materialized ? "green" : "gray"}">${item.materialized ? "Materialized" : "Lazy"}</span></div></header>
+    <header class="review-header"><div><div class="eyebrow">Proposal Review · same terminal interaction</div><h2>${html(item.label)}</h2><p class="mono">Repository: ${html(item.primaryPath)}<br>Live: ${html(item.livePath)}</p></div><div class="status-line">${selectionMark(item.approved)}<span class="badge ${item.materialized ? "green" : "gray"}">${item.materialized ? "Materialized" : "Lazy"}</span></div></header>
     <div class="intent-strip"><div><div class="fact-label">Resolution Intent</div><div class="intent-actions">${intentButtons(item)}</div></div><div>${policyMarkup(item)}</div></div>
     <div class="review-body"><main class="review-main">
-      <h3>Primary Source Change</h3><div class="review-title">${item.editedPrimary !== null ? "Edited" : intentLabel(item.intent)}</div><pre class="diff">${item.materialized ? diff(item.repositoryFrozen, primaryAfter) : '<span class="empty">Not materialized. Review or Approval will produce the frozen Proposal.</span>'}</pre>
+      <h3>Primary Source Change</h3><div class="review-title">${item.editedPrimary !== null ? "Edited" : intentLabel(item.intent)}</div><pre class="diff">${item.materialized ? diff(item.repositoryFrozen, primaryAfter) : '<span class="empty">Not materialized. Review or Selection will produce the frozen Proposal.</span>'}</pre>
       <h3>Policy-derived Publication Effect</h3><pre class="diff">${item.materialized ? diff(item.liveFrozen, liveAfter) : '<span class="empty">Not materialized.</span>'}</pre>
-      <div class="divider"></div><h3>Referenced Additional Changes · canonical approval lives in Source Change Review</h3>
-      <div class="refs">${additional.length ? additional.map((candidate) => `<div class="ref-row"><button onclick="openSource('${candidate.id}')">${html(candidate.repo)}:${html(candidate.path)}<br><span class="tiny muted">${candidate.approved ? "Approved candidate included" : "Unapproved candidate excluded; frozen preimage used"}</span></button>${approvalMark(candidate.approved)}</div>`).join("") : '<p class="empty">No staged Additional Changes.</p>'}</div>
+      <div class="divider"></div><h3>Referenced Additional Changes · canonical selection lives in Source Change Review</h3>
+      <div class="refs">${additional.length ? additional.map((candidate) => `<div class="ref-row"><button onclick="openSource('${candidate.id}')">${html(candidate.repo)}:${html(candidate.path)}<br><span class="tiny muted">${candidate.approved ? "Selected candidate included" : "Unselected candidate excluded; frozen preimage used"}</span></button>${selectionMark(candidate.approved)}</div>`).join("") : '<p class="empty">No staged Additional Changes.</p>'}</div>
     </main><aside class="review-facts">
-      <div class="fact"><div class="fact-label">Whole-unit Approval</div><div class="fact-value">${item.approved ? "Standing authorization" : "Not approved"}</div><p class="tiny muted">Covers this Proposal's Primary effect, live effects, and conditional Sync Base acknowledgment.</p></div>
+      <div class="fact"><div class="fact-label">Whole-unit Selection</div><div class="fact-value">${item.approved ? "Standing authorization" : "Not selected"}</div><p class="tiny muted">Includes this Proposal's Primary effect, live effects, and conditional Sync Base acknowledgment.</p></div>
       <div class="fact"><div class="fact-label">Sync Base</div><div class="fact-value">${html(item.baseDetail)}</div></div>
       <div class="fact"><div class="fact-label">Frozen effects</div><div class="fact-value">Repository: ${item.materialized ? effectLabel(item.primaryEffect) : "pending"}<br>Live: ${item.materialized ? effectLabel(item.liveEffect) : "pending"}</div></div>
       <div class="fact"><div class="fact-label">Latest alignment</div><div class="fact-value small">${html(item.lastMaterialization || item.invalidReason || "Not materialized yet")}</div></div>
     </aside></div>
-    <footer class="review-footer"><button class="button primary" onclick="openEditorProposal('${item.id}')">Proposal Editor <span class="key">e</span></button><button class="button" onclick="dispatch({type:'TOGGLE_PROPOSAL_APPROVAL',id:'${item.id}'})">${item.approved ? "Unapprove" : "Approve"} unit <span class="key">a</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer>
+    <footer class="review-footer"><button class="button primary" onclick="openEditorProposal('${item.id}')">Proposal Editor <span class="key">e</span></button><button class="button" onclick="dispatch({type:'TOGGLE_PROPOSAL_APPROVAL',id:'${item.id}'})">${item.approved ? "Unselect" : "Select"} unit <span class="key">Space</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer>
   </section></div>`;
 }
 function sourceReview() {
   const item = source(state.reviewId);
   if (!item || !SyncDeckLogic.changed(item)) return deck();
   return `<div class="shell">${scenarioPanel()}<section class="panel review-shell">
-    <header class="review-header"><div><div class="eyebrow">Source Change Review · canonical Additional row</div><h2>${html(item.path)}</h2><p class="mono">${html(item.repo)} repository · frozen-preimage diff</p></div><div class="status-line">${approvalMark(item.approved)}<span class="badge ${item.approved ? "green" : "amber"}">${item.approved ? "Approved independently" : "Unapproved"}</span></div></header>
+    <header class="review-header"><div><div class="eyebrow">Source Change Review · canonical Additional row</div><h2>${html(item.path)}</h2><p class="mono">${html(item.repo)} repository · frozen-preimage diff</p></div><div class="status-line">${selectionMark(item.approved)}<span class="badge ${item.approved ? "green" : "amber"}">${item.approved ? "Selected independently" : "Unselected"}</span></div></header>
     <div class="review-body"><main class="review-main"><h3>Frozen-preimage diff</h3><div class="review-title">Additional Source Change</div><pre class="diff">${diff(item.frozen, item.current)}</pre>
-      <div class="review-actions"><button class="button primary" onclick="dispatch({type:'TOGGLE_ADDITIONAL_APPROVAL',id:'${item.id}'})">${item.approved ? "Unapprove" : "Approve"} Additional Change <span class="key">a</span></button></div>
-      <div class="divider"></div><h3>Referencing Proposals</h3><div class="refs">${item.references.map((id) => { const ref = proposal(id); return `<div class="ref-row"><button onclick="openProposal('${id}')">${html(ref.label)}<br><span class="tiny muted">${ref.approved ? "Approved: aligns immediately" : "Unapproved: stale preview becomes lazy"}</span></button>${approvalMark(ref.approved, ref.blocked)}</div>`; }).join("")}</div>
-    </main><aside class="review-facts"><div class="fact"><div class="fact-label">Approval contract</div><div class="fact-value">Independent repository write</div><p class="tiny muted">Its success never gates a Proposal's Converged result or Base acknowledgment.</p></div><div class="fact"><div class="fact-label">Alignment contract</div><div class="fact-value">Unapproved candidate bytes are excluded</div><p class="tiny muted">Dependent Proposals use the frozen preimage instead.</p></div><div class="fact"><div class="fact-label">Repository Apply</div><div class="fact-value">Written once before all Primaries</div></div></aside></div>
+      <div class="review-actions"><button class="button primary" onclick="dispatch({type:'TOGGLE_ADDITIONAL_APPROVAL',id:'${item.id}'})">${item.approved ? "Unselect" : "Select"} Additional Change <span class="key">Space</span></button></div>
+      <div class="divider"></div><h3>Referencing Proposals</h3><div class="refs">${item.references.map((id) => { const ref = proposal(id); return `<div class="ref-row"><button onclick="openProposal('${id}')">${html(ref.label)}<br><span class="tiny muted">${ref.approved ? "Selected: aligns immediately" : "Unselected: stale preview becomes lazy"}</span></button>${selectionMark(ref.approved, ref.blocked)}</div>`; }).join("")}</div>
+    </main><aside class="review-facts"><div class="fact"><div class="fact-label">Selection contract</div><div class="fact-value">Independent repository write</div><p class="tiny muted">Its success never gates a Proposal's Converged result or Base acknowledgment.</p></div><div class="fact"><div class="fact-label">Alignment contract</div><div class="fact-value">Unselected candidate bytes are excluded</div><p class="tiny muted">Dependent Proposals use the frozen preimage instead.</p></div><div class="fact"><div class="fact-label">Repository Apply</div><div class="fact-value">Written once before all Primaries</div></div></aside></div>
     <footer class="review-footer"><button class="button primary" onclick="openEditorProposal('${item.references[0]}')">Edit via referencing Proposal <span class="key">e</span></button><button class="button return" onclick="returnDeck()">Command Deck <span class="key">Esc</span></button></footer>
   </section></div>`;
 }
@@ -705,16 +704,16 @@ function editor() {
   const additional = item.additionalIds.map(source).filter(Boolean);
   return `<div class="shell">${scenarioPanel()}<section class="panel editor-shell"><div class="eyebrow">Proposal Editor · transactional terminal handoff</div><h1 style="font-size:clamp(1.8rem,4vw,2.7rem)">Edit the Proposal's repository sources.</h1>
     <p class="lede">The Editor may deliberately change repository sources under every surviving policy. Save rematerializes aligned effects; it never writes the working tree.</p>
-    <div class="editor-source"><h3><span>Primary · <span class="mono">${html(item.primaryPath)}</span></span><span class="badge blue">exclusive</span></h3><textarea data-primary>${html(item.repositoryOutcome)}</textarea><p class="tiny muted">Changing this produces an Edited Proposal. Standing Proposal Approval remains if rematerialization succeeds.</p></div>
-    ${additional.map((candidate) => `<div class="editor-source"><h3><span>Additional · <span class="mono">${html(candidate.repo)}:${html(candidate.path)}</span></span><span class="badge amber">canonical shared path</span></h3><textarea data-additional-id="${html(candidate.id)}" data-repo="${html(candidate.repo)}" data-path="${html(candidate.path)}">${html(candidate.current)}</textarea><p class="tiny muted">Approval is path-scoped and standing. Changed bytes invalidate every dependent Proposal, then align them eagerly or lazily.</p></div>`).join("")}
+    <div class="editor-source"><h3><span>Primary · <span class="mono">${html(item.primaryPath)}</span></span><span class="badge blue">exclusive</span></h3><textarea data-primary>${html(item.repositoryOutcome)}</textarea><p class="tiny muted">Changing this produces an Edited Proposal. Standing Proposal Selection remains if rematerialization succeeds.</p></div>
+    ${additional.map((candidate) => `<div class="editor-source"><h3><span>Additional · <span class="mono">${html(candidate.repo)}:${html(candidate.path)}</span></span><span class="badge amber">canonical shared path</span></h3><textarea data-additional-id="${html(candidate.id)}" data-repo="${html(candidate.repo)}" data-path="${html(candidate.path)}">${html(candidate.current)}</textarea><p class="tiny muted">Selection is path-scoped and standing. Changed bytes invalidate every dependent Proposal, then align them eagerly or lazily.</p></div>`).join("")}
     <div class="editor-add"><input id="new-additional-path" placeholder="new Additional path"><button class="button" onclick="addEditorField()">Add Additional source</button></div>
     <div class="command-bar"><button class="button primary" onclick="saveEditor('${item.id}')">Return and adopt edits</button><button class="button" onclick="cancelEditor()">Cancel Editor <span class="key">Esc</span></button></div>
   </section></div>`;
 }
 function confirmation() {
   const frozen = state.frozenExecution;
-  return `<div class="shell confirm-shell">${scenarioPanel()}<section class="confirm-card"><div class="eyebrow">Compact final confirmation · frozen set</div><h1>Converge approved work?</h1><p>Editing and Approval toggles are closed only after confirmation. Execution will not Capture, Render, reconcile, observe, or replan.</p>
-    <div class="count-grid"><div><strong>${frozen.approvedProposalIds.length}</strong><span>approved units</span></div><div><strong>${frozen.repositoryChanges}</strong><span>repository changes</span></div><div><strong>${frozen.liveWrites}</strong><span>live writes</span></div><div><strong>${frozen.liveDeletes}</strong><span>live deletions</span></div></div>
+  return `<div class="shell confirm-shell">${scenarioPanel()}<section class="confirm-card"><div class="eyebrow">Compact final confirmation · frozen set</div><h1>Converge selected work?</h1><p>Editing and Selection toggles are closed only after confirmation. Execution will not Capture, Render, reconcile, observe, or replan.</p>
+    <div class="count-grid"><div><strong>${frozen.approvedProposalIds.length}</strong><span>selected Sync Units</span></div><div><strong>${frozen.repositoryChanges}</strong><span>repository changes</span></div><div><strong>${frozen.liveWrites}</strong><span>live writes</span></div><div><strong>${frozen.liveDeletes}</strong><span>live deletions</span></div></div>
     <div class="confirm-actions"><button class="button primary" onclick="dispatch({type:'CONFIRM_EXECUTION'})" ${frozen.approvedProposalIds.length + frozen.approvedAdditionalIds.length === 0 ? "disabled" : ""}>Confirm convergence <span class="key">Enter</span></button><button class="button" onclick="dispatch({type:'CANCEL_CONFIRM'})">Back to Command Deck <span class="key">Esc</span></button></div>
     <p class="tiny muted">No detailed final-effect screen: those effects were already reviewed in the deck and focused Reviews.</p></section></div>`;
 }
@@ -722,7 +721,7 @@ function terminal() {
   const report = state.executionReport;
   return `<div class="shell">${scenarioPanel()}<section class="terminal"><div class="eyebrow" style="color:#bfc3ff">Simulated terminal execution · frozen artifacts only</div><h1 style="font-size:clamp(1.8rem,4vw,2.7rem);color:#fff">${html(report.status)}</h1>
     <div class="terminal-stages"><div><h2>1 · Repository Apply</h2><ol>${report.repositoryLines.map((line, index) => `<li class="${index === 0 ? "stage-title" : "ok"}">${html(line)}</li>`).join("")}</ol></div><div><h2>2 · Live Publication</h2><ol>${report.publicationLines.map((line, index) => `<li class="${index === 0 ? "stage-title" : "ok"}">${html(line)}</li>`).join("")}</ol></div></div>
-    <div class="terminal-summary"><div><h2>Healthy rows left unapproved</h2><ul>${report.pending.length ? report.pending.map((label) => `<li class="warn">${html(label)}</li>`).join("") : '<li class="ok">None</li>'}</ul></div><div><h2>Blocked diagnostics</h2><ul>${report.blocked.length ? report.blocked.map((label) => `<li class="warn">${html(label)} · not executed</li>`).join("") : '<li class="ok">None</li>'}</ul></div></div>
+    <div class="terminal-summary"><div><h2>Healthy rows left unselected</h2><ul>${report.pending.length ? report.pending.map((label) => `<li class="warn">${html(label)}</li>`).join("") : '<li class="ok">None</li>'}</ul></div><div><h2>Blocked diagnostics</h2><ul>${report.blocked.length ? report.blocked.map((label) => `<li class="warn">${html(label)} · not executed</li>`).join("") : '<li class="ok">None</li>'}</ul></div></div>
     <p class="tiny" style="margin-top:18px;color:#adb6c4">Additional Source Changes execute independently once, but never gate Proposal convergence. Each Base-Eligible unit acknowledges only after its own effects; push-only units complete without a fake Base.</p>
     <button class="button" onclick="resetDemo(activeScenario)">Start another simulated Sync</button>
   </section></div>`;
@@ -749,7 +748,7 @@ function openFocused() {
 }
 function openProposal(id) { dispatch({ type: "OPEN_PROPOSAL", id }); }
 function openSource(id) { dispatch({ type: "OPEN_SOURCE", id }); }
-function toggleFocusedApproval() {
+function toggleFocusedSelection() {
   if (state.focus.type === "proposal") dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: state.focus.id });
   else if (state.focus.type === "source") dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: state.focus.id });
   else toggleAuxiliary(state.focus.id);
@@ -773,7 +772,7 @@ function cancelEditor() {
   state.editorOrigin = null;
   state.view = origin.view === "proposal" || origin.view === "source" ? origin.view : "deck";
   state.reviewId = origin.reviewId;
-  state.lastAction = "Editor cancelled; no candidate bytes, materializations, or Approvals changed.";
+  state.lastAction = "Editor cancelled; no candidate bytes, materializations, or Selections changed.";
   state.log.unshift(`${now()} · ${state.lastAction}`);
   render();
 }
@@ -795,7 +794,7 @@ function addEditorField() {
   if (document.querySelector(`[data-additional-id="${CSS.escape(id)}"]`)) return;
   const block = document.createElement("div");
   block.className = "editor-source";
-  block.innerHTML = `<h3><span>Additional · <span class="mono">main:${html(path)}</span></span><span class="badge amber">new path · starts unapproved</span></h3><textarea data-additional-id="${html(id)}" data-repo="main" data-path="${html(path)}"></textarea><p class="tiny muted">Missing frozen preimage. Saving non-empty bytes creates one canonical Additional Change.</p>`;
+  block.innerHTML = `<h3><span>Additional · <span class="mono">main:${html(path)}</span></span><span class="badge amber">new path · starts unselected</span></h3><textarea data-additional-id="${html(id)}" data-repo="main" data-path="${html(path)}"></textarea><p class="tiny muted">Missing frozen preimage. Saving non-empty bytes creates one canonical Additional Change.</p>`;
   input.closest(".editor-add").before(block);
   input.value = "";
 }
@@ -874,7 +873,7 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape") { event.preventDefault(); returnDeck(); return; }
   if (state.view === "proposal") {
-    if (event.key === "a") dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: state.reviewId });
+    if (event.key === " ") { event.preventDefault(); dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id: state.reviewId }); }
     else if (event.key === "e") openEditorProposal(state.reviewId);
     else if (event.key === "r") setIntent(state.reviewId, "repo");
     else if (event.key === "l") setIntent(state.reviewId, "live");
@@ -882,7 +881,7 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (state.view === "source") {
-    if (event.key === "a") dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: state.reviewId });
+    if (event.key === " ") { event.preventDefault(); dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id: state.reviewId }); }
     else if (event.key === "e") openEditorProposal(source(state.reviewId).references[0]);
     return;
   }
@@ -897,9 +896,8 @@ document.addEventListener("keydown", (event) => {
   } else if (event.key === "k" || event.key === "ArrowUp") {
     event.preventDefault(); const next = list[(index - 1 + list.length) % list.length]; state.focus = next; state.lastAction = `Focused ${focusedLabel()}.`; render();
   } else if (event.key === "Enter" && state.focus.type !== "auxiliary") { event.preventDefault(); openFocused(); }
-  else if ((event.key === " " || event.key === "x") && state.focus.type === "auxiliary") { event.preventDefault(); toggleFocusedApproval(); }
-  else if (event.key === "a" && state.focus.type !== "auxiliary") { event.preventDefault(); toggleFocusedApproval(); }
-  else if (event.key === "A") { event.preventDefault(); dispatch({ type: "BATCH_APPROVE" }); }
+  else if (event.key === " ") { event.preventDefault(); toggleFocusedSelection(); }
+  else if (event.key === "S") { event.preventDefault(); dispatch({ type: "BATCH_APPROVE" }); }
   else if (event.key === "U") { event.preventDefault(); dispatch({ type: "UNAPPROVE_ALL" }); }
   else if (event.key === "e") { event.preventDefault(); openEditorFocused(); }
   else if (event.key === "r") { event.preventDefault(); setFocusedIntent("repo"); }
