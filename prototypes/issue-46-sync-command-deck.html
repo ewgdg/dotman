@@ -515,7 +515,7 @@ function policyLabel(policy) {
   })[policy] || policy;
 }
 function policyMarkup(item) {
-  if (item.blocked) return '<span class="badge red">Blocked by Guard</span>';
+  if (item.blocked) return '<span class="badge red">pull + push → —</span>';
   const narrowed = item.configuredPolicy !== item.effectivePolicy;
   const label = narrowed
     ? `${policyLabel(item.configuredPolicy)} → ${policyLabel(item.effectivePolicy)}`
@@ -523,7 +523,7 @@ function policyMarkup(item) {
   return `<span class="badge ${narrowed ? "amber" : "gray"}">${html(label)}</span>`;
 }
 function resolutionMarkup(item) {
-  if (item.blocked) return '<span class="muted">—</span>';
+  if (item.blocked) return '<span class="badge red">Blocked by Guard</span>';
   const label = item.editedPrimary !== null ? `${intentLabel(item.intent)} · Edited` : intentLabel(item.intent);
   return `<span class="badge ${item.materialized ? "blue" : "gray"}">${html(label)}</span>`;
 }
