@@ -15,7 +15,7 @@
 
 /* Issue 46 Sync Command Deck additions. The base visual language is intentionally
    inherited from the validated issue 42 Dense Command Deck prototype. */
-.shell.wide{width:min(1460px,calc(100% - 28px))}.deck-table{min-width:1370px}.deck-table .target-col{width:15%}.deck-table .policy-col{width:11%}.deck-table .repo-col{width:19%}.deck-table .live-col{width:16%}.deck-table .observation-col{width:9%}.deck-table .base-col{width:8%}.deck-table .resolution-col{width:15%}.deck-table td{padding-top:11px;padding-bottom:11px}.path{overflow-wrap:anywhere}.micro{display:block;margin-top:5px;color:var(--muted);font-size:.67rem;line-height:1.3}.micro.inline{display:inline;margin-top:0}.amber-text{color:var(--amber)}.diagnostic-row{background:#fffafa}.selection-mark{display:inline-grid;width:22px;height:22px;place-items:center;border:0;border-radius:50%;background:#eef0f3;color:var(--faint);font-weight:900}.selection-mark.selected{background:var(--green-soft);color:var(--green)}.aux-row td{background:#fbfcfd}.intent-strip{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;padding:13px 22px;border-bottom:1px solid var(--line);background:#fbfcfd}.intent-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}.selected-intent{border-color:var(--accent)!important;background:var(--accent-soft)!important;color:var(--accent-dark)!important;font-weight:800}.confirm-shell{display:grid;place-items:center;min-height:80vh}.confirm-card{width:min(720px,100%);padding:28px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:var(--shadow)}.confirm-card h1{font-size:clamp(2rem,5vw,3rem)}.count-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:23px 0}.count-grid div{padding:15px 10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfd;text-align:center}.count-grid strong{display:block;color:var(--accent-dark);font-size:1.8rem}.count-grid span{display:block;color:var(--muted);font-size:.72rem}.confirm-actions{display:flex;flex-wrap:wrap;gap:9px}.terminal-stages,.terminal-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}.terminal-stages>div,.terminal-summary>div{padding:15px;border:1px solid #3e4858;border-radius:10px;background:#2a3240}.terminal ol,.terminal ul{margin:9px 0 0;padding-left:22px}.terminal li+li{margin-top:6px}.terminal .stage-title{color:#bfc3ff;font-weight:800}.status-line .approval-mark{margin-right:2px}@media(max-width:900px){.shell.wide{width:min(100% - 18px,760px)}.count-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.terminal-stages,.terminal-summary{grid-template-columns:1fr}}@media(max-width:520px){.count-grid{grid-template-columns:1fr 1fr}}
+.shell.wide{width:min(1260px,calc(100% - 28px))}.deck-table{min-width:1120px}.deck-table .target-col{width:20%}.deck-table .policy-col{width:16%}.deck-table .live-col{width:24%}.deck-table .observation-col{width:11%}.deck-table .base-col{width:10%}.deck-table .resolution-col{width:19%}.deck-table td{padding-top:11px;padding-bottom:11px}.path{overflow-wrap:anywhere}.micro{display:block;margin-top:5px;color:var(--muted);font-size:.67rem;line-height:1.3}.micro.inline{display:inline;margin-top:0}.amber-text{color:var(--amber)}.diagnostic-row{background:#fffafa}.selection-mark{display:inline-grid;width:22px;height:22px;place-items:center;border:0;border-radius:50%;background:#eef0f3;color:var(--faint);font-weight:900}.selection-mark.selected{background:var(--green-soft);color:var(--green)}.aux-row td{background:#fbfcfd}.intent-strip{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;padding:13px 22px;border-bottom:1px solid var(--line);background:#fbfcfd}.intent-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}.selected-intent{border-color:var(--accent)!important;background:var(--accent-soft)!important;color:var(--accent-dark)!important;font-weight:800}.confirm-shell{display:grid;place-items:center;min-height:80vh}.confirm-card{width:min(720px,100%);padding:28px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:var(--shadow)}.confirm-card h1{font-size:clamp(2rem,5vw,3rem)}.count-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:23px 0}.count-grid div{padding:15px 10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfd;text-align:center}.count-grid strong{display:block;color:var(--accent-dark);font-size:1.8rem}.count-grid span{display:block;color:var(--muted);font-size:.72rem}.confirm-actions{display:flex;flex-wrap:wrap;gap:9px}.terminal-stages,.terminal-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}.terminal-stages>div,.terminal-summary>div{padding:15px;border:1px solid #3e4858;border-radius:10px;background:#2a3240}.terminal ol,.terminal ul{margin:9px 0 0;padding-left:22px}.terminal li+li{margin-top:6px}.terminal .stage-title{color:#bfc3ff;font-weight:800}.status-line .approval-mark{margin-right:2px}@media(max-width:900px){.shell.wide{width:min(100% - 18px,760px)}.count-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.terminal-stages,.terminal-summary{grid-template-columns:1fr}}@media(max-width:520px){.count-grid{grid-template-columns:1fr 1fr}}
 
 </style>
 </head>
@@ -505,26 +505,31 @@ function approvalMark(approved, blocked = false) {
   if (blocked) return '<span class="approval-mark blocked" title="Not approvable">!</span>';
   return approved ? '<span class="approval-mark approved" title="Approved">✓</span>' : '<span class="approval-mark pending" title="Unapproved">·</span>';
 }
+function policyLabel(policy) {
+  return ({
+    both: "pull + push",
+    "pull-only": "pull only",
+    "push-only": "push only",
+    "push-only-delete": "push delete",
+    "no route": "no route",
+  })[policy] || policy;
+}
 function policyMarkup(item) {
-  if (item.blocked) return '<span class="badge red">both → no route</span><span class="micro">both Guards skipped</span>';
+  if (item.blocked) return '<span class="badge red">pull + push → no route</span><span class="micro">Guards removed both</span>';
   const narrowed = item.configuredPolicy !== item.effectivePolicy;
-  return `<span class="badge ${narrowed ? "amber" : "gray"}">${html(narrowed ? `${item.configuredPolicy} → ${item.effectivePolicy}` : item.effectivePolicy)}</span><span class="micro">${html(item.guard)}</span>`;
+  const label = narrowed
+    ? `${policyLabel(item.configuredPolicy)} → ${policyLabel(item.effectivePolicy)}`
+    : policyLabel(item.effectivePolicy);
+  return `<span class="badge ${narrowed ? "amber" : "gray"}">${html(label)}</span>`;
 }
 function resolutionMarkup(item) {
   if (item.blocked) return '<span class="badge red">Guard diagnostic</span>';
-  const label = item.editedPrimary !== null ? `${intentLabel(item.intent)} · Edited` : intentLabel(item.intent);
-  const materialization = item.materialized ? "Ready" : "Not materialized";
-  const fallback = item.fallback ? '<span class="micro amber-text">Fallback: Merge unavailable</span>' : "";
-  return `<span class="badge ${item.materialized ? "blue" : "gray"}">${html(label)}</span><span class="micro">${materialization}</span>${fallback}`;
-}
-function sourceChangeMarkup(item) {
-  if (item.blocked) return '<span class="muted">—</span>';
-  if (!item.materialized) return '<span class="muted">Not materialized</span>';
-  return `<span class="badge ${effectTone(item.primaryEffect)}">${effectLabel(item.primaryEffect)}</span>`;
+  let label = item.editedPrimary !== null ? `${intentLabel(item.intent)} · Edited` : intentLabel(item.intent);
+  if (item.fallback) label = "Use live (no Base)";
+  return `<span class="badge ${item.materialized ? "blue" : "gray"}">${html(label)}</span>`;
 }
 function liveChangeMarkup(item) {
-  if (item.blocked) return '<span class="muted">—</span>';
-  if (!item.materialized) return '<span class="muted">Not materialized</span>';
+  if (item.blocked || !item.materialized) return "";
   return `<span class="badge ${effectTone(item.liveEffect)}">${effectLabel(item.liveEffect)}</span>`;
 }
 function focusedLabel() {
@@ -536,13 +541,13 @@ function focusProposal(id) { dispatch({ type: "FOCUS", focus: { type: "proposal"
 function focusSource(id) { dispatch({ type: "FOCUS", focus: { type: "source", id }, label: `${source(id).repo}:${source(id).path}` }); }
 function proposalRow(item) {
   const focused = state.focus.type === "proposal" && state.focus.id === item.id;
+  const liveEffect = liveChangeMarkup(item);
   return `<tr class="${focused ? "current" : ""} ${item.blocked ? "diagnostic-row" : ""}" onclick="focusProposal('${item.id}')">
     <td class="focus-cell">${focused ? "›" : ""}</td>
     <td class="approval-cell">${approvalMark(item.approved, item.blocked)}</td>
     <td><strong>${html(item.label)}</strong></td>
     <td>${policyMarkup(item)}</td>
-    <td><strong class="mono path">${html(item.primaryPath)}</strong><span class="micro">${sourceChangeMarkup(item)}</span></td>
-    <td><strong class="mono path">${html(item.livePath)}</strong><span class="micro">${liveChangeMarkup(item)}</span></td>
+    <td><strong class="mono path">${html(item.livePath)}</strong>${liveEffect ? `<span class="micro">${liveEffect}</span>` : ""}</td>
     <td><span class="badge ${item.blocked ? "red" : "amber"}">${html(item.observation)}</span></td>
     <td><span class="badge ${item.baseShort === "Exact" ? "green" : item.baseShort === "N/A" ? "gray" : "amber"}">${html(item.baseShort)}</span></td>
     <td>${resolutionMarkup(item)}</td>
@@ -554,7 +559,7 @@ function additionalRow(item) {
   return `<tr class="${focused ? "current" : ""}" onclick="focusSource('${item.id}')">
     <td class="focus-cell">${focused ? "›" : ""}</td>
     <td class="approval-cell">${approvalMark(item.approved)}</td>
-    <td colspan="4"><strong class="mono path">${html(item.repo)}:${html(item.path)}</strong></td>
+    <td colspan="3"><strong class="mono path">${html(item.repo)}:${html(item.path)}</strong></td>
     <td colspan="2"><span class="badge ${kind === "Delete" ? "red" : kind === "Create" ? "green" : "blue"}">${kind}</span></td>
     <td><span class="micro inline">${item.references.length} referencing Proposal${item.references.length === 1 ? "" : "s"}</span></td>
   </tr>`;
@@ -564,9 +569,9 @@ function auxiliaryRows() {
     <td class="focus-cell"></td>
     <td class="approval-cell"><button class="selection-mark ${item.selected ? "selected" : ""}" onclick="event.stopPropagation();dispatch({type:'TOGGLE_AUXILIARY',id:'${item.id}'})" title="${item.selected ? "Selected" : "Excluded"}">${item.selected ? "✓" : "·"}</button></td>
     <td><strong>${html(item.label)}</strong></td>
-    <td><span class="badge gray">${html(item.policy)}</span></td>
+    <td><span class="badge gray">${html(policyLabel(item.policy))}</span></td>
     <td colspan="2" class="muted">${item.kind === "probe" ? "No repository/live payload" : html(item.effect)}</td>
-    <td colspan="2"><span class="badge ${item.kind === "probe" ? "green" : "amber"}">${html(item.status)}</span></td>
+    <td><span class="badge ${item.kind === "probe" ? "green" : "amber"}">${html(item.status)}</span></td>
     <td><span class="micro inline">Selection, not Approval</span></td>
   </tr>`).join("");
 }
@@ -587,11 +592,11 @@ function stateLog() {
 function deck() {
   const additions = Object.values(state.additional).filter(SyncDeckLogic.changed).sort((a, b) => a.path.localeCompare(b.path));
   const approved = state.proposals.filter((item) => item.approved).length;
-  const columns = '<colgroup><col class="focus-col"><col class="approval-col"><col class="target-col"><col class="policy-col"><col class="repo-col"><col class="live-col"><col class="observation-col"><col class="base-col"><col class="resolution-col"></colgroup>';
+  const columns = '<colgroup><col class="focus-col"><col class="approval-col"><col class="target-col"><col class="policy-col"><col class="live-col"><col class="observation-col"><col class="base-col"><col class="resolution-col"></colgroup>';
   return `<div class="shell wide">
     <div class="eyebrow">Dotman Sync convergence · issue 46 throwaway prototype</div>
     <h1>One workset. Whole-unit Approval. Two destination stages.</h1>
-    <p class="lede">The preserved Dense Command Deck now shows policy-constrained Resolution Intents and effects while keeping repository and live paths visible. Primary changes stay inside their Proposal row; shared Additional changes stay canonical.</p>
+    <p class="lede">The preserved Dense Command Deck keeps policy-constrained Resolution Intents and live destinations scannable. Primary Source paths and effects move into focused Review; shared Additional changes stay canonical.</p>
     <div class="prototype-note">No repository or live files are changed</div>
     <div class="question"><strong>Prototype question</strong>Does this revised deck preserve the fast workset flow while making the complete Sync convergence contract legible?</div>
     <section class="panel">
@@ -599,9 +604,9 @@ function deck() {
       <div class="deck-stats"><span class="badge blue">${state.proposals.length} drifted</span><span class="badge amber">${additions.length} Additional</span><span class="badge green">${approved} units approved</span><span class="badge red">${state.proposals.filter((item) => item.blocked).length} blocked</span></div></div>
       <div class="deck-wrap">
         <div class="section-label">Sync Unit Proposals · Approval covers Primary, live effects, and conditional Base acknowledgment</div>
-        <table class="deck-table">${columns}<thead><tr><th></th><th>Approval</th><th>Target</th><th>Effective policy</th><th>Primary source</th><th>Live path</th><th>Observation</th><th>Sync Base</th><th>Resolution</th></tr></thead><tbody>${state.proposals.map(proposalRow).join("")}</tbody></table>
+        <table class="deck-table">${columns}<thead><tr><th></th><th>Approval</th><th>Target</th><th>Effective policy</th><th>Live path</th><th>Observation</th><th>Sync Base</th><th>Resolution</th></tr></thead><tbody>${state.proposals.map(proposalRow).join("")}</tbody></table>
         <div class="section-label">Additional Changes · independent repository writes</div>
-        ${additions.length ? `<table class="deck-table additional-table">${columns}<thead><tr><th></th><th>Approval</th><th colspan="4">Additional source</th><th colspan="2">Change</th><th>Context</th></tr></thead><tbody>${additions.map(additionalRow).join("")}</tbody></table>` : '<div class="pad muted small">No Additional Source Changes are staged.</div>'}
+        ${additions.length ? `<table class="deck-table additional-table">${columns}<thead><tr><th></th><th>Approval</th><th colspan="3">Additional source</th><th colspan="2">Change</th><th>Context</th></tr></thead><tbody>${additions.map(additionalRow).join("")}</tbody></table>` : '<div class="pad muted small">No Additional Source Changes are staged.</div>'}
         <div class="section-label">Auxiliary work · selection without Proposal Approval</div>
         <table class="deck-table auxiliary-table">${columns}<tbody>${auxiliaryRows()}</tbody></table>
       </div>
