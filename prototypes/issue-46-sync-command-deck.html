@@ -378,13 +378,13 @@ const initialState = () => {
     {
       id: "p-nvim", label: "main:nvim.config/init.lua", primaryPath: "main:packages/nvim/files/config/nvim/init.lua.tmpl", livePath: "~/.config/nvim/init.lua",
       configuredPolicy: "both", effectivePolicy: "both", guard: "both directions", allowed: ["repo", "live"], intent: "live",
-      observation: "Drifted", baseShort: "Missing", baseDetail: "No applicable Sync Base · Use live fallback is visibly selected", baseEligible: true,
+      observation: "Drifted", baseShort: "Missing", baseDetail: "No applicable Sync Base", baseEligible: true,
       repositoryFrozen: "vim.opt.number = true", liveFrozen: "vim.opt.number = true",
       outcomes: {
         repo: { repository: "vim.opt.number = true", live: "vim.opt.number = true" },
         live: { repository: "vim.opt.number = true", live: "vim.opt.number = true" },
       },
-      additionalIds: ["main|scripts/shared.sh"], approved: false, blocked: false, materialized: false, materialization: 0, editedPrimary: null, fallback: true,
+      additionalIds: ["main|scripts/shared.sh"], approved: false, blocked: false, materialized: false, materialization: 0, editedPrimary: null,
     },
     {
       id: "p-ssh", label: "main:ssh.config", primaryPath: "main:packages/ssh/files/config/ssh/config", livePath: "~/.ssh/config",
@@ -459,8 +459,8 @@ let activeScenario = "policy";
 const scenarios = {
   policy: {
     title: "Policy-constrained rows",
-    description: "Compare the same dense row shape across both, one-sided, delete, fallback, and Guard-blocked outcomes. Watch the allowed intents and effect summaries change without losing either path.",
-    steps: ["Reset this scenario", "Review missing-Base fallback", "Review push-only-delete", "Review no-route diagnostic"],
+    description: "Compare the same dense row shape across two-way, one-sided, delete, and Guard-blocked outcomes. Watch the allowed intents and effect summaries change without losing either path.",
+    steps: ["Reset this scenario", "Review missing Sync Base", "Review push-only-delete", "Review no-route diagnostic"],
   },
   editor: {
     title: "Standing Approval + Editor",
@@ -524,8 +524,7 @@ function policyMarkup(item) {
 }
 function resolutionMarkup(item) {
   if (item.blocked) return '<span class="badge red">Blocked by Guard</span>';
-  let label = item.editedPrimary !== null ? `${intentLabel(item.intent)} · Edited` : intentLabel(item.intent);
-  if (item.fallback) label = "Use live (no Base)";
+  const label = item.editedPrimary !== null ? `${intentLabel(item.intent)} · Edited` : intentLabel(item.intent);
   return `<span class="badge ${item.materialized ? "blue" : "gray"}">${html(label)}</span>`;
 }
 function liveChangeMarkup(item) {
