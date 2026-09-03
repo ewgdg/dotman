@@ -500,7 +500,6 @@ function dispatch(action) {
 function effectLabel(effect) {
   return effect === "none" ? "No write" : effect === "create" ? "Create" : effect === "delete" ? "Delete" : "Update";
 }
-function effectTone(effect) { return effect === "none" ? "gray" : effect === "delete" ? "red" : effect === "create" ? "green" : "blue"; }
 function approvalMark(approved, blocked = false) {
   if (blocked) return '<span class="approval-mark blocked" title="Not approvable">!</span>';
   return approved ? '<span class="approval-mark approved" title="Approved">✓</span>' : '<span class="approval-mark pending" title="Unapproved">·</span>';
@@ -527,10 +526,6 @@ function resolutionMarkup(item) {
   const label = item.editedPrimary !== null ? `${intentLabel(item.intent)} · Edited` : intentLabel(item.intent);
   return `<span class="badge ${item.materialized ? "blue" : "gray"}">${html(label)}</span>`;
 }
-function liveChangeMarkup(item) {
-  if (item.blocked || !item.materialized) return "";
-  return `<span class="badge ${effectTone(item.liveEffect)}">${effectLabel(item.liveEffect)}</span>`;
-}
 function auxiliary(id) { return state.auxiliary.find((item) => item.id === id); }
 function focusedLabel() {
   if (state.focus.type === "proposal") return proposal(state.focus.id)?.label || "Proposal";
@@ -547,13 +542,12 @@ function toggleAuxiliary(id) {
 }
 function proposalRow(item) {
   const focused = state.focus.type === "proposal" && state.focus.id === item.id;
-  const liveEffect = liveChangeMarkup(item);
   return `<tr class="${focused ? "current" : ""} ${item.blocked ? "diagnostic-row" : ""}" onclick="focusProposal('${item.id}')">
     <td class="focus-cell">${focused ? "›" : ""}</td>
     <td class="approval-cell">${approvalMark(item.approved, item.blocked)}</td>
     <td><strong>${html(item.label)}</strong></td>
     <td>${policyMarkup(item)}</td>
-    <td><strong class="mono path">${html(item.livePath)}</strong>${liveEffect ? `<span class="micro">${liveEffect}</span>` : ""}</td>
+    <td><strong class="mono path">${html(item.livePath)}</strong></td>
     <td><span class="badge ${item.baseShort === "Exact" ? "green" : item.baseShort === "N/A" ? "gray" : "amber"}">${html(item.baseShort)}</span></td>
     <td>${resolutionMarkup(item)}</td>
   </tr>`;
