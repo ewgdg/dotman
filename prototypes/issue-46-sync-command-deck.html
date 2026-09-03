@@ -15,7 +15,7 @@
 
 /* Issue 46 Sync Command Deck additions. The base visual language is intentionally
    inherited from the validated issue 42 Dense Command Deck prototype. */
-.shell.wide{width:min(1180px,calc(100% - 28px))}.deck-table{min-width:1040px}.deck-table .target-col{width:22%}.deck-table .policy-col{width:17%}.deck-table .live-col{width:27%}.deck-table .base-col{width:12%}.deck-table .resolution-col{width:22%}.additional-table,.auxiliary-table{min-width:760px}.additional-table .additional-source-col{width:55%}.additional-table .additional-change-col{width:16%}.additional-table .references-col{width:29%}.auxiliary-table .selection-col{width:74px}.auxiliary-table .aux-work-col{width:26%}.auxiliary-table .aux-policy-col{width:18%}.auxiliary-table .aux-effect-col{width:56%}.auxiliary-table tr{cursor:pointer}.deck-table td{padding-top:11px;padding-bottom:11px}.path{overflow-wrap:anywhere}.micro{display:block;margin-top:5px;color:var(--muted);font-size:.67rem;line-height:1.3}.micro.inline{display:inline;margin-top:0}.amber-text{color:var(--amber)}.diagnostic-row{background:#fffafa}.selection-mark{display:inline-grid;width:22px;height:22px;place-items:center;border:0;border-radius:50%;background:#eef0f3;color:var(--faint);font-weight:900}.selection-mark.selected{background:var(--green-soft);color:var(--green)}.focus-cell{line-height:1}.intent-strip{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;padding:13px 22px;border-bottom:1px solid var(--line);background:#fbfcfd}.intent-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}.selected-intent{border-color:var(--accent)!important;background:var(--accent-soft)!important;color:var(--accent-dark)!important;font-weight:800}.confirm-shell{display:grid;place-items:center;min-height:80vh}.confirm-card{width:min(720px,100%);padding:28px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:var(--shadow)}.confirm-card h1{font-size:clamp(2rem,5vw,3rem)}.count-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:23px 0}.count-grid div{padding:15px 10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfd;text-align:center}.count-grid strong{display:block;color:var(--accent-dark);font-size:1.8rem}.count-grid span{display:block;color:var(--muted);font-size:.72rem}.confirm-actions{display:flex;flex-wrap:wrap;gap:9px}.terminal-stages,.terminal-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}.terminal-stages>div,.terminal-summary>div{padding:15px;border:1px solid #3e4858;border-radius:10px;background:#2a3240}.terminal ol,.terminal ul{margin:9px 0 0;padding-left:22px}.terminal li+li{margin-top:6px}.terminal .stage-title{color:#bfc3ff;font-weight:800}.status-line .approval-mark{margin-right:2px}@media(max-width:900px){.shell.wide{width:min(100% - 18px,760px)}.count-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.terminal-stages,.terminal-summary{grid-template-columns:1fr}}@media(max-width:520px){.count-grid{grid-template-columns:1fr 1fr}}
+.shell.wide{width:min(1180px,calc(100% - 28px))}.deck-table{min-width:1040px}.deck-table .target-col{width:22%}.deck-table .policy-col{width:17%}.deck-table .live-col{width:27%}.deck-table .base-col{width:12%}.deck-table .resolution-col{width:22%}.additional-table,.auxiliary-table{min-width:760px}.additional-table .additional-source-col{width:55%}.additional-table .additional-change-col{width:16%}.additional-table .references-col{width:29%}.auxiliary-table .selection-col{width:74px}.auxiliary-table .aux-work-col{width:26%}.auxiliary-table .aux-policy-col{width:18%}.auxiliary-table .aux-effect-col{width:56%}.auxiliary-table tr{cursor:pointer}.deck-table td{padding-top:11px;padding-bottom:11px}.path{overflow-wrap:anywhere}.micro{display:block;margin-top:5px;color:var(--muted);font-size:.67rem;line-height:1.3}.micro.inline{display:inline;margin-top:0}.amber-text{color:var(--amber)}.diagnostic-row{background:#fffafa}.selection-mark{display:inline-grid;width:22px;height:22px;padding:0;place-items:center;border:0;border-radius:50%;background:#eef0f3;color:var(--faint);font-weight:900}.selection-mark.selected{background:var(--green-soft);color:var(--green)}.selection-mark.blocked{background:var(--red-soft);color:var(--red)}.selection-mark:disabled{cursor:not-allowed}.resolution-control{position:relative;display:inline-flex}.resolution-trigger{border:0}.resolution-trigger:hover{box-shadow:inset 0 0 0 1px currentColor}.resolution-menu{position:absolute;z-index:30;top:calc(100% + 6px);right:0;display:grid;min-width:170px;padding:5px;border:1px solid var(--line-strong);border-radius:9px;background:#fff;box-shadow:0 12px 28px rgba(29,39,58,.18)}.resolution-option{display:flex;gap:12px;align-items:center;justify-content:space-between;border:0;border-radius:6px;padding:7px 9px;background:#fff;text-align:left;white-space:nowrap}.resolution-option:hover{background:var(--accent-soft);color:var(--accent-dark)}.resolution-option.current{font-weight:800}.resolution-check{color:var(--green)}.focus-cell{line-height:1}.intent-strip{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;padding:13px 22px;border-bottom:1px solid var(--line);background:#fbfcfd}.intent-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}.selected-intent{border-color:var(--accent)!important;background:var(--accent-soft)!important;color:var(--accent-dark)!important;font-weight:800}.confirm-shell{display:grid;place-items:center;min-height:80vh}.confirm-card{width:min(720px,100%);padding:28px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:var(--shadow)}.confirm-card h1{font-size:clamp(2rem,5vw,3rem)}.count-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:23px 0}.count-grid div{padding:15px 10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfd;text-align:center}.count-grid strong{display:block;color:var(--accent-dark);font-size:1.8rem}.count-grid span{display:block;color:var(--muted);font-size:.72rem}.confirm-actions{display:flex;flex-wrap:wrap;gap:9px}.terminal-stages,.terminal-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}.terminal-stages>div,.terminal-summary>div{padding:15px;border:1px solid #3e4858;border-radius:10px;background:#2a3240}.terminal ol,.terminal ul{margin:9px 0 0;padding-left:22px}.terminal li+li{margin-top:6px}.terminal .stage-title{color:#bfc3ff;font-weight:800}.status-line .approval-mark{margin-right:2px}@media(max-width:900px){.shell.wide{width:min(100% - 18px,760px)}.count-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.terminal-stages,.terminal-summary{grid-template-columns:1fr}}@media(max-width:520px){.count-grid{grid-template-columns:1fr 1fr}}
 
 </style>
 </head>
@@ -457,6 +457,7 @@ const initialState = () => {
 
 let state = initialState();
 let activeScenario = "policy";
+let openResolutionMenuId = null;
 
 const scenarios = {
   policy: {
@@ -494,6 +495,7 @@ function proposal(id) { return SyncDeckLogic.proposalById(state, id); }
 function source(id) { return state.additional[id]; }
 function intentLabel(intent) { return SyncDeckLogic.intentLabel(intent); }
 function dispatch(action) {
+  openResolutionMenuId = null;
   state = SyncDeckLogic.dispatch(state, action);
   state.log.unshift(`${now()} · ${state.lastAction}`);
   state.log = state.log.slice(0, 6);
@@ -526,7 +528,13 @@ function policyMarkup(item) {
 function resolutionMarkup(item) {
   if (item.blocked) return '<span class="badge red">Blocked by Guard</span>';
   const label = item.editedPrimary !== null ? `${intentLabel(item.intent)} · Edited` : intentLabel(item.intent);
-  return `<span class="badge ${item.materialized ? "blue" : "gray"}">${html(label)}</span>`;
+  if (item.allowed.length < 2) return `<span class="badge ${item.materialized ? "blue" : "gray"}">${html(label)}</span>`;
+  const open = openResolutionMenuId === item.id;
+  const options = item.allowed.map((intent) => {
+    const current = intent === item.intent;
+    return `<button class="resolution-option ${current ? "current" : ""}" role="menuitemradio" aria-checked="${current}" onclick="event.stopPropagation();chooseResolution('${item.id}','${intent}')"><span>${html(intentLabel(intent))}</span>${current ? ' <span class="resolution-check">✓</span>' : ""}</button>`;
+  }).join("");
+  return `<span class="resolution-control"><button class="badge ${item.materialized ? "blue" : "gray"} resolution-trigger" aria-haspopup="menu" aria-expanded="${open}" onclick="event.stopPropagation();toggleResolutionMenu('${item.id}')">${html(label)}</button>${open ? `<span class="resolution-menu" role="menu">${options}</span>` : ""}</span>`;
 }
 function auxiliary(id) { return state.auxiliary.find((item) => item.id === id); }
 function focusedLabel() {
@@ -538,15 +546,24 @@ function focusedLabel() {
 function focusProposal(id) { dispatch({ type: "FOCUS", focus: { type: "proposal", id }, label: proposal(id).label }); }
 function focusSource(id) { dispatch({ type: "FOCUS", focus: { type: "source", id }, label: `${source(id).repo}:${source(id).path}` }); }
 function focusAuxiliary(id) { dispatch({ type: "FOCUS", focus: { type: "auxiliary", id }, label: auxiliary(id).label }); }
+function toggleProposalSelection(id) {
+  state.focus = { type: "proposal", id };
+  dispatch({ type: "TOGGLE_PROPOSAL_APPROVAL", id });
+}
+function toggleSourceSelection(id) {
+  state.focus = { type: "source", id };
+  dispatch({ type: "TOGGLE_ADDITIONAL_APPROVAL", id });
+}
 function toggleAuxiliary(id) {
   state.focus = { type: "auxiliary", id };
   dispatch({ type: "TOGGLE_AUXILIARY", id });
 }
 function proposalRow(item) {
   const focused = state.focus.type === "proposal" && state.focus.id === item.id;
+  const selectionTitle = item.blocked ? "Not selectable" : item.approved ? "Selected" : "Unselected";
   return `<tr class="${focused ? "current" : ""} ${item.blocked ? "diagnostic-row" : ""}" onclick="focusProposal('${item.id}')">
     <td class="focus-cell">${focused ? "›" : ""}</td>
-    <td class="approval-cell">${selectionMark(item.approved, item.blocked)}</td>
+    <td class="approval-cell"><button class="selection-mark ${item.blocked ? "blocked" : item.approved ? "selected" : ""}" onclick="event.stopPropagation();toggleProposalSelection('${item.id}')" title="${selectionTitle}" aria-label="Toggle selection for ${html(item.label)}" aria-pressed="${item.approved}" ${item.blocked ? "disabled" : ""}>${item.blocked ? "!" : item.approved ? "✓" : "·"}</button></td>
     <td><strong>${html(item.label)}</strong></td>
     <td>${policyMarkup(item)}</td>
     <td><strong class="mono path">${html(item.livePath)}</strong></td>
@@ -557,9 +574,10 @@ function proposalRow(item) {
 function additionalRow(item) {
   const focused = state.focus.type === "source" && state.focus.id === item.id;
   const kind = item.frozen === "(missing)" ? "Create" : item.current === "(missing)" ? "Delete" : "Update";
+  const selectionTitle = item.approved ? "Selected" : "Unselected";
   return `<tr class="${focused ? "current" : ""}" onclick="focusSource('${item.id}')">
     <td class="focus-cell">${focused ? "›" : ""}</td>
-    <td class="approval-cell">${selectionMark(item.approved)}</td>
+    <td class="approval-cell"><button class="selection-mark ${item.approved ? "selected" : ""}" onclick="event.stopPropagation();toggleSourceSelection('${item.id}')" title="${selectionTitle}" aria-label="Toggle selection for ${html(item.repo)}:${html(item.path)}" aria-pressed="${item.approved}">${item.approved ? "✓" : "·"}</button></td>
     <td><strong class="mono path">${html(item.repo)}:${html(item.path)}</strong></td>
     <td><span class="badge ${kind === "Delete" ? "red" : kind === "Create" ? "green" : "blue"}">${kind}</span></td>
     <td>${item.references.length} Proposal${item.references.length === 1 ? "" : "s"}</td>
@@ -570,7 +588,7 @@ function auxiliaryRows() {
     const focused = state.focus.type === "auxiliary" && state.focus.id === item.id;
     return `<tr class="aux-row ${focused ? "current" : ""}" onclick="focusAuxiliary('${item.id}')">
       <td class="focus-cell">${focused ? "›" : ""}</td>
-      <td class="approval-cell"><button class="selection-mark ${item.selected ? "selected" : ""}" onclick="event.stopPropagation();toggleAuxiliary('${item.id}')" title="${item.selected ? "Selected" : "Unselected"}">${item.selected ? "✓" : "·"}</button></td>
+      <td class="approval-cell"><button class="selection-mark ${item.selected ? "selected" : ""}" onclick="event.stopPropagation();toggleAuxiliary('${item.id}')" title="${item.selected ? "Selected" : "Unselected"}" aria-label="Toggle selection for ${html(item.label)}" aria-pressed="${item.selected}">${item.selected ? "✓" : "·"}</button></td>
       <td><strong>${html(item.label)}</strong></td>
       <td><span class="badge gray">${html(policyLabel(item.policy))}</span></td>
       <td class="muted">${html(item.effect)}</td>
@@ -608,7 +626,7 @@ function deck() {
       <div class="deck-stats"><span class="badge blue">${state.proposals.length} drifted</span><span class="badge amber">${additions.length} Additional</span><span class="badge green">${selected} units selected</span><span class="badge red">${state.proposals.filter((item) => item.blocked).length} blocked</span></div></div>
       <div class="deck-wrap">
         <div class="section-label">Sync Unit Proposals</div>
-        <table class="deck-table">${proposalColumns}<thead><tr><th></th><th>Selection</th><th>Target</th><th>Policy</th><th>Live path</th><th>Sync Base</th><th>Resolution</th></tr></thead><tbody>${state.proposals.map(proposalRow).join("")}</tbody></table>
+        <table class="deck-table proposal-table">${proposalColumns}<thead><tr><th></th><th>Selection</th><th>Target</th><th>Policy</th><th>Live path</th><th>Sync Base</th><th>Resolution</th></tr></thead><tbody>${state.proposals.map(proposalRow).join("")}</tbody></table>
         <div class="section-label">Additional Changes</div>
         ${additions.length ? `<table class="deck-table additional-table">${additionalColumns}<thead><tr><th></th><th>Selection</th><th>Additional source</th><th>Change</th><th>References</th></tr></thead><tbody>${additions.map(additionalRow).join("")}</tbody></table>` : '<div class="pad muted small">No Additional Source Changes are staged.</div>'}
         <div class="section-label">Auxiliary Work</div>
@@ -755,6 +773,18 @@ function toggleFocusedSelection() {
 }
 function setIntent(id, intent) { dispatch({ type: "SET_INTENT", id, intent }); }
 function setFocusedIntent(intent) { if (state.focus.type === "proposal") setIntent(state.focus.id, intent); }
+function toggleResolutionMenu(id) {
+  const item = proposal(id);
+  if (!item || item.blocked || item.allowed.length < 2) return;
+  state.focus = { type: "proposal", id };
+  openResolutionMenuId = openResolutionMenuId === id ? null : id;
+  render();
+}
+function chooseResolution(id, intent) {
+  openResolutionMenuId = null;
+  state.focus = { type: "proposal", id };
+  setIntent(id, intent);
+}
 function openEditorProposal(id) {
   const item = proposal(id);
   if (!item || item.blocked) return;
@@ -861,6 +891,12 @@ document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.view === "editor") { event.preventDefault(); cancelEditor(); }
     return;
   }
+  if (event.key === "Escape" && openResolutionMenuId) {
+    event.preventDefault();
+    openResolutionMenuId = null;
+    render();
+    return;
+  }
   if (state.view === "terminal") return;
   if (state.view === "confirm") {
     if (event.key === "Escape") { event.preventDefault(); dispatch({ type: "CANCEL_CONFIRM" }); }
@@ -903,6 +939,12 @@ document.addEventListener("keydown", (event) => {
   else if (event.key === "r") { event.preventDefault(); setFocusedIntent("repo"); }
   else if (event.key === "l") { event.preventDefault(); setFocusedIntent("live"); }
   else if (event.key === "m") { event.preventDefault(); setFocusedIntent("merge"); }
+});
+
+document.addEventListener("click", (event) => {
+  if (!openResolutionMenuId || event.target.closest(".resolution-control")) return;
+  openResolutionMenuId = null;
+  render();
 });
 
 render();
