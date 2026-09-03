@@ -170,7 +170,7 @@ const SyncDeckLogic = (() => {
       publicationLines,
       pending,
       blocked,
-      status: blocked.length ? "Approved work converged; one Guard diagnostic remains (exit 1)." : "Approved work converged (exit 0).",
+      status: blocked.length ? "Approved work converged; one Guard-blocked unit remains (exit 1)." : "Approved work converged (exit 0).",
     };
   }
 
@@ -192,7 +192,7 @@ const SyncDeckLogic = (() => {
         state.view = "proposal";
         state.reviewId = proposal.id;
         state.lastAction = proposal.blocked
-          ? `${proposal.label}: opened the frozen Guard diagnostic; no convergence route survives.`
+          ? `${proposal.label}: opened the blocked-by-Guard details; no convergence route survives.`
           : `${proposal.label}: opened Proposal Review; Approval covers the complete unit outcome.`;
         break;
       }
@@ -523,7 +523,7 @@ function policyMarkup(item) {
   return `<span class="badge ${narrowed ? "amber" : "gray"}">${html(label)}</span>`;
 }
 function resolutionMarkup(item) {
-  if (item.blocked) return '<span class="badge red">Guard diagnostic</span>';
+  if (item.blocked) return '<span class="badge red">Blocked by Guard</span>';
   let label = item.editedPrimary !== null ? `${intentLabel(item.intent)} · Edited` : intentLabel(item.intent);
   if (item.fallback) label = "Use live (no Base)";
   return `<span class="badge ${item.materialized ? "blue" : "gray"}">${html(label)}</span>`;
