@@ -634,7 +634,7 @@ function deck() {
       </div>
     </section>
     ${scenarioPanel()}${stateLog()}${deckButtons()}
-    <div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Space</span> toggle selection</span><span><span class="key">Enter</span> review</span><span><span class="key">e</span> Editor</span><span><span class="key">r</span> Use repository</span><span><span class="key">l</span> Use live</span><span><span class="key">m</span> Merge</span><span><span class="key">S</span> select eligible</span><span><span class="key">U</span> unselect all</span></div>
+    <div class="keyboard-strip"><span><span class="key">j</span>/<span class="key">k</span> focus</span><span><span class="key">Space</span> toggle selection</span><span><span class="key">Enter</span> review</span><span><span class="key">e</span> Editor</span><span><span class="key">r</span> Use repository</span><span><span class="key">l</span> Use live</span><span><span class="key">m</span> Merge</span><span><span class="key">A</span> select eligible</span><span><span class="key">U</span> unselect all</span></div>
   </div>`;
 }
 function focusedEntity() {
@@ -656,7 +656,7 @@ function deckButtons() {
     <button class="button" onclick="setFocusedIntent('live')" ${!allowed.includes("live") ? "disabled" : ""}>Use live <span class="key">l</span></button>
     <button class="button" onclick="setFocusedIntent('merge')" ${!allowed.includes("merge") ? "disabled" : ""}>Merge <span class="key">m</span></button>
     <button class="button" onclick="toggleFocusedSelection()" ${blocked ? "disabled" : ""}>${selected ? "Unselect" : "Select"} focused <span class="key">Space</span></button>
-    <button class="button" onclick="dispatch({type:'BATCH_APPROVE'})">Select eligible <span class="key">S</span></button>
+    <button class="button" onclick="dispatch({type:'BATCH_APPROVE'})">Select eligible <span class="key">A</span></button>
     <button class="button" onclick="dispatch({type:'UNAPPROVE_ALL'})">Unselect all <span class="key">U</span></button>
     <button class="button primary" onclick="dispatch({type:'OPEN_CONFIRM'})">Converge selected</button>
   </div>`;
@@ -933,7 +933,7 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault(); const next = list[(index - 1 + list.length) % list.length]; state.focus = next; state.lastAction = `Focused ${focusedLabel()}.`; render();
   } else if (event.key === "Enter" && state.focus.type !== "auxiliary") { event.preventDefault(); openFocused(); }
   else if (event.key === " ") { event.preventDefault(); toggleFocusedSelection(); }
-  else if (event.key === "S") { event.preventDefault(); dispatch({ type: "BATCH_APPROVE" }); }
+  else if (event.key === "A") { event.preventDefault(); dispatch({ type: "BATCH_APPROVE" }); }
   else if (event.key === "U") { event.preventDefault(); dispatch({ type: "UNAPPROVE_ALL" }); }
   else if (event.key === "e") { event.preventDefault(); openEditorFocused(); }
   else if (event.key === "r") { event.preventDefault(); setFocusedIntent("repo"); }
