@@ -1116,3 +1116,115 @@ def test_package_gitignore_operations_are_resolved_and_applied_during_push(
     live_root = home / ".config" / "sample"
     assert (live_root / "visible.conf").read_text(encoding="utf-8") == "visible = true\n"
     assert not (live_root / "machine.local").exists()
+
+
+def test_repository_ignore_patterns_are_direction_independent(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "packages").mkdir()
+    (repo_root / "repo.toml").write_text(
+        "[ignore]\npatterns = [\"*.cache\"]\n",
+        encoding="utf-8",
+    )
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+    defaults = engine.get_repo("fixture").ignore_defaults
+    assert defaults.patterns == ("*.cache",)
+    assert not hasattr(defaults, "push")
+    assert not hasattr(defaults, "pull")
+
+
+
+def test_ignore_patterns_compose_repo_package_target_in_order_and_keep_empty_package_layer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "repo.toml").write_text(
+        '[ignore]\npatterns = ["*.tmp"]\ngitignore = ["push"]\n',
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        '\n'.join(
+            [
+                'id = "sample"',
+                "",
+                "[ignore]",
+                "patterns = []",
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+                "[targets.config.ignore]",
+                'patterns = ["!keep.log"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    for name in ("keep.tmp", "drop.tmp", "keep.log", "drop.log"):
+        (source_root / name).write_text(name + "\n", encoding="utf-8")
+    (source_root / "visible.conf").write_text("visible\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+    target = single_package_plan(engine, "fixture:sample@default", operation="push").target_plans[0]
+    paths = {item.relative_path for item in target.directory_items}
+
+    assert "visible.conf" in paths
+    assert "keep.tmp" not in paths
+    assert "drop.tmp" not in paths
+    assert "keep.log" in paths
+    assert "drop.log" not in paths
+
+
+def test_ignore_pattern_order_preserves_later_repeated_exclusion_after_negation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "repo.toml").write_text('[ignore]\npatterns = ["*.tmp"]\n', encoding="utf-8")
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        '\n'.join(
+            [
+                'id = "sample"',
+                "",
+                "[ignore]",
+                'patterns = ["!keep.tmp"]',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+                "[targets.config.ignore]",
+                'patterns = ["*.tmp"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for name in ("keep.tmp", "drop.tmp"):
+        (source_root / name).write_text(name + "\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+    target = single_package_plan(engine, "fixture:sample@default", operation="push").target_plans[0]
+    paths = {item.relative_path for item in target.directory_items}
+
+    assert "keep.tmp" not in paths
+    assert "drop.tmp" not in paths

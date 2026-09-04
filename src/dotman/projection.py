@@ -64,8 +64,7 @@ class TargetMetadata:
     capture_command: str | None
     compare_repo: str
     compare_live: str
-    push_ignore: tuple[str, ...]
-    pull_ignore: tuple[str, ...]
+    ignore_patterns: tuple[str, ...]
     gitignore_control_ops: tuple[str, ...]
     skip_markers: tuple[str, ...]
     chmod: str | None
@@ -88,8 +87,7 @@ def _metadata_collision_tuple(metadata: TargetMetadata):
         metadata.target,
         metadata.repo_path,
         metadata.live_path,
-        metadata.push_ignore,
-        metadata.pull_ignore,
+        metadata.ignore_patterns,
         metadata.live_path_is_symlink,
         metadata.live_path_symlink_target,
     )
@@ -185,8 +183,7 @@ def build_target_metadata(
                         additional_sources_root=target.additional_sources_root,
                         compare_repo="raw",
                         compare_live="raw",
-                        push_ignore=(),
-                        pull_ignore=(),
+                        ignore_patterns=(),
                         gitignore_control_ops=(),
                         skip_markers=(),
                         chmod=None,
@@ -240,16 +237,15 @@ def build_target_metadata(
                 if target.capture != "raw"
                 else None
             )
-            package_ignore = package.ignore_patterns if package.ignore_patterns is not None else repo.ignore_defaults.push
-            push_ignore = merge_ignore_patterns(package_ignore, target.ignore_patterns or ())
-            pull_ignore = merge_ignore_patterns(package_ignore, target.ignore_patterns or ())
             gitignore_ops = package.gitignore_ops if package.gitignore_ops is not None else repo.ignore_defaults.gitignore
-            if gitignore_ops and inspect_gitignore_patterns:
-                gitignore_patterns = collect_gitignore_patterns(repo_path)
-                if "push" in gitignore_ops:
-                    push_ignore = merge_ignore_patterns(gitignore_patterns, push_ignore)
-                if "pull" in gitignore_ops:
-                    pull_ignore = merge_ignore_patterns(gitignore_patterns, pull_ignore)
+            pattern_layers: list[tuple[str, ...]] = [repo.ignore_defaults.patterns]
+            if gitignore_ops and operation in gitignore_ops and inspect_gitignore_patterns:
+                pattern_layers.append(collect_gitignore_patterns(repo_path))
+            if package.ignore_patterns is not None:
+                pattern_layers.append(package.ignore_patterns)
+            if target.ignore_patterns is not None:
+                pattern_layers.append(target.ignore_patterns)
+            ignore_patterns = merge_ignore_patterns(*pattern_layers)
             skip_markers = repo.ignore_defaults.skip_markers
             path_rules = render_target_path_rules(target.path_rules, context=context, base_dir=target.declared_in)
             metadata_targets.append(
@@ -266,8 +262,7 @@ def build_target_metadata(
                     capture_command=capture_command,
                     compare_repo=target.compare_repo if target.compare_repo != "raw" else "raw",
                     compare_live=target.compare_live,
-                    push_ignore=push_ignore,
-                    pull_ignore=pull_ignore,
+                    ignore_patterns=ignore_patterns,
                     gitignore_control_ops=gitignore_ops,
                     skip_markers=skip_markers,
                     chmod=target.chmod,
@@ -335,8 +330,8 @@ def plan_targets(
         target = metadata.target
         repo_path = metadata.repo_path
         live_path = metadata.live_path
-        effective_push_ignore = merge_ignore_patterns(metadata.push_ignore, target.ignore_patterns or ())
-        effective_pull_ignore = merge_ignore_patterns(metadata.pull_ignore, target.ignore_patterns or ())
+        effective_ignore_patterns = metadata.ignore_patterns
+        sync_policy = resolve_sync_policy(package=package, target=target)
         if target.probe is not None:
             probe_active = run_probe_command(projection_context.command_runtime, metadata)
             plans.append(
@@ -347,7 +342,8 @@ def plan_targets(
                     capture=target.capture,
                     compare_repo=metadata.compare_repo,
                     compare_live=metadata.compare_live,
-                    editor=target.editor,
+                    sync_policy=sync_policy,
+                        editor=target.editor,
                     editor_explicit=target.editor_explicit,
                     additional_sources=target.additional_sources,
                     additional_source_entries=target.additional_source_entries,
@@ -363,7 +359,6 @@ def plan_targets(
                 )
             )
             continue
-        sync_policy = resolve_sync_policy(package=package, target=target)
         target_kind = resolve_target_kind(
             target_type=target.target_type,
             repo_path=repo_path,
@@ -396,7 +391,7 @@ def plan_targets(
                     follow_dir_symlinks=projection_context.config.dir_symlink_mode == "follow",
                     command_runtime=projection_context.command_runtime,
                     path_rules=metadata.path_rules,
-                    push_ignore=effective_push_ignore,
+                    ignore_patterns=effective_ignore_patterns,
                     compare_repo=metadata.compare_repo,
                     compare_live=metadata.compare_live,
                     package=package,
@@ -417,6 +412,7 @@ def plan_targets(
                         capture=target.capture,
                         compare_repo=metadata.compare_repo,
                         compare_live=metadata.compare_live,
+                        sync_policy=sync_policy,
                         editor=target.editor,
                         editor_explicit=target.editor_explicit,
                         additional_sources=target.additional_sources,
@@ -468,6 +464,7 @@ def plan_targets(
                     capture=target.capture,
                     compare_repo=metadata.compare_repo,
                     compare_live=metadata.compare_live,
+                    sync_policy=sync_policy,
                     editor=target.editor,
                     editor_explicit=target.editor_explicit,
                     additional_sources=target.additional_sources,
@@ -502,6 +499,7 @@ def plan_targets(
                     capture=target.capture,
                     compare_repo=metadata.compare_repo,
                     compare_live=metadata.compare_live,
+                    sync_policy=sync_policy,
                     editor=target.editor,
                     editor_explicit=target.editor_explicit,
                     additional_sources=target.additional_sources,
@@ -547,8 +545,7 @@ def plan_targets(
                 skip_markers=metadata.skip_markers,
                 force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if operation in metadata.gitignore_control_ops else (),
                 operation=operation,
-                push_ignore=effective_push_ignore,
-                pull_ignore=effective_pull_ignore,
+                ignore_patterns=effective_ignore_patterns,
                 render_command=render_command,
                 capture_command=capture_command,
                 context=context,
@@ -568,6 +565,7 @@ def plan_targets(
                     capture=target.capture,
                     compare_repo=metadata.compare_repo,
                     compare_live=metadata.compare_live,
+                    sync_policy=sync_policy,
                     editor=target.editor,
                     editor_explicit=target.editor_explicit,
                     additional_sources=target.additional_sources,
@@ -660,6 +658,7 @@ def plan_targets(
                 capture=target.capture,
                 compare_repo=metadata.compare_repo,
                 compare_live=metadata.compare_live,
+                sync_policy=sync_policy,
                 editor=target.editor,
                 editor_explicit=target.editor_explicit,
                 additional_sources=target.additional_sources,
@@ -986,8 +985,7 @@ def plan_directory_action(
     target: TargetSpec,
     repo_path: Path,
     live_path: Path,
-    push_ignore: tuple[str, ...],
-    pull_ignore: tuple[str, ...],
+    ignore_patterns: tuple[str, ...],
     skip_markers: tuple[str, ...],
     operation: str,
     render_command: str | None,
@@ -1002,9 +1000,9 @@ def plan_directory_action(
     force_ignore_patterns: tuple[str, ...] = (),
     guard_skips: list[GuardSkip] | None = None,
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
-    # Ignore lists are operation-scoped: an ignored child should disappear from
-    # both repo and live scans so planning does not create, update, or delete it.
-    operation_ignore = push_ignore if operation == "push" else pull_ignore
+    # The operation-specific metadata already includes any selected .gitignore
+    # controls; apply the same patterns to repository and live census inputs.
+    operation_ignore = ignore_patterns
     follow_dir_symlinks = projection_context.config.dir_symlink_mode == "follow"
     desired_files = list_directory_files(
         repo_path,
@@ -1565,7 +1563,7 @@ def plan_live_delete_directory_action(
     command_runtime: CommandRuntime,
     repo_path: Path,
     live_path: Path,
-    push_ignore: tuple[str, ...],
+    ignore_patterns: tuple[str, ...],
     skip_markers: tuple[str, ...],
     path_rules: tuple[TargetPathRule, ...],
     compare_repo: str,
@@ -1585,7 +1583,7 @@ def plan_live_delete_directory_action(
     live_files = (
         list_directory_files(
             live_path,
-            push_ignore,
+            ignore_patterns,
             skip_markers=skip_markers,
             follow_dir_symlinks=follow_dir_symlinks,
             force_ignore_patterns=force_ignore_patterns,

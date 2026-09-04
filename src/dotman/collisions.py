@@ -95,34 +95,19 @@ def resolve_tracked_target_winners(
 
 
 
-def _operation_ignore_patterns(
-    *,
-    push_ignore: tuple[str, ...],
-    pull_ignore: tuple[str, ...],
-    operation: str,
-) -> tuple[str, ...]:
-    if operation == "push":
-        return push_ignore
-    if operation == "pull":
-        return pull_ignore
-    raise ValueError(f"unsupported operation '{operation}'")
-
-
-
 def validate_target_collisions(
-    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
+    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], bool, str | None]],
     *,
     operation: str,
 ) -> None:
-    for index, (package, target, repo_path, live_path, push_ignore, pull_ignore, _live_path_is_symlink, _live_path_symlink_target) in enumerate(rendered_targets):
+    for index, (package, target, repo_path, live_path, ignore_patterns, _live_path_is_symlink, _live_path_symlink_target) in enumerate(rendered_targets):
         path = operation_write_path(repo_path=repo_path, live_path=live_path, operation=operation)
         for (
             other_package,
             other_target,
             other_repo_path,
             other_live_path,
-            other_push_ignore,
-            other_pull_ignore,
+            other_ignore_patterns,
             _other_live_path_is_symlink,
             _other_live_path_symlink_target,
         ) in rendered_targets[index + 1 :]:
@@ -133,26 +118,14 @@ def validate_target_collisions(
                 )
             if path in other_path.parents:
                 relative = other_path.relative_to(path).as_posix()
-                parent_ignore = IgnoreMatcher.from_patterns(
-                    _operation_ignore_patterns(
-                        push_ignore=push_ignore,
-                        pull_ignore=pull_ignore,
-                        operation=operation,
-                    )
-                )
+                parent_ignore = IgnoreMatcher.from_patterns(ignore_patterns)
                 if not parent_ignore.matches(relative):
                     raise ValueError(
                         f"incompatible nested targets: {package.id}:{target.name} contains {other_package.id}:{other_target.name}"
                     )
             elif other_path in path.parents:
                 relative = path.relative_to(other_path).as_posix()
-                parent_ignore = IgnoreMatcher.from_patterns(
-                    _operation_ignore_patterns(
-                        push_ignore=other_push_ignore,
-                        pull_ignore=other_pull_ignore,
-                        operation=operation,
-                    )
-                )
+                parent_ignore = IgnoreMatcher.from_patterns(other_ignore_patterns)
                 if not parent_ignore.matches(relative):
                     raise ValueError(
                         f"incompatible nested targets: {other_package.id}:{other_target.name} contains {package.id}:{target.name}"
@@ -170,12 +143,12 @@ def operation_write_path(*, repo_path: Path, live_path: Path, operation: str) ->
 
 def validate_reserved_path_conflicts(
     packages: list[PackageSpec],
-    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
+    rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], bool, str | None]],
     context: dict[str, Any],
 ) -> None:
     target_claims = [
         (package.id, f"{package.id}:{target.name}", live_path)
-        for package, target, _repo_path, live_path, _push_ignore, _pull_ignore, _live_path_is_symlink, _live_path_symlink_target in rendered_targets
+        for package, target, _repo_path, live_path, _ignore_patterns, _live_path_is_symlink, _live_path_symlink_target in rendered_targets
     ]
     reserved_claims: list[tuple[str, Path]] = []
     for package in packages:

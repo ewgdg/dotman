@@ -4,7 +4,7 @@ import sys
 from collections.abc import Collection
 from dataclasses import MISSING, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from dotman.models import AdditionalSource, DefaultCommandElevationMode, EditorSpec, HookCommandSpec, HookSpec, PackageSpec, TargetPathRule, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
@@ -562,23 +562,6 @@ def read_target_ignore_table(
     return ignore_payload
 
 
-def build_target_operation_ignore(
-    *,
-    ignore_payload: dict[str, Any] | None,
-    operation: Literal["push", "pull"],
-) -> tuple[str, ...] | None:
-    if ignore_payload is None:
-        return None
-    operation_ignore = normalize_string_list(ignore_payload.get(operation))
-    shared_ignore = normalize_string_list(ignore_payload.get("shared"))
-    if operation_ignore is None and shared_ignore is None:
-        return None
-    return merge_ignore_patterns(
-        operation_ignore or (),
-        shared_ignore or (),
-    )
-
-
 def build_target_spec(
     *,
     target_name: str,
@@ -748,12 +731,12 @@ def build_hook_spec(
 
 
 def merge_ignore_patterns(*pattern_sets: tuple[str, ...]) -> tuple[str, ...]:
-    merged: list[str] = []
-    for pattern_set in pattern_sets:
-        for pattern in pattern_set:
-            if pattern not in merged:
-                merged.append(pattern)
-    return tuple(merged)
+    """Compose ignore layers without changing gitignore rule ordering.
+
+    Repeated patterns are meaningful: an exclusion can be followed by a
+    negation and then reinstated by the same exclusion text.
+    """
+    return tuple(pattern for pattern_set in pattern_sets for pattern in pattern_set)
 
 
 VALID_GITIGNORE_OPS = frozenset({"push", "pull"})
@@ -1047,7 +1030,7 @@ def _normalize_append_values(
             )
             return (*current, *normalized)
         if (current and isinstance(current[0], str)) or path.endswith(
-            (".depends", ".reserved_paths", ".push_ignore", ".pull_ignore", ".gitignore")
+            (".depends", ".reserved_paths", ".ignore_patterns", ".gitignore_ops")
         ):
             if not all(isinstance(item, str) for item in values):
                 raise ValueError(f"append target '{path}' must contain only strings")

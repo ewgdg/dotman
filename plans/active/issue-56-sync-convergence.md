@@ -50,7 +50,8 @@ Add a one-shot `SyncSession` that observes selected repository and live state on
 - [x] Created `feat/issue-56-sync-convergence` from the finalized domain-contract baseline.
 - [x] Confirmed the parent-specified test seams and mapped the current implementation.
 - [x] Complete #57 hard-cut projection and Editor configuration (1,053 tests passing; independent review accepted).
-- [ ] Complete #58–#78 in dependency order.
+- [x] Complete #58 policy, named Path Rule, and unified exclusion hard cut (1,058 tests passing; independent review accepted).
+- [ ] Complete #59–#78 in dependency order.
 - [ ] Run final validation and open the PR.
 
 ## Decisions
