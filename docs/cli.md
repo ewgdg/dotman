@@ -17,6 +17,7 @@ This document captures the current command and selector direction for `dotman`.
 - The canonical tracked package-instance form for a `multi_instance` package is `repo:package<profile>`.
 - The canonical human-facing target form is `repo:package.target`.
 - The canonical human-facing package-instance target form is `repo:package<profile>.target`.
+- A directory child uses `repo:package.target/<relative/child>`, with a normalized POSIX relative suffix.
 - `/` belongs inside selector IDs for namespacing, for example `work/git` or `os/arch`.
 - `<...>` is reserved for resolved tracked package instances, not selector+profile forms or manifest IDs.
 - `.` is reserved as the package/target separator in human-facing target labels.
@@ -38,6 +39,18 @@ This document captures the current command and selector direction for `dotman`.
 - Human planning output shows the omission as `skipped (guard)` before review or selection.
 - JSON planning output exposes structured `guard_skips` without guard command text.
 - If every selected scope is guard-skipped and no higher-scope pre/post work remains, the command succeeds without review, selection, execution, or snapshots.
+
+## Sync scope resolution
+
+The Sync scope resolver accepts exact tracked identities only:
+`repo:package`, `repo:package<profile>`, `repo:package.target`,
+`repo:package<profile>.target`, and directory-child forms with a normalized
+POSIX suffix. Multiple inputs form a stable de-duplicated union. Omitting
+inputs expands the current tracked package state across every configured repo,
+including dependency closure and ownership winners. Groups are catalog
+selectors, not tracked identities, and are never returned as Sync scope
+members. Partial or ambiguous lookup remains an interactive concern; JSON,
+unattended, and non-terminal resolution fails rather than guessing.
 
 ## Selectors
 

@@ -339,6 +339,63 @@ class ResolvedPackageSelection:
         }
 
 
+@dataclass(frozen=True)
+class ResolvedSyncTarget:
+    """A canonical target or directory-child identity in a resolved sync scope."""
+
+    repo: str
+    package_id: str
+    target_name: str
+    bound_profile: str | None = None
+    child_path: str | None = None
+
+    @property
+    def canonical(self) -> str:
+        identity = repo_qualified_target_text(
+            repo_name=self.repo,
+            package_id=self.package_id,
+            target_name=self.target_name,
+            bound_profile=self.bound_profile,
+        )
+        return identity if self.child_path is None else f"{identity}/{self.child_path}"
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "repo": self.repo,
+            "package_id": self.package_id,
+            "bound_profile": self.bound_profile,
+            "target_name": self.target_name,
+        }
+        if self.child_path is not None:
+            payload["child_path"] = self.child_path
+        payload["selector"] = self.canonical
+        return payload
+
+
+@dataclass(frozen=True)
+class ResolvedSyncScope:
+    """Static, ownership-checked identities supplied to a future SyncSession."""
+
+    selectors: tuple[str, ...]
+    package_selections: tuple[ResolvedPackageSelection, ...]
+    targets: tuple[ResolvedSyncTarget, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "selectors": list(self.selectors),
+            "packages": [
+                {
+                    "repo": selection.identity.repo,
+                    "package_id": selection.identity.package_id,
+                    "bound_profile": selection.identity.bound_profile,
+                    "profile": selection.requested_profile,
+                }
+                for selection in self.package_selections
+            ],
+            "targets": [target.to_dict() for target in self.targets],
+        }
+
+
 def resolved_package_identity_key(identity: ResolvedPackageIdentity) -> tuple[str, str, str | None]:
     return (identity.repo, identity.package_id, identity.bound_profile)
 
