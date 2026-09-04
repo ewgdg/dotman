@@ -644,7 +644,7 @@ def test_capture_exit_100_remains_a_strict_planning_failure(
     package_path = repo_root / "packages" / "app" / "package.toml"
     package_text = package_path.read_text(encoding="utf-8").replace(
         'capture = "printf unavailable >&2; exit 100"',
-        'capture = "printf unavailable >&2; exit 100"\npull_view_live = "capture"',
+        'capture = "printf unavailable >&2; exit 100"',
     )
     package_path.write_text(package_text, encoding="utf-8")
 

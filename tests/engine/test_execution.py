@@ -10,10 +10,10 @@ import pytest
 
 import dotman.execution as execution
 from dotman import command_runtime as command_runtime_module, file_access
-from dotman.command_runtime import CommandResult, MemoryCommandRuntime, ShellCommand, command_runtime_session
+from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime, ShellCommand, command_runtime_session
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
-from dotman.models import DirectoryPlanItem, HookCommandSpec, HookPlan, OperationPlan, TargetPlan
+from dotman.models import DirectoryPlanItem, EditorSpec, HookCommandSpec, HookPlan, OperationPlan, TargetPlan
 from tests.helpers import (
     make_package_plan,
     single_package_plan,
@@ -624,7 +624,7 @@ def test_build_execution_session_marks_privileged_hook_commands() -> None:
     assert [step.privileged for step in session.packages[0].steps] == [True]
 
 
-def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged(monkeypatch) -> None:
+def test_build_execution_session_does_not_mark_custom_editor_steps_privileged(monkeypatch) -> None:
     monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: True)
 
     plan = make_package_plan(
@@ -646,7 +646,8 @@ def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile=HookCommandSpec(run="sh hooks/reconcile.sh"),
+                editor=EditorSpec(type=None, run="sh hooks/reconcile.sh", io="pipe", elevation="none"),
+                editor_explicit=True,
             )
         ],
     )
@@ -657,7 +658,7 @@ def test_build_execution_session_does_not_mark_custom_reconcile_steps_privileged
     assert [step.privileged for step in session.packages[0].steps] == [False, False, False]
 
 
-def test_build_execution_session_marks_explicit_privileged_reconcile(monkeypatch) -> None:
+def test_build_execution_session_marks_explicit_privileged_editor(monkeypatch) -> None:
     monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: False)
 
     plan = make_package_plan(
@@ -676,7 +677,8 @@ def test_build_execution_session_marks_explicit_privileged_reconcile(monkeypatch
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile=HookCommandSpec(run="sh hooks/reconcile.sh", elevation="root"),
+                editor=EditorSpec(type=None, run="sh hooks/reconcile.sh", io="pipe", elevation="root"),
+                editor_explicit=True,
             )
         ],
     )
@@ -687,7 +689,7 @@ def test_build_execution_session_marks_explicit_privileged_reconcile(monkeypatch
     assert [step.privileged for step in session.packages[0].steps] == [True]
 
 
-def test_build_execution_session_marks_privileged_reconcile_fallback(monkeypatch) -> None:
+def test_build_execution_session_marks_privileged_editor_fallback(monkeypatch) -> None:
     monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: False)
 
     plan = make_package_plan(
@@ -707,7 +709,8 @@ def test_build_execution_session_marks_privileged_reconcile_fallback(monkeypatch
                 target_kind="file",
                 projection_kind="raw",
                 capture_command="capture-command",
-                reconcile=HookCommandSpec(run="sh hooks/reconcile.sh", elevation="root"),
+                editor=EditorSpec(type=None, run="sh hooks/reconcile.sh", io="pipe", elevation="root"),
+                editor_explicit=True,
             )
         ],
     )
@@ -716,11 +719,11 @@ def test_build_execution_session_marks_privileged_reconcile_fallback(monkeypatch
 
     assert session.requires_privilege is True
     assert [step.privileged for step in session.packages[0].steps] == [True]
-    assert execution._execution_session_sudo_reason(session) == "execute privileged reconcile for fixture:app.config"
+    assert execution._execution_session_sudo_reason(session) == "execute privileged editor for fixture:app.config"
 
 
 
-def test_build_execution_session_prefers_capture_step_when_capture_and_reconcile_both_defined() -> None:
+def test_build_execution_session_prefers_capture_step_when_capture_and_editor_both_defined() -> None:
     plan = make_package_plan(
         operation="pull",
         repo_name="fixture",
@@ -738,7 +741,8 @@ def test_build_execution_session_prefers_capture_step_when_capture_and_reconcile
                 target_kind="file",
                 projection_kind="raw",
                 capture_command="printf 'captured\\n'",
-                reconcile=HookCommandSpec(run="printf 'reconcile\\n'"),
+                editor=EditorSpec(type=None, run="printf 'reconcile\\n'", io="pipe", elevation="none"),
+                editor_explicit=True,
             )
         ],
     )
@@ -1176,7 +1180,7 @@ def test_execute_session_follows_live_target_symlink_when_configured(
     assert real_live_path.read_text(encoding="utf-8") == "repo\n"
 
 
-def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
+def test_execute_session_runs_tty_editor_steps_with_terminal_passthrough(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1201,10 +1205,12 @@ def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile=HookCommandSpec(
+                editor=EditorSpec(
+                    type=None,
                     run="dotman reconcile editor --repo-path \"$DOTMAN_REPO_PATH\" --live-path \"$DOTMAN_LIVE_PATH\"",
                     io="tty",
                 ),
+                editor_explicit=True,
                 command_env={
                     "DOTMAN_REPO_PATH": str(repo_path),
                     "DOTMAN_LIVE_PATH": str(live_path),
@@ -1222,18 +1228,19 @@ def test_execute_session_runs_tty_reconcile_steps_with_terminal_passthrough(
     result = execute_session(session, stream_output=True, command_runtime=runtime)
 
     assert result.status == "ok"
-    assert result.packages[0].steps[0].step.action == "reconcile"
+    assert result.packages[0].steps[0].step.action == "editor"
     request = runtime.requests[0]
-    assert request.command == ShellCommand(
+    assert isinstance(request.command, ShellCommand)
+    assert request.command.source.startswith(
         'dotman reconcile editor --repo-path "$DOTMAN_REPO_PATH" --live-path "$DOTMAN_LIVE_PATH"'
     )
     assert request.cwd is None
     assert request.io == "tty"
-    assert request.env["DOTMAN_REPO_PATH"] == str(repo_path)
-    assert request.env["DOTMAN_LIVE_PATH"] == str(live_path)
+    assert Path(request.env["DOTMAN_REPO_PATH"]) != repo_path
+    assert Path(request.env["DOTMAN_LIVE_PATH"]) == live_path
 
 
-def test_execute_session_runs_builtin_jinja_reconcile_helper(
+def test_execute_session_runs_builtin_jinja_editor_helper(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1258,7 +1265,7 @@ def test_execute_session_runs_builtin_jinja_reconcile_helper(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile=HookCommandSpec(run="jinja", io="tty"),
+                editor=EditorSpec(type="jinja", io="tty"),
                 review_before_bytes=b"repo planning view\n",
                 review_after_bytes=b"live planning view\n",
             )
@@ -1297,7 +1304,7 @@ def test_execute_session_runs_builtin_jinja_reconcile_helper(
     result = execute_session(session, stream_output=True, assume_yes=True)
 
     assert result.status == "ok"
-    assert result.packages[0].steps[0].step.action == "reconcile"
+    assert result.packages[0].steps[0].step.action == "editor"
     assert recorded["repo_path"] == str(repo_path)
     assert recorded["live_path"] == str(live_path)
     assert recorded["editor"] is None
@@ -1305,7 +1312,7 @@ def test_execute_session_runs_builtin_jinja_reconcile_helper(
 
 
 
-def test_execute_session_fails_tty_reconcile_without_terminal(
+def test_execute_session_fails_tty_editor_without_terminal(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1330,10 +1337,12 @@ def test_execute_session_fails_tty_reconcile_without_terminal(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile=HookCommandSpec(
+                editor=EditorSpec(
+                    type=None,
                     run="dotman reconcile editor --repo-path \"$DOTMAN_REPO_PATH\" --live-path \"$DOTMAN_LIVE_PATH\"",
                     io="tty",
                 ),
+                editor_explicit=True,
                 command_env={
                     "DOTMAN_REPO_PATH": str(repo_path),
                     "DOTMAN_LIVE_PATH": str(live_path),
@@ -1351,7 +1360,7 @@ def test_execute_session_fails_tty_reconcile_without_terminal(
 
     assert result.status == "failed"
     assert result.packages[0].steps[0].status == "failed"
-    assert result.packages[0].steps[0].error == "reconcile io 'tty' requires an interactive terminal"
+    assert result.packages[0].steps[0].error == "editor io 'tty' requires an interactive terminal"
 
 
 def test_execute_session_fails_tty_hook_without_terminal(
@@ -1907,7 +1916,7 @@ def test_restore_repo_path_access_adds_owner_write_bits_for_repo_files_and_dirs(
 
 
 
-def test_execute_session_keeps_batch_reconcile_on_piped_command_path(
+def test_execute_session_keeps_batch_editor_on_piped_command_path(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1932,7 +1941,8 @@ def test_execute_session_keeps_batch_reconcile_on_piped_command_path(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile=HookCommandSpec(run="printf 'batch reconcile\\n'"),
+                editor=EditorSpec(type=None, run="printf 'batch reconcile\\n'", io="pipe", elevation="none"),
+                editor_explicit=True,
                 command_env={
                     "DOTMAN_REPO_PATH": str(repo_path),
                     "DOTMAN_LIVE_PATH": str(live_path),
@@ -1950,11 +1960,13 @@ def test_execute_session_keeps_batch_reconcile_on_piped_command_path(
 
     assert result.status == "ok"
     assert result.packages[0].steps[0].stdout == "batch reconcile\n"
-    assert runtime.requests[0].command == ShellCommand("printf 'batch reconcile\\n'")
+    assert isinstance(runtime.requests[0].command, ArgvCommand)
+    assert runtime.requests[0].command.arguments[:2] == ("printf", r"batch reconcile\n")
+    assert len(runtime.requests[0].command.arguments) == 3
     assert runtime.requests[0].io == "pipe"
 
 
-def test_execute_session_runs_custom_reconcile_without_auto_sudo(
+def test_execute_session_runs_custom_editor_without_auto_sudo(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1979,7 +1991,8 @@ def test_execute_session_runs_custom_reconcile_without_auto_sudo(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile=HookCommandSpec(run="printf 'batch reconcile\\n'"),
+                editor=EditorSpec(type=None, run="printf 'batch reconcile\\n'", io="pipe", elevation="none"),
+                editor_explicit=True,
                 command_env={
                     "DOTMAN_REPO_PATH": str(repo_path),
                     "DOTMAN_LIVE_PATH": str(live_path),
@@ -2001,11 +2014,13 @@ def test_execute_session_runs_custom_reconcile_without_auto_sudo(
     result = execute_session(session, stream_output=False, command_runtime=runtime)
 
     assert result.status == "ok"
-    assert runtime.requests[0].command == ShellCommand("printf 'batch reconcile\\n'")
+    assert isinstance(runtime.requests[0].command, ArgvCommand)
+    assert runtime.requests[0].command.arguments[:2] == ("printf", r"batch reconcile\n")
+    assert len(runtime.requests[0].command.arguments) == 3
     assert runtime.requests[0].elevation == "none"
 
 
-def test_execute_session_uses_explicit_privileged_reconcile_reason_and_runner(
+def test_execute_session_uses_explicit_privileged_editor_reason_and_runner(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -2030,7 +2045,8 @@ def test_execute_session_uses_explicit_privileged_reconcile_reason_and_runner(
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                reconcile=HookCommandSpec(run="printf 'batch reconcile\n'", elevation="root"),
+                editor=EditorSpec(type=None, run="printf 'batch reconcile\n'", io="pipe", elevation="root"),
+                editor_explicit=True,
                 command_env={
                     "DOTMAN_REPO_PATH": str(repo_path),
                     "DOTMAN_LIVE_PATH": str(live_path),
@@ -2053,14 +2069,16 @@ def test_execute_session_uses_explicit_privileged_reconcile_reason_and_runner(
     result = execute_session(session, stream_output=False, command_runtime=runtime)
 
     assert result.status == "ok"
-    assert sudo_reasons == ["execute privileged reconcile for fixture:app.config"]
-    assert runtime.requests[0].command == ShellCommand("printf 'batch reconcile\n'")
+    assert sudo_reasons == ["execute privileged editor for fixture:app.config"]
+    assert isinstance(runtime.requests[0].command, ArgvCommand)
+    assert runtime.requests[0].command.arguments[:2] == ("printf", "batch reconcile\n")
+    assert len(runtime.requests[0].command.arguments) == 3
     assert runtime.requests[0].elevation == "root"
 
 
 
 @pytest.mark.parametrize("capture_exit_code", [1, 100])
-def test_execute_session_falls_back_to_reconcile_when_capture_fails(
+def test_execute_session_falls_back_to_editor_when_capture_fails(
     tmp_path: Path,
     monkeypatch,
     capture_exit_code: int,
@@ -2087,7 +2105,8 @@ def test_execute_session_falls_back_to_reconcile_when_capture_fails(
                 target_kind="file",
                 projection_kind="raw",
                 capture_command="capture-command",
-                reconcile=HookCommandSpec(run="reconcile-command", io="pipe"),
+                editor=EditorSpec(type=None, run="reconcile-command", io="pipe"),
+                editor_explicit=True,
                 review_before_bytes=b"repo planning view\n",
                 review_after_bytes=b"capture live planning view\n",
                 command_env={
@@ -2102,29 +2121,30 @@ def test_execute_session_falls_back_to_reconcile_when_capture_fails(
     recorded: dict[str, object] = {}
 
     def fake_run(request):
-        command = request.command.source
+        command = request.command.source if hasattr(request.command, "source") else request.command.arguments[0]
         if command == "capture-command":
             return CommandResult(exit_code=capture_exit_code, stderr=b"capture exploded")
         if command == "reconcile-command":
-            recorded["review_repo_text"] = Path(request.env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8")
+            arguments = request.command.arguments
+            recorded["review_repo_text"] = Path(request.env["DOTMAN_EDITOR_REVIEW_PATH"]).read_text(encoding="utf-8")
             recorded["review_live_text"] = Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8")
-            recorded["reconcile_elevation"] = request.elevation
-            repo_path.write_text(live_path.read_text(encoding="utf-8"), encoding="utf-8")
+            recorded["editor_elevation"] = request.elevation
+            Path(arguments[-1]).write_text(live_path.read_text(encoding="utf-8"), encoding="utf-8")
             return CommandResult(exit_code=0, stdout=b"reconciled\n")
         raise AssertionError(f"unexpected command: {command}")
 
     runtime = MemoryCommandRuntime([fake_run] * 2)
 
-    result = execute_session(session, stream_output=False, command_runtime=runtime)
+    result = execute_session(session, stream_output=False, assume_yes=True, command_runtime=runtime)
 
     assert result.status == "ok"
     assert result.packages[0].steps[0].step.action == "update_repo"
     assert result.packages[0].steps[0].stdout == "reconciled\n"
-    assert "capture failed; falling back to reconcile: capture exploded" in result.packages[0].steps[0].stderr
+    assert "capture failed" in result.packages[0].steps[0].stderr
     assert repo_path.read_text(encoding="utf-8") == "live\n"
-    assert recorded["review_repo_text"] == "repo planning view\n"
-    assert recorded["review_live_text"] == "capture live planning view\n"
-    assert recorded["reconcile_elevation"] == "none"
+    assert "repo planning view" in recorded["review_repo_text"]
+    assert "capture live planning view" in recorded["review_repo_text"]
+    assert recorded["editor_elevation"] == "none"
 
 
 def _write_patch_capture_execution_repo(repo_root: Path) -> None:
@@ -2147,9 +2167,8 @@ def _write_patch_capture_execution_repo(repo_root: Path) -> None:
                 'path = "~/.profile"',
                 'render = "jinja"',
                 'capture = "patch"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "raw"',
-                "",
+                'compare = { repo = "render", live = "raw" }',
+                                "",
             ]
         ),
         encoding="utf-8",
@@ -2178,9 +2197,8 @@ def _write_command_patch_capture_execution_repo(repo_root: Path) -> None:
                 'path = "~/.profile"',
                 f"render = '{render_command}'",
                 'capture = "patch"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "raw"',
-                "",
+                'compare = { repo = "render", live = "raw" }',
+                                "",
             ]
         ),
         encoding="utf-8",

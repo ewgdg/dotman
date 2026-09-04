@@ -39,12 +39,12 @@ def test_reconcile_editor_subcommand_invokes_editor_with_transactional_source_co
 
     recorded: dict[str, object] = {}
 
-    def fake_run(command: list[str], check: bool):
+    def fake_run(command: list[str], check: bool, env: dict[str, str]):
         recorded["command"] = command
         recorded["check"] = check
-        review_path = Path(command[1])
-        editable_repo_path = Path(command[2])
-        editable_include_path = Path(command[3])
+        review_path = Path(env["DOTMAN_EDITOR_REVIEW_PATH"])
+        editable_repo_path = Path(command[1])
+        editable_include_path = Path(command[2])
         assert review_path.name == "reconcile-review.md"
         assert review_path.read_text(encoding="utf-8") == "\n".join(
             [
@@ -84,7 +84,9 @@ def test_reconcile_editor_subcommand_invokes_editor_with_transactional_source_co
 
     def run_editor(request):
         assert isinstance(request.command, ArgvCommand)
-        completed = fake_run(list(request.command.arguments), False)
+        assert request.command.arguments[0] == "nvim"
+        assert len(request.command.arguments) == 3
+        completed = fake_run(list(request.command.arguments), False, request.env)
         return CommandResult(exit_code=completed.returncode)
 
     runtime = MemoryCommandRuntime([run_editor])
@@ -110,8 +112,8 @@ def test_reconcile_editor_subcommand_invokes_editor_with_transactional_source_co
     assert recorded["check"] is False
     command = recorded["command"]
     assert command[0] == "nvim"
-    assert Path(command[2]) != repo_path.resolve()
-    assert Path(command[3]) != include_path.resolve()
+    assert Path(command[1]) != repo_path.resolve()
+    assert Path(command[2]) != include_path.resolve()
     assert repo_path.read_text(encoding="utf-8") == "edited repo\n"
     assert include_path.read_text(encoding="utf-8") == "edited include\n"
 

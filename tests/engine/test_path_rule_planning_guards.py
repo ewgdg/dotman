@@ -33,8 +33,8 @@ def _write_directory_package(
         'path = "~/.config/app"',
         *(target_lines or []),
     ]
-    for block in path_rule_blocks:
-        lines.extend(["", "[[targets.config.path_rules]]", *block])
+    for index, block in enumerate(path_rule_blocks, start=1):
+        lines.extend(["", f"[targets.config.path_rules.rule{index}]", *block])
     package_root.joinpath("package.toml").write_text("\n".join([*lines, ""]), encoding="utf-8")
     return source_root
 
@@ -49,9 +49,7 @@ def _guard_rule(*, pattern: str, operation: str, command: str, extra: list[str] 
     return [
         f"pattern = {json.dumps(pattern)}",
         *(extra or []),
-        "",
-        "[targets.config.path_rules.hooks]",
-        f"guard_{operation} = {json.dumps(command)}",
+        f"hooks = {{ guard_{operation} = {json.dumps(command)} }}",
     ]
 
 
@@ -162,12 +160,12 @@ def test_path_rule_activation_excludes_ignored_control_and_skip_marker_paths(
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     repo_root.joinpath("repo.toml").write_text(
-        '[ignore]\nskip_markers = [".dotman-skip"]\n',
+        '[ignore]\ngitignore = ["push"]\nskip_markers = [".dotman-skip"]\n',
         encoding="utf-8",
     )
     source_root = _write_directory_package(
         repo_root,
-        target_lines=["[targets.config.ignore]", 'push = ["ignored.txt"]', 'gitignore = ["push"]'],
+        target_lines=["[targets.config.ignore]", 'patterns = ["ignored.txt"]'],
         path_rule_blocks=[
             _guard_rule(pattern=pattern, operation="push", command=command)
             for pattern in ("keep.txt", "ignored.txt", ".gitignore", "skipped/hidden.txt")

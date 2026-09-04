@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
+from dotman.execution import build_execution_session, execute_session
 from dotman.ignore import list_directory_files, matches_ignore_pattern
 from tests.helpers import single_package_plan, write_single_repo_config
 
@@ -26,7 +27,7 @@ def test_gitignore_style_recursive_directory_patterns_ignore_nested_pycache_file
                 'path = "~/.config/sample"',
                 '',
                 '[targets.config.ignore]',
-                'push = ["**/__pycache__/"]',
+                'patterns = ["**/__pycache__/"]',
                 '',
             ]
         ),
@@ -170,7 +171,7 @@ def test_directory_target_ignore_push_uses_gitignore_semantics_for_nested_pycach
                 'path = "~/.config/sample"',
                 '',
                 '[targets.config.ignore]',
-                'push = ["**/__pycache__/"]',
+                'patterns = ["**/__pycache__/"]',
                 '',
             ]
         ),
@@ -217,7 +218,7 @@ def test_directory_target_ignore_push_preserves_gitignore_style_nested_pycache_f
                 'path = "~/.config/sample"',
                 '',
                 '[targets.config.ignore]',
-                'push = ["**/__pycache__/"]',
+                'patterns = ["**/__pycache__/"]',
                 '',
             ]
         ),
@@ -312,7 +313,7 @@ def test_directory_target_scan_allows_ignored_nested_live_directory_symlink(
                 'path = "~/.config/sample"',
                 '',
                 '[targets.config.ignore]',
-                'push = ["linked/"]',
+                'patterns = ["linked/"]',
                 '',
             ]
         ),
@@ -455,7 +456,7 @@ def test_directory_target_ignore_pull_hides_both_repo_and_live_children_during_p
                 'path = "~/.config/sample"',
                 '',
                 '[targets.config.ignore]',
-                'pull = ["*.local"]',
+                'patterns = ["*.local"]',
                 '',
             ]
         ),
@@ -730,133 +731,6 @@ def test_repo_toml_rejects_invalid_gitignore_values(tmp_path: Path) -> None:
         )
 
 
-def test_target_gitignore_overrides_repo_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "files" / "config").mkdir(parents=True)
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text(
-        "\n".join(["[ignore]", 'gitignore = ["push"]', ""]),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-                "[targets.config.ignore]",
-                'gitignore = ["pull"]',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "sample" / "files" / "config" / "visible.conf").write_text(
-        "visible = true\n", encoding="utf-8"
-    )
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    package = engine.get_repo("fixture").resolve_package("sample")
-    target_spec = package.targets["config"]
-    assert target_spec.gitignore == ("pull",)
-
-
-def test_target_gitignore_empty_explicitly_disables_ignore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "files" / "config").mkdir(parents=True)
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text(
-        "\n".join(["[ignore]", 'gitignore = ["push"]', ""]),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-                "[targets.config.ignore]",
-                'gitignore = []',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    target_root = repo_root / "packages" / "sample" / "files" / "config"
-    (target_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (target_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
-    (target_root / "ignored.log").write_text("still managed\n", encoding="utf-8")
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    package = engine.get_repo("fixture").resolve_package("sample")
-    target_spec = package.targets["config"]
-    assert target_spec.gitignore == ()
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-    assert "ignored.log" in {item.relative_path for item in plan.target_plans[0].directory_items}
-
-
-def test_target_gitignore_absent_inherits_repo_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "files" / "config").mkdir(parents=True)
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text(
-        "\n".join(["[ignore]", 'gitignore = ["push"]', ""]),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "sample" / "files" / "config" / "visible.conf").write_text(
-        "visible = true\n", encoding="utf-8"
-    )
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    package = engine.get_repo("fixture").resolve_package("sample")
-    target_spec = package.targets["config"]
-    assert target_spec.gitignore is None
-
-
 def test_directory_target_applies_gitignore_patterns_during_push(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -876,7 +750,6 @@ def test_directory_target_applies_gitignore_patterns_during_push(tmp_path: Path,
                 'path = "~/.config/sample"',
                 "",
                 "[targets.config.ignore]",
-                'gitignore = ["push"]',
                 "",
             ]
         ),
@@ -886,6 +759,7 @@ def test_directory_target_applies_gitignore_patterns_during_push(tmp_path: Path,
     (source_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
     (source_root / "app.log").write_text("log\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"push\"]\n", encoding="utf-8")
 
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
@@ -921,7 +795,6 @@ def test_directory_target_gitignore_applies_to_both_repo_and_live_scans_during_p
                 'path = "~/.config/sample"',
                 "",
                 "[targets.config.ignore]",
-                'gitignore = ["push"]',
                 "",
             ]
         ),
@@ -930,6 +803,7 @@ def test_directory_target_gitignore_applies_to_both_repo_and_live_scans_during_p
     (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
     (source_root / ".gitignore").write_text("*.local\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"push\"]\n", encoding="utf-8")
 
     live_root = home / ".config" / "sample"
     live_root.mkdir(parents=True)
@@ -968,7 +842,6 @@ def test_directory_target_gitignore_not_applied_for_non_selected_operation(
                 'path = "~/.config/sample"',
                 "",
                 "[targets.config.ignore]",
-                'gitignore = ["push"]',
                 "",
             ]
         ),
@@ -978,6 +851,7 @@ def test_directory_target_gitignore_not_applied_for_non_selected_operation(
     (source_root / ".gitignore").write_text("*.conf\n", encoding="utf-8")
     (source_root / "local.ini").write_text("local\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"push\"]\n", encoding="utf-8")
 
     live_root = home / ".config" / "sample"
     live_root.mkdir(parents=True)
@@ -1018,7 +892,6 @@ def test_directory_target_gitignore_preserves_ignored_pull_children(
                 'path = "~/.config/sample"',
                 "",
                 "[targets.config.ignore]",
-                'gitignore = ["pull"]',
                 "",
             ]
         ),
@@ -1028,6 +901,7 @@ def test_directory_target_gitignore_preserves_ignored_pull_children(
     (source_root / ".gitignore").write_text("*.local\n", encoding="utf-8")
     (source_root / "repo-only.local").write_text("repo local\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"pull\"]\n", encoding="utf-8")
 
     live_root = home / ".config" / "sample"
     live_root.mkdir(parents=True)
@@ -1066,7 +940,6 @@ def test_gitignore_control_files_are_not_reincluded_by_negation(
                 'path = "~/.config/sample"',
                 "",
                 "[targets.config.ignore]",
-                'gitignore = ["push"]',
                 "",
             ]
         ),
@@ -1077,6 +950,7 @@ def test_gitignore_control_files_are_not_reincluded_by_negation(
     (source_root / "nested" / ".gitignore").write_text("*.tmp\n", encoding="utf-8")
     (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"push\"]\n", encoding="utf-8")
 
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
@@ -1111,8 +985,7 @@ def test_explicit_ignore_can_override_gitignore_with_negation(
                 'path = "~/.config/sample"',
                 "",
                 "[targets.config.ignore]",
-                'push = ["!important.log"]',
-                'gitignore = ["push"]',
+                'patterns = ["!important.log"]',
                 "",
             ]
         ),
@@ -1123,6 +996,7 @@ def test_explicit_ignore_can_override_gitignore_with_negation(
     (source_root / "important.log").write_text("important\n", encoding="utf-8")
     (source_root / "trash.log").write_text("trash\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"push\"]\n", encoding="utf-8")
 
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
@@ -1136,3 +1010,109 @@ def test_explicit_ignore_can_override_gitignore_with_negation(
     assert ("visible.conf", "create") in items
     assert ("important.log", "create") in items
     assert not any("trash.log" in ref for ref, _ in items)
+
+
+def test_package_ignore_patterns_are_resolved_and_applied_during_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[ignore]",
+                'patterns = ["*.secret"]',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (source_root / "machine.secret").write_text("secret\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    package = engine.get_repo("fixture").resolve_package("sample")
+    assert package.ignore_patterns == ("*.secret",)
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+    target = plan.target_plans[0]
+    assert [item.relative_path for item in target.directory_items] == ["visible.conf"]
+
+    result = execute_session(
+        build_execution_session([plan], operation="push"),
+        stream_output=False,
+    )
+    assert result.status == "ok"
+    live_root = home / ".config" / "sample"
+    assert (live_root / "visible.conf").read_text(encoding="utf-8") == "visible = true\n"
+    assert not (live_root / "machine.secret").exists()
+
+
+def test_package_gitignore_operations_are_resolved_and_applied_during_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "sample" / "files" / "config"
+    source_root.mkdir(parents=True)
+    (repo_root / "profiles").mkdir()
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        "\n".join(
+            [
+                'id = "sample"',
+                "",
+                "[ignore]",
+                'gitignore = ["push"]',
+                "",
+                "[targets.config]",
+                'source = "files/config"',
+                'path = "~/.config/sample"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
+    (source_root / ".gitignore").write_text("*.local\n", encoding="utf-8")
+    (source_root / "machine.local").write_text("local\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    )
+
+    package = engine.get_repo("fixture").resolve_package("sample")
+    assert package.ignore_patterns is None
+    assert package.gitignore_ops == ("push",)
+
+    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
+    target = plan.target_plans[0]
+    assert [item.relative_path for item in target.directory_items] == ["visible.conf"]
+
+    result = execute_session(
+        build_execution_session([plan], operation="push"),
+        stream_output=False,
+    )
+    assert result.status == "ok"
+    live_root = home / ".config" / "sample"
+    assert (live_root / "visible.conf").read_text(encoding="utf-8") == "visible = true\n"
+    assert not (live_root / "machine.local").exists()

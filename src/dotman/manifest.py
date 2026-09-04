@@ -6,7 +6,7 @@ from dataclasses import MISSING, fields, is_dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from dotman.models import DefaultCommandElevationMode, HookCommandSpec, HookSpec, PackageSpec, TargetPathRule, TargetSpec
+from dotman.models import AdditionalSource, DefaultCommandElevationMode, EditorSpec, HookCommandSpec, HookSpec, PackageSpec, TargetPathRule, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset
 
 
@@ -16,39 +16,18 @@ VALID_ELEVATION_VALUES = ("none", "root", "lease", "broker", "intercept")
 VALID_DEFAULT_COMMAND_ELEVATION_VALUES = ("none", "broker", "intercept")
 VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both", "push-only-delete")
 VALID_TARGET_TYPE_VALUES = ("file", "directory")
+FORCED_COMMAND_PREFIX = "__dotman_command__:"
 TARGET_MANIFEST_KEYS = frozenset(
-    {
-        "capture",
-        "chmod",
-        "disabled",
-        "hooks",
-        "ignore",
-        "path",
-        "path_rules",
-        "preset",
-        "probe",
-        "pull_view_live",
-        "pull_view_repo",
-        "reconcile",
-        "render",
-        "source",
-        "sync_policy",
-        "type",
-    }
+    {"capture", "chmod", "compare", "disabled", "editor", "hooks", "ignore",
+     "path", "path_rules", "preset", "probe", "render", "source", "sync_policy", "type"}
 )
+
 TARGET_PATH_RULE_KEYS = frozenset(
-    {
-        "capture",
-        "chmod",
-        "hooks",
-        "pattern",
-        "preset",
-        "pull_view_live",
-        "pull_view_repo",
-        "render",
-    }
+    {"capture", "chmod", "compare", "editor", "hooks", "pattern", "priority",
+     "preset", "render", "sync_policy"}
 )
-TARGET_IGNORE_KEYS = frozenset({"gitignore", "pull", "push", "shared"})
+
+TARGET_IGNORE_KEYS = frozenset({"patterns"})
 
 
 def validate_supported_keys(
@@ -229,34 +208,6 @@ def _build_command_spec(
     return HookCommandSpec(run=run_value, io=io_value, elevation=elevation_value, run_noop=run_noop_value)
 
 
-def _build_reconcile_spec(
-    *,
-    reconcile_payload: Any,
-    manifest_kind: str,
-    manifest_path: Path,
-    owner_label: str,
-    default_command_elevation: DefaultCommandElevationMode = "none",
-) -> HookCommandSpec | None:
-    if reconcile_payload is None:
-        return None
-    if isinstance(reconcile_payload, str):
-        if reconcile_payload == "jinja":
-            return HookCommandSpec(run=reconcile_payload, io="tty")
-        return HookCommandSpec(run=reconcile_payload, elevation=default_command_elevation)
-    if not isinstance(reconcile_payload, dict):
-        raise ValueError(
-            f"{manifest_kind} {manifest_path} {owner_label} reconcile must be a string or table"
-        )
-    return _build_command_spec(
-        command_payload=reconcile_payload,
-        manifest_kind=manifest_kind,
-        manifest_path=manifest_path,
-        owner_label=owner_label,
-        command_label="reconcile object",
-        default_command_elevation=default_command_elevation,
-    )
-
-
 def normalize_optional_string_enum(value: Any, *, key: str, allowed: tuple[str, ...]) -> str | None:
     if value is None:
         return None
@@ -279,6 +230,95 @@ def normalize_default_command_elevation(value: Any, *, manifest_path: Path) -> D
 
 def normalize_sync_policy(value: Any) -> str | None:
     return normalize_optional_string_enum(value, key="sync_policy", allowed=VALID_SYNC_POLICY_VALUES)
+
+
+def _invalid_octal(value: str) -> bool:
+    try:
+        int(value, 8)
+    except ValueError:
+        return True
+    return False
+
+
+def normalize_projection(value: Any, *, field_name: str, default: str, builtins: tuple[str, ...]) -> str:
+    """Resolve a scalar projection or an explicit {run = ...} command."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        if not value.strip():
+            raise ValueError(f"'{field_name}' must not be empty")
+        return value
+    if isinstance(value, dict):
+        validate_supported_keys(value, supported_keys={"run"}, context=field_name)
+        run = value.get("run")
+        if not isinstance(run, str) or not run.strip():
+            raise ValueError(f"{field_name} command object must define non-empty 'run'")
+        return f"{FORCED_COMMAND_PREFIX}{run}" if run in builtins else run
+    raise ValueError(f"{field_name} must be a string or table containing only 'run'")
+
+
+def normalize_additional_sources(value: Any, *, manifest_path: Path, target_name: str) -> tuple[str, ...]:
+    values = normalize_string_list(value) or ()
+    result: list[str] = []
+    for source in values:
+        normalized = source.replace("\\", "/")
+        path = Path(normalized)
+        if path.is_absolute() or any(part in {"", ".", ".."} for part in normalized.split("/")):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' editor additional_sources must be relative paths within the package")
+        if normalized not in result:
+            result.append(normalized)
+    return tuple(result)
+
+
+def normalize_compare(value: Any, *, manifest_path: Path, target_name: str) -> tuple[str, str]:
+    if value is None:
+        return "raw", "capture"
+    if not isinstance(value, dict):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' compare must be a table")
+    validate_supported_keys(value, supported_keys={"repo", "live"}, context=f"package manifest {manifest_path} target '{target_name}' compare")
+    repo = normalize_projection(value.get("repo"), field_name="compare.repo", default="raw", builtins=("raw", "render"))
+    live = normalize_projection(value.get("live"), field_name="compare.live", default="capture", builtins=("raw", "capture"))
+    return repo, live
+
+
+def normalize_editor(value: Any, *, manifest_path: Path, target_name: str, default_elevation: DefaultCommandElevationMode = "none") -> EditorSpec:
+    if value is None:
+        return EditorSpec()
+    if isinstance(value, str):
+        if not value.strip():
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' editor must not be empty")
+        if value in {"default", "jinja"}:
+            return EditorSpec(type=value)
+        return EditorSpec(type=None, run=value, elevation=default_elevation)
+    if not isinstance(value, dict):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' editor must be a string or table")
+    validate_supported_keys(value, supported_keys={"type", "run", "io", "elevation", "additional_sources"},
+                           context=f"package manifest {manifest_path} target '{target_name}' editor")
+    has_type, has_run = "type" in value, "run" in value
+    if has_type == has_run:
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' editor must define exactly one of 'type' or 'run'")
+    provider_type = value.get("type") if has_type else None
+    if provider_type is not None and (not isinstance(provider_type, str) or provider_type not in {"default", "jinja"}):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' editor type must be 'default' or 'jinja'")
+    run = value.get("run") if has_run else None
+    if run is not None and (not isinstance(run, str) or not run.strip()):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' editor run must be a non-empty string")
+    io = normalize_optional_string_enum(value.get("io"), key="editor.io", allowed=VALID_COMMAND_IO_VALUES) or "tty"
+    elevation = normalize_optional_string_enum(value.get("elevation"), key="editor.elevation", allowed=VALID_ELEVATION_VALUES) or (default_elevation if provider_type is None else "none")
+    if provider_type is not None and elevation != "none":
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' built-in editor cannot request elevation")
+    sources = normalize_additional_sources(value.get("additional_sources"), manifest_path=manifest_path, target_name=target_name)
+    source_entries = tuple(AdditionalSource(path, manifest_path.parent) for path in sources)
+    return EditorSpec(
+        type=provider_type,
+        run=run,
+        io=io,
+        elevation=elevation,
+        additional_sources=sources,
+        additional_source_entries=source_entries,
+        additional_sources_root=manifest_path.parent if sources else None,
+        additional_sources_explicit="additional_sources" in value,
+    )
 
 
 def normalize_target_type(value: Any) -> str | None:
@@ -388,110 +428,118 @@ def normalize_target_path_rules(
     manifest_path: Path,
     target_name: str,
     default_command_elevation: DefaultCommandElevationMode = "none",
+    inherited_render: str = "raw",
+    inherited_capture: str = "raw",
+    inherited_compare_repo: str = "raw",
+    inherited_compare_live: str = "capture",
+    inherited_editor: EditorSpec | None = None,
+    inherited_sync_policy: str | None = None,
 ) -> tuple[TargetPathRule, ...]:
     if value is None:
         return ()
-    if not isinstance(value, list):
-        raise ValueError(
-            f"package manifest {manifest_path} target '{target_name}' path_rules must be a list"
-        )
+    if not isinstance(value, dict):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules must be a table")
     rules: list[TargetPathRule] = []
-    for index, rule_payload in enumerate(value, start=1):
-        if not isinstance(rule_payload, dict):
-            raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}] must be a table"
-            )
-        rule_payload = cast(dict[str, Any], rule_payload)
-        validate_supported_keys(
-            rule_payload,
-            supported_keys=TARGET_PATH_RULE_KEYS,
-            context=f"package manifest {manifest_path} target '{target_name}' path_rules[{index}]",
-        )
-        pattern = rule_payload.get("pattern")
-        if not isinstance(pattern, str) or not pattern.strip():
-            raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pattern must be a non-empty string"
-            )
-        normalized_pattern = pattern.replace("\\", "/")
-        pattern_parts = normalized_pattern.split("/")
-        if normalized_pattern.startswith("/") or any(part == ".." for part in pattern_parts):
-            raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pattern must be relative to the target root"
-            )
+    for name, raw_payload in value.items():
+        if not isinstance(name, str) or not name or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for ch in name):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' path rule names must contain only letters, numbers, '_' or '-'")
+        if not isinstance(raw_payload, dict):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name} must be a table")
+        payload = dict(raw_payload)
+        validate_supported_keys(payload, supported_keys=TARGET_PATH_RULE_KEYS,
+                                context=f"package manifest {manifest_path} target '{target_name}' path_rules.{name}")
         preset_payload: dict[str, Any] = {}
-        preset_name = rule_payload.get("preset")
+        preset_name = payload.get("preset")
         if preset_name is not None:
             if not isinstance(preset_name, str):
-                raise ValueError(
-                    f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].preset must be a string"
-                )
-            preset = get_builtin_target_preset(preset_name)
-            if preset is None:
-                available = ", ".join(sorted(BUILTIN_TARGET_PRESETS))
-                raise ValueError(
-                    f"package manifest {manifest_path} target '{target_name}' path_rules[{index}] uses unknown preset '{preset_name}'; "
-                    f"available presets: {available}"
-                )
-            preset_payload = preset
-        chmod = get_target_value(target_payload=rule_payload, preset_payload=preset_payload, key="chmod")
-        if chmod is not None:
-            if not isinstance(chmod, str):
-                raise ValueError(
-                    f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].chmod must be a string"
-                )
-            try:
-                int(chmod, 8)
-            except ValueError:
-                raise ValueError(
-                    f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].chmod must be an octal string"
-                ) from None
-        render = get_target_value(target_payload=rule_payload, preset_payload=preset_payload, key="render")
-        if render is not None and not isinstance(render, str):
-            raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].render must be a string"
+                raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.preset must be a string")
+            preset_payload = get_builtin_target_preset(preset_name) or {}
+            if not preset_payload:
+                raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name} uses unknown preset '{preset_name}'")
+        def val(key: str, fallback: Any) -> Any:
+            return payload[key] if key in payload else (preset_payload.get(key, fallback))
+        pattern = val("pattern", "")
+        if not isinstance(pattern, str):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.pattern must be a string")
+        if not pattern.strip() and "pattern" in payload:
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.pattern must be a non-empty string")
+        normalized_pattern = pattern.replace("\\", "/")
+        if normalized_pattern.startswith("/") or any(part == ".." for part in normalized_pattern.split("/")):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.pattern must be relative to the target root")
+        priority = val("priority", 0)
+        if not isinstance(priority, int) or isinstance(priority, bool):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.priority must be an integer")
+        render = normalize_projection(val("render", inherited_render), field_name="path rule render", default=inherited_render, builtins=("raw", "jinja"))
+        capture = normalize_projection(val("capture", inherited_capture), field_name="path rule capture", default=inherited_capture, builtins=("raw", "patch"))
+        preset_compare = preset_payload.get("compare")
+        rule_compare = payload.get("compare")
+        if preset_compare is not None and not isinstance(preset_compare, dict):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.preset compare must be a table")
+        if rule_compare is not None and not isinstance(rule_compare, dict):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.compare must be a table")
+        if preset_compare is not None:
+            validate_supported_keys(preset_compare, supported_keys={"repo", "live"},
+                                    context=f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.preset compare")
+        if rule_compare is not None:
+            validate_supported_keys(rule_compare, supported_keys={"repo", "live"},
+                                    context=f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.compare")
+        compare_payload = dict(preset_compare or {})
+        compare_payload.update(rule_compare or {})
+        compare_repo = normalize_projection(compare_payload.get("repo"),
+                                            field_name="path rule compare.repo", default=inherited_compare_repo, builtins=("raw", "render"))
+        compare_live = normalize_projection(compare_payload.get("live"),
+                                            field_name="path rule compare.live", default=inherited_compare_live, builtins=("raw", "capture"))
+        preset_editor_payload = preset_payload.get("editor")
+        rule_editor_payload = payload.get("editor")
+        editor_label = f"{target_name} path_rules.{name}"
+        base_editor = (
+            normalize_editor(
+                preset_editor_payload,
+                manifest_path=manifest_path,
+                target_name=editor_label,
+                default_elevation=default_command_elevation,
             )
-        capture = get_target_value(target_payload=rule_payload, preset_payload=preset_payload, key="capture")
-        if capture is not None and not isinstance(capture, str):
-            raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].capture must be a string"
-            )
-        pull_view_repo = get_target_value(
-            target_payload=rule_payload,
-            preset_payload=preset_payload,
-            key="pull_view_repo",
+            if preset_editor_payload is not None
+            else (inherited_editor or EditorSpec())
         )
-        if pull_view_repo is not None and not isinstance(pull_view_repo, str):
-            raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pull_view_repo must be a string"
+        if rule_editor_payload is None:
+            editor = base_editor
+        else:
+            override_editor = normalize_editor(
+                rule_editor_payload,
+                manifest_path=manifest_path,
+                target_name=editor_label,
+                default_elevation=default_command_elevation,
             )
-        pull_view_live = get_target_value(
-            target_payload=rule_payload,
-            preset_payload=preset_payload,
-            key="pull_view_live",
-        )
-        if pull_view_live is not None and not isinstance(pull_view_live, str):
-            raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' path_rules[{index}].pull_view_live must be a string"
+            # Provider metadata is replaced atomically, while omitted source
+            # declarations retain each inherited entry's original root.
+            editor = _merge_editor_specs(
+                base_editor,
+                override_editor,
+                override_explicit=True,
             )
-        hooks = normalize_path_rule_hooks(
-            rule_payload.get("hooks"),
-            manifest_path=manifest_path,
-            target_name=target_name,
-            rule_index=index,
-            default_command_elevation=default_command_elevation,
-        )
-        rules.append(
-            TargetPathRule(
-                pattern=normalized_pattern,
-                chmod=chmod,
-                render=render,
-                capture=capture,
-                pull_view_repo=pull_view_repo,
-                pull_view_live=pull_view_live,
-                hooks=hooks,
-            )
-        )
-    return tuple(rules)
+        chmod = val("chmod", None)
+        if chmod is not None and (not isinstance(chmod, str) or _invalid_octal(chmod)):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' path_rules.{name}.chmod must be an octal string")
+        sync_policy = normalize_sync_policy(payload.get("sync_policy", inherited_sync_policy))
+        hooks = normalize_path_rule_hooks(payload.get("hooks"), manifest_path=manifest_path, target_name=target_name, rule_index=name,
+                                          default_command_elevation=default_command_elevation)
+        rules.append(TargetPathRule(name=name, pattern=normalized_pattern, priority=priority, chmod=chmod,
+                                    render=render, capture=capture, compare_repo=compare_repo, compare_live=compare_live,
+                                    editor=editor, sync_policy=sync_policy,
+                                    additional_sources=editor.additional_sources,
+                                    additional_source_entries=editor.source_entries(),
+                                    render_explicit=("render" in payload or "render" in preset_payload),
+                                    capture_explicit=("capture" in payload or "capture" in preset_payload),
+                                    compare_repo_explicit=("repo" in compare_payload),
+                                    compare_live_explicit=("live" in compare_payload),
+                                    editor_explicit=("editor" in payload or "editor" in preset_payload),
+                                    priority_explicit=("priority" in payload or "priority" in preset_payload),
+                                    pattern_explicit=("pattern" in payload or "pattern" in preset_payload),
+                                    sync_policy_explicit=("sync_policy" in payload or "sync_policy" in preset_payload),
+                                    hooks=hooks))
+    return tuple(sorted(rules, key=lambda rule: (rule.priority, rule.name)))
+
 
 
 def read_target_ignore_table(
@@ -542,137 +590,113 @@ def build_target_spec(
         validate_target_name(target_name)
     except ValueError as exc:
         raise ValueError(f"package manifest {manifest_path}: {exc}") from None
-    validate_supported_keys(
-        target_payload,
-        supported_keys=TARGET_MANIFEST_KEYS,
-        context=f"package manifest {manifest_path} target '{target_name}'",
-    )
-    preset_payload = resolve_target_preset(
-        target_payload=target_payload,
-        manifest_path=manifest_path,
-        target_name=target_name,
-    )
+    validate_supported_keys(target_payload, supported_keys=TARGET_MANIFEST_KEYS,
+                            context=f"package manifest {manifest_path} target '{target_name}'")
+    preset_payload = resolve_target_preset(target_payload=target_payload, manifest_path=manifest_path, target_name=target_name)
+    def value(key: str, default: Any = None) -> Any:
+        return target_payload[key] if key in target_payload else preset_payload.get(key, default)
+    source = value("source")
+    path = value("path")
+    probe = normalize_probe_command(value("probe"), manifest_path=manifest_path, target_name=target_name)
+    target_type = normalize_target_type(value("type"))
+    sync_policy = normalize_sync_policy(value("sync_policy"))
+    chmod = value("chmod")
+    if chmod is not None and (not isinstance(chmod, str) or _invalid_octal(chmod)):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' chmod must be an octal string")
+    render = normalize_projection(value("render"), field_name="render", default="raw", builtins=("raw", "jinja"))
+    capture = normalize_projection(value("capture"), field_name="capture", default="raw", builtins=("raw", "patch"))
+    # Preset comparison sides are independently inherited: an explicit side
+    # replaces only that side while the other side remains from the preset.
+    preset_compare = preset_payload.get("compare")
+    target_compare = target_payload.get("compare")
+    if preset_compare is not None and not isinstance(preset_compare, dict):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' preset compare must be a table")
+    if target_compare is not None and not isinstance(target_compare, dict):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' compare must be a table")
+    compare_payload = dict(preset_compare or {})
+    compare_payload.update(target_compare or {})
+    compare_payload = compare_payload or None
+    compare_repo, compare_live = normalize_compare(compare_payload, manifest_path=manifest_path, target_name=target_name)
+    preset_editor_payload = preset_payload.get("editor")
+    target_editor_payload = target_payload.get("editor")
+    if target_editor_payload is None:
+        editor = normalize_editor(
+            preset_editor_payload,
+            manifest_path=manifest_path,
+            target_name=target_name,
+            default_elevation=default_command_elevation,
+        )
+    elif isinstance(target_editor_payload, dict) and isinstance(preset_editor_payload, dict):
+        # Provider selection is atomic, while Additional Sources are inherited
+        # independently when the override omits them.
+        merged_editor_payload = dict(target_editor_payload)
+        if (
+            "additional_sources" not in merged_editor_payload
+            and "additional_sources" in preset_editor_payload
+        ):
+            merged_editor_payload["additional_sources"] = preset_editor_payload["additional_sources"]
+        editor = normalize_editor(
+            merged_editor_payload,
+            manifest_path=manifest_path,
+            target_name=target_name,
+            default_elevation=default_command_elevation,
+        )
+    else:
+        editor = normalize_editor(
+            target_editor_payload,
+            manifest_path=manifest_path,
+            target_name=target_name,
+            default_elevation=default_command_elevation,
+        )
+    ignore_payload = read_target_ignore_table(target_payload=target_payload, preset_payload=preset_payload,
+                                              manifest_path=manifest_path, target_name=target_name)
+    patterns = normalize_string_list(ignore_payload.get("patterns")) if ignore_payload is not None else None
     hooks_payload = target_payload.get("hooks")
     hooks = None
-    if isinstance(hooks_payload, dict):
-        unknown_hook_names = sorted(key for key in hooks_payload if key not in {"guard_push", "pre_push", "post_push", "guard_pull", "pre_pull", "post_pull"})
-        if unknown_hook_names:
-            unknown_text = ", ".join(unknown_hook_names)
-            raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' uses unsupported hook names: {unknown_text}"
-            )
-        hooks = {
-            hook_name: build_hook_spec(
-                hook_name=hook_name,
-                hook_payload=hook_value,
-                manifest_path=manifest_path,
-                owner_label=f"target '{target_name}'",
-                default_command_elevation=default_command_elevation,
-            )
-            for hook_name, hook_value in hooks_payload.items()
-        }
-    source = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="source")
-    path = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path")
-    probe = normalize_probe_command(
-        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="probe"),
-        manifest_path=manifest_path,
-        target_name=target_name,
-    )
-    target_type = normalize_target_type(
-        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="type")
-    )
-    sync_policy = normalize_sync_policy(
-        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="sync_policy")
-    )
-    chmod = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="chmod")
-    render = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="render")
-    capture = get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="capture")
-    reconcile = _build_reconcile_spec(
-        reconcile_payload=get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="reconcile"),
-        manifest_kind="package manifest",
-        manifest_path=manifest_path,
-        owner_label=f"target '{target_name}'",
-        default_command_elevation=default_command_elevation,
-    )
-    pull_view_repo = get_target_value(
-        target_payload=target_payload,
-        preset_payload=preset_payload,
-        key="pull_view_repo",
-    )
-    pull_view_live = get_target_value(
-        target_payload=target_payload,
-        preset_payload=preset_payload,
-        key="pull_view_live",
-    )
-    ignore_payload = read_target_ignore_table(
-        target_payload=target_payload,
-        preset_payload=preset_payload,
-        manifest_path=manifest_path,
-        target_name=target_name,
-    )
-    push_ignore = build_target_operation_ignore(
-        ignore_payload=ignore_payload,
-        operation="push",
-    )
-    pull_ignore = build_target_operation_ignore(
-        ignore_payload=ignore_payload,
-        operation="pull",
-    )
-    gitignore = (
-        normalize_gitignore_list(ignore_payload.get("gitignore"))
-        if ignore_payload is not None
-        else None
-    )
-    path_rules = normalize_target_path_rules(
-        get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="path_rules"),
-        manifest_path=manifest_path,
-        target_name=target_name,
-        default_command_elevation=default_command_elevation,
-    )
-    if probe is not None:
-        forbidden_probe_fields = {
-            "source": source,
-            "path": path,
-            "type": target_type,
-            "chmod": chmod,
-            "render": render,
-            "capture": capture,
-            "reconcile": reconcile,
-            "pull_view_repo": pull_view_repo,
-            "pull_view_live": pull_view_live,
-            "push_ignore": push_ignore,
-            "pull_ignore": pull_ignore,
-            "gitignore": gitignore,
-            "path_rules": path_rules or None,
-        }
-        forbidden = sorted(name for name, value in forbidden_probe_fields.items() if value is not None)
-        if forbidden:
-            raise ValueError(
-                f"package manifest {manifest_path} target '{target_name}' uses probe and must not define: "
-                + ", ".join(forbidden)
-            )
-    return TargetSpec(
-        name=target_name,
-        declared_in=manifest_path.parent,
-        source=source,
-        path=path,
-        probe=probe,
-        target_type=target_type,
-        sync_policy=sync_policy,
-        chmod=chmod,
-        render=render,
-        capture=capture,
-        reconcile=reconcile,
-        pull_view_repo=pull_view_repo,
-        pull_view_live=pull_view_live,
-        push_ignore=push_ignore,
-        pull_ignore=pull_ignore,
-        gitignore=gitignore,
-        path_rules=path_rules,
-        hooks=hooks,
-        disabled=bool(get_target_value(target_payload=target_payload, preset_payload=preset_payload, key="disabled") or False),
-    )
+    if hooks_payload is not None:
+        if not isinstance(hooks_payload, dict):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' hooks must be a table")
+        unknown = sorted(key for key in hooks_payload if key not in {"guard_push", "pre_push", "post_push", "guard_pull", "pre_pull", "post_pull"})
+        if unknown:
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' uses unsupported hook names: {', '.join(unknown)}")
+        hooks = {name: build_hook_spec(hook_name=name, hook_payload=payload, manifest_path=manifest_path,
+                                       owner_label=f"target '{target_name}'",
+                                       default_command_elevation=default_command_elevation)
+                 for name, payload in hooks_payload.items()}
+    if capture == "patch":
+        if render == "raw":
+            raise ValueError(f'package manifest {manifest_path} target "{target_name}" capture = "patch" requires non-raw render')
+        if compare_repo != "render" or compare_live != "raw":
+            raise ValueError(f'package manifest {manifest_path} target "{target_name}" capture = "patch" requires compare.repo = "render" and compare.live = "raw"')
 
+    path_rules = normalize_target_path_rules(
+        value("path_rules"), manifest_path=manifest_path, target_name=target_name,
+        default_command_elevation=default_command_elevation, inherited_render=render,
+        inherited_capture=capture, inherited_compare_repo=compare_repo, inherited_compare_live=compare_live,
+        inherited_editor=editor, inherited_sync_policy=sync_policy)
+    if probe is not None:
+        forbidden = sorted(name for name, item in {
+            "source": source, "path": path, "type": target_type, "chmod": chmod,
+            "render": None if render == "raw" else render, "capture": None if capture == "raw" else capture,
+            "compare": compare_payload, "editor": None if editor == EditorSpec() else editor,
+            "ignore": patterns, "path_rules": path_rules or None,
+        }.items() if item is not None)
+        if forbidden:
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' uses probe and must not define: {', '.join(forbidden)}")
+    return TargetSpec(name=target_name, declared_in=manifest_path.parent, source=source, path=path, probe=probe,
+                      target_type=target_type, sync_policy=sync_policy, chmod=chmod, render=render, capture=capture,
+                      editor=editor, compare_repo=compare_repo, compare_live=compare_live,
+                      additional_sources=editor.additional_sources,
+                      additional_source_entries=editor.source_entries(),
+                      additional_sources_root=editor.additional_sources_root,
+                      render_explicit=("render" in target_payload or "render" in preset_payload),
+                      capture_explicit=("capture" in target_payload or "capture" in preset_payload),
+                      compare_repo_explicit=(isinstance(compare_payload, dict) and "repo" in compare_payload) or isinstance(preset_payload.get("compare"), dict) and "repo" in preset_payload["compare"],
+                      compare_live_explicit=(isinstance(compare_payload, dict) and "live" in compare_payload) or isinstance(preset_payload.get("compare"), dict) and "live" in preset_payload["compare"],
+                      editor_explicit=("editor" in target_payload or "editor" in preset_payload),
+                      ignore_patterns=patterns,
+                      path_rules=path_rules, hooks=hooks,
+                      disabled=bool(value("disabled", False)))
 
 def build_hook_spec(
     *,
@@ -780,30 +804,106 @@ def strip_package_extensions(package: PackageSpec) -> PackageSpec:
     return replace(package, extends=None)
 
 
+def _merge_editor_specs(base: EditorSpec, override: EditorSpec, *, override_explicit: bool) -> EditorSpec:
+    if not override_explicit:
+        return base
+    # Provider, I/O, and elevation are one atomic Editor selection. Source
+    # declarations are independent list configuration and inherit unless the
+    # overriding editor explicitly supplies them.
+    return replace(
+        override,
+        additional_sources=(
+            override.additional_sources
+            if override.additional_sources_explicit
+            else base.additional_sources
+        ),
+        additional_source_entries=(
+            override.source_entries()
+            if override.additional_sources_explicit
+            else base.source_entries()
+        ),
+        additional_sources_root=(
+            override.additional_sources_root
+            if override.additional_sources_explicit
+            else base.additional_sources_root
+        ),
+        additional_sources_explicit=(
+            override.additional_sources_explicit or base.additional_sources_explicit
+        ),
+    )
+
+
+def merge_path_rule_specs(base: TargetPathRule, override: TargetPathRule) -> TargetPathRule:
+    editor = _merge_editor_specs(base.editor, override.editor, override_explicit=override.editor_explicit)
+    hooks = dict(base.hooks or {})
+    hooks.update(override.hooks or {})
+    return TargetPathRule(
+        name=override.name, pattern=override.pattern if override.pattern_explicit else base.pattern,
+        priority=override.priority if override.priority_explicit else base.priority,
+        chmod=override.chmod if override.chmod is not None else base.chmod,
+        render=override.render if override.render_explicit else base.render,
+        capture=override.capture if override.capture_explicit else base.capture,
+        compare_repo=override.compare_repo if override.compare_repo_explicit else base.compare_repo,
+        compare_live=override.compare_live if override.compare_live_explicit else base.compare_live,
+        editor=editor, sync_policy=override.sync_policy if override.sync_policy_explicit else base.sync_policy,
+        additional_sources=editor.additional_sources,
+        additional_source_entries=editor.source_entries(),
+        render_explicit=base.render_explicit or override.render_explicit,
+        capture_explicit=base.capture_explicit or override.capture_explicit,
+        compare_repo_explicit=base.compare_repo_explicit or override.compare_repo_explicit,
+        compare_live_explicit=base.compare_live_explicit or override.compare_live_explicit,
+        editor_explicit=base.editor_explicit or override.editor_explicit,
+        priority_explicit=base.priority_explicit or override.priority_explicit,
+        pattern_explicit=base.pattern_explicit or override.pattern_explicit,
+        sync_policy_explicit=base.sync_policy_explicit or override.sync_policy_explicit,
+        hooks=hooks,
+    )
+
+
 def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
     hooks = dict(base.hooks or {})
     hooks.update(override.hooks or {})
+    base_rules = {rule.name: rule for rule in base.path_rules}
+    for rule in override.path_rules:
+        base_rules[rule.name] = merge_path_rule_specs(base_rules[rule.name], rule) if rule.name in base_rules else rule
+    editor = _merge_editor_specs(base.editor, override.editor, override_explicit=override.editor_explicit)
     return TargetSpec(
-        name=override.name,
-        declared_in=override.declared_in,
+        name=override.name, declared_in=override.declared_in,
         source=override.source if override.source is not None else base.source,
         path=override.path if override.path is not None else base.path,
         probe=override.probe if override.probe is not None else base.probe,
         target_type=override.target_type if override.target_type is not None else base.target_type,
         sync_policy=override.sync_policy if override.sync_policy is not None else base.sync_policy,
         chmod=override.chmod if override.chmod is not None else base.chmod,
-        render=override.render if override.render is not None else base.render,
-        capture=override.capture if override.capture is not None else base.capture,
-        reconcile=override.reconcile if override.reconcile is not None else base.reconcile,
-        pull_view_repo=override.pull_view_repo if override.pull_view_repo is not None else base.pull_view_repo,
-        pull_view_live=override.pull_view_live if override.pull_view_live is not None else base.pull_view_live,
-        push_ignore=override.push_ignore if override.push_ignore is not None else base.push_ignore,
-        pull_ignore=override.pull_ignore if override.pull_ignore is not None else base.pull_ignore,
-        gitignore=override.gitignore if override.gitignore is not None else base.gitignore,
-        path_rules=override.path_rules or base.path_rules,
-        hooks=hooks,
-        disabled=override.disabled or base.disabled,
+        render=override.render if override.render_explicit else base.render,
+        capture=override.capture if override.capture_explicit else base.capture,
+        editor=editor,
+        compare_repo=override.compare_repo if override.compare_repo_explicit else base.compare_repo,
+        compare_live=override.compare_live if override.compare_live_explicit else base.compare_live,
+        render_explicit=base.render_explicit or override.render_explicit,
+        capture_explicit=base.capture_explicit or override.capture_explicit,
+        compare_repo_explicit=base.compare_repo_explicit or override.compare_repo_explicit,
+        compare_live_explicit=base.compare_live_explicit or override.compare_live_explicit,
+        editor_explicit=base.editor_explicit or override.editor_explicit,
+        additional_sources=editor.additional_sources,
+        additional_source_entries=editor.source_entries(),
+        additional_sources_root=editor.additional_sources_root,
+        ignore_patterns=override.ignore_patterns if override.ignore_patterns is not None else base.ignore_patterns,
+        gitignore_ops=override.gitignore_ops if override.gitignore_ops is not None else base.gitignore_ops,
+        path_rules=tuple(sorted(base_rules.values(), key=lambda r: (r.priority, r.name))),
+        hooks=hooks, disabled=override.disabled or base.disabled,
     )
+
+
+
+def _validate_resolved_package(package: PackageSpec) -> PackageSpec:
+    for target in (package.targets or {}).values():
+        for rule in target.path_rules:
+            if not rule.pattern.strip():
+                raise ValueError(
+                    f"target '{package.id}:{target.name}' path rule '{rule.name}' must define pattern"
+                )
+    return package
 
 
 def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec:
@@ -823,6 +923,8 @@ def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec
         depends=override.depends if override.depends is not None else base.depends,
         extends=None,
         reserved_paths=override.reserved_paths if override.reserved_paths is not None else base.reserved_paths,
+        ignore_patterns=override.ignore_patterns if override.ignore_patterns is not None else base.ignore_patterns,
+        gitignore_ops=override.gitignore_ops if override.gitignore_ops is not None else base.gitignore_ops,
         vars=deep_merge(base.vars or {}, override.vars or {}),
         targets=targets,
         hooks=hooks,
@@ -965,6 +1067,28 @@ def _append_structured_path(
     default_command_elevation: DefaultCommandElevationMode,
     path: str,
 ) -> Any:
+    # Additional Sources are the one list whose entries carry declaration
+    # provenance. An append in a child package therefore anchors only the new
+    # entries at the child root; inherited entries retain their own roots.
+    if isinstance(value, EditorSpec) and parts == ("additional_sources",):
+        appended = normalize_additional_sources(
+            values,
+            manifest_path=package.package_root / "package.toml",
+            target_name=path,
+        )
+        entries = [*value.source_entries(), *(AdditionalSource(item, package.package_root) for item in appended)]
+        deduped: list[AdditionalSource] = []
+        for entry in entries:
+            if entry not in deduped:
+                deduped.append(entry)
+        return replace(
+            value,
+            additional_sources=tuple(entry.path for entry in deduped),
+            additional_source_entries=tuple(deduped),
+            additional_sources_root=None,
+            additional_sources_explicit=True,
+        )
+
     if not parts:
         return _normalize_append_values(
             value,
@@ -1000,7 +1124,17 @@ def _append_structured_path(
         default_command_elevation=default_command_elevation,
         path=path,
     )
-    return _replace_dataclass_field(value, field_name, replacement, path=path)
+    updated = _replace_dataclass_field(value, field_name, replacement, path=path)
+    # TargetSpec and path rules mirror editor sources for plan/display
+    # consumers; keep those denormalized views synchronized after append.
+    if field_name == "editor" and isinstance(replacement, EditorSpec):
+        updated = replace(
+            updated,
+            additional_sources=replacement.additional_sources,
+            additional_source_entries=replacement.source_entries(),
+            additional_sources_root=replacement.additional_sources_root,
+        )
+    return updated
 
 
 def _iter_append_paths(payload: dict[str, Any], prefix: tuple[str, ...] = ()):

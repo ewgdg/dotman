@@ -73,7 +73,7 @@ This document captures the current repository structure and configuration schema
 - A package may define `sync_policy = "push-only" | "pull-only" | "both" | "push-only-delete"` to gate target participation by operation.
 - `sync_policy` defaults to `both` when omitted.
 - Target-level `sync_policy` overrides the package default for that target.
-- `push-only-delete` means the target participates only in `push`, and `push` removes the live file path while leaving the repo source untouched. For directory targets, it removes live child files except paths matched by `ignore.push`. Use it to retire live files while keeping repo-side sources as fallback/history.
+- `push-only-delete` means the target participates only in `push`, and `push` removes the live file path while leaving the repo source untouched. For directory targets, it removes live child files except paths matched by `ignore.patterns`. Use it to retire live files while keeping repo-side sources as fallback/history.
 - Package inheritance should merge `sync_policy` with last-wins behavior, just like other scalar fields.
 - Target and reserved-path collision rules apply across all resolved package instances, including instances that come from the same `multi_instance` package definition.
 - Keep target reuse explicit by splitting shared logic into smaller packages or using normal `depends`; package dependencies stay package/group-only.
@@ -139,12 +139,12 @@ chmod = "600"
 - For file targets, `chmod` is the source of truth for the installed file mode when present.
 - For directory targets, `chmod` applies to the live directory root only; child files mirror Git semantics and carry only the executable bit, not full permission bits such as `600` vs `644`.
 - Directory targets may define target-level `render` and `capture`; for directory targets these apply as defaults for every child file.
-- Directory targets may define `[[targets.<name>.path_rules]]` for path-scoped child policy. Path rules support `pattern`, `preset`, `chmod`, `render`, `capture`, `pull_view_repo`, `pull_view_live`, and a guard-only `hooks` namespace.
+- Directory targets may define named `[targets.<name>.path_rules.<rule>]` tables for path-scoped child policy. Rule names contain only letters, numbers, `_`, or `-`; optional `priority` orders matches. Path rules support `pattern`, `preset`, `chmod`, `render`, `capture`, `compare.repo`, `compare.live`, and a guard-only `hooks` namespace.
 - Path-rule `pattern` values are relative glob-style patterns under the directory target root. They must not be absolute or contain `..` segments.
 - Path-rule `preset` reuses built-in target presets as defaults for matching child files. Useful example: `preset = "jinja-patch"` applies Jinja render, patch capture, and the required patch-review views for that path rule.
-- Path-rule `render`, `capture`, and pull-view keys override the directory target defaults for matching child files. Rule fields override independently, so a rule with only `capture` keeps the inherited `render`.
-- Child pull views are resolved per child: if `pull_view_live` is omitted, a child with effective `capture` defaults its live view to `capture`; otherwise it defaults to `raw`.
-- `capture = "patch"` is allowed for directory child files when the effective child settings satisfy the same file-like requirements: effective `render`, `pull_view_repo = "render"`, and `pull_view_live = "raw"`.
+- Path-rule `render`, `capture`, `compare`, `editor`, and `sync_policy` keys override the directory target defaults for matching child files. Rule fields override independently, and higher priority wins.
+- Child pull views are resolved per child: if `compare.live` is omitted, a child with effective `capture` defaults its live view to `capture`; otherwise it defaults to `raw`.
+- `capture = "patch"` is allowed for directory child files when the effective child settings satisfy the same file-like requirements: effective `render`, `compare.repo = "render"`, and `compare.live = "raw"`.
 - Path-rule `chmod` values apply during `push` only. `pull` still stores only bytes plus the Git executable bit because Git cannot represent full child file modes such as `600`.
 - If multiple path rules match the same child file, later non-empty scalar policy values win. Matching guards accumulate in declaration order and must all pass.
 - A path-rule guard becomes active when its pattern matches any managed repo-side or live-side candidate path after operation ignores, `.gitignore` control-file exclusions, and skip markers. Shared noop candidates still activate guards.
@@ -158,19 +158,19 @@ Example:
 source = "files/config"
 path = "~/.config/app"
 
-[[targets.config.path_rules]]
+[targets.config.path_rules.secrets]
 pattern = "secrets/*.conf"
 chmod = "600"
 
 [targets.config.path_rules.hooks]
 guard_push = "test -r /run/credentials/app || exit 100"
 
-[[targets.config.path_rules]]
+[targets.config.path_rules.data]
 pattern = "*/data.json"
 render = "json-render-command"
 capture = "json-capture-command"
 
-[[targets.config.path_rules]]
+[targets.config.path_rules.templates]
 pattern = "templates/*.conf"
 preset = "jinja-patch"
 ```
@@ -178,7 +178,7 @@ preset = "jinja-patch"
 - Targets may define `sync_policy` to narrow or widen the package-level operation gate for that target.
 - Use `push-only` for forward-managed targets, `pull-only` for reverse-only targets, `both` for targets that can participate in both operations, and `push-only-delete` for targets whose live file should be removed on push while the repo source is retained.
 - Targets may define `probe` as a side-effect-free planning command instead of file payload fields.
-- A probe target does not define `source`, `path`, `type`, `chmod`, `render`, `capture`, `reconcile`, pull views, ignore rules, or path rules.
+- A probe target does not define `source`, `path`, `type`, `chmod`, `render`, `capture`, `editor`, pull views, ignore rules, or path rules.
 - Probe exit codes are:
   - `0`: active; the target appears in normal selection and makes package/target hooks eligible.
   - `100`: inactive/noop; the target stays out of normal selection and hooks run only if explicitly noop-eligible.
@@ -187,7 +187,7 @@ preset = "jinja-patch"
 - Use `sync_policy = "push-only"` for install/update probes that should run only before push-style setup.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
 - Explicit target keys override preset defaults.
-- Built-in target presets currently include `jinja-editor` for the common Jinja render + reconcile workflow, `jinja-patch` for the current built-in Jinja patch-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.
+- Built-in target presets currently include `jinja-editor` for the common Jinja render + editor workflow, `jinja-patch` for the current built-in Jinja patch-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.
 - Targets may define `render` as a forward transform used during `push`.
 - `render` may be a built-in renderer such as `jinja`, or a non-interactive stdout-producing command string.
 - Built-in renderers are shortcuts for equivalent dotman helper commands; for example, `render = "jinja"` means dotman runs the built-in Jinja renderer as if it had executed `dotman render jinja "$DOTMAN_SOURCE"` **with the current selector/profile context already injected through `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`**.
@@ -196,27 +196,28 @@ preset = "jinja-patch"
 - `capture` should be a non-interactive stdout producer.
 - The reserved value `capture = "patch"` selects the built-in patch helper instead of a shell command.
 - `capture = "patch"` is reserved for automatic patch-first reverse capture of rendered/template file targets, not for arbitrary shell-based stdout capture.
-- Targets may define `reconcile` as the actual reverse-sync action used during `pull`.
-- `reconcile` may be interactive and should receive both repo and live paths.
-- Built-in reconcile helpers are also available; for example, `reconcile = { run = "jinja", io = "tty" }` uses dotman's Jinja-aware editor reconcile flow for static template dependency trees.
-- Targets may define `pull_view_repo` to control how repo-side content is projected during pull planning.
-- Targets may define `pull_view_live` to control how live-side content is projected during pull planning.
-- `pull_view_repo` and `pull_view_live` may use built-in values such as `raw`, `render`, and `capture`, or an explicit script/command string when needed.
+- Targets may define `editor` as the actual reverse-sync action used during `pull`.
+- `editor` may be interactive and should receive both repo and live paths.
+- Built-in editor helpers are also available; for example, `editor = { run = "jinja", io = "tty" }` uses dotman's Jinja-aware editor flow for static template dependency trees.
+- Targets may define `compare.repo` to control how repo-side content is projected during pull planning.
+- Targets may define `compare.live` to control how live-side content is projected during pull planning.
+- `compare.repo` and `compare.live` may use built-in values such as `raw`, `render`, and `capture`, or an explicit script/command string when needed.
 - Default pull planning should compare:
   - repo side: `raw`
   - live side: `capture` if the target defines a capture command, otherwise `raw`
 - A template-style forward-managed target should typically set:
-  - `pull_view_repo = "render"`
-  - `pull_view_live = "raw"`
+  - `compare.repo = "render"`
+  - `compare.live = "raw"`
 - For the current built-in Jinja patch-capture workflow, use:
   - `render = "jinja"`
   - `capture = "patch"`
-  - `pull_view_repo = "render"`
-  - `pull_view_live = "raw"`
-- See [`templates.md`](./templates.md) for a concrete package-manifest setup, including reconcile configuration for template sources with includes.
+  - `compare.repo = "render"`
+  - `compare.live = "raw"`
+- See [`templates.md`](./templates.md) for a concrete package-manifest setup, including editor configuration for template sources with includes.
 - A live-dump-style target should typically keep:
-  - `pull_view_repo = "raw"`
-  - `pull_view_live = "capture"`
+  - `compare.repo = "raw"`
+  - `compare.live = "capture"`
+- Package manifests may define an `[ignore]` table with `patterns = [...]` and `gitignore = ["push", "pull"]`; these settings apply to every directory target in the package. Package patterns apply to both operations, while `gitignore` selects the operations that read repo-source `.gitignore` files.
 - Targets may define an `[targets.<name>.ignore]` table with gitignore-style patterns relative to the directory target root:
   - `push = [...]` is operation-scoped: during `push`, matching repo and live child paths are ignored, so they are not created, updated, chmodded, or deleted.
   - `pull = [...]` is operation-scoped: during `pull`, matching repo and live child paths are ignored, so they are not created, updated, or deleted in the repo.
@@ -235,9 +236,9 @@ preset = "jinja-patch"
 - When `.gitignore` support is enabled for an operation, dotman reads `.gitignore` files from the repo source tree only, not the live tree. Matching repo and live child paths are unmanaged/preserved for that operation, and the `.gitignore` files themselves are treated as control files rather than synced payload. Control files cannot be re-included by `!` negation.
 - `skip_markers` entries are basenames, not patterns. If a scanned directory contains one of these marker names, dotman treats that directory subtree as unmanaged during both `push` and `pull`; marker file contents are ignored.
 - Recommended marker name: `.dotman-skip`. Dotman does not use `.dotmanignore` for this feature.
-- For directory targets, `push` installs everything under the source tree except paths matched by target-level `ignore.push`.
-- For directory targets, `push` also removes stale live paths that are no longer present in the repo source, except paths matched by target-level `ignore.push`.
-- For directory targets, `pull` updates the repo from live paths except paths matched by target-level `ignore.pull`; ignored repo paths are also preserved during pull cleanup.
+- For directory targets, `push` installs everything under the source tree except paths matched by target-level `ignore.patterns`.
+- For directory targets, `push` also removes stale live paths that are no longer present in the repo source, except paths matched by target-level `ignore.patterns`.
+- For directory targets, `pull` updates the repo from live paths except paths matched by target-level `ignore.patterns`; ignored repo paths are also preserved during pull cleanup.
 - For directory-target child files, `push` and `pull` should plan and apply mode changes only when the executable bit differs. Non-executable permission drift such as `600` vs `644` should not trigger an update because Git does not preserve those bits in the repo.
 - For directory-target child files matched by `path_rules` with `chmod`, `push` should also plan and apply exact live chmod drift for those matching paths.
 - If `type` is omitted, dotman should infer the target kind from either side:
@@ -314,7 +315,7 @@ exit 0
 - `run` is required for command objects and must not be empty after trimming.
 - `io` defaults to `pipe`.
 - `elevation` defaults to the repo-level `default_command_elevation`, or `none` when the repo default is omitted.
-- `repo.toml` may set `default_command_elevation = "none" | "broker" | "intercept"`. This applies to repo hooks, package hooks, target hooks, and custom reconcile commands that omit explicit `elevation`.
+- `repo.toml` may set `default_command_elevation = "none" | "broker" | "intercept"`. This applies to repo hooks, package hooks, target hooks, and custom editor commands that omit explicit `elevation`.
 - `default_command_elevation` does not support `root` or `lease`; set those on specific command objects instead.
 - Explicit command metadata wins over the repo default. Use `elevation = "none"` to opt a command out of a repo default.
 - `default_command_elevation = "intercept"` gives every command without explicit `elevation` the temporary `sudo` shim in `PATH`.
@@ -432,41 +433,41 @@ commands = [
 - A target with `render` is implicitly a transformed/template-like target; no separate template flag is needed.
 - `render` is the forward path used during `push`.
 - `capture` is the live-side planning projection used during `pull` when it is a capture command string.
-- Capture is strict: only exit `0` produces bytes. Every non-zero status, including `100`, is a capture failure; configured execution-time reconcile fallback handles it like any other capture failure.
+- Capture is strict: only exit `0` produces bytes. Every non-zero status, including `100`, is a capture failure; configured execution-time editor fallback handles it like any other capture failure.
 - The reserved value `capture = "patch"` selects the built-in reverse-capture helper and is not itself a planning projection.
-- If you use `capture = "patch"`, you must also set `pull_view_repo` and `pull_view_live` explicitly.
+- If you use `capture = "patch"`, you must also set `compare.repo` and `compare.live` explicitly.
 - `capture = "patch"` reprojects the patched repo source through the forward render path and must match the reviewed live bytes exactly.
-- `reconcile` is the reverse action used during `pull`.
-- Directory targets apply `render` and `capture` per child file. Target-level `reconcile` is for file targets; use child `capture` or path rules for directory targets.
+- `editor` is the reverse action used during `pull`.
+- Directory targets apply `render` and `capture` per child file. Target-level `editor` is for file targets; use child `capture` or path rules for directory targets.
 - During pull planning, dotman should compare:
   - repo-side view output against live-side view output
   - default repo-side view: `raw`
   - default live-side view: `capture` if available via a capture command, otherwise `raw`
-- `pull_view_repo` and `pull_view_live` must stay non-interactive and side-effect free.
-- `reconcile` is the explicit reverse workflow. A `reconcile` command may open an editor or otherwise guide manual source reconciliation.
-- Custom `reconcile` commands never auto-escalate through `sudo`; if they need root, set `elevation = "root"` on the reconcile object or request sudo inside the command.
+- `compare.repo` and `compare.live` must stay non-interactive and side-effect free.
+- `editor` is the explicit reverse workflow. An `editor` command may open an editor or otherwise guide manual source reconciliation.
+- Custom `editor` commands never auto-escalate through `sudo`; if they need root, set `elevation = "root"` on the editor object or request sudo inside the command.
 - Hook command `io` controls how that hook command is executed.
   - `pipe`: default behavior; dotman captures and prefixes stdout/stderr like other hook commands.
   - `tty`: run attached to the current terminal and require an interactive tty.
 - Pipe commands normally detach from the controlling terminal so hidden prompts cannot steal input. When `elevation` is not `none`, pipe commands keep the invoking terminal session so sudo timestamps can be reused; stdin still stays closed and stdout/stderr stay captured.
 - Use hook command `io = "tty"` for full-screen editors, password prompts, or other terminal-native tools that would break if dotman piped and prefixed their output.
-- `reconcile.run` is the selected reconcile command and `reconcile.io` controls how it is executed.
+- `editor.run` is the selected editor command and `editor.io` controls how it is executed.
   - `pipe`: default behavior; dotman captures stdout/stderr like other command-backed steps.
   - `tty`: run attached to the current terminal and require an interactive tty.
-- `reconcile.elevation = "root"` runs the reconcile command through dotman's sudo flow.
-- Use `reconcile = { run = "...", io = "tty" }` for full-screen editors or other terminal-native tools that would break if dotman piped and prefixed their output.
-- Dotman may provide helper commands for package-authored `reconcile` workflows; for example, `dotman reconcile editor` can accept repeated `--additional-source` args for multi-source reconcile workflows.
+- `editor.elevation = "root"` runs the editor command through dotman's sudo flow.
+- Use `editor = { run = "...", io = "tty" }` for full-screen editors or other terminal-native tools that would break if dotman piped and prefixed their output.
+- Dotman may provide helper commands for package-authored `editor` workflows; for example, `dotman reconcile editor` can accept repeated `--additional-source` args for multi-source editor workflows.
 - For `dotman reconcile editor`, `--repo-path` is the primary repo-side target source and repeated `--additional-source` args are for extra repo files that should be opened alongside it during reconciliation.
 - `dotman reconcile editor` may receive separate review paths, so the review content can use planning projections while the editor buffers point at temporary transactional copies of the repo-side source files.
-- The preferred contract for reconcile helpers is review-side projections via `DOTMAN_REVIEW_REPO_PATH` and `DOTMAN_REVIEW_LIVE_PATH`.
+- The preferred contract for editor helpers is review-side projections via `DOTMAN_REVIEW_REPO_PATH` and `DOTMAN_REVIEW_LIVE_PATH`.
 - Temporary review artifacts should be readonly, since they are inspection-only scratch files.
-- `dotman reconcile editor` should open the review diff first, and then open temporary editable copies of the repo-side source files.
+- `dotman reconcile editor` receives temporary editable source copies positionally; the readonly review is available through `DOTMAN_EDITOR_REVIEW_PATH`.
 - `dotman reconcile editor` should only write those edited copies back to the repo after the editor exits and the user confirms the write.
 - CLI `--yes` may bypass that write confirmation when a safe default exists, but it does not auto-resolve any selector or profile ambiguity.
-- `reconcile` should run only after the target has already been selected for pull work.
-- If both `capture` and `reconcile` are defined, dotman should use `capture` for pull planning and should attempt the actual pull through `capture` first.
-- If that capture attempt fails, dotman should retry the selected pull step through `reconcile` using the same review projections.
-- If a transformed file target has no `reconcile`, dotman may still pull by writing repo-side content from `capture` alone.
+- `editor` should run only after the target has already been selected for pull work.
+- If both `capture` and `editor` are defined, dotman should use `capture` for pull planning and should attempt the actual pull through `capture` first.
+- If that capture attempt fails, dotman should retry the selected pull step through `editor` using the same review projections.
+- If a transformed file target has no `editor`, dotman may still pull by writing repo-side content from `capture` alone.
 - When `pull` writes repo-side files while dotman is running under `sudo`, dotman should restore ownership of the written repo path back to the invoking user so the repo does not get stranded as root-owned.
 - Live file mode checks should compare against explicit target `chmod` where applicable. Directory-target child-file checks should compare only the Git-tracked executable bit.
 

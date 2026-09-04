@@ -112,7 +112,7 @@ def _write_directory_execution_repo(
 
 
 
-def _write_reconcile_execution_repo(repo_root: Path) -> None:
+def _write_editor_execution_repo(repo_root: Path) -> None:
     package_root = repo_root / "packages" / "app"
     (package_root / "files").mkdir(parents=True)
     (package_root / "hooks").mkdir(parents=True)
@@ -125,7 +125,7 @@ def _write_reconcile_execution_repo(repo_root: Path) -> None:
             [
                 "#!/bin/sh",
                 "set -eu",
-                "printf 'reconcile:%s:%s\\n' \"$DOTMAN_REPO_PATH\" \"$DOTMAN_LIVE_PATH\"",
+                "printf 'editor:%s:%s\\n' \"$DOTMAN_REPO_PATH\" \"$DOTMAN_LIVE_PATH\"",
                 "cp \"$DOTMAN_LIVE_PATH\" \"$DOTMAN_REPO_PATH\"",
                 "",
             ]
@@ -140,7 +140,7 @@ def _write_reconcile_execution_repo(repo_root: Path) -> None:
                 "[targets.config]",
                 'source = "files/config.txt"',
                 'path = "~/.config/app/config.txt"',
-                'reconcile = { run = "sh hooks/reconcile.sh", io = "pipe" }',
+                f'editor = {{ run = "sh {package_root / "hooks" / "reconcile.sh"}", io = "pipe" }}',
                 "",
                 "[hooks]",
                 'guard_pull = "printf \'guard pull\\n\'"',
@@ -153,7 +153,7 @@ def _write_reconcile_execution_repo(repo_root: Path) -> None:
 
 
 
-def _write_reconcile_preview_execution_repo(repo_root: Path) -> None:
+def _write_editor_preview_execution_repo(repo_root: Path) -> None:
     package_root = repo_root / "packages" / "app"
     (package_root / "files").mkdir(parents=True)
     (package_root / "hooks").mkdir(parents=True)
@@ -205,9 +205,8 @@ def _write_reconcile_preview_execution_repo(repo_root: Path) -> None:
                 'path = "~/.config/app/config.txt"',
                 'render = "sh hooks/render.sh"',
                 'capture = "sh hooks/capture.sh"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "capture"',
-                'reconcile = { run = "sh hooks/reconcile.sh", io = "pipe" }',
+                'compare = { repo = "render", live = "raw" }',
+                f'editor = {{ run = "sh {package_root / "hooks" / "reconcile.sh"}", io = "pipe" }}',
                 "",
                 "[hooks]",
                 'guard_pull = "printf \'guard pull\\n\'"',
@@ -219,7 +218,7 @@ def _write_reconcile_preview_execution_repo(repo_root: Path) -> None:
     )
 
 
-def _write_capture_fallback_execution_repo(repo_root: Path) -> None:
+def _write_capture_fallback_editor_execution_repo(repo_root: Path) -> None:
     package_root = repo_root / "packages" / "app"
     (package_root / "files").mkdir(parents=True)
     (package_root / "hooks").mkdir(parents=True)
@@ -272,9 +271,8 @@ def _write_capture_fallback_execution_repo(repo_root: Path) -> None:
                 'path = "~/.config/app/config.txt"',
                 'render = "sh hooks/render.sh"',
                 'capture = "sh hooks/capture.sh"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "raw"',
-                'reconcile = { run = "sh hooks/reconcile.sh", io = "pipe" }',
+                'compare = { repo = "render", live = "raw" }',
+                f'editor = {{ run = "sh {package_root / "hooks" / "reconcile.sh"}", io = "pipe" }}',
                 "",
                 "[hooks]",
                 'guard_pull = "printf \'guard pull\\n\'"',
@@ -426,7 +424,7 @@ def test_push_directory_target_path_rule_applies_child_chmod_on_create(
     _write_directory_execution_repo(
         repo_root,
         path_rules=[
-            "[[targets.config.path_rules]]",
+            "[targets.config.path_rules.rule]",
             'pattern = "nested.txt"',
             'chmod = "600"',
         ],
@@ -454,7 +452,7 @@ def test_push_directory_target_path_rule_repairs_child_chmod_drift(
     _write_directory_execution_repo(
         repo_root,
         path_rules=[
-            "[[targets.config.path_rules]]",
+            "[targets.config.path_rules.rule]",
             'pattern = "nested.txt"',
             'chmod = "600"',
         ],
@@ -512,7 +510,7 @@ def test_push_directory_target_path_rule_render_overrides_default_render(
         repo_root,
         target_config=['render = "sh hooks/default-render.sh"'],
         path_rules=[
-            "[[targets.config.path_rules]]",
+            "[targets.config.path_rules.rule]",
             'pattern = "*.json"',
             'render = "sh hooks/json-render.sh"',
         ],
@@ -582,8 +580,7 @@ def test_pull_directory_target_patch_capture_updates_child_repo_source(
         target_config=[
             'render = "jinja"',
             'capture = "patch"',
-            'pull_view_repo = "render"',
-            'pull_view_live = "raw"',
+            'compare = { repo = "render", live = "raw" }',
         ],
     )
     repo_path = repo_root / "packages" / "app" / "files" / "config" / "nested.txt"
@@ -613,7 +610,7 @@ def test_pull_directory_target_path_rule_capture_overrides_default_capture(
         repo_root,
         target_config=['capture = "sh hooks/default-capture.sh"'],
         path_rules=[
-            "[[targets.config.path_rules]]",
+            "[targets.config.path_rules.rule]",
             'pattern = "*.json"',
             'capture = "sh hooks/json-capture.sh"',
         ],
@@ -1072,7 +1069,7 @@ def test_pull_cli_executes_direct_repo_update_and_emits_json_results(
 
 
 
-def test_pull_cli_uses_reconcile_for_selected_target_execution(
+def test_pull_cli_uses_editor_for_selected_target_execution(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1082,7 +1079,7 @@ def test_pull_cli_uses_reconcile_for_selected_target_execution(
     monkeypatch.setenv("HOME", str(home))
 
     repo_root = tmp_path / "repo"
-    _write_reconcile_execution_repo(repo_root)
+    _write_editor_execution_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     _write_tracked_binding(tmp_path / "state")
 
@@ -1090,21 +1087,22 @@ def test_pull_cli_uses_reconcile_for_selected_target_execution(
     live_path.parent.mkdir(parents=True)
     live_path.write_text("live value\n", encoding="utf-8")
 
-    exit_code = main(["--config", str(config_path), "--json", "pull"])
+    exit_code = main(["--config", str(config_path), "--json", "pull", "--yes"])
 
     assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
+    output = capsys.readouterr().out
+    payload = json.loads(output[output.index("{"):])
     repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
     assert repo_path.read_text(encoding="utf-8") == "live value\n"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "reconcile",
+        "editor",
         "post_pull",
     ]
-    assert payload["packages"][0]["steps"][0]["stdout"].startswith("reconcile:")
+    assert payload["packages"][0]["steps"][0]["stdout"].startswith("editor:")
 
 
 
-def test_pull_cli_prefers_capture_over_reconcile_when_both_are_defined(
+def test_pull_cli_prefers_capture_over_editor_when_both_are_defined(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1114,7 +1112,7 @@ def test_pull_cli_prefers_capture_over_reconcile_when_both_are_defined(
     monkeypatch.setenv("HOME", str(home))
 
     repo_root = tmp_path / "repo"
-    _write_reconcile_preview_execution_repo(repo_root)
+    _write_editor_preview_execution_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     _write_tracked_binding(tmp_path / "state")
 
@@ -1135,7 +1133,7 @@ def test_pull_cli_prefers_capture_over_reconcile_when_both_are_defined(
     assert payload["packages"][0]["steps"][0]["stdout"] == ""
 
 
-def test_pull_cli_falls_back_to_reconcile_when_capture_fails(
+def test_pull_cli_falls_back_to_editor_when_capture_fails(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1145,7 +1143,7 @@ def test_pull_cli_falls_back_to_reconcile_when_capture_fails(
     monkeypatch.setenv("HOME", str(home))
 
     repo_root = tmp_path / "repo"
-    _write_capture_fallback_execution_repo(repo_root)
+    _write_capture_fallback_editor_execution_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     _write_tracked_binding(tmp_path / "state")
 
@@ -1153,10 +1151,11 @@ def test_pull_cli_falls_back_to_reconcile_when_capture_fails(
     live_path.parent.mkdir(parents=True)
     live_path.write_text("raw live value\n", encoding="utf-8")
 
-    exit_code = main(["--config", str(config_path), "--json", "pull"])
+    exit_code = main(["--config", str(config_path), "--json", "pull", "--yes"])
 
     assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
+    output = capsys.readouterr().out
+    payload = json.loads(output[output.index("{"):])
     repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
     assert repo_path.read_text(encoding="utf-8") == "raw live value\n"
     assert [step["action"] for step in payload["packages"][0]["steps"]] == [
@@ -1164,7 +1163,7 @@ def test_pull_cli_falls_back_to_reconcile_when_capture_fails(
         "post_pull",
     ]
     assert payload["packages"][0]["steps"][0]["stdout"] == "review:rendered repo view|raw live value\n"
-    assert "capture failed; falling back to reconcile" in payload["packages"][0]["steps"][0]["stderr"]
+    assert "capture failed" in payload["packages"][0]["steps"][0]["stderr"]
 
 
 def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(

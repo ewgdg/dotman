@@ -28,7 +28,7 @@ from dotman.diff_review import (
     run_review_item_diff,
     run_review_item_edit,
 )
-from dotman.models import DirectoryPlanItem, HookCommandSpec, HookPlan, UiConfig, TargetPlan
+from dotman.models import DirectoryPlanItem, EditorSpec, HookPlan, UiConfig, TargetPlan
 from dotman.ui_context import ui_config_scope
 from tests.helpers import make_package_plan
 
@@ -83,7 +83,7 @@ def test_build_review_items_adds_probe_targets_with_related_hooks() -> None:
     assert review_items[0].hook_command_summaries == ("pre_push: echo target pre",)
 
 
-def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) -> None:
+def test_build_review_items_for_pull_uses_compare_view_bytes(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"
     repo_path.write_text("raw repo\n", encoding="utf-8")
@@ -105,8 +105,8 @@ def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) ->
                 action="update",
                 target_kind="file",
                 projection_kind="raw",
-                review_before_bytes=b"repo planning view\n",
-                review_after_bytes=b"live planning view\n",
+                review_before_bytes=b"repo compare view\n",
+                review_after_bytes=b"live compare view\n",
             )
         ],
     )
@@ -114,13 +114,13 @@ def test_build_review_items_for_pull_uses_planning_view_bytes(tmp_path: Path) ->
     review_items = build_review_items([plan], operation="pull")
 
     assert len(review_items) == 1
-    assert review_items[0].before_bytes == b"repo planning view\n"
-    assert review_items[0].after_bytes == b"live planning view\n"
+    assert review_items[0].before_bytes == b"repo compare view\n"
+    assert review_items[0].after_bytes == b"live compare view\n"
     assert review_items[0].source_path == str(live_path)
     assert review_items[0].destination_path == str(repo_path)
 
 
-def test_build_review_items_for_pull_directory_uses_planning_view_bytes(tmp_path: Path) -> None:
+def test_build_review_items_for_pull_directory_uses_compare_view_bytes(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"
     repo_path.write_text("raw repo\n", encoding="utf-8")
@@ -148,8 +148,8 @@ def test_build_review_items_for_pull_directory_uses_planning_view_bytes(tmp_path
                         action="update",
                         repo_path=repo_path,
                         live_path=live_path,
-                        review_before_bytes=b"repo planning view\n",
-                        review_after_bytes=b"live planning view without secret\n",
+                        review_before_bytes=b"repo compare view\n",
+                        review_after_bytes=b"live compare view without secret\n",
                     ),
                 ),
             )
@@ -159,8 +159,8 @@ def test_build_review_items_for_pull_directory_uses_planning_view_bytes(tmp_path
     review_items = build_review_items([plan], operation="pull")
 
     assert len(review_items) == 1
-    assert review_items[0].before_bytes == b"repo planning view\n"
-    assert review_items[0].after_bytes == b"live planning view without secret\n"
+    assert review_items[0].before_bytes == b"repo compare view\n"
+    assert review_items[0].after_bytes == b"live compare view without secret\n"
 
 
 
@@ -235,7 +235,7 @@ def test_build_review_items_for_pull_directory_create_lazily_loads_capture_view(
                         repo_path=repo_path,
                         live_path=live_path,
                         capture_command="printf 'captured live\\n'",
-                        pull_view_live="capture",
+                        compare_live="capture",
                     ),
                 ),
             )
@@ -279,7 +279,7 @@ def test_build_review_items_for_pull_directory_delete_lazily_loads_render_view(t
                         repo_path=repo_path,
                         live_path=live_path,
                         render_command="printf 'rendered repo\\n'",
-                        pull_view_repo="render",
+                        compare_repo="render",
                     ),
                 ),
             )
@@ -323,7 +323,7 @@ def test_pull_directory_lazy_capture_view_uses_sudo_when_live_read_needs_it(monk
                         repo_path=repo_path,
                         live_path=live_path,
                         capture_command="capture-cmd",
-                        pull_view_live="capture",
+                        compare_live="capture",
                     ),
                 ),
             )
@@ -827,7 +827,7 @@ def test_select_review_pager_command_treats_git_pager_cat_as_disabled(monkeypatc
     assert _select_review_pager_command() is None
 
 
-def test_run_review_item_edit_prefers_pull_reconcile(monkeypatch, tmp_path: Path) -> None:
+def test_run_review_item_edit_prefers_pull_editor(monkeypatch, tmp_path: Path) -> None:
     review_item = ReviewItem(
         selection_label="example:nvim@basic",
         package_id="nvim",
@@ -838,9 +838,10 @@ def test_run_review_item_edit_prefers_pull_reconcile(monkeypatch, tmp_path: Path
         live_path=tmp_path / "live-file",
         source_path="/live-file",
         destination_path="/repo-file",
-        before_bytes=b"repo planning view\n",
-        after_bytes=b"live planning view\n",
-        reconcile=HookCommandSpec(run="sh hooks/reconcile.sh"),
+        before_bytes=b"repo compare view\n",
+        after_bytes=b"live compare view\n",
+        editor=EditorSpec(type=None, run="sh hooks/editor.sh", io="tty"),
+        editor_explicit=True,
         command_cwd=tmp_path,
         command_env={
             "DOTMAN_REPO_PATH": str(tmp_path / "repo-file"),
@@ -852,8 +853,8 @@ def test_run_review_item_edit_prefers_pull_reconcile(monkeypatch, tmp_path: Path
 
     def fake_run(request):
         recorded["request"] = request
-        assert Path(request.env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8") == "repo planning view\n"
-        assert Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8") == "live planning view\n"
+        assert Path(request.env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8") == "repo compare view\n"
+        assert Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8") == "live compare view\n"
         assert Path(request.env["DOTMAN_REVIEW_REPO_PATH"]).stat().st_mode & 0o222 == 0
         assert Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).stat().st_mode & 0o222 == 0
         return CommandResult(exit_code=0)
@@ -863,15 +864,16 @@ def test_run_review_item_edit_prefers_pull_reconcile(monkeypatch, tmp_path: Path
 
     assert exit_code == 0
     request = recorded["request"]
-    assert request.command == ShellCommand("sh hooks/reconcile.sh")
+    assert request.command.arguments[:2] == ("sh", "hooks/editor.sh")
+    assert len(request.command.arguments) == 3
     assert request.io == "tty"
-    assert request.cwd == tmp_path
-    assert request.env["DOTMAN_REPO_PATH"] == str(tmp_path / "repo-file")
-    assert request.env["DOTMAN_LIVE_PATH"] == str(tmp_path / "live-file")
+    assert request.cwd is None
+    assert request.env["DOTMAN_REPO_PATH"] == request.env["DOTMAN_EDITOR_PRIMARY_PATH"]
+    assert request.env["DOTMAN_LIVE_PATH"] == request.env["DOTMAN_REVIEW_LIVE_PATH"]
     assert request.env["DOTMAN_TARGET_NAME"] == "init_lua"
 
 
-def test_run_review_item_edit_runs_builtin_jinja_reconcile(monkeypatch, tmp_path: Path) -> None:
+def test_run_review_item_edit_runs_builtin_jinja_editor(monkeypatch, tmp_path: Path) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"
     repo_path.write_text("{% include 'shared.txt' %}\n", encoding="utf-8")
@@ -887,9 +889,10 @@ def test_run_review_item_edit_runs_builtin_jinja_reconcile(monkeypatch, tmp_path
         live_path=live_path,
         source_path="/live-file",
         destination_path="/repo-file",
-        before_bytes=b"repo planning view\n",
-        after_bytes=b"capture live planning view\n",
-        reconcile=HookCommandSpec(run="jinja", io="tty"),
+        before_bytes=b"repo compare view\n",
+        after_bytes=b"capture live compare view\n",
+        editor=EditorSpec(type="jinja", io="tty"),
+        editor_explicit=True,
         command_env={
             "DOTMAN_REPO_PATH": str(repo_path),
             "DOTMAN_LIVE_PATH": str(live_path),
@@ -912,8 +915,8 @@ def test_run_review_item_edit_runs_builtin_jinja_reconcile(monkeypatch, tmp_path
         recorded["editor"] = editor
         assert review_repo_path is not None
         assert review_live_path is not None
-        assert Path(review_repo_path).read_text(encoding="utf-8") == "repo planning view\n"
-        assert Path(review_live_path).read_text(encoding="utf-8") == "capture live planning view\n"
+        assert Path(review_repo_path).read_text(encoding="utf-8") == "repo compare view\n"
+        assert Path(review_live_path).read_text(encoding="utf-8") == "capture live compare view\n"
         return 0
 
     monkeypatch.setattr("dotman.diff_review.run_jinja_reconcile", fake_run_jinja_reconcile)
@@ -927,7 +930,7 @@ def test_run_review_item_edit_runs_builtin_jinja_reconcile(monkeypatch, tmp_path
 
 
 
-def test_run_review_item_edit_uses_planning_views_for_plain_pull_editor(monkeypatch, tmp_path: Path) -> None:
+def test_run_review_item_edit_uses_compare_views_for_plain_pull_editor(monkeypatch, tmp_path: Path) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"
     repo_path.write_text("raw repo\n", encoding="utf-8")
@@ -942,8 +945,10 @@ def test_run_review_item_edit_uses_planning_views_for_plain_pull_editor(monkeypa
         live_path=live_path,
         source_path="/live-file",
         destination_path="/repo-file",
-        before_bytes=b"repo planning view\n",
-        after_bytes=b"capture live planning view\n",
+        before_bytes=b"repo compare view\n",
+        after_bytes=b"capture live compare view\n",
+        editor=EditorSpec(type="default"),
+        editor_explicit=True,
     )
     recorded: dict[str, object] = {}
 
@@ -956,6 +961,7 @@ def test_run_review_item_edit_uses_planning_views_for_plain_pull_editor(monkeypa
         review_live_path: str | None = None,
         editor: str | None = None,
         assume_yes: bool = False,
+        **kwargs,
     ) -> int:
         recorded["repo_path"] = repo_path
         recorded["live_path"] = live_path
@@ -965,8 +971,8 @@ def test_run_review_item_edit_uses_planning_views_for_plain_pull_editor(monkeypa
         recorded["editor"] = editor
         assert review_repo_path is not None
         assert review_live_path is not None
-        assert Path(review_repo_path).read_text(encoding="utf-8") == "repo planning view\n"
-        assert Path(review_live_path).read_text(encoding="utf-8") == "capture live planning view\n"
+        assert Path(review_repo_path).read_text(encoding="utf-8") == "repo compare view\n"
+        assert Path(review_live_path).read_text(encoding="utf-8") == "capture live compare view\n"
         return 0
 
     monkeypatch.setattr("dotman.diff_review.run_basic_reconcile", fake_run_basic_reconcile)
@@ -980,7 +986,7 @@ def test_run_review_item_edit_uses_planning_views_for_plain_pull_editor(monkeypa
     assert recorded["editor"] is None
 
 
-def test_edit_status_keeps_reconcile_pull_only(tmp_path: Path) -> None:
+def test_edit_status_keeps_editor_pull_only(tmp_path: Path) -> None:
     repo_path = tmp_path / "repo-file"
     live_path = tmp_path / "live-file"
     repo_path.write_text("repo\n", encoding="utf-8")
@@ -996,7 +1002,8 @@ def test_edit_status_keeps_reconcile_pull_only(tmp_path: Path) -> None:
         live_path=live_path,
         source_path=str(repo_path),
         destination_path=str(live_path),
-        reconcile=HookCommandSpec(run="sh hooks/reconcile.sh"),
+        editor=EditorSpec(type=None, run="sh hooks/editor.sh", io="tty"),
+        editor_explicit=True,
     )
     pull_item = ReviewItem(
         selection_label="example:nvim@basic",
@@ -1008,8 +1015,9 @@ def test_edit_status_keeps_reconcile_pull_only(tmp_path: Path) -> None:
         live_path=live_path,
         source_path=str(live_path),
         destination_path=str(repo_path),
-        reconcile=HookCommandSpec(run="sh hooks/reconcile.sh"),
+        editor=EditorSpec(type=None, run="sh hooks/editor.sh", io="tty"),
+        editor_explicit=True,
     )
 
     assert edit_status(push_item) == "editor"
-    assert edit_status(pull_item) == "reconcile"
+    assert edit_status(pull_item) == "editor"

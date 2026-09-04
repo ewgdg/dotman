@@ -217,7 +217,7 @@ Examples:
 - After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
 - After diff review accepts, `pull` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
 - A repo, package, target, or active directory path-rule `guard_pull` that exits `100` omits its scope before pull review and selection while eligible sibling scopes continue planning.
-- The `pull` diff preview should compare planning views, meaning `pull_view_repo` against `pull_view_live`.
+- The `pull` diff preview should compare planning views, meaning `compare.repo` against `compare.live`.
 - The interactive diff review stage should stay inspection-only.
 - Diff review should use `git diff --no-index --color=auto`.
 - Diff review headers should use explicit `repo/...` and `live/...` paths instead of opaque `before-*` or `after-*` temp names.
@@ -236,18 +236,18 @@ Examples:
 - For the current built-in Jinja patch-capture workflow, use:
   - `render = "jinja"`
   - `capture = "patch"`
-  - `pull_view_repo = "render"`
-  - `pull_view_live = "raw"`
-- Capture-style targets should typically keep repo side as `raw` and use `pull_view_live = "capture"`.
-- `pull_view_repo` and `pull_view_live` define those projections explicitly when the defaults are not right.
+  - `compare.repo = "render"`
+  - `compare.live = "raw"`
+- Capture-style targets should typically keep repo side as `raw` and use `compare.live = "capture"`.
+- `compare.repo` and `compare.live` define those projections explicitly when the defaults are not right.
 - Only targets with detected drift should appear in the pull selection menu.
-- `pull_view_repo` and `pull_view_live` must stay non-interactive and side-effect free.
-- A `reconcile` command may be interactive, for example by opening an editor to reconcile repo source files against the current live output.
-- For editor-backed reconcile helpers, dotman should prefer transactional editing: review scratch files stay readonly, editable buffers should be temporary copies, and dotman should ask for confirmation before writing those edits back to repo sources.
-- `reconcile` should only run after the user selects a changed target for pull.
-- If both `capture` and `reconcile` are defined, `capture` should drive planning and dotman should attempt the actual pull through `capture` first.
-- If that capture attempt fails, dotman should retry the selected pull step through `reconcile` using the same review projections.
-- If a transformed target has no `reconcile`, dotman may still pull by writing repo-side content from `capture` alone.
+- `compare.repo` and `compare.live` must stay non-interactive and side-effect free.
+- An `editor` configuration may be interactive, for example by opening an editor to reconcile repo source files against the current live output.
+- For editor-backed reverse-sync helpers, dotman should prefer transactional editing: review scratch files stay readonly, editable buffers should be temporary copies, and dotman should ask for confirmation before writing those edits back to repo sources.
+- `editor` should only run after the user selects a changed target for pull.
+- If both `capture` and `editor` are defined, `capture` should drive planning and dotman should attempt the actual pull through `capture` first.
+- If that capture attempt fails, dotman should retry the selected pull step through `editor` using the same review projections.
+- If a transformed target has no `editor`, dotman may still pull by writing repo-side content from `capture` alone.
 - `pull` should only touch sources owned by the current managed selection.
 - Managed target paths should keep the declared pathname as identity instead of silently following a live symlink to a different path.
 - `pull` may read through a symlinked declared live path, but it should still treat the declared pathname as the managed target identity.
@@ -267,7 +267,7 @@ Examples:
 - `capture patch` reprojects the patched repo file through the forward render path and must match the reviewed live bytes exactly.
 - If that verification fails, `capture patch` exits non-zero; `pull` stops the current package and skips later packages instead of applying an unverified patch.
 - The built-in target helper should reuse the same implementation as `dotman capture patch`.
-- Use `capture = "patch"` for automatic template-style reverse capture when dotman can patch source deterministically and verify the result; use `reconcile` when a human needs to inspect or edit source reconciliation manually.
+- Use `capture = "patch"` for automatic template-style reverse capture when dotman can patch source deterministically and verify the result; use `editor` when a human needs to inspect or edit source reconciliation manually.
 
 ## Restore
 

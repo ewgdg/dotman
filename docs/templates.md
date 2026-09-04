@@ -39,19 +39,19 @@ See [`repository.md`](./repository.md) for template var resolution.
 
 For pull, you usually also want:
 
-- `pull_view_repo = "render"`
-- `pull_view_live = "raw"`
+- `compare.repo = "render"`
+- `compare.live = "raw"`
 - and **either**:
   - `capture` for a non-interactive reverse projection, or
-  - `reconcile` for an interactive workflow
+  - `editor` for an interactive workflow
 
 For the common Jinja editor workflow, you can use the built-in shortcut:
 
-- `reconcile = { run = "jinja", io = "tty" }`
+- `editor = { run = "jinja", io = "tty" }`
 
-`reconcile = { run = "jinja", io = "tty" }` recursively discovers static Jinja template dependencies such as `{% include %}`, `{% extends %}`, `{% import %}`, and `{% from ... import ... %}`, then runs the built-in editor reconcile flow with those files added as extra editable sources.
+`editor = { run = "jinja", io = "tty" }` recursively discovers static Jinja template dependencies such as `{% include %}`, `{% extends %}`, `{% import %}`, and `{% from ... import ... %}`, then runs the built-in editor flow with those files added as extra editable sources.
 
-The string shorthand `reconcile = "jinja"` is also accepted and normalizes to the same tty-backed builtin workflow.
+The string shorthand `editor = "jinja"` is also accepted and normalizes to the same tty-backed builtin workflow.
 
 If you want the whole common bundle as defaults, you can also use:
 
@@ -60,17 +60,17 @@ If you want the whole common bundle as defaults, you can also use:
 That preset supplies default values for:
 
 - `render = "jinja"`
-- `pull_view_repo = "render"`
-- `pull_view_live = "raw"`
-- `reconcile = { run = "jinja", io = "tty" }`
+- `compare.repo = "render"`
+- `compare.live = "raw"`
+- `editor = { run = "jinja", io = "tty" }`
 
 Explicit target keys still win over the preset.
 
-If your template references other files dynamically, use an explicit `reconcile = { run = 'dotman reconcile editor ...', io = 'tty' }` command instead.
+If your template references other files dynamically, use an explicit editor provider and list those files with `additional_sources`.
 
-If `reconcile` opens an editor or otherwise needs a real terminal, set:
+If `editor` opens an editor or otherwise needs a real terminal, set:
 
-- `reconcile = { run = "...", io = "tty" }`
+- `editor = { run = "...", io = "tty" }`
 
 ## Built-In `capture = "patch"`
 
@@ -79,12 +79,12 @@ If `reconcile` opens an editor or otherwise needs a real terminal, set:
 Current built-in presets and CLI examples pair it with file targets that already have the forward render and pull review split configured as:
 
 - `render = "jinja"`
-- `pull_view_repo = "render"`
-- `pull_view_live = "raw"`
+- `compare.repo = "render"`
+- `compare.live = "raw"`
 
 The helper reads the reviewed repo/live projections, patches the raw repo source, reprojects the patched source through the forward render path, and fails unless that projection matches the review live bytes exactly.
 
-Keep this for simple, deterministic template cases where live edits map cleanly back onto one canonical source file. If reverse mapping needs human judgment, use `reconcile`.
+Keep this for simple, deterministic template cases where live edits map cleanly back onto one canonical source file. If reverse mapping needs human judgment, use `editor`.
 
 Use the explicit CLI helper when you want to debug the algorithm directly. Pass the same forward render you configured on the target, plus any template context flags that renderer needs:
 
@@ -108,8 +108,8 @@ That preset supplies default values for:
 
 - `render = "jinja"`
 - `capture = "patch"`
-- `pull_view_repo = "render"`
-- `pull_view_live = "raw"`
+- `compare.repo = "render"`
+- `compare.live = "raw"`
 
 If you want the same patch-first workflow but also want built-in interactive fallback when patch capture fails, use:
 
@@ -117,7 +117,7 @@ If you want the same patch-first workflow but also want built-in interactive fal
 
 That preset supplies the same defaults as `jinja-patch`, plus:
 
-- `reconcile = { run = "jinja", io = "tty" }`
+- `editor = { run = "jinja", io = "tty" }`
 
 ## Example
 
@@ -143,9 +143,9 @@ description = "Shell profile"
 source = "files/profile"
 path = "~/.profile"
 render = "jinja"
-pull_view_repo = "render"
-pull_view_live = "raw"
-reconcile = { run = "jinja", io = "tty" }
+compare.repo = "render"
+compare.live = "raw"
+editor = { run = "jinja", io = "tty" }
 ```
 
 Or, if you want a fully explicit custom editor command:
@@ -158,10 +158,10 @@ description = "Shell profile"
 source = "files/profile"
 path = "~/.profile"
 render = "jinja"
-pull_view_repo = "render"
-pull_view_live = "raw"
+compare.repo = "render"
+compare.live = "raw"
 
-[targets.profile.reconcile]
+[targets.profile.editor]
 run = '''
 dotman reconcile editor \
   --review-repo-path "${DOTMAN_REVIEW_REPO_PATH:-$DOTMAN_REPO_PATH}" \
@@ -204,34 +204,34 @@ export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 - `render = "jinja"`
   - shortcut for the built-in Jinja renderer
   - equivalent command form: `dotman render jinja "$DOTMAN_SOURCE"`
-- `pull_view_repo = "render"`
+- `compare.repo = "render"`
   - pull review compares the rendered repo-side result, not raw source text
-- `pull_view_live = "raw"`
+- `compare.live = "raw"`
   - pull review compares against the actual live file
-- `reconcile = { run = "dotman reconcile editor ...", io = "tty" }`
-  - explicit editor-based reconcile workflow
-- `reconcile = { run = "jinja", io = "tty" }`
-  - shortcut for the built-in Jinja reconcile helper
+- `editor = { run = "...", io = "tty" }`
+  - explicit editor-based reverse-sync workflow
+- `editor = { run = "jinja", io = "tty" }`
+  - shortcut for the built-in Jinja editor helper
   - auto-adds recursively discovered static template dependencies as editable sources
-- `reconcile = { run = "...", io = "tty" }`
+- `editor = { run = "...", io = "tty" }`
   - required for full-screen editor workflows
 - `--additional-source ...`
   - includes extra repo source files that also need to be editable, such as included partials
 
-## When To Use `capture` vs `reconcile`
+## When To Use `capture` vs `editor`
 
 Use `capture` when you can convert the live file back into the canonical repo source **without user interaction**.
 
 Use `capture = "patch"` when dotman can patch the canonical source automatically and verify that the forward projection matches the reviewed live bytes exactly.
 
-Use `reconcile` when a human needs to decide how the live change maps back to one or more template source files.
+Use `editor` when a human needs to decide how the live change maps back to one or more template source files.
 
-If a target defines both `capture` and `reconcile`, dotman now tries `capture` first during pull execution and only falls back to `reconcile` when that capture step errors.
+If a target defines both `capture` and `editor`, dotman now tries `capture` first during pull execution and only falls back to `editor` when that capture step errors.
 
 Typical template target:
 
 - forward path: template source -> rendered live file
-- reverse path: `reconcile`, not blind file copy
+- reverse path: `editor`, not blind file copy
 
 ## Built-In `dotman reconcile editor`
 
@@ -239,7 +239,7 @@ Typical template target:
 
 It is meant for cases where the live file is rendered output, but the repo stores editable source files.
 
-Use it like this inside `reconcile`:
+Use it like this inside `editor`:
 
 ```sh
 dotman reconcile editor \
@@ -254,16 +254,16 @@ Notes:
 
 - `--repo-path` is the main repo source file to edit
 - `--live-path` is the actual live file
-- `DOTMAN_REVIEW_REPO_PATH` is the repo-side file for the editor diff view; it should contain the result of applying `pull_view_repo` to the repo side
-- `DOTMAN_REVIEW_LIVE_PATH` is the live-side file for the editor diff view; it should contain the result of applying `pull_view_live` to the live side
+- `DOTMAN_REVIEW_REPO_PATH` is the repo-side file for the editor diff view; it should contain the result of applying `compare.repo` to the repo side
+- `DOTMAN_REVIEW_LIVE_PATH` is the live-side file for the editor diff view; it should contain the result of applying `compare.live` to the live side
 - `--review-repo-path` and `--review-live-path` tell `dotman reconcile editor` which two files to show in the diff view
 - `--additional-source` adds extra editable source files, usually included partials
 
-If your template uses `{% include %}`, shared fragments, or helper files, add them with `--additional-source`. Otherwise the reconcile flow only edits the top-level source file.
+If your template uses `{% include %}`, shared fragments, or helper files, add them with `--additional-source`. Otherwise the editor flow only edits the top-level source file.
 
-## Built-In `reconcile = { run = "jinja", io = "tty" }` and `dotman reconcile jinja`
+## Built-In `editor = { run = "jinja", io = "tty" }` and `dotman reconcile jinja`
 
-`reconcile = { run = "jinja", io = "tty" }` is the shortcut form for the common Jinja editor reconcile workflow.
+`editor = { run = "jinja", io = "tty" }` is the shortcut form for the common Jinja editor workflow.
 
 It uses the same helper as:
 
@@ -316,12 +316,12 @@ dotman render jinja --profile basic --os linux --var git.user_name='Example User
 
 - No `template = true` flag or separate template target type exists
 - Jinja file rendering is explicit: use `render = "jinja"`, `preset = "jinja-editor"`, `preset = "jinja-patch"`, or `preset = "jinja-patch-editor"`
-- `capture = "patch"` is dotman's automatic reverse-capture helper; in the current built-in Jinja workflow it is paired with `render = "jinja"`, `pull_view_repo = "render"`, and `pull_view_live = "raw"`
-- dotman follows the configured `render`, `pull_view_*`, `capture`, and `reconcile` workflow
+- `capture = "patch"` is dotman's automatic reverse-capture helper; in the current built-in Jinja workflow it is paired with `render = "jinja"`, `compare.repo = "render"`, and `compare.live = "raw"`
+- dotman follows the configured `render`, `compare`, `capture`, and `editor` workflow
 - `.tmpl` is optional naming only
 - If your source uses Jinja `{% include %}`, relative paths resolve from the source file directory
 - For Jinja pull review, use:
-  - `pull_view_repo = "render"`
-  - `pull_view_live = "raw"`
-- For template-style pull execution, use either `capture = "patch"` for automatic source patching or `reconcile` for interactive/manual work
-- If `reconcile` is interactive, set `reconcile = { run = "...", io = "tty" }`
+  - `compare.repo = "render"`
+  - `compare.live = "raw"`
+- For template-style pull execution, use either `capture = "patch"` for automatic source patching or `editor` for interactive/manual work
+- If `editor` is interactive, set `editor = { run = "...", io = "tty" }`

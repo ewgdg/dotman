@@ -3,14 +3,16 @@ from __future__ import annotations
 import difflib
 import os
 import shlex
+import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from dotman.atomic_files import write_text_atomic
-from dotman.command_runtime import ArgvCommand, CommandRequest, current_command_runtime
-from dotman.file_access import read_bytes
+from dotman.command_runtime import ArgvCommand, CommandRequest, CommandResult, ShellCommand, current_command_runtime
+from dotman.file_access import read_bytes, write_bytes_atomic as sudo_write_bytes_atomic
 from dotman.terminal import read_prompt_line
 
 
@@ -26,6 +28,7 @@ class EditableSourceCopy:
     destination_path: Path
     editable_copy_path: Path
     original_text: str
+    original_bytes: bytes = b""
 
 
 def prompt(message: str) -> str:
@@ -42,11 +45,40 @@ def style_text(text: str, *codes: str) -> str:
     return f"\033[{';'.join(codes)}m{text}{ANSI_RESET}"
 
 
+def _resolve_editor_value(editor: str | None) -> str:
+    if editor:
+        return editor
+    for variable in ("VISUAL", "EDITOR", "GIT_EDITOR"):
+        value = os.environ.get(variable)
+        if value:
+            return value
+
+    # Ask Git for its effective editor so core.editor and Git's environment
+    # precedence are handled in one place. Process execution stays behind the
+    # command runtime seam, which is also used by engine and CLI callers.
+    try:
+        result = current_command_runtime().run(
+            CommandRequest(
+                command=ArgvCommand(("git", "config", "--get", "core.editor")),
+                io="pipe",
+                elevation="none",
+            )
+        )
+    except (OSError, ValueError):
+        result = None
+    if result is not None and result.exit_code == 0:
+        value = result.stdout_text.strip()
+        if value:
+            return value
+
+    for candidate in ("sensible-editor", "editor", "nvim", "vim", "vi", "nano"):
+        if shutil.which(candidate) is not None:
+            return candidate
+    raise ValueError("could not resolve an editor")
+
+
 def _resolve_editor_command(editor: str | None) -> list[str]:
-    editor_value = editor or os.environ.get("VISUAL") or os.environ.get("EDITOR")
-    if not editor_value:
-        raise ValueError("reconcile editor requires --editor or $VISUAL/$EDITOR")
-    return shlex.split(editor_value)
+    return shlex.split(_resolve_editor_value(editor))
 
 
 def _normalize_editor_command(editor_command: list[str]) -> list[str]:
@@ -145,17 +177,21 @@ def _write_review_file(
     return review_path
 
 
-def _write_editable_source_copies(*, root: Path, source_paths: list[Path]) -> list[EditableSourceCopy]:
+def _write_editable_source_copies(
+    *, root: Path, source_paths: list[Path], source_bytes: Mapping[Path, bytes] | None = None,
+) -> list[EditableSourceCopy]:
     editable_sources: list[EditableSourceCopy] = []
     for index, source_path in enumerate(source_paths, start=1):
         editable_copy_path = root / f"editable-{index}-{source_path.name}"
-        original_text = _read_text(source_path)
-        editable_copy_path.write_text(original_text, encoding="utf-8")
+        original_bytes = source_bytes[source_path] if source_bytes is not None and source_path in source_bytes else read_bytes(source_path)
+        original_text = original_bytes.decode("utf-8", errors="replace")
+        editable_copy_path.write_bytes(original_bytes)
         editable_sources.append(
             EditableSourceCopy(
                 destination_path=source_path,
                 editable_copy_path=editable_copy_path,
                 original_text=original_text,
+                original_bytes=original_bytes,
             )
         )
     return editable_sources
@@ -165,7 +201,7 @@ def _changed_editable_sources(editable_sources: list[EditableSourceCopy]) -> lis
     return [
         editable_source
         for editable_source in editable_sources
-        if _read_text(editable_source.editable_copy_path) != editable_source.original_text
+        if editable_source.editable_copy_path.read_bytes() != editable_source.original_bytes
     ]
 
 
@@ -200,10 +236,16 @@ def _confirm_reconcile_write(*, changed_sources: list[EditableSourceCopy], assum
 
 def _write_confirmed_sources(changed_sources: list[EditableSourceCopy]) -> None:
     for changed_source in changed_sources:
-        write_text_atomic(
-            changed_source.destination_path,
-            _read_text(changed_source.editable_copy_path),
-        )
+        content = changed_source.editable_copy_path.read_bytes()
+        try:
+            write_text_atomic(
+                changed_source.destination_path,
+                content.decode("utf-8"),
+            )
+        except (PermissionError, UnicodeDecodeError):
+            # Source inputs may be readable only through the elevation broker,
+            # and binary editor inputs must still be copied byte-for-byte.
+            sudo_write_bytes_atomic(changed_source.destination_path, content)
 
 
 def run_basic_reconcile(
@@ -215,9 +257,23 @@ def run_basic_reconcile(
     review_live_path: str | None = None,
     editor: str | None = None,
     assume_yes: bool = False,
-) -> int:
-    resolved_repo_path = _resolve_existing_path(repo_path, label="repo path")
-    resolved_live_path = _resolve_existing_path(live_path, label="live path")
+    source_bytes: Mapping[Path, bytes] | None = None,
+    review_repo_bytes: bytes | None = None,
+    review_live_bytes: bytes | None = None,
+    editor_env: Mapping[str, str] | None = None,
+    editor_io: str = "tty",
+    editor_elevation: str = "none",
+    stream_output: bool = False,
+    return_result: bool = False,
+) -> int | CommandResult:
+    resolved_repo_path = Path(repo_path).expanduser().resolve()
+    if not resolved_repo_path.exists() and (
+        source_bytes is None or resolved_repo_path not in source_bytes
+    ):
+        raise ValueError(f"repo path does not exist: {resolved_repo_path}")
+    resolved_live_path = Path(live_path).expanduser().resolve()
+    if not resolved_live_path.exists() and review_live_bytes is None:
+        raise ValueError(f"live path does not exist: {resolved_live_path}")
     resolved_review_repo_path = (
         _resolve_existing_path(review_repo_path, label="review repo path")
         if review_repo_path is not None
@@ -233,11 +289,22 @@ def run_basic_reconcile(
         for path_value in additional_sources
     ]
 
-    editor_command = _normalize_editor_command(_resolve_editor_command(editor))
+    editor_value = _resolve_editor_value(editor)
+    editor_command = _normalize_editor_command(shlex.split(editor_value))
     source_paths = _dedupe_paths([resolved_repo_path, *resolved_additional_sources])
     with tempfile.TemporaryDirectory(prefix="dotman-reconcile-") as temp_dir:
         temp_root = Path(temp_dir)
-        editable_sources = _write_editable_source_copies(root=temp_root, source_paths=source_paths)
+        editable_sources = _write_editable_source_copies(
+            root=temp_root, source_paths=source_paths, source_bytes=source_bytes,
+        )
+        if review_repo_bytes is not None:
+            resolved_review_repo_path = temp_root / "review-repo"
+            resolved_review_repo_path.write_bytes(review_repo_bytes)
+            resolved_review_repo_path.chmod(0o444)
+        if review_live_bytes is not None:
+            resolved_review_live_path = temp_root / "review-live"
+            resolved_review_live_path.write_bytes(review_live_bytes)
+            resolved_review_live_path.chmod(0o444)
         review_file_path = _write_review_file(
             root=temp_root,
             repo_path=resolved_review_repo_path,
@@ -245,26 +312,52 @@ def run_basic_reconcile(
             editable_sources=editable_sources,
             live_path_sudo_aware=resolved_review_live_path == resolved_live_path,
         )
+        command_env = dict(editor_env or {})
+        command_env.update({
+            "DOTMAN_EDITOR_REVIEW_PATH": str(review_file_path),
+            "DOTMAN_EDITOR_SOURCE_PATH": str(editable_sources[0].editable_copy_path),
+            "DOTMAN_EDITOR_PRIMARY_PATH": str(editable_sources[0].editable_copy_path),
+            "DOTMAN_EDITOR_TRANSACTIONAL_ROOT": str(temp_root),
+            "DOTMAN_EDITOR_ADDITIONAL_SOURCE_PATHS": os.pathsep.join(
+                str(source.editable_copy_path) for source in editable_sources[1:]
+            ),
+            # Existing command helpers use these names; point them at the
+            # staged, readable inputs so an editor cannot mutate managed files.
+            "DOTMAN_REVIEW_REPO_PATH": str(resolved_review_repo_path),
+            "DOTMAN_REVIEW_LIVE_PATH": str(resolved_review_live_path),
+            "DOTMAN_REPO_PATH": str(editable_sources[0].editable_copy_path),
+            "DOTMAN_SOURCE": str(editable_sources[0].editable_copy_path),
+            "DOTMAN_LIVE_PATH": str(resolved_review_live_path),
+        })
+        # Editors receive only editable sources positionally. The review is
+        # intentionally discoverable through DOTMAN_EDITOR_REVIEW_PATH so a
+        # provider cannot accidentally treat the read-only review as writable.
+        positional_paths = [
+            *(str(editable_source.editable_copy_path) for editable_source in editable_sources),
+        ]
+        if "$" in editor_value:
+            command = ShellCommand(
+                editor_value + " " + " ".join(shlex.quote(path) for path in positional_paths)
+            )
+        else:
+            command = ArgvCommand((*editor_command, *positional_paths))
         result = current_command_runtime().run(
             CommandRequest(
-                command=ArgvCommand(
-                    (
-                        *editor_command,
-                        str(review_file_path),
-                        *(str(editable_source.editable_copy_path) for editable_source in editable_sources),
-                    )
-                ),
-                io="tty",
+                command=command,
+                env=command_env,
+                io=editor_io,
+                stream_output=stream_output if editor_io == "pipe" else False,
+                elevation=editor_elevation,
             )
         )
         if result.exit_code != 0:
-            return result.exit_code
+            return result if return_result else result.exit_code
 
         changed_sources = _changed_editable_sources(editable_sources)
         if not changed_sources:
             print("No reconciled repo source changes.")
-            return 0
+            return result if return_result else 0
         if not _confirm_reconcile_write(changed_sources=changed_sources, assume_yes=assume_yes):
-            return 0
+            return result if return_result else 0
         _write_confirmed_sources(changed_sources)
-        return 0
+        return result if return_result else 0
