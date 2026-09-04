@@ -1,0 +1,297 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from dotman.engine import DotmanEngine
+from dotman.models import ResolvedSyncScope
+from tests.helpers import write_named_manager_config, write_tracked_packages_state
+
+
+def _write_repo(repo_root: Path, *, repo_name: str, package_id: str = "app", multi_instance: bool = False) -> None:
+    (repo_root / "profiles").mkdir(parents=True)
+    package_root = repo_root / "packages" / package_id / "files"
+    package_root.mkdir(parents=True)
+    (package_root / "config.conf").write_text("config\n", encoding="utf-8")
+    (package_root / "settings").mkdir()
+    (package_root / "settings" / "nested.conf").write_text("nested\n", encoding="utf-8")
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    binding = 'binding_mode = "multi_instance"\n' if multi_instance else ""
+    (repo_root / "packages" / package_id / "package.toml").write_text(
+        "\n".join(
+            [
+                f'id = "{package_id}"',
+                binding.rstrip(),
+                "",
+                "[targets.config]",
+                'source = "files/config.conf"',
+                f'path = "~/.config/{package_id}/config.conf"',
+                "",
+                "[targets.settings]",
+                'source = "files/settings"',
+                f'path = "~/.config/{package_id}/settings"',
+                'type = "directory"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _engine(tmp_path: Path, repos: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> DotmanEngine:
+    state_home = tmp_path / "state"
+    config_path = write_named_manager_config(tmp_path, repos)
+    # The resolver reads the same manager state location as normal commands.
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    return DotmanEngine.from_config_path(config_path)
+
+
+def test_resolved_sync_scope_accepts_exact_target_and_directory_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "default")])
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope(["main:app.settings/nested.conf"])
+
+    assert isinstance(scope, ResolvedSyncScope)
+    assert [item.canonical for item in scope.targets] == ["main:app.settings/nested.conf"]
+    assert [selection.package_id for selection in scope.package_selections] == ["app"]
+
+
+def test_resolved_sync_scope_expands_dependencies_and_deduplicates_union(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    base_root = repo_root / "packages" / "base" / "files"
+    base_root.mkdir(parents=True)
+    (base_root / "base.conf").write_text("base\n", encoding="utf-8")
+    (repo_root / "packages" / "base" / "package.toml").write_text(
+        '\n'.join(
+            [
+                'id = "base"',
+                "",
+                "[targets.base]",
+                'source = "files/base.conf"',
+                'path = "~/.config/app/base.conf"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    app_manifest = (repo_root / "packages" / "app" / "package.toml").read_text(encoding="utf-8")
+    (repo_root / "packages" / "app" / "package.toml").write_text(
+        'depends = ["base"]\n' + app_manifest,
+        encoding="utf-8",
+    )
+    write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "default")])
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope(["main:app", "main:app.config", "main:app.config"])
+
+    assert scope.selectors == ("main:app", "main:app.config")
+    assert [selection.package_id for selection in scope.package_selections] == ["base", "app"]
+    assert [item.canonical for item in scope.targets] == [
+        "main:base.base",
+        "main:app.config",
+        "main:app.settings",
+    ]
+
+
+def test_resolved_sync_scope_without_inputs_expands_tracked_state_across_repositories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    _write_repo(alpha, repo_name="alpha")
+    _write_repo(beta, repo_name="beta", package_id="other")
+    write_tracked_packages_state(tmp_path / "state", repo_name="alpha", entries=[("app", "default")])
+    write_tracked_packages_state(tmp_path / "state", repo_name="beta", entries=[("other", "default")])
+    engine = _engine(tmp_path, {"alpha": alpha, "beta": beta}, monkeypatch)
+
+    scope = engine.resolve_sync_scope()
+
+    assert [(selection.identity.repo, selection.package_id) for selection in scope.package_selections] == [("alpha", "app"), ("beta", "other")]
+    assert [item.canonical for item in scope.targets] == [
+        "alpha:app.config",
+        "alpha:app.settings",
+        "beta:other.config",
+        "beta:other.settings",
+    ]
+
+
+def test_resolved_sync_scope_rejects_noncanonical_or_group_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    (repo_root / "groups").mkdir()
+    (repo_root / "groups" / "all.toml").write_text('members = ["app"]\n', encoding="utf-8")
+    write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "default")])
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    with pytest.raises(ValueError, match="canonical"):
+        engine.resolve_sync_scope(["app"])
+    with pytest.raises(ValueError, match="group"):
+        engine.resolve_sync_scope(["main:all"])
+    with pytest.raises(ValueError, match="normalized POSIX"):
+        engine.resolve_sync_scope(["main:app.settings/../nested.conf"])
+    with pytest.raises(ValueError, match="directory target"):
+        engine.resolve_sync_scope(["main:app.config/missing.conf"])
+
+
+def test_resolved_sync_scope_accepts_exact_multi_instance_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main", multi_instance=True)
+    (repo_root / "profiles" / "work.toml").write_text("", encoding="utf-8")
+    write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "work")])
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope(["main:app<work>.config"])
+
+    assert scope.targets[0].canonical == "main:app<work>.config"
+    assert scope.package_selections[0].bound_profile == "work"
+
+
+def _write_policy_package(repo_root: Path, package_id: str, policy: str) -> None:
+    package_root = repo_root / "packages" / package_id / "files"
+    package_root.mkdir(parents=True)
+    (package_root / "value.conf").write_text(package_id + "\n", encoding="utf-8")
+    (repo_root / "packages" / package_id / "package.toml").write_text(
+        "\n".join(
+            [
+                f'id = "{package_id}"',
+                f'sync_policy = "{policy}"',
+                "",
+                f"[targets.{package_id}]",
+                'source = "files/value.conf"',
+                f'path = "~/.config/{package_id}.conf"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_resolved_sync_scope_includes_targets_from_any_applicable_direction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    policies = ("push-only", "pull-only", "both", "push-only-delete")
+    for package_id, policy in zip(("push", "pull", "both", "delete"), policies):
+        _write_policy_package(repo_root, package_id, policy)
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="main",
+        entries=[(package_id, "default") for package_id in ("push", "pull", "both", "delete")],
+    )
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope()
+
+    assert {target.package_id for target in scope.targets} == {"push", "pull", "both", "delete"}
+
+
+def test_resolved_sync_scope_uses_explicit_singleton_profile_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "profiles" / "basic.toml").write_text("", encoding="utf-8")
+    (repo_root / "profiles" / "work.toml").write_text("", encoding="utf-8")
+    shared_root = repo_root / "packages" / "shared" / "files"
+    shared_root.mkdir(parents=True)
+    (shared_root / "value.conf").write_text("shared\n", encoding="utf-8")
+    (repo_root / "packages" / "shared" / "package.toml").write_text(
+        'id = "shared"\n\n[targets.shared]\nsource = "files/value.conf"\npath = "~/.config/shared.conf"\n',
+        encoding="utf-8",
+    )
+    meta_root = repo_root / "packages" / "meta"
+    meta_root.mkdir(parents=True)
+    (meta_root / "package.toml").write_text(
+        'id = "meta"\ndepends = ["shared"]\n',
+        encoding="utf-8",
+    )
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="main",
+        entries=[("meta", "basic"), ("shared", "work")],
+    )
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope(["main:meta"])
+
+    assert {selection.package_id for selection in scope.package_selections} == {"meta", "shared"}
+    assert [target.canonical for target in scope.targets] == ["main:shared.shared"]
+
+    shared = [selection for selection in scope.package_selections if selection.package_id == "shared"]
+    assert len(shared) == 1
+    assert shared[0].requested_profile == "work"
+    assert [target.canonical for target in scope.targets] == ["main:shared.shared"]
+    payload = scope.to_dict()
+    assert "tracked_entries" not in payload
+    assert all("owner_identity" not in package for package in payload["packages"])
+
+
+def test_resolved_sync_scope_checks_collisions_outside_requested_selector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    for package_id in ("one", "two"):
+        package_root = repo_root / "packages" / package_id / "files"
+        package_root.mkdir(parents=True)
+        (package_root / "value.conf").write_text(package_id + "\n", encoding="utf-8")
+        (repo_root / "packages" / package_id / "package.toml").write_text(
+            "\n".join(
+                [
+                    f'id = "{package_id}"',
+                    "",
+                    f"[targets.{package_id}]",
+                    'source = "files/value.conf"',
+                    'path = "~/.config/shared.conf"',
+                ]
+            ),
+            encoding="utf-8",
+        )
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="main",
+        entries=[("one", "default"), ("two", "default")],
+    )
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    with pytest.raises(ValueError, match="conflicting"):
+        engine.resolve_sync_scope(["main:one"])
+
+
+def test_resolved_sync_scope_keeps_explicit_ownership_winner_over_dependency_loser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    for package_id in ("winner", "loser"):
+        package_root = repo_root / "packages" / package_id / "files"
+        package_root.mkdir(parents=True)
+        (package_root / "value.conf").write_text(package_id + "\n", encoding="utf-8")
+    (repo_root / "packages" / "winner" / "package.toml").write_text(
+        'id = "winner"\n\n[targets.shared]\nsource = "files/value.conf"\npath = "~/.config/shared.conf"\n',
+        encoding="utf-8",
+    )
+    (repo_root / "packages" / "loser" / "package.toml").write_text(
+        'id = "loser"\nsync_policy = "push-only"\n\n[targets.shared]\nsource = "files/value.conf"\npath = "~/.config/shared.conf"\n',
+        encoding="utf-8",
+    )
+    meta_root = repo_root / "packages" / "meta"
+    meta_root.mkdir(parents=True)
+    (meta_root / "package.toml").write_text(
+        'id = "meta"\ndepends = ["loser"]\n',
+        encoding="utf-8",
+    )
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="main",
+        entries=[("winner", "default"), ("meta", "default")],
+    )
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope()
+
+    assert [target.canonical for target in scope.targets] == ["main:winner.shared"]

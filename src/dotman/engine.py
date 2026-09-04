@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
 
 from dotman.collisions import TrackedTargetOverride
 from dotman.command_runtime import CommandRuntime, current_command_runtime
@@ -10,6 +10,7 @@ from dotman.config import default_state_root, load_manager_config
 from dotman.models import (
     FullSpecSelector,
     ResolvedPackageSelection,
+    ResolvedSyncScope,
     ResolvedSelector,
     SearchMatch,
     SelectorKind,
@@ -28,6 +29,7 @@ from dotman.planning import PlanningContext
 from dotman.projection import ProjectionContext
 from dotman.profiles import rank_profiles
 from dotman.repository import Repository
+from dotman.sync_scope import resolve_sync_scope
 from dotman.tracking import (
     PersistedTrackedPackageEntryRecord,
     TrackedStateContext,
@@ -266,6 +268,10 @@ class DotmanEngine:
             guard_skips=result.guard_skips,
             considered_repo_names=result.considered_repo_names,
         )
+
+    def resolve_sync_scope(self, selectors: Sequence[str] | None = None) -> ResolvedSyncScope:
+        """Resolve exact tracked identities for a future SyncSession."""
+        return resolve_sync_scope(self._planning_context, selectors)
 
     def plan_push_query(self, query_text: str, *, profile: str | None = None, run_noop: bool = False) -> OperationPlan:
         return self._plan_query(
