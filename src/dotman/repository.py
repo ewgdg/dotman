@@ -12,6 +12,7 @@ from dotman.manifest import (
     deep_merge,
     merge_ignore_patterns,
     merge_package_specs,
+    _validate_resolved_package,
     normalize_default_command_elevation,
     normalize_gitignore_list,
     normalize_string_list,
@@ -41,7 +42,7 @@ VALID_HOOK_NAMES = (
     "post_pull",
 )
 REPO_CONFIG_KEYS = frozenset({"default_command_elevation", "hooks", "ignore"})
-REPO_IGNORE_KEYS = frozenset({"gitignore", "pull", "push", "shared", "skip_markers"})
+REPO_IGNORE_KEYS = frozenset({"gitignore", "patterns", "skip_markers"})
 
 
 def normalize_skip_markers(value: Any, *, repo_config_path: Path) -> tuple[str, ...]:
@@ -69,6 +70,7 @@ PACKAGE_MANIFEST_TOP_LEVEL_KEYS = {
     "extends",
     "hooks",
     "id",
+    "ignore",
     "remove",
     "reserved_paths",
     "sync_policy",
@@ -124,21 +126,12 @@ class Repository:
             supported_keys=REPO_IGNORE_KEYS,
             context=f"repo config {repo_config_path} [ignore]",
         )
-        shared_ignore = normalize_string_list(ignore_payload.get("shared")) or ()
+        patterns = normalize_string_list(ignore_payload.get("patterns")) or ()
         gitignore = normalize_gitignore_list(ignore_payload.get("gitignore")) or ()
         return RepoIgnoreDefaults(
-            push=merge_ignore_patterns(
-                normalize_string_list(ignore_payload.get("push")) or (),
-                shared_ignore,
-            ),
-            pull=merge_ignore_patterns(
-                normalize_string_list(ignore_payload.get("pull")) or (),
-                shared_ignore,
-            ),
-            skip_markers=normalize_skip_markers(
-                ignore_payload.get("skip_markers"),
-                repo_config_path=repo_config_path,
-            ),
+            push=patterns,
+            pull=patterns,
+            skip_markers=normalize_skip_markers(ignore_payload.get("skip_markers"), repo_config_path=repo_config_path),
             gitignore=gitignore,
         )
 
@@ -229,6 +222,18 @@ class Repository:
                     )
                     for hook_name, hook_value in hooks_payload.items()
                 }
+            package_ignore_payload = payload.get("ignore")
+            if package_ignore_payload is not None:
+                if not isinstance(package_ignore_payload, dict):
+                    raise ValueError(f"package manifest {manifest_path} ignore must be a table")
+                validate_supported_keys(package_ignore_payload, supported_keys={"gitignore", "patterns"},
+                                        context=f"package manifest {manifest_path} ignore")
+                package_ignore_patterns = normalize_string_list(package_ignore_payload.get("patterns"))
+                package_gitignore_ops = normalize_gitignore_list(package_ignore_payload.get("gitignore"))
+            else:
+                package_ignore_patterns = None
+                package_gitignore_ops = None
+
             packages[package_id] = PackageSpec(
                 id=package_id,
                 package_root=manifest_path.parent,
@@ -238,6 +243,8 @@ class Repository:
                 depends=normalize_string_list(payload.get("depends")),
                 extends=normalize_string_list(payload.get("extends")),
                 reserved_paths=normalize_string_list(payload.get("reserved_paths")),
+                ignore_patterns=package_ignore_patterns,
+                gitignore_ops=package_gitignore_ops,
                 vars=_copy_map(payload.get("vars")) if isinstance(payload.get("vars"), dict) else None,
                 targets=targets,
                 hooks=hooks,
@@ -312,6 +319,9 @@ class Repository:
         return visit(profile_id, ()), lineage
 
     def resolve_package(self, package_id: str) -> PackageSpec:
+        return self._resolve_package(package_id, validate=True)
+
+    def _resolve_package(self, package_id: str, *, validate: bool) -> PackageSpec:
         cached = self._resolved_packages.get(package_id)
         if cached is not None:
             return cached
@@ -320,7 +330,9 @@ class Repository:
         loaded = self.packages[package_id]
         merged: PackageSpec | None = None
         for parent_id in loaded.extends or ():
-            parent_spec = self.resolve_package(parent_id)
+            # A parent may contribute only part of a keyed path rule. Defer
+            # completeness checks until all parents and the child are merged.
+            parent_spec = self._resolve_package(parent_id, validate=False)
             merged = parent_spec if merged is None else merge_package_specs(merged, parent_spec)
         current = strip_package_extensions(loaded)
         merged = current if merged is None else merge_package_specs(merged, current)
@@ -330,7 +342,9 @@ class Repository:
             loaded.append or {},
             default_command_elevation=self.default_command_elevation,
         )
-        self._resolved_packages[package_id] = merged
+        if validate:
+            merged = _validate_resolved_package(merged)
+            self._resolved_packages[package_id] = merged
         return merged
 
     def package_binding_mode(self, package_id: str) -> str:

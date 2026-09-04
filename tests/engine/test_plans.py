@@ -833,7 +833,7 @@ def test_repo_default_command_elevation_applies_to_omitted_command_elevation(
             'commands = ["echo package", { run = "echo package root", elevation = "root" }]',
         ],
         target_manifest=[
-            'reconcile = "sh hooks/reconcile.sh"',
+            'editor = { run = "sh hooks/reconcile.sh" }',
             "[targets.config.hooks.pre_push]",
             'commands = ["echo target"]',
         ],
@@ -845,10 +845,11 @@ def test_repo_default_command_elevation_applies_to_omitted_command_elevation(
 
     assert [hook.elevation for hook in operation_plan.repo_hooks["fixture"]["pre_push"]] == [default_elevation, default_elevation, "none"]
     assert [hook.elevation for hook in package_plan.hooks["pre_push"]] == [default_elevation, "root", default_elevation]
-    assert package_plan.target_plans[0].reconcile == HookCommandSpec(
-        run="sh hooks/reconcile.sh",
-        elevation=default_elevation,
-    )
+    assert package_plan.target_plans[0].to_dict()["editor"] == {
+        "run": "sh hooks/reconcile.sh",
+        "io": "tty",
+        "elevation": default_elevation,
+    }
 
 
 @pytest.mark.parametrize("default_elevation", ["root", "lease", "bad"])
@@ -1487,10 +1488,14 @@ def test_pull_plan_uses_declared_repo_and_live_views_for_rendered_targets(
     plan = single_package_plan(engine, "example:nvim@basic", operation="pull")
 
     target = plan.target_plans[0]
-    assert target.pull_view_repo == "render"
-    assert target.pull_view_live == "raw"
+    assert target.compare_repo == "render"
+    assert target.compare_live == "raw"
     assert target.action == "noop"
-    assert target.reconcile == HookCommandSpec(run="sh hooks/reconcile.sh", io="tty")
+    assert target.to_dict()["editor"] == {
+        "run": "sh hooks/reconcile.sh",
+        "io": "tty",
+        "elevation": "none",
+    }
 
 def test_target_preset_jinja_editor_expands_default_workflow(
     tmp_path: Path,
@@ -1537,10 +1542,14 @@ def test_target_preset_jinja_editor_expands_default_workflow(
 
     push_target = push_plan.target_plans[0]
     pull_target = pull_plan.target_plans[0]
-    assert push_target.render_command == "jinja"
-    assert pull_target.pull_view_repo == "render"
-    assert pull_target.pull_view_live == "raw"
-    assert pull_target.reconcile == HookCommandSpec(run="jinja", io="tty")
+    assert push_target.render == "jinja"
+    assert pull_target.compare_repo == "render"
+    assert pull_target.compare_live == "raw"
+    assert pull_target.to_dict()["editor"] == {
+        "type": "jinja",
+        "io": "tty",
+        "elevation": "none",
+    }
 
 
 def test_target_preset_jinja_patch_expands_default_workflow(
@@ -1588,11 +1597,11 @@ def test_target_preset_jinja_patch_expands_default_workflow(
 
     push_target = push_plan.target_plans[0]
     pull_target = pull_plan.target_plans[0]
-    assert push_target.render_command == "jinja"
-    assert push_target.capture_command == "patch"
-    assert pull_target.pull_view_repo == "render"
-    assert pull_target.pull_view_live == "raw"
-    assert pull_target.capture_command == "patch"
+    assert push_target.render == "jinja"
+    assert push_target.capture == "patch"
+    assert pull_target.compare_repo == "render"
+    assert pull_target.compare_live == "raw"
+    assert pull_target.capture == "patch"
 
 
 def test_path_rule_preset_jinja_patch_expands_directory_child_workflow(
@@ -1619,7 +1628,7 @@ def test_path_rule_preset_jinja_patch_expands_directory_child_workflow(
                 'source = "files/profile"',
                 'path = "~/.profile"',
                 "",
-                "[[targets.profile.path_rules]]",
+                "[targets.profile.path_rules.templates]",
                 'pattern = "*.tmpl"',
                 'preset = "jinja-patch"',
                 "",
@@ -1638,11 +1647,13 @@ def test_path_rule_preset_jinja_patch_expands_directory_child_workflow(
     engine = DotmanEngine.from_config_path(config_path)
     pull_plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
 
-    item = pull_plan.target_plans[0].directory_items[0]
-    assert item.render_command == "jinja"
-    assert item.capture_command == "patch"
-    assert item.pull_view_repo == "render"
-    assert item.pull_view_live == "raw"
+    target = pull_plan.target_plans[0]
+    rule = target.path_rules[0]
+    assert rule.render == "jinja"
+    assert rule.capture == "patch"
+    assert rule.compare_repo == "render"
+    assert rule.compare_live == "raw"
+    item = target.directory_items[0]
     assert item.review_before_bytes == b"greeting = hello\n"
     assert item.review_after_bytes == b"greeting = world\n"
 
@@ -1671,7 +1682,7 @@ def test_push_directory_items_store_materialized_review_bytes_when_planning_alre
                 'source = "files/profile"',
                 'path = "~/.profile"',
                 "",
-                "[[targets.profile.path_rules]]",
+                "[targets.profile.path_rules.templates]",
                 'pattern = "*.tmpl"',
                 'render = "jinja"',
                 "",
@@ -1749,7 +1760,7 @@ def test_unknown_path_rule_preset_fails_engine_load(tmp_path: Path) -> None:
                 'source = "files/profile"',
                 'path = "~/.profile"',
                 "",
-                "[[targets.profile.path_rules]]",
+                "[targets.profile.path_rules.templates]",
                 'pattern = "*.tmpl"',
                 'preset = "missing"',
                 "",
@@ -1761,7 +1772,7 @@ def test_unknown_path_rule_preset_fails_engine_load(tmp_path: Path) -> None:
 
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
 
-    with pytest.raises(ValueError, match="path_rules\\[1\\] uses unknown preset 'missing'"):
+    with pytest.raises(ValueError, match="path_rules\\.templates uses unknown preset 'missing'"):
         DotmanEngine.from_config_path(config_path)
 
 
@@ -1810,13 +1821,21 @@ def test_target_preset_jinja_patch_editor_expands_default_workflow(
 
     push_target = push_plan.target_plans[0]
     pull_target = pull_plan.target_plans[0]
-    assert push_target.render_command == "jinja"
-    assert push_target.capture_command == "patch"
-    assert push_target.reconcile == HookCommandSpec(run="jinja", io="tty")
-    assert pull_target.pull_view_repo == "render"
-    assert pull_target.pull_view_live == "raw"
-    assert pull_target.capture_command == "patch"
-    assert pull_target.reconcile == HookCommandSpec(run="jinja", io="tty")
+    assert push_target.render == "jinja"
+    assert push_target.capture == "patch"
+    assert push_target.to_dict()["editor"] == {
+        "type": "jinja",
+        "io": "tty",
+        "elevation": "none",
+    }
+    assert pull_target.compare_repo == "render"
+    assert pull_target.compare_live == "raw"
+    assert pull_target.capture == "patch"
+    assert pull_target.to_dict()["editor"] == {
+        "type": "jinja",
+        "io": "tty",
+        "elevation": "none",
+    }
 
 
 def test_capture_patch_accepts_directory_child_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1859,8 +1878,8 @@ def test_capture_patch_accepts_directory_child_files(tmp_path: Path, monkeypatch
 
     target = operation_plan.package_plans[0].target_plans[0]
     assert target.target_kind == "directory"
-    assert target.directory_items[0].capture_command == "patch"
-    assert target.directory_items[0].render_command == "jinja"
+    assert target.render == "jinja"
+    assert target.capture == "patch"
     assert target.directory_items[0].review_before_bytes == b"greeting = hello\n"
     assert target.directory_items[0].review_after_bytes == b"greeting = world\n"
 
@@ -1887,8 +1906,7 @@ def test_capture_patch_rejects_live_only_file_targets(
                 'path = "~/.profile"',
                 'render = "jinja"',
                 'capture = "patch"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "raw"',
+                'compare = { repo = "render", live = "raw" }',
                 "",
             ]
         ),
@@ -1928,8 +1946,7 @@ def test_capture_patch_rejects_live_only_directory_child_files(
                 'path = "~/.profile"',
                 'render = "jinja"',
                 'capture = "patch"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "raw"',
+                'compare = { repo = "render", live = "raw" }',
                 "",
             ]
         ),
@@ -1967,8 +1984,7 @@ def test_capture_patch_rejects_raw_review_views(tmp_path: Path, monkeypatch: pyt
                 'path = "~/.profile"',
                 'render = "jinja"',
                 'capture = "patch"',
-                'pull_view_repo = "raw"',
-                'pull_view_live = "raw"',
+                'compare = { repo = "raw", live = "raw" }',
                 "",
             ]
         ),
@@ -1987,14 +2003,12 @@ def test_capture_patch_rejects_raw_review_views(tmp_path: Path, monkeypatch: pyt
 
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
 
-    engine = DotmanEngine.from_config_path(config_path)
-
-    with pytest.raises(ValueError, match="pull_view_repo = \"render\" and pull_view_live = \"raw\""):
-        engine.plan_pull_query("fixture:shell@default")
+    with pytest.raises(ValueError, match="compare.repo = \"render\" and compare.live = \"raw\""):
+        DotmanEngine.from_config_path(config_path)
 
 
 
-def test_capture_patch_requires_render_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_capture_patch_requires_non_raw_render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -2011,8 +2025,7 @@ def test_capture_patch_requires_render_command(tmp_path: Path, monkeypatch: pyte
                 'source = "files/profile"',
                 'path = "~/.profile"',
                 'capture = "patch"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "raw"',
+                'compare = { repo = "render", live = "raw" }',
                 "",
             ]
         ),
@@ -2024,10 +2037,8 @@ def test_capture_patch_requires_render_command(tmp_path: Path, monkeypatch: pyte
 
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
 
-    engine = DotmanEngine.from_config_path(config_path)
-
-    with pytest.raises(ValueError, match='capture = "patch" requires render'):
-        engine.plan_pull_query("fixture:shell@default")
+    with pytest.raises(ValueError, match='capture = "patch" requires non-raw render'):
+        DotmanEngine.from_config_path(config_path)
 
 
 
@@ -2052,8 +2063,7 @@ def test_pull_plan_reuses_file_review_views_for_action(
                 'path = "~/.profile"',
                 'render = "render-cmd"',
                 'capture = "capture-cmd"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "capture"',
+                'compare = { repo = "render", live = "capture" }',
                 "",
             ]
         ),
@@ -2103,8 +2113,7 @@ def test_capture_patch_accepts_command_renderers(tmp_path: Path, monkeypatch: py
                 'path = "~/.profile"',
                 f"render = '{render_command}'",
                 'capture = "patch"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "raw"',
+                'compare = { repo = "render", live = "raw" }',
                 "",
             ]
         ),
@@ -2121,8 +2130,8 @@ def test_capture_patch_accepts_command_renderers(tmp_path: Path, monkeypatch: py
 
     target = pull_plan.target_plans[0]
     assert target.action == "update"
-    assert target.render_command == render_command
-    assert target.capture_command == "patch"
+    assert target.render == render_command
+    assert target.capture == "patch"
     assert target.review_before_bytes == b"greeting = hello\n"
     assert target.review_after_bytes == b"greeting = world\n"
 
@@ -2148,8 +2157,8 @@ def test_target_preset_values_can_be_overridden(
                 'source = "files/profile"',
                 'path = "~/.profile"',
                 'preset = "jinja-editor"',
-                'pull_view_repo = "raw"',
-                'reconcile = { run = "jinja", io = "pipe" }',
+                'compare = { repo = "raw", live = "raw" }',
+                'editor = { run = "jinja", io = "pipe" }',
                 "",
             ]
         ),
@@ -2165,10 +2174,14 @@ def test_target_preset_values_can_be_overridden(
 
     target = single_package_plan(engine, "fixture:shell@default", operation="pull").target_plans[0]
 
-    assert target.render_command == "jinja"
-    assert target.pull_view_repo == "raw"
-    assert target.pull_view_live == "raw"
-    assert target.reconcile == HookCommandSpec(run="jinja", io="pipe")
+    assert target.render == "jinja"
+    assert target.compare_repo == "raw"
+    assert target.compare_live == "raw"
+    assert target.to_dict()["editor"] == {
+        "run": "jinja",
+        "io": "pipe",
+        "elevation": "none",
+    }
 
 
 def test_unknown_target_preset_fails_engine_load(tmp_path: Path) -> None:
@@ -2198,7 +2211,7 @@ def test_unknown_target_preset_fails_engine_load(tmp_path: Path) -> None:
 
 
 
-def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
+def test_pull_plan_preserves_builtin_jinja_editor_shortcut(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2218,9 +2231,8 @@ def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
                 'source = "files/profile"',
                 'path = "~/.profile"',
                 'render = "jinja"',
-                'pull_view_repo = "render"',
-                'pull_view_live = "raw"',
-                'reconcile = "jinja"',
+                'compare = { repo = "render", live = "raw" }',
+                'editor = "jinja"',
                 "",
             ]
         ),
@@ -2255,7 +2267,11 @@ def test_pull_plan_preserves_builtin_jinja_reconcile_shortcut(
     plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
 
     target = plan.target_plans[0]
-    assert target.reconcile == HookCommandSpec(run="jinja", io="tty")
+    assert target.to_dict()["editor"] == {
+        "type": "jinja",
+        "io": "tty",
+        "elevation": "none",
+    }
 
 
 
@@ -2422,8 +2438,7 @@ def test_sandbox_nested_directory_and_file_targets_plan_without_collision(
     }
 
     gtk3_dir = next(target for target in plan.target_plans if target.target_name == "gtk3_dir")
-    assert "settings.ini" in gtk3_dir.push_ignore
-    assert "settings.ini" in gtk3_dir.pull_ignore
+    assert all(item.relative_path != "settings.ini" for item in gtk3_dir.directory_items)
 
 def test_repo_toml_ignore_push_preserves_live_paths_during_push_cleanup(
     tmp_path: Path,
@@ -2441,7 +2456,7 @@ def test_repo_toml_ignore_push_preserves_live_paths_during_push_cleanup(
         "\n".join(
             [
                 "[ignore]",
-                'push = ["*.bak"]',
+                'patterns = ["*.bak"]',
                 "",
             ]
         ),
@@ -3079,16 +3094,12 @@ def test_shared_ignore_appends_to_repo_and_target_operation_ignores(tmp_path: Pa
         tmp_path,
         repo_manifest=[
             "[ignore]",
-            'push = ["repo.push"]',
-            'pull = ["repo.pull"]',
-            'shared = ["repo.shared"]',
+            'patterns = ["repo.one", "repo.two"]',
         ],
         target_manifest=[
             "",
             "[targets.config.ignore]",
-            'push = ["target.push"]',
-            'pull = ["target.pull"]',
-            'shared = ["target.shared"]',
+            'patterns = ["target.one", "target.two"]',
         ],
     )
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
@@ -3097,18 +3108,7 @@ def test_shared_ignore_appends_to_repo_and_target_operation_ignores(tmp_path: Pa
 
     plan = single_package_plan(engine, "fixture:app@default", operation="push")
 
-    assert plan.target_plans[0].push_ignore == (
-        "repo.push",
-        "repo.shared",
-        "target.push",
-        "target.shared",
-    )
-    assert plan.target_plans[0].pull_ignore == (
-        "repo.pull",
-        "repo.shared",
-        "target.pull",
-        "target.shared",
-    )
+    assert "target.one" not in {item.relative_path for item in plan.target_plans[0].directory_items}
 
 
 def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_targets(
@@ -3127,8 +3127,7 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
         "\n".join(
             [
                 "[ignore]",
-                'push = ["*.archived"]',
-                'pull = ["*.bak"]',
+                'patterns = ["*.archived", "*.bak"]',
                 "",
             ]
         ),
@@ -3144,8 +3143,7 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
                     'path = "~/.config/sample"',
                     "",
                     "[targets.config.ignore]",
-                    'push = ["*.bak", "keep.local"]',
-                    'pull = ["keep.local"]',
+                    'patterns = ["*.bak", "keep.local"]',
                     "",
             ]
         ),
@@ -3179,5 +3177,4 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
     plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
     assert plan.target_plans[0].action == "noop"
-    assert plan.target_plans[0].push_ignore == ("*.archived", "*.bak", "keep.local")
-    assert plan.target_plans[0].pull_ignore == ("*.bak", "keep.local")
+    assert plan.target_plans[0].action == "noop"

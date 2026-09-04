@@ -6,21 +6,7 @@ source = "files/config/sunshine"
 path = "~/.config/sunshine"
 
 [targets.config.ignore]
-push = [
-  "__pycache__/",
-  "tests/*",
-  "sunshine-*.conf",
-  "sunshine.conf",
-]
-pull = [
-  "__pycache__/",
-  "tests/*",
-  "sunshine-*.conf",
-  "sunshine.conf",
-  "credentials/*",
-  "sunshine.log",
-  "*state.json",
-]
+patterns = ["__pycache__/", "tests/*", "sunshine-*.conf", "sunshine.conf", "credentials/*", "sunshine.log", "*state.json"]
 
 [targets.selected_config]
 source = "files/config/sunshine/sunshine-{{ desktop }}.conf"

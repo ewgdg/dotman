@@ -6,6 +6,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, TypeAlias, overload
 
 
+def _serialized_projection(value: str) -> str | dict[str, str]:
+    prefix = "__dotman_command__:"
+    if value.startswith(prefix):
+        return {"run": value[len(prefix):]}
+    return value
+
+
 def package_ref_text(*, package_id: str, bound_profile: str | None = None) -> str:
     if bound_profile is None:
         return package_id
@@ -64,23 +71,77 @@ class ManagerConfig:
 
 
 @dataclass(frozen=True)
+class AdditionalSource:
+    """An editor input path and the package root that declared it."""
+
+    path: str
+    root: Path | None = None
+
+    def to_dict(self) -> str:
+        # Configuration and plan output intentionally expose user paths, not
+        # internal absolute provenance roots.
+        return self.path
+
+
+@dataclass(frozen=True)
+class EditorSpec:
+    """Resolved Proposal Editor provider configuration."""
+    type: str | None = "default"
+    run: str | None = None
+    io: HookCommandIO = "tty"
+    elevation: ElevationMode = "none"
+    additional_sources: tuple[str, ...] = ()
+    # Per-entry provenance survives inheritance and append operations.
+    additional_source_entries: tuple[AdditionalSource, ...] = field(default=(), repr=False, compare=False)
+    # Kept only for callers constructing an EditorSpec directly. Parsed entries
+    # always carry their own root.
+    additional_sources_root: Path | None = field(default=None, repr=False, compare=False)
+    additional_sources_explicit: bool = field(default=False, repr=False, compare=False)
+
+    def source_entries(self) -> tuple[AdditionalSource, ...]:
+        if self.additional_source_entries:
+            return self.additional_source_entries
+        return tuple(AdditionalSource(path, self.additional_sources_root) for path in self.additional_sources)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = ({"type": self.type} if self.type is not None else {"run": self.run})
+        payload.update({"io": self.io, "elevation": self.elevation})
+        if self.additional_sources:
+            payload["additional_sources"] = list(self.additional_sources)
+        return payload
+
+
+@dataclass(frozen=True)
 class TargetPathRule:
     pattern: str
+    name: str = ""
+    priority: int = 0
     chmod: str | None = None
-    render: str | None = None
-    capture: str | None = None
-    pull_view_repo: str | None = None
-    pull_view_live: str | None = None
+    render: str = "raw"
+    capture: str = "raw"
+    compare_repo: str = "raw"
+    compare_live: str = "capture"
+    editor: EditorSpec = field(default_factory=EditorSpec)
+    sync_policy: str | None = None
+    additional_sources: tuple[str, ...] = ()
+    additional_source_entries: tuple[AdditionalSource, ...] = field(default=(), repr=False, compare=False)
+    render_explicit: bool = field(default=False, repr=False, compare=False)
+    capture_explicit: bool = field(default=False, repr=False, compare=False)
+    compare_repo_explicit: bool = field(default=False, repr=False, compare=False)
+    compare_live_explicit: bool = field(default=False, repr=False, compare=False)
+    editor_explicit: bool = field(default=False, repr=False, compare=False)
+    priority_explicit: bool = field(default=False, repr=False, compare=False)
+    pattern_explicit: bool = field(default=False, repr=False, compare=False)
+    sync_policy_explicit: bool = field(default=False, repr=False, compare=False)
     hooks: dict[str, "HookSpec"] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "pattern": self.pattern,
-            "chmod": self.chmod,
-            "render": self.render,
-            "capture": self.capture,
-            "pull_view_repo": self.pull_view_repo,
-            "pull_view_live": self.pull_view_live,
+            "name": self.name, "pattern": self.pattern, "priority": self.priority,
+            "chmod": self.chmod, "render": _serialized_projection(self.render), "capture": _serialized_projection(self.capture),
+            "compare": {"repo": _serialized_projection(self.compare_repo), "live": _serialized_projection(self.compare_live)},
+            "editor": self.editor.to_dict(), "sync_policy": self.sync_policy,
+            "additional_sources": list(self.additional_sources),
         }
 
 
@@ -99,12 +160,21 @@ class TargetSpec:
     chmod: str | None = None
     render: str | None = None
     capture: str | None = None
-    reconcile: "HookCommandSpec | None" = None
-    pull_view_repo: str | None = None
-    pull_view_live: str | None = None
-    push_ignore: tuple[str, ...] | None = None
-    pull_ignore: tuple[str, ...] | None = None
-    gitignore: tuple[str, ...] | None = None
+    # Resolved flat projection contract.
+    editor: EditorSpec = field(default_factory=EditorSpec)
+    compare_repo: str = "raw"
+    compare_live: str = "capture"
+    additional_sources: tuple[str, ...] = ()
+    additional_source_entries: tuple[AdditionalSource, ...] = field(default=(), repr=False, compare=False)
+    # Compatibility fallback for manually constructed specs.
+    additional_sources_root: Path | None = field(default=None, repr=False, compare=False)
+    render_explicit: bool = field(default=False, repr=False, compare=False)
+    capture_explicit: bool = field(default=False, repr=False, compare=False)
+    compare_repo_explicit: bool = field(default=False, repr=False, compare=False)
+    compare_live_explicit: bool = field(default=False, repr=False, compare=False)
+    editor_explicit: bool = field(default=False, repr=False, compare=False)
+    ignore_patterns: tuple[str, ...] | None = None
+    gitignore_ops: tuple[str, ...] | None = None
     path_rules: tuple[TargetPathRule, ...] = ()
     hooks: dict[str, "HookSpec"] | None = None
     disabled: bool = False
@@ -150,6 +220,8 @@ class PackageSpec:
     depends: tuple[str, ...] | None = None
     extends: tuple[str, ...] | None = None
     reserved_paths: tuple[str, ...] | None = None
+    ignore_patterns: tuple[str, ...] | None = None
+    gitignore_ops: tuple[str, ...] | None = None
     vars: dict[str, Any] | None = None
     targets: dict[str, TargetSpec] | None = None
     hooks: dict[str, HookSpec] | None = None
@@ -368,13 +440,13 @@ class TrackedTargetSummary:
     repo_path: Path | None
     live_path: Path | None
     target_kind: str
-    render_command: str | None = None
-    capture_command: str | None = None
-    reconcile: HookCommandSpec | None = None
-    pull_view_repo: str = "raw"
-    pull_view_live: str = "raw"
-    push_ignore: tuple[str, ...] = ()
-    pull_ignore: tuple[str, ...] = ()
+    render: str = "raw"
+    capture: str = "raw"
+    editor: EditorSpec = field(default_factory=EditorSpec)
+    compare_repo: str = "raw"
+    compare_live: str = "capture"
+    additional_sources: tuple[str, ...] = ()
+    additional_source_entries: tuple[AdditionalSource, ...] = field(default=(), repr=False, compare=False)
     chmod: str | None = None
     probe_command: str | None = None
 
@@ -384,13 +456,11 @@ class TrackedTargetSummary:
             "repo_path": None if self.repo_path is None else str(self.repo_path),
             "live_path": None if self.live_path is None else str(self.live_path),
             "target_kind": self.target_kind,
-            "render_command": self.render_command,
-            "capture_command": self.capture_command,
-            "reconcile": None if self.reconcile is None else self.reconcile.to_dict(),
-            "pull_view_repo": self.pull_view_repo,
-            "pull_view_live": self.pull_view_live,
-            "push_ignore": list(self.push_ignore),
-            "pull_ignore": list(self.pull_ignore),
+            "render": _serialized_projection(self.render),
+            "capture": _serialized_projection(self.capture),
+            "editor": self.editor.to_dict(),
+            "compare": {"repo": _serialized_projection(self.compare_repo), "live": _serialized_projection(self.compare_live)},
+            "additional_sources": list(self.additional_sources),
             "chmod": self.chmod,
         }
         if self.probe_command is not None:
@@ -429,13 +499,12 @@ class TrackableTargetDetail:
     source: str | None
     path: str | None
     target_type: str | None = None
-    render_command: str | None = None
-    capture_command: str | None = None
-    reconcile: HookCommandSpec | None = None
-    pull_view_repo: str | None = None
-    pull_view_live: str | None = None
-    push_ignore: tuple[str, ...] = ()
-    pull_ignore: tuple[str, ...] = ()
+    render: str = "raw"
+    capture: str = "raw"
+    editor: EditorSpec = field(default_factory=EditorSpec)
+    compare_repo: str = "raw"
+    compare_live: str = "capture"
+    additional_sources: tuple[str, ...] = ()
     chmod: str | None = None
     probe_command: str | None = None
 
@@ -445,13 +514,11 @@ class TrackableTargetDetail:
             "source": self.source,
             "path": self.path,
             "target_type": self.target_type,
-            "render_command": self.render_command,
-            "capture_command": self.capture_command,
-            "reconcile": None if self.reconcile is None else self.reconcile.to_dict(),
-            "pull_view_repo": self.pull_view_repo,
-            "pull_view_live": self.pull_view_live,
-            "push_ignore": list(self.push_ignore),
-            "pull_ignore": list(self.pull_ignore),
+            "render": _serialized_projection(self.render),
+            "capture": _serialized_projection(self.capture),
+            "editor": self.editor.to_dict(),
+            "compare": {"repo": _serialized_projection(self.compare_repo), "live": _serialized_projection(self.compare_live)},
+            "additional_sources": list(self.additional_sources),
             "chmod": self.chmod,
         }
         if self.probe_command is not None:
@@ -675,19 +742,23 @@ class TargetPlan:
     target_kind: str
     projection_kind: str
     desired_text: str | None = None
+    render: str = "raw"
+    capture: str = "raw"
+    compare_repo: str = "raw"
+    compare_live: str = "capture"
+    editor: EditorSpec = field(default_factory=EditorSpec)
+    editor_explicit: bool = field(default=False, repr=False, compare=False)
+    additional_sources: tuple[str, ...] = ()
+    additional_source_entries: tuple[AdditionalSource, ...] = field(default=(), repr=False, compare=False)
+    additional_sources_root: Path | None = field(default=None, repr=False, compare=False)
     render_command: str | None = None
     capture_command: str | None = None
-    reconcile: HookCommandSpec | None = None
     projection_error: str | None = None
     live_path_is_symlink: bool = field(default=False, repr=False)
     live_path_symlink_target: str | None = field(default=None, repr=False)
     allow_live_path_symlink_replace: bool = field(default=False, repr=False)
     file_symlink_mode: str = field(default="prompt", repr=False)
     dir_symlink_mode: str = field(default="fail", repr=False)
-    pull_view_repo: str = "raw"
-    pull_view_live: str = "raw"
-    push_ignore: tuple[str, ...] = ()
-    pull_ignore: tuple[str, ...] = ()
     chmod: str | None = None
     path_rules: tuple[TargetPathRule, ...] = ()
     command_cwd: Path | None = None
@@ -708,14 +779,12 @@ class TargetPlan:
             "action": self.action,
             "target_kind": self.target_kind,
             "projection_kind": self.projection_kind,
-            "render_command": self.render_command,
-            "capture_command": self.capture_command,
-            "reconcile": None if self.reconcile is None else self.reconcile.to_dict(),
+            "render": _serialized_projection(self.render),
+            "capture": _serialized_projection(self.capture),
+            "editor": self.editor.to_dict(),
+            "additional_sources": list(self.additional_sources),
+            "compare": {"repo": _serialized_projection(self.compare_repo), "live": _serialized_projection(self.compare_live)},
             "projection_error": self.projection_error,
-            "pull_view_repo": self.pull_view_repo,
-            "pull_view_live": self.pull_view_live,
-            "push_ignore": list(self.push_ignore),
-            "pull_ignore": list(self.pull_ignore),
             "chmod": self.chmod,
             "path_rules": [rule.to_dict() for rule in self.path_rules],
             "directory_items": [item.to_dict() for item in self.directory_items],
@@ -955,8 +1024,13 @@ class DirectoryPlanItem:
     chmod: str | None = None
     render_command: str | None = None
     capture_command: str | None = None
-    pull_view_repo: str = "raw"
-    pull_view_live: str = "raw"
+    compare_repo: str = "raw"
+    compare_live: str = "raw"
+    editor: EditorSpec = field(default_factory=EditorSpec)
+    editor_explicit: bool = field(default=False, repr=False, compare=False)
+    additional_sources: tuple[str, ...] = ()
+    additional_source_entries: tuple[AdditionalSource, ...] = field(default=(), repr=False, compare=False)
+    sync_policy: str | None = None
     desired_bytes: bytes | None = field(default=None, repr=False)
     review_before_bytes: bytes | None = field(default=None, repr=False)
     review_after_bytes: bytes | None = field(default=None, repr=False)
@@ -968,8 +1042,14 @@ class DirectoryPlanItem:
             "repo_path": str(self.repo_path),
             "live_path": str(self.live_path),
             "chmod": self.chmod,
-            "render_command": self.render_command,
-            "capture_command": self.capture_command,
-            "pull_view_repo": self.pull_view_repo,
-            "pull_view_live": self.pull_view_live,
+            "render": _serialized_projection(self.render_command or "raw"),
+            "capture": _serialized_projection(self.capture_command or "raw"),
+            "compare": {
+                "repo": _serialized_projection(self.compare_repo),
+                "live": _serialized_projection(self.compare_live),
+            },
+            "editor": self.editor.to_dict(),
+            "editor_explicit": self.editor_explicit,
+            "additional_sources": list(self.additional_sources),
+            "sync_policy": self.sync_policy,
         }

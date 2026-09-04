@@ -6,7 +6,7 @@ import stat
 import sys
 import tempfile
 from contextlib import contextmanager
-from dataclasses import InitVar, dataclass
+from dataclasses import InitVar, dataclass, replace
 from pathlib import Path
 from typing import Iterator, Sequence
 
@@ -33,9 +33,12 @@ from dotman.file_access import (
     request_sudo,
     write_bytes_atomic as sudo_write_bytes_atomic,
 )
-from dotman.models import DirectoryPlanItem, ElevationMode, GuardSkip, HookPlan, OperationPlan, PackagePlan, TargetPlan, package_plans_for_operation_plan, repo_qualified_target_text
+from dotman.models import AdditionalSource, DirectoryPlanItem, ElevationMode, GuardSkip, HookPlan, OperationPlan, PackagePlan, TargetPlan, package_plans_for_operation_plan, repo_qualified_target_text
 from dotman.repo_access import restore_repo_path_access_for_invoking_user
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
+from dotman.reconcile import run_basic_reconcile
+from dotman.templates import discover_template_file_dependencies
+from dotman.manifest import FORCED_COMMAND_PREFIX
 from dotman.templates import build_template_context, render_template_string
 
 
@@ -56,8 +59,8 @@ class ExecutionStep:
     def command(self) -> str | None:
         if self.hook_plan is not None:
             return self.hook_plan.command
-        if self.action == "reconcile" and self.target_plan is not None:
-            return None if self.target_plan.reconcile is None else self.target_plan.reconcile.run
+        if self.action == "editor" and self.target_plan is not None:
+            return self.target_plan.editor.run
         return None
 
 
@@ -162,8 +165,8 @@ class ExecutionStepResult:
 def _step_command_elevation(step: ExecutionStep) -> ElevationMode:
     if step.hook_plan is not None:
         return step.hook_plan.elevation
-    if step.action == "reconcile" and step.target_plan is not None and step.target_plan.reconcile is not None:
-        return step.target_plan.reconcile.elevation
+    if step.action == "editor" and step.target_plan is not None:
+        return step.target_plan.editor.elevation
     return "root" if step.privileged else "none"
 
 
@@ -693,14 +696,15 @@ def _build_skipped_package_result(
     )
 
 
-def _reconcile_step_needs_sudo(target_plan: TargetPlan) -> bool:
-    # Custom reconcile commands are arbitrary user shell. Dotman should not
-    # silently run them as root; users must opt in through command metadata.
-    if target_plan.reconcile is None:
-        return False
-    if target_plan.reconcile.elevation == "root":
+def _editor_step_needs_sudo(target_plan: TargetPlan) -> bool:
+    if target_plan.editor.elevation == "root":
         return True
-    return target_plan.reconcile.run == BUILTIN_JINJA_RECONCILE and needs_sudo_for_read(target_plan.live_path)
+    # The implicit Jinja provider reads the live input itself during fallback.
+    return (
+        target_plan.editor.type == "jinja"
+        and not target_plan.editor_explicit
+        and needs_sudo_for_read(target_plan.live_path)
+    )
 
 
 def _target_step_needs_sudo(
@@ -710,6 +714,13 @@ def _target_step_needs_sudo(
     action: str,
     directory_item: DirectoryPlanItem | None = None,
 ) -> bool:
+    if action == "editor" and directory_item is not None:
+        return (
+            directory_item.editor.elevation == "root"
+            or needs_sudo_for_read(directory_item.repo_path)
+            or needs_sudo_for_read(directory_item.live_path)
+        )
+
     if operation == "push":
         live_path = directory_item.live_path if directory_item is not None else target_plan.live_path
         if action in {"create", "update", "delete"}:
@@ -720,7 +731,7 @@ def _target_step_needs_sudo(
 
     if action in {"create_repo", "update_repo"}:
         source_path = directory_item.live_path if directory_item is not None else target_plan.live_path
-        return needs_sudo_for_read(source_path) or _reconcile_fallback_needs_sudo(
+        return needs_sudo_for_read(source_path) or _editor_fallback_needs_sudo(
             target_plan,
             directory_item=directory_item,
         )
@@ -730,10 +741,16 @@ def _target_step_needs_sudo(
     return False
 
 
-def _reconcile_fallback_needs_sudo(target_plan: TargetPlan, *, directory_item: DirectoryPlanItem | None = None) -> bool:
-    if directory_item is not None or target_plan.capture_command is None or target_plan.reconcile is None:
+def _editor_fallback_needs_sudo(target_plan: TargetPlan, *, directory_item: DirectoryPlanItem | None = None) -> bool:
+    if directory_item is not None or target_plan.capture_command is None:
         return False
-    return target_plan.reconcile.elevation == "root"
+    if target_plan.editor.elevation == "root":
+        return True
+    return (
+        target_plan.editor.type == "jinja"
+        and not target_plan.editor_explicit
+        and needs_sudo_for_read(target_plan.live_path)
+    )
 
 
 def _preflight_execution_session_sudo(session: ExecutionSession) -> None:
@@ -754,20 +771,25 @@ def _execution_session_sudo_reason(session: ExecutionSession) -> str:
 
 
 def _sudo_reason_for_step(step: ExecutionStep) -> str:
+    if (
+        step.target_plan is not None
+        and (step.target_plan.editor_explicit or step.target_plan.editor.type is None)
+        and step.target_plan.editor.elevation == "root"
+    ):
+        return f"execute privileged editor for {_step_target_label(step)}"
     live_path = _step_live_path(step)
     repo_path = _step_repo_path(step)
     if (
-        step.action in {"reconcile", "create_repo", "update_repo"}
+        step.action in {"editor", "create_repo", "update_repo"}
         and step.target_plan is not None
-        and step.target_plan.reconcile is not None
-        and step.target_plan.reconcile.elevation == "root"
+        and step.target_plan.editor.elevation == "root"
     ):
-        return f"execute privileged reconcile for {_step_target_label(step)}"
+        return f"execute privileged editor for {_step_target_label(step)}"
     if step.action in {"create", "update", "delete"} and live_path is not None:
         return f"write protected path: {live_path}"
     if step.action == "chmod" and live_path is not None:
         return f"change mode on protected path: {live_path}"
-    if step.action in {"create_repo", "update_repo", "reconcile"} and live_path is not None:
+    if step.action in {"editor", "create_repo", "update_repo"} and live_path is not None:
         return f"read protected path: {live_path}"
     if step.action == "delete_repo" and repo_path is not None:
         return f"delete protected path: {repo_path}"
@@ -865,37 +887,62 @@ def _build_target_steps(*, plan: PackagePlan, target_plan: TargetPlan, operation
             )
         return steps
 
-    if target_plan.reconcile is not None and target_plan.capture_command is None and target_plan.action == "update":
+    if (
+        (
+            target_plan.editor_explicit
+            or target_plan.editor.type in {"jinja", None}
+        )
+        and target_plan.capture_command is None
+        and target_plan.action == "update"
+        and target_plan.target_kind != "directory"
+    ):
         steps.append(
             ExecutionStep(
                 repo_name=plan.repo_name,
                 package_id=target_plan.package_id,
                 package_plan=plan,
-                kind="reconcile",
-                action="reconcile",
+                kind="editor",
+                action="editor",
                 scope_kind="target",
                 target_plan=target_plan,
-                privileged=_reconcile_step_needs_sudo(target_plan),
+                privileged=_editor_step_needs_sudo(target_plan),
             )
         )
         return steps
 
     if target_plan.target_kind == "directory":
         action_map = {"create": "create_repo", "update": "update_repo", "delete": "delete_repo"}
-        steps.extend(
-            ExecutionStep(
-                repo_name=plan.repo_name,
-                package_id=target_plan.package_id,
-                package_plan=plan,
-                kind="target",
-                action=action_map[item.action],
-                scope_kind="target",
-                target_plan=target_plan,
-                directory_item=item,
-                privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=action_map[item.action], directory_item=item),
+        for item in target_plan.directory_items:
+            # A child path rule may select its own editor. Execute that editor
+            # against the child transaction, not the containing directory.
+            if item.action in {"create", "update"} and _directory_item_uses_editor(item):
+                steps.append(
+                    ExecutionStep(
+                        repo_name=plan.repo_name,
+                        package_id=target_plan.package_id,
+                        package_plan=plan,
+                        kind="editor",
+                        action="editor",
+                        scope_kind="target",
+                        target_plan=target_plan,
+                        directory_item=item,
+                        privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action="editor", directory_item=item),
+                    )
+                )
+                continue
+            steps.append(
+                ExecutionStep(
+                    repo_name=plan.repo_name,
+                    package_id=target_plan.package_id,
+                    package_plan=plan,
+                    kind="target",
+                    action=action_map[item.action],
+                    scope_kind="target",
+                    target_plan=target_plan,
+                    directory_item=item,
+                    privileged=_target_step_needs_sudo(operation=operation, target_plan=target_plan, action=action_map[item.action], directory_item=item),
+                )
             )
-            for item in target_plan.directory_items
-        )
         return steps
 
     direct_action = {
@@ -916,6 +963,10 @@ def _build_target_steps(*, plan: PackagePlan, target_plan: TargetPlan, operation
         )
     )
     return steps
+
+
+def _directory_item_uses_editor(item: DirectoryPlanItem) -> bool:
+    return item.editor_explicit or item.editor.type in {"jinja", None}
 
 
 def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool) -> ExecutionStepResult:
@@ -972,12 +1023,12 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                     f"{target_plan.live_path} -> {target_plan.live_path.resolve(strict=False)}"
                 )
 
-        if step.kind == "reconcile":
-            command_result = _run_reconcile_target_plan(
+        if step.kind == "editor":
+            command_result = _run_editor_for_target(
                 target_plan=target_plan,
+                directory_item=step.directory_item,
                 stream_output=stream_output,
                 assume_yes=assume_yes,
-                elevation=target_plan.reconcile.elevation if target_plan.reconcile is not None else "root",
             )
             exit_code = command_result.exit_code
             stdout = command_result.stdout_text
@@ -990,7 +1041,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                 stderr=stderr,
                 error=None if exit_code == 0 or _is_interrupt_exit_code(exit_code) else f"command exited with status {exit_code}",
             )
-        if _should_fallback_to_reconcile_after_capture(step):
+        if _should_fallback_to_editor_after_capture(step):
             return _execute_target_step_with_capture_fallback(
                 step,
                 stream_output=stream_output,
@@ -1017,7 +1068,7 @@ def _command_step_status(exit_code: int) -> str:
     return "failed"
 
 
-def _should_fallback_to_reconcile_after_capture(step: ExecutionStep) -> bool:
+def _should_fallback_to_editor_after_capture(step: ExecutionStep) -> bool:
     target_plan = step.target_plan
     return (
         step.kind == "target"
@@ -1025,7 +1076,7 @@ def _should_fallback_to_reconcile_after_capture(step: ExecutionStep) -> bool:
         and step.directory_item is None
         and target_plan is not None
         and target_plan.capture_command is not None
-        and target_plan.reconcile is not None
+        and (target_plan.editor_explicit or target_plan.editor.type is None)
     )
 
 
@@ -1040,18 +1091,17 @@ def _execute_target_step_with_capture_fallback(
         repo_bytes = _pull_repo_bytes(step)
     except Exception as capture_exc:  # noqa: BLE001 - fallback should trigger on any capture failure.
         try:
-            command_result = _run_reconcile_target_plan(
+            command_result = _run_editor_for_target(
                 target_plan=target_plan,
                 stream_output=stream_output,
                 assume_yes=assume_yes,
-                elevation=target_plan.reconcile.elevation if target_plan.reconcile is not None else "none",
             )
             exit_code = command_result.exit_code
             stdout = command_result.stdout_text
             stderr = command_result.stderr_text
-        except Exception as reconcile_exc:  # noqa: BLE001 - surface both failures together.
-            raise ValueError(f"capture failed ({capture_exc}); reconcile failed ({reconcile_exc})") from reconcile_exc
-        fallback_note = f"capture failed; falling back to reconcile: {capture_exc}"
+        except Exception as editor_exc:  # noqa: BLE001 - surface both failures together.
+            raise ValueError(f"capture failed ({capture_exc}); editor failed ({editor_exc})") from editor_exc
+        fallback_note = f"capture failed; falling back to editor: {capture_exc}"
         combined_stderr = fallback_note if not stderr else f"{fallback_note}\n{stderr}"
         return ExecutionStepResult(
             step=step,
@@ -1211,7 +1261,7 @@ def _push_desired_bytes(target_plan: TargetPlan) -> bytes:
         )
     result = current_command_runtime().run(
         CommandRequest(
-            command=ShellCommand(target_plan.render_command),
+            command=ShellCommand(_projection_command(target_plan.render_command)),
             cwd=target_plan.command_cwd,
             env=_build_target_env(target_plan),
         )
@@ -1235,7 +1285,7 @@ def _push_directory_item_bytes(step: ExecutionStep) -> bytes:
         return read_bytes(directory_item.repo_path)
     result = current_command_runtime().run(
         CommandRequest(
-            command=ShellCommand(directory_item.render_command),
+            command=ShellCommand(_projection_command(directory_item.render_command)),
             cwd=_require_target_plan(step).command_cwd,
             env=_build_directory_item_env(step),
         )
@@ -1249,55 +1299,151 @@ def _push_directory_item_bytes(step: ExecutionStep) -> bytes:
     return result.stdout
 
 
-def _run_reconcile_target_plan(
+def _run_editor_for_target(
+    *,
+    target_plan: TargetPlan,
+    directory_item: DirectoryPlanItem | None = None,
+    stream_output: bool,
+    assume_yes: bool,
+) -> CommandResult:
+    if directory_item is not None:
+        child_plan = replace(
+            target_plan,
+            repo_path=directory_item.repo_path,
+            live_path=directory_item.live_path,
+            editor=directory_item.editor,
+            editor_explicit=directory_item.editor_explicit,
+            additional_sources=directory_item.additional_sources,
+            additional_source_entries=directory_item.additional_source_entries,
+            render_command=directory_item.render_command,
+            capture_command=directory_item.capture_command,
+            review_before_bytes=directory_item.review_before_bytes,
+            review_after_bytes=directory_item.review_after_bytes,
+            target_kind="file",
+        )
+        return _run_editor_target_plan(
+            target_plan=child_plan,
+            stream_output=stream_output,
+            assume_yes=assume_yes,
+        )
+    # Every configured Editor uses the transactional source/review contract.
+    # This deliberately avoids inspecting command text: a custom provider may
+    # invoke Dotman itself, but it still receives isolated source copies.
+    if target_plan.editor_explicit or target_plan.editor.type is None:
+        if target_plan.editor.io == "tty":
+            _require_interactive_terminal(setting_name="editor io")
+        return _run_editor_target_plan(
+            target_plan=target_plan,
+            stream_output=stream_output,
+            assume_yes=assume_yes,
+        )
+    if target_plan.editor.type == "jinja":
+        with _materialize_editor_review_env(target_plan) as review_env:
+            return CommandResult(
+                exit_code=run_jinja_reconcile(
+                    repo_path=str(target_plan.repo_path),
+                    live_path=str(target_plan.live_path),
+                    review_repo_path=review_env.get("DOTMAN_REVIEW_REPO_PATH"),
+                    review_live_path=review_env.get("DOTMAN_REVIEW_LIVE_PATH"),
+                    assume_yes=assume_yes,
+                )
+            )
+    raise ValueError("missing editor")
+
+
+def _run_editor_target_plan(
     *,
     target_plan: TargetPlan,
     stream_output: bool,
     assume_yes: bool,
-    elevation: ElevationMode,
 ) -> CommandResult:
-    with _materialize_reconcile_review_env(target_plan) as review_env:
-        if target_plan.reconcile is None:
-            raise ValueError("missing reconcile command")
-        command_env = {**_build_target_env(target_plan), **review_env}
-        if target_plan.reconcile.io == "tty":
-            _require_interactive_terminal_for_reconcile()
-        if target_plan.reconcile.run == BUILTIN_JINJA_RECONCILE:
-            # Keep built-in reconcile values declarative in plans/info
-            # while still reusing the same helper as the CLI subcommand.
-            exit_code = run_jinja_reconcile(
-                repo_path=str(target_plan.repo_path),
-                live_path=str(target_plan.live_path),
-                review_repo_path=command_env.get("DOTMAN_REVIEW_REPO_PATH"),
-                review_live_path=command_env.get("DOTMAN_REVIEW_LIVE_PATH"),
-                assume_yes=assume_yes,
-            )
-            return CommandResult(exit_code=exit_code)
-        return current_command_runtime().run(
-            CommandRequest(
-                command=ShellCommand(target_plan.reconcile.run),
-                cwd=target_plan.command_cwd,
-                env=command_env,
-                io=target_plan.reconcile.io,
-                stream_output=(
-                    stream_output if target_plan.reconcile.io == "pipe" else False
-                ),
-                elevation=elevation,
-            )
-        )
+    # Editor providers always receive isolated source copies. This keeps an
+    # interactive editor from mutating managed files directly and also makes
+    # protected live/repository inputs readable by an unprivileged projection.
+    source_paths = [target_plan.repo_path]
+    package_root_value = _build_target_env(target_plan).get("DOTMAN_PACKAGE_ROOT")
+    package_root = Path(package_root_value).expanduser().resolve() if package_root_value else target_plan.repo_path.parent
+
+    # Resolve each configured entry against the package that declared it.
+    # Entries from inherited specs retain their parent root; appended entries
+    # carry the child root. Manual plans without provenance use package_root.
+    entries = list(target_plan.additional_source_entries)
+    if not entries:
+        entries = list(target_plan.editor.source_entries())
+    if not entries:
+        fallback_root = target_plan.additional_sources_root or package_root
+        entries = [AdditionalSource(path, fallback_root) for path in target_plan.additional_sources]
+    elif target_plan.additional_sources and len(entries) < len(target_plan.additional_sources):
+        known = {entry.path for entry in entries}
+        entries.extend(AdditionalSource(path, target_plan.additional_sources_root or package_root) for path in target_plan.additional_sources if path not in known)
+
+    for entry in entries:
+        root = (entry.root or package_root).expanduser().resolve()
+        source_path = (root / entry.path).resolve()
+        try:
+            source_path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"editor additional source escapes declaring package root: {entry.path}") from exc
+        source_paths.append(source_path)
+    if target_plan.editor.type == "jinja":
+        # Dependency discovery is static by design; dynamic includes are
+        # rejected instead of silently omitting editable inputs.
+        source_paths.extend(discover_template_file_dependencies(target_plan.repo_path))
+    deduped_paths: list[Path] = []
+    for path in source_paths:
+        resolved = path.expanduser().resolve()
+        if resolved not in deduped_paths:
+            deduped_paths.append(resolved)
+
+    # Read through Dotman's sudo-aware accessor before staging. The editor
+    # itself remains unelevated unless the configured custom provider opts in.
+    # A pull create has no repository file yet; its planned review bytes are
+    # the empty/initial primary source for the transactional editor.
+    source_bytes: dict[Path, bytes] = {}
+    for index, path in enumerate(deduped_paths):
+        if path.exists():
+            source_bytes[path] = read_bytes(path)
+        elif index == 0 and target_plan.review_before_bytes is not None:
+            source_bytes[path] = target_plan.review_before_bytes
+        else:
+            raise ValueError(f"editor source does not exist: {path}")
+    configured_editor = target_plan.editor.run if target_plan.editor.type is None else None
+    result_code = run_basic_reconcile(
+        repo_path=str(target_plan.repo_path),
+        live_path=str(target_plan.live_path),
+        additional_sources=[str(path) for path in deduped_paths[1:]],
+        editor=configured_editor,
+        assume_yes=assume_yes,
+        source_bytes=source_bytes,
+        review_repo_bytes=target_plan.review_before_bytes,
+        review_live_bytes=target_plan.review_after_bytes,
+        editor_env=_build_target_env(target_plan),
+        editor_io=target_plan.editor.io,
+        editor_elevation=target_plan.editor.elevation,
+        stream_output=stream_output,
+        return_result=True,
+    )
+    if isinstance(result_code, CommandResult):
+        return result_code
+    return CommandResult(exit_code=result_code)
 
 
 def _pull_desired_bytes(target_plan: TargetPlan) -> bytes:
     if target_plan.capture_command is None:
         return read_bytes(target_plan.live_path)
-    result = current_command_runtime().run(
-        CommandRequest(
-            command=ShellCommand(target_plan.capture_command),
-            cwd=target_plan.command_cwd,
-            env=_build_target_env(target_plan),
-            elevation="root" if needs_sudo_for_read(target_plan.live_path) else "none",
+    command_env = _build_target_env(target_plan)
+    with _stage_capture_inputs(
+        command_env,
+        paths=(target_plan.repo_path, target_plan.live_path),
+    ) as staged_env:
+        result = current_command_runtime().run(
+            CommandRequest(
+                command=ShellCommand(_projection_command(target_plan.capture_command)),
+                cwd=target_plan.command_cwd,
+                env=staged_env,
+                elevation="none",
+            )
         )
-    )
     if result.exit_code != 0:
         _raise_for_interrupt_exit_code(result.exit_code)
         raise ValueError(
@@ -1315,14 +1461,19 @@ def _pull_directory_item_bytes(step: ExecutionStep) -> bytes:
         return read_bytes(directory_item.live_path)
     if directory_item.capture_command == BUILTIN_PATCH_CAPTURE:
         return _pull_directory_patch_capture_bytes(step)
-    result = current_command_runtime().run(
-        CommandRequest(
-            command=ShellCommand(directory_item.capture_command),
-            cwd=_require_target_plan(step).command_cwd,
-            env=_build_directory_item_env(step),
-            elevation="root" if needs_sudo_for_read(directory_item.live_path) else "none",
+    command_env = _build_directory_item_env(step)
+    with _stage_capture_inputs(
+        command_env,
+        paths=(directory_item.repo_path, directory_item.live_path),
+    ) as staged_env:
+        result = current_command_runtime().run(
+            CommandRequest(
+                command=ShellCommand(_projection_command(directory_item.capture_command)),
+                cwd=_require_target_plan(step).command_cwd,
+                env=staged_env,
+                elevation="none",
+            )
         )
-    )
     if result.exit_code != 0:
         _raise_for_interrupt_exit_code(result.exit_code)
         raise ValueError(
@@ -1333,10 +1484,36 @@ def _pull_directory_item_bytes(step: ExecutionStep) -> bytes:
 
 
 @contextmanager
+def _stage_capture_inputs(
+    command_env: dict[str, str],
+    *,
+    paths: tuple[Path, ...],
+) -> Iterator[dict[str, str]]:
+    """Expose readable copies of protected managed inputs to Capture commands."""
+    staged_by_path: dict[Path, Path] = {}
+    with tempfile.TemporaryDirectory(prefix="dotman-capture-") as temp_dir:
+        temp_root = Path(temp_dir)
+        staged_env = dict(command_env)
+        for index, path in enumerate(dict.fromkeys(paths), start=1):
+            if not path.is_file() or not needs_sudo_for_read(path):
+                continue
+            staged_path = temp_root / f"input-{index}-{path.name}"
+            staged_path.write_bytes(read_bytes(path))
+            staged_path.chmod(0o444)
+            staged_by_path[path] = staged_path
+        for key, value in tuple(staged_env.items()):
+            path = Path(value)
+            staged_path = staged_by_path.get(path)
+            if staged_path is not None:
+                staged_env[key] = str(staged_path)
+        yield staged_env
+
+
+@contextmanager
 def _materialize_patch_capture_review_env(target_plan: TargetPlan) -> Iterator[None]:
     # Reverse capture needs the same review-side projection bytes the reviewer saw,
     # not the raw repo and live files.
-    with _materialize_reconcile_review_env(target_plan) as review_env:
+    with _materialize_editor_review_env(target_plan) as review_env:
         previous_env = {key: os.environ.get(key) for key in review_env}
         os.environ.update(review_env)
         try:
@@ -1400,7 +1577,7 @@ def _build_patch_capture_projector(*, target_plan: TargetPlan, package_plan: Pac
         }
         return _run_patch_capture_command_projector(
             candidate_bytes=candidate_bytes,
-            render_command=target_plan.render_command or "",
+            render_command=_projection_command(target_plan.render_command or ""),
             command_cwd=target_plan.command_cwd,
             command_env=command_env,
             render_source_path=target_plan.repo_path,
@@ -1433,7 +1610,7 @@ def _build_directory_item_patch_capture_projector(step: ExecutionStep):
     def project(candidate_bytes: bytes) -> bytes:
         return _run_patch_capture_command_projector(
             candidate_bytes=candidate_bytes,
-            render_command=directory_item.render_command or "",
+            render_command=_projection_command(directory_item.render_command or ""),
             command_cwd=target_plan.command_cwd,
             command_env=_build_directory_item_env(step),
             render_source_path=directory_item.repo_path,
@@ -1467,42 +1644,37 @@ def _run_patch_capture_command_projector(
     render_source_path: Path,
     live_path: Path,
 ) -> bytes:
-    # Keep temp source beside real source so command renderers that resolve
-    # sibling files relative to $DOTMAN_SOURCE still see same local layout.
-    with tempfile.NamedTemporaryFile(
-        prefix=f".dotman-patch-{render_source_path.stem}-",
-        suffix=render_source_path.suffix,
-        dir=render_source_path.parent,
-        delete=False,
-    ) as temp_source:
-        temp_source.write(candidate_bytes)
-        temp_source_path = Path(temp_source.name)
-    try:
-        temp_source_text = str(temp_source_path)
-        command_env.update(
-            {
-                "DOTMAN_TARGET_REPO_PATH": temp_source_text,
-                "DOTMAN_REPO_PATH": temp_source_text,
-                "DOTMAN_SOURCE": temp_source_text,
-            }
-        )
-        result = current_command_runtime().run(
-            CommandRequest(
-                command=ShellCommand(render_command),
-                cwd=command_cwd,
-                env=command_env,
-                elevation="root" if needs_sudo_for_read(live_path) else "none",
-            )
-        )
+    # Keep all managed inputs readable without elevating the projection
+    # provider. The candidate source is always temporary; protected live input
+    # is copied through Dotman's access layer as well.
+    with tempfile.TemporaryDirectory(prefix="dotman-patch-") as temp_dir:
+        temp_root = Path(temp_dir)
+        temp_source_path = temp_root / render_source_path.name
+        temp_source_path.write_bytes(candidate_bytes)
+        staged_env = dict(command_env)
+        staged_env.update({
+            "DOTMAN_TARGET_REPO_PATH": str(temp_source_path),
+            "DOTMAN_REPO_PATH": str(temp_source_path),
+            "DOTMAN_SOURCE": str(temp_source_path),
+        })
+        if live_path.exists() and needs_sudo_for_read(live_path):
+            staged_live_path = temp_root / f"live-{live_path.name}"
+            staged_live_path.write_bytes(read_bytes(live_path))
+            staged_live_path.chmod(0o444)
+            staged_env.update({
+                "DOTMAN_TARGET_LIVE_PATH": str(staged_live_path),
+                "DOTMAN_LIVE_PATH": str(staged_live_path),
+            })
+        result = current_command_runtime().run(CommandRequest(
+            command=ShellCommand(render_command),
+            cwd=command_cwd,
+            env=staged_env,
+            elevation="none",
+        ))
         if result.exit_code != 0:
             _raise_for_interrupt_exit_code(result.exit_code)
-            raise ValueError(
-                result.stderr_text.strip()
-                or f"render command exited with status {result.exit_code}"
-            )
+            raise ValueError(result.stderr_text.strip() or f"render command exited with status {result.exit_code}")
         return result.stdout
-    finally:
-        temp_source_path.unlink(missing_ok=True)
 
 
 def write_bytes_atomic(path: Path, content: bytes) -> None:
@@ -1547,8 +1719,8 @@ def _raise_for_interrupt_exit_code(exit_code: int) -> None:
         raise KeyboardInterrupt
 
 
-def _require_interactive_terminal_for_reconcile() -> None:
-    _require_interactive_terminal(setting_name="reconcile io")
+def _require_interactive_terminal_for_editor() -> None:
+    _require_interactive_terminal(setting_name="editor io")
 
 
 def _require_interactive_terminal_for_hook() -> None:
@@ -1588,6 +1760,10 @@ def _build_hook_env(step: ExecutionStep, *, assume_yes: bool) -> dict[str, str]:
     return env
 
 
+def _projection_command(value: str) -> str:
+    return value[len(FORCED_COMMAND_PREFIX):] if value.startswith(FORCED_COMMAND_PREFIX) else value
+
+
 def _build_target_env(target_plan: TargetPlan) -> dict[str, str]:
     return target_plan.command_env or {}
 
@@ -1614,14 +1790,14 @@ def _build_directory_item_env(step: ExecutionStep) -> dict[str, str]:
 
 
 @contextmanager
-def _materialize_reconcile_review_env(target_plan: TargetPlan) -> Iterator[dict[str, str]]:
+def _materialize_editor_review_env(target_plan: TargetPlan) -> Iterator[dict[str, str]]:
     if target_plan.review_before_bytes is None or target_plan.review_after_bytes is None:
         yield {}
         return
 
-    # Review helpers, especially `dotman reconcile editor` and reverse capture,
+    # Review helpers and reverse capture need the same projected review bytes,
     # should review the same projected pull views the user selected from, not the raw repo/live files.
-    with tempfile.TemporaryDirectory(prefix="dotman-reconcile-review-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="dotman-editor-review-") as temp_dir:
         temp_root = Path(temp_dir)
         review_repo_path = temp_root / f"review-repo-{target_plan.repo_path.name}"
         review_live_path = temp_root / f"review-live-{target_plan.live_path.name}"

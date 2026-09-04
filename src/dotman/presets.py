@@ -8,22 +8,19 @@ from dotman.capture import BUILTIN_PATCH_CAPTURE
 BUILTIN_TARGET_PRESETS: dict[str, dict[str, Any]] = {
     "jinja-editor": {
         "render": "jinja",
-        "pull_view_repo": "render",
-        "pull_view_live": "raw",
-        "reconcile": {"run": "jinja", "io": "tty"},
+        "compare": {"repo": "render", "live": "raw"},
+        "editor": {"type": "jinja"},
     },
     "jinja-patch": {
         "render": "jinja",
         "capture": BUILTIN_PATCH_CAPTURE,
-        "pull_view_repo": "render",
-        "pull_view_live": "raw",
+        "compare": {"repo": "render", "live": "raw"},
     },
     "jinja-patch-editor": {
         "render": "jinja",
         "capture": BUILTIN_PATCH_CAPTURE,
-        "pull_view_repo": "render",
-        "pull_view_live": "raw",
-        "reconcile": {"run": "jinja", "io": "tty"},
+        "compare": {"repo": "render", "live": "raw"},
+        "editor": {"type": "jinja"},
     },
 }
 

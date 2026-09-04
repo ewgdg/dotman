@@ -21,7 +21,7 @@ This example shows one possible repository layout for the new `dotman` design.
 - For terminology, see ArchWiki's distinction between meta packages and package groups: <https://wiki.archlinux.org/title/Meta_package_and_package_group>
 - `profile-note`: minimal `binding_mode = "multi_instance"` example with one profile-bound target path
 - `work/git`: namespaced variant that uses `extends = ["git"]` and overrides only work-specific vars
-- `nvim`: example file target with stdout-based `render`, explicit reverse-sync views, and an interactive tty-backed `reconcile` step
+- `nvim`: example file target with stdout-based `render`, explicit reverse-sync views, and an interactive tty-backed `editor` step
 
 ## Example Groups
 

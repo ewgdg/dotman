@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from dotman.config import expand_path
 from dotman.file_access import needs_sudo_for_read, read_bytes
 from dotman.ignore import GITIGNORE_CONTROL_FILE_PATTERNS, collect_gitignore_patterns, list_directory_files
 from dotman.manifest import (
+    FORCED_COMMAND_PREFIX,
     flatten_vars,
     merge_ignore_patterns,
     resolve_sync_policy,
@@ -25,7 +27,9 @@ from dotman.manifest import (
     sync_policy_deletes_on_push,
 )
 from dotman.models import (
+    AdditionalSource,
     DirectoryPlanItem,
+    EditorSpec,
     GuardSkip,
     HookCommandSpec,
     ManagerConfig,
@@ -58,9 +62,8 @@ class TargetMetadata:
     probe_command: str | None
     render_command: str | None
     capture_command: str | None
-    reconcile: HookCommandSpec | None
-    pull_view_repo: str
-    pull_view_live: str
+    compare_repo: str
+    compare_live: str
     push_ignore: tuple[str, ...]
     pull_ignore: tuple[str, ...]
     gitignore_control_ops: tuple[str, ...]
@@ -71,6 +74,10 @@ class TargetMetadata:
     command_env: dict[str, str]
     package: PackageSpec
     target: TargetSpec
+    editor: Any = None
+    additional_sources: tuple[str, ...] = ()
+    additional_source_entries: tuple[AdditionalSource, ...] = ()
+    additional_sources_root: Path | None = None
     live_path_is_symlink: bool = False
     live_path_symlink_target: str | None = None
 
@@ -100,14 +107,16 @@ def validate_probe_target_config(*, package: PackageSpec, target: TargetSpec) ->
         "path": target.path,
         "type": target.target_type,
         "chmod": target.chmod,
-        "render": target.render,
-        "capture": target.capture,
-        "reconcile": target.reconcile,
-        "pull_view_repo": target.pull_view_repo,
-        "pull_view_live": target.pull_view_live,
-        "push_ignore": target.push_ignore,
-        "pull_ignore": target.pull_ignore,
-        "gitignore": target.gitignore,
+        "render": target.render if target.render_explicit else None,
+        "capture": target.capture if target.capture_explicit else None,
+        "editor": target.editor if target.editor_explicit else None,
+        "compare": (
+            {"repo": target.compare_repo, "live": target.compare_live}
+            if target.compare_repo_explicit or target.compare_live_explicit
+            else None
+        ),
+        "ignore": target.ignore_patterns,
+        "gitignore": target.gitignore_ops,
         "path_rules": target.path_rules or None,
     }
     forbidden = sorted(name for name, value in forbidden_probe_fields.items() if value is not None)
@@ -116,6 +125,10 @@ def validate_probe_target_config(*, package: PackageSpec, target: TargetSpec) ->
             f"target '{package.id}:{target.name}' uses probe and must not define: "
             + ", ".join(forbidden)
         )
+
+
+def _projection_command(value: str) -> str:
+    return value[len(FORCED_COMMAND_PREFIX):] if value.startswith(FORCED_COMMAND_PREFIX) else value
 
 
 def build_target_metadata(
@@ -166,9 +179,12 @@ def build_target_metadata(
                         probe_command=probe_command,
                         render_command=None,
                         capture_command=None,
-                        reconcile=None,
-                        pull_view_repo="raw",
-                        pull_view_live="raw",
+                        editor=target.editor,
+                        additional_sources=target.additional_sources,
+                        additional_source_entries=target.additional_source_entries,
+                        additional_sources_root=target.additional_sources_root,
+                        compare_repo="raw",
+                        compare_live="raw",
                         push_ignore=(),
                         pull_ignore=(),
                         gitignore_control_ops=(),
@@ -216,26 +232,18 @@ def build_target_metadata(
             live_path_symlink_target = os.readlink(live_path) if live_path_is_symlink else None
             render_command = (
                 render_template_string(target.render, context, base_dir=target.declared_in, source_path=target.declared_in)
-                if target.render is not None
+                if target.render != "raw"
                 else None
             )
             capture_command = (
                 render_template_string(target.capture, context, base_dir=target.declared_in, source_path=target.declared_in)
-                if target.capture is not None
+                if target.capture != "raw"
                 else None
             )
-            reconcile = (
-                HookCommandSpec(
-                    run=render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in),
-                    io=target.reconcile.io,
-                    elevation=target.reconcile.elevation,
-                )
-                if target.reconcile is not None
-                else None
-            )
-            push_ignore = merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ())
-            pull_ignore = merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ())
-            gitignore_ops = target.gitignore if target.gitignore is not None else repo.ignore_defaults.gitignore
+            package_ignore = package.ignore_patterns if package.ignore_patterns is not None else repo.ignore_defaults.push
+            push_ignore = merge_ignore_patterns(package_ignore, target.ignore_patterns or ())
+            pull_ignore = merge_ignore_patterns(package_ignore, target.ignore_patterns or ())
+            gitignore_ops = package.gitignore_ops if package.gitignore_ops is not None else repo.ignore_defaults.gitignore
             if gitignore_ops and inspect_gitignore_patterns:
                 gitignore_patterns = collect_gitignore_patterns(repo_path)
                 if "push" in gitignore_ops:
@@ -256,9 +264,8 @@ def build_target_metadata(
                     probe_command=None,
                     render_command=render_command,
                     capture_command=capture_command,
-                    reconcile=reconcile,
-                    pull_view_repo=target.pull_view_repo or "raw",
-                    pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
+                    compare_repo=target.compare_repo if target.compare_repo != "raw" else "raw",
+                    compare_live=target.compare_live,
                     push_ignore=push_ignore,
                     pull_ignore=pull_ignore,
                     gitignore_control_ops=gitignore_ops,
@@ -279,6 +286,10 @@ def build_target_metadata(
                     ),
                     package=package,
                     target=target,
+                    editor=target.editor,
+                    additional_sources=target.additional_sources,
+                    additional_source_entries=target.additional_source_entries,
+                    additional_sources_root=target.additional_sources_root,
                     live_path_is_symlink=live_path_is_symlink,
                     live_path_symlink_target=live_path_symlink_target,
                 )
@@ -324,12 +335,23 @@ def plan_targets(
         target = metadata.target
         repo_path = metadata.repo_path
         live_path = metadata.live_path
+        effective_push_ignore = merge_ignore_patterns(metadata.push_ignore, target.ignore_patterns or ())
+        effective_pull_ignore = merge_ignore_patterns(metadata.pull_ignore, target.ignore_patterns or ())
         if target.probe is not None:
             probe_active = run_probe_command(projection_context.command_runtime, metadata)
             plans.append(
                 TargetPlan(
                     package_id=package.id,
                     target_name=target.name,
+                    render=target.render,
+                    capture=target.capture,
+                    compare_repo=metadata.compare_repo,
+                    compare_live=metadata.compare_live,
+                    editor=target.editor,
+                    editor_explicit=target.editor_explicit,
+                    additional_sources=target.additional_sources,
+                    additional_source_entries=target.additional_source_entries,
+                    additional_sources_root=target.additional_sources_root,
                     repo_path=repo_path,
                     live_path=live_path,
                     action="probe" if probe_active else "noop",
@@ -356,7 +378,6 @@ def plan_targets(
             )
         render_command = metadata.render_command
         capture_command = metadata.capture_command
-        reconcile = metadata.reconcile
         if operation == "push" and sync_policy_deletes_on_push(sync_policy):
             target_kind = resolve_push_only_delete_target_kind(
                 target_type=target.target_type,
@@ -370,12 +391,16 @@ def plan_targets(
                 action, directory_items = plan_live_delete_directory_action(
                     repo_path=repo_path,
                     live_path=live_path,
-                    push_ignore=metadata.push_ignore,
                     skip_markers=metadata.skip_markers,
                     force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if operation in metadata.gitignore_control_ops else (),
                     follow_dir_symlinks=projection_context.config.dir_symlink_mode == "follow",
                     command_runtime=projection_context.command_runtime,
                     path_rules=metadata.path_rules,
+                    push_ignore=effective_push_ignore,
+                    compare_repo=metadata.compare_repo,
+                    compare_live=metadata.compare_live,
+                    package=package,
+                    target=target,
                     context=context,
                     target_env=metadata.command_env,
                     repo_name=repo.config.name,
@@ -388,6 +413,15 @@ def plan_targets(
                     TargetPlan(
                         package_id=package.id,
                         target_name=target.name,
+                        render=target.render,
+                        capture=target.capture,
+                        compare_repo=metadata.compare_repo,
+                        compare_live=metadata.compare_live,
+                        editor=target.editor,
+                        editor_explicit=target.editor_explicit,
+                        additional_sources=target.additional_sources,
+                        additional_source_entries=target.additional_source_entries,
+                        additional_sources_root=target.additional_sources_root,
                         repo_path=repo_path,
                         live_path=live_path,
                         action=action,
@@ -395,15 +429,10 @@ def plan_targets(
                         projection_kind="directory",
                         render_command=render_command,
                         capture_command=capture_command,
-                        reconcile=reconcile,
                         live_path_is_symlink=metadata.live_path_is_symlink,
                         live_path_symlink_target=metadata.live_path_symlink_target,
                         file_symlink_mode=projection_context.config.file_symlink_mode,
                         dir_symlink_mode=projection_context.config.dir_symlink_mode,
-                        pull_view_repo=metadata.pull_view_repo,
-                        pull_view_live=metadata.pull_view_live,
-                        push_ignore=metadata.push_ignore,
-                        pull_ignore=metadata.pull_ignore,
                         chmod=metadata.chmod,
                         path_rules=metadata.path_rules,
                         command_cwd=metadata.command_cwd,
@@ -428,13 +457,22 @@ def plan_targets(
                 selection=selection,
                 operation=operation,
                 inferred_os=inferred_os,
-                pull_view_repo=metadata.pull_view_repo,
-                pull_view_live=metadata.pull_view_live,
+                compare_repo=metadata.compare_repo,
+                compare_live=metadata.compare_live,
             )
             plans.append(
                 TargetPlan(
                     package_id=package.id,
                     target_name=target.name,
+                    render=target.render,
+                    capture=target.capture,
+                    compare_repo=metadata.compare_repo,
+                    compare_live=metadata.compare_live,
+                    editor=target.editor,
+                    editor_explicit=target.editor_explicit,
+                    additional_sources=target.additional_sources,
+                    additional_source_entries=target.additional_source_entries,
+                    additional_sources_root=target.additional_sources_root,
                     repo_path=repo_path,
                     live_path=live_path,
                     action=action,
@@ -442,15 +480,10 @@ def plan_targets(
                     projection_kind="raw" if target_kind != "unknown" else "unknown",
                     render_command=render_command,
                     capture_command=capture_command,
-                    reconcile=reconcile,
                     live_path_is_symlink=metadata.live_path_is_symlink,
                     live_path_symlink_target=metadata.live_path_symlink_target,
                     file_symlink_mode=projection_context.config.file_symlink_mode,
                     dir_symlink_mode=projection_context.config.dir_symlink_mode,
-                    pull_view_repo=metadata.pull_view_repo,
-                    pull_view_live=metadata.pull_view_live,
-                    push_ignore=metadata.push_ignore,
-                    pull_ignore=metadata.pull_ignore,
                     chmod=metadata.chmod,
                     path_rules=metadata.path_rules,
                     command_cwd=metadata.command_cwd,
@@ -465,6 +498,15 @@ def plan_targets(
                 TargetPlan(
                     package_id=package.id,
                     target_name=target.name,
+                    render=target.render,
+                    capture=target.capture,
+                    compare_repo=metadata.compare_repo,
+                    compare_live=metadata.compare_live,
+                    editor=target.editor,
+                    editor_explicit=target.editor_explicit,
+                    additional_sources=target.additional_sources,
+                    additional_source_entries=target.additional_source_entries,
+                    additional_sources_root=target.additional_sources_root,
                     repo_path=repo_path,
                     live_path=live_path,
                     action="noop",
@@ -472,15 +514,10 @@ def plan_targets(
                     projection_kind="unknown",
                     render_command=render_command,
                     capture_command=capture_command,
-                    reconcile=reconcile,
                     live_path_is_symlink=metadata.live_path_is_symlink,
                     live_path_symlink_target=metadata.live_path_symlink_target,
                     file_symlink_mode=projection_context.config.file_symlink_mode,
                     dir_symlink_mode=projection_context.config.dir_symlink_mode,
-                    pull_view_repo=metadata.pull_view_repo,
-                    pull_view_live=metadata.pull_view_live,
-                    push_ignore=metadata.push_ignore,
-                    pull_ignore=metadata.pull_ignore,
                     chmod=metadata.chmod,
                     path_rules=metadata.path_rules,
                     command_cwd=metadata.command_cwd,
@@ -495,8 +532,8 @@ def plan_targets(
             target_kind=target_kind,
             render_command=render_command,
             capture_command=capture_command,
-            pull_view_repo=metadata.pull_view_repo,
-            pull_view_live=metadata.pull_view_live,
+            compare_repo=metadata.compare_repo,
+            compare_live=metadata.compare_live,
             repo_path=repo_path,
         )
         if target_kind == "directory":
@@ -507,18 +544,18 @@ def plan_targets(
                 target=target,
                 repo_path=repo_path,
                 live_path=live_path,
-                push_ignore=metadata.push_ignore,
-                pull_ignore=metadata.pull_ignore,
                 skip_markers=metadata.skip_markers,
                 force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if operation in metadata.gitignore_control_ops else (),
                 operation=operation,
+                push_ignore=effective_push_ignore,
+                pull_ignore=effective_pull_ignore,
                 render_command=render_command,
                 capture_command=capture_command,
                 context=context,
                 selection=selection,
                 inferred_os=inferred_os,
-                pull_view_repo=metadata.pull_view_repo,
-                pull_view_live=metadata.pull_view_live,
+                compare_repo=metadata.compare_repo,
+                compare_live=metadata.compare_live,
                 target_env=metadata.command_env,
                 path_rules=metadata.path_rules,
                 guard_skips=guard_skips,
@@ -527,22 +564,26 @@ def plan_targets(
                 TargetPlan(
                     package_id=package.id,
                     target_name=target.name,
-                    repo_path=repo_path,
+                    render=target.render,
+                    capture=target.capture,
+                    compare_repo=metadata.compare_repo,
+                    compare_live=metadata.compare_live,
+                    editor=target.editor,
+                    editor_explicit=target.editor_explicit,
+                    additional_sources=target.additional_sources,
+                    additional_source_entries=target.additional_source_entries,
+                    additional_sources_root=target.additional_sources_root,
+                            repo_path=repo_path,
                     live_path=live_path,
                     action=action,
                     target_kind="directory",
                     projection_kind="directory",
                     render_command=render_command,
                     capture_command=capture_command,
-                    reconcile=reconcile,
                     live_path_is_symlink=metadata.live_path_is_symlink,
                     live_path_symlink_target=metadata.live_path_symlink_target,
                     file_symlink_mode=projection_context.config.file_symlink_mode,
                     dir_symlink_mode=projection_context.config.dir_symlink_mode,
-                    pull_view_repo=metadata.pull_view_repo,
-                    pull_view_live=metadata.pull_view_live,
-                    push_ignore=metadata.push_ignore,
-                    pull_ignore=metadata.pull_ignore,
                     chmod=metadata.chmod,
                     path_rules=metadata.path_rules,
                     command_cwd=metadata.command_cwd,
@@ -578,8 +619,8 @@ def plan_targets(
                 projection_kind = "command"
             else:
                 raise
-        pull_view_repo = metadata.pull_view_repo
-        pull_view_live = metadata.pull_view_live
+        compare_repo = metadata.compare_repo
+        compare_live = metadata.compare_live
         review_before_bytes, review_after_bytes = build_file_review_bytes(
             projection_context.command_runtime,
             repo=repo,
@@ -594,8 +635,8 @@ def plan_targets(
             selection=selection,
             operation=operation,
             inferred_os=inferred_os,
-            pull_view_repo=pull_view_repo,
-            pull_view_live=pull_view_live,
+            compare_repo=compare_repo,
+            compare_live=compare_live,
         )
         action = plan_file_action_from_review_bytes(
             repo_path=repo_path,
@@ -615,6 +656,15 @@ def plan_targets(
             TargetPlan(
                 package_id=package.id,
                 target_name=target.name,
+                render=target.render,
+                capture=target.capture,
+                compare_repo=metadata.compare_repo,
+                compare_live=metadata.compare_live,
+                editor=target.editor,
+                editor_explicit=target.editor_explicit,
+                additional_sources=target.additional_sources,
+                additional_source_entries=target.additional_source_entries,
+                additional_sources_root=target.additional_sources_root,
                 repo_path=repo_path,
                 live_path=live_path,
                 action=action,
@@ -623,16 +673,11 @@ def plan_targets(
                 desired_text=desired_text,
                 render_command=render_command,
                 capture_command=capture_command,
-                reconcile=reconcile,
                 projection_error=projection_error,
                 live_path_is_symlink=metadata.live_path_is_symlink,
                 live_path_symlink_target=metadata.live_path_symlink_target,
                 file_symlink_mode=projection_context.config.file_symlink_mode,
                 dir_symlink_mode=projection_context.config.dir_symlink_mode,
-                pull_view_repo=pull_view_repo,
-                pull_view_live=pull_view_live,
-                push_ignore=metadata.push_ignore,
-                pull_ignore=metadata.pull_ignore,
                 chmod=metadata.chmod,
                 command_cwd=metadata.command_cwd,
                 command_env=metadata.command_env,
@@ -761,7 +806,7 @@ def infer_push_only_delete_target_kind(*, repo_path: Path, live_path: Path, dir_
     return "unknown"
 
 
-def default_pull_view_live(capture_command: str | None) -> str:
+def default_compare_live(capture_command: str | None) -> str:
     if capture_command == BUILTIN_PATCH_CAPTURE:
         return "raw"
     if capture_command is not None:
@@ -775,24 +820,33 @@ def render_target_path_rules(
     context: dict[str, Any],
     base_dir: Path,
 ) -> tuple[TargetPathRule, ...]:
-    rendered_rules: list[TargetPathRule] = []
-    for rule in path_rules:
-        rendered_rules.append(
-            TargetPathRule(
-                pattern=rule.pattern,
-                chmod=rule.chmod,
-                render=render_template_string(rule.render, context, base_dir=base_dir, source_path=base_dir)
-                if rule.render is not None
-                else None,
-                capture=render_template_string(rule.capture, context, base_dir=base_dir, source_path=base_dir)
-                if rule.capture is not None
-                else None,
-                pull_view_repo=rule.pull_view_repo,
-                pull_view_live=rule.pull_view_live,
-                hooks=rule.hooks,
-            )
+    return tuple(
+        TargetPathRule(
+            name=rule.name,
+            pattern=rule.pattern,
+            priority=rule.priority,
+            chmod=rule.chmod,
+            render=render_template_string(rule.render, context, base_dir=base_dir, source_path=base_dir) if rule.render != "raw" else "raw",
+            capture=render_template_string(rule.capture, context, base_dir=base_dir, source_path=base_dir) if rule.capture != "raw" else "raw",
+            compare_repo=render_template_string(rule.compare_repo, context, base_dir=base_dir, source_path=base_dir) if rule.compare_repo not in {"raw", "render"} else rule.compare_repo,
+            compare_live=render_template_string(rule.compare_live, context, base_dir=base_dir, source_path=base_dir) if rule.compare_live not in {"raw", "capture"} else rule.compare_live,
+            editor=rule.editor,
+            sync_policy=rule.sync_policy,
+            additional_sources=rule.additional_sources,
+            additional_source_entries=rule.additional_source_entries,
+            render_explicit=rule.render_explicit,
+            capture_explicit=rule.capture_explicit,
+            compare_repo_explicit=rule.compare_repo_explicit,
+            compare_live_explicit=rule.compare_live_explicit,
+            editor_explicit=rule.editor_explicit,
+            priority_explicit=rule.priority_explicit,
+            pattern_explicit=rule.pattern_explicit,
+            sync_policy_explicit=rule.sync_policy_explicit,
+            hooks=rule.hooks,
         )
-    return tuple(rendered_rules)
+        for rule in path_rules
+    )
+
 
 
 def validate_patch_capture_target(
@@ -802,8 +856,8 @@ def validate_patch_capture_target(
     target_kind: str,
     render_command: str | None,
     capture_command: str | None,
-    pull_view_repo: str,
-    pull_view_live: str,
+    compare_repo: str,
+    compare_live: str,
     repo_path: Path,
 ) -> None:
     if capture_command != BUILTIN_PATCH_CAPTURE:
@@ -816,8 +870,8 @@ def validate_patch_capture_target(
         label=f"{package.id}:{target.name}",
         render_command=render_command,
         capture_command=capture_command,
-        pull_view_repo=pull_view_repo,
-        pull_view_live=pull_view_live,
+        compare_repo=compare_repo,
+        compare_live=compare_live,
         repo_path=repo_path,
     )
 
@@ -827,17 +881,17 @@ def validate_patch_capture_unit(
     label: str,
     render_command: str | None,
     capture_command: str | None,
-    pull_view_repo: str,
-    pull_view_live: str,
+    compare_repo: str,
+    compare_live: str,
     repo_path: Path | None = None,
 ) -> None:
     if capture_command != BUILTIN_PATCH_CAPTURE:
         return
     if render_command is None:
         raise ValueError(f'capture = "patch" requires render for {label}')
-    if pull_view_repo != "render" or pull_view_live != "raw":
+    if compare_repo != "render" or compare_live != "raw":
         raise ValueError(
-            f'capture = "patch" requires pull_view_repo = "render" and pull_view_live = "raw" for {label}'
+            f'capture = "patch" requires compare_repo = "render" and compare_live = "raw" for {label}'
         )
     if repo_path is not None and not repo_path.exists():
         raise ValueError(f'capture = "patch" requires existing repo source for {label}')
@@ -869,7 +923,7 @@ def project_repo_file(
                     target=target,
                     repo_path=repo_path,
                     live_path=live_path,
-                    command=render_command,
+                    command=_projection_command(render_command),
                     selection=selection,
                     operation=operation,
                     inferred_os=inferred_os,
@@ -941,8 +995,8 @@ def plan_directory_action(
     context: dict[str, Any],
     selection: ResolvedPackageSelection,
     inferred_os: str,
-    pull_view_repo: str,
-    pull_view_live: str,
+    compare_repo: str,
+    compare_live: str,
     target_env: dict[str, str],
     path_rules: tuple[TargetPathRule, ...] = (),
     force_ignore_patterns: tuple[str, ...] = (),
@@ -990,6 +1044,53 @@ def plan_directory_action(
     directory_items: list[DirectoryPlanItem] = []
 
     if operation == "push":
+        # A path rule's push-only-delete policy applies to each matching child,
+        # so classify those children before constructing create/update actions.
+        child_delete_paths: set[str] = set()
+        for relative_path in sorted(desired_rel_paths | live_rel_paths):
+            child_policy = directory_child_policy(
+                relative_path,
+                path_rules,
+                default_render=render_command,
+                default_capture=capture_command,
+                default_editor=target.editor,
+                default_sync_policy=resolve_sync_policy(package=package, target=target),
+            )
+            if not sync_policy_deletes_on_push(child_policy[7] or ""):
+                continue
+            child_delete_paths.add(relative_path)
+            if relative_path not in live_rel_paths:
+                continue
+            child_compare_repo, child_compare_live = directory_child_pull_views(
+                target=target,
+                capture_command=child_policy[2],
+                target_compare_repo=compare_repo,
+                target_compare_live=compare_live,
+                rule_compare_repo=child_policy[3],
+                rule_compare_live=child_policy[4],
+            )
+            directory_items.append(
+                DirectoryPlanItem(
+                    relative_path=relative_path,
+                    action="delete",
+                    repo_path=repo_path / relative_path,
+                    live_path=live_files[relative_path],
+                    render_command=child_policy[1],
+                    capture_command=child_policy[2],
+                    compare_repo=child_compare_repo,
+                    compare_live=child_compare_live,
+                    editor=child_policy[5],
+                    editor_explicit=directory_child_editor_explicit(
+                        relative_path, path_rules, default_explicit=target.editor_explicit
+                    ),
+                    additional_sources=child_policy[6],
+                    additional_source_entries=child_policy[5].source_entries(),
+                    sync_policy=child_policy[7],
+                )
+            )
+        desired_rel_paths -= child_delete_paths
+        live_rel_paths -= child_delete_paths
+
         for relative_path in sorted(desired_rel_paths - live_rel_paths):
             source_path = desired_files[relative_path]
             child_policy = directory_child_policy(
@@ -997,14 +1098,18 @@ def plan_directory_action(
                 path_rules,
                 default_render=render_command,
                 default_capture=capture_command,
+                default_editor=target.editor,
+                default_sync_policy=resolve_sync_policy(package=package, target=target),
             )
-            child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+            if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
+                continue
+            child_compare_repo, child_compare_live = directory_child_pull_views(
                 target=target,
                 capture_command=child_policy[2],
-                target_pull_view_repo=pull_view_repo,
-                target_pull_view_live=pull_view_live,
-                rule_pull_view_repo=child_policy[3],
-                rule_pull_view_live=child_policy[4],
+                target_compare_repo=compare_repo,
+                target_compare_live=compare_live,
+                rule_compare_repo=child_policy[3],
+                rule_compare_live=child_policy[4],
             )
             validate_directory_child_patch_capture(
                 package=package,
@@ -1012,8 +1117,8 @@ def plan_directory_action(
                 relative_path=relative_path,
                 render_command=child_policy[1],
                 capture_command=child_policy[2],
-                pull_view_repo=child_pull_view_repo,
-                pull_view_live=child_pull_view_live,
+                compare_repo=child_compare_repo,
+                compare_live=child_compare_live,
                 repo_path=source_path,
             )
             desired_bytes, _projection_kind = project_repo_file(
@@ -1038,20 +1143,42 @@ def plan_directory_action(
                     chmod=child_policy[0],
                     render_command=child_policy[1],
                     capture_command=child_policy[2],
-                    pull_view_repo=child_pull_view_repo,
-                    pull_view_live=child_pull_view_live,
+                    compare_repo=child_compare_repo,
+                    compare_live=child_compare_live,
+                    editor=child_policy[5],
+                    editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
+                    additional_sources=child_policy[6],
+                    additional_source_entries=child_policy[5].source_entries(),
+                    sync_policy=child_policy[7],
                     desired_bytes=desired_bytes,
                     review_before_bytes=b"",
                     review_after_bytes=desired_bytes,
                 )
             )
         for relative_path in sorted(live_rel_paths - desired_rel_paths):
+            child_policy = directory_child_policy(
+                relative_path,
+                path_rules,
+                default_render=render_command,
+                default_capture=capture_command,
+                default_editor=target.editor,
+                default_sync_policy=resolve_sync_policy(package=package, target=target),
+            )
+            if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
+                continue
             directory_items.append(
                 DirectoryPlanItem(
                     relative_path=relative_path,
                     action="delete",
                     repo_path=repo_path / relative_path,
                     live_path=live_files[relative_path],
+                    render_command=child_policy[1],
+                    capture_command=child_policy[2],
+                    editor=child_policy[5],
+                    editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
+                    additional_sources=child_policy[6],
+                    additional_source_entries=child_policy[5].source_entries(),
+                    sync_policy=child_policy[7],
                 )
             )
         for relative_path in sorted(desired_rel_paths & live_rel_paths):
@@ -1062,14 +1189,18 @@ def plan_directory_action(
                 path_rules,
                 default_render=render_command,
                 default_capture=capture_command,
+                default_editor=target.editor,
+                default_sync_policy=resolve_sync_policy(package=package, target=target),
             )
-            child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+            if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
+                continue
+            child_compare_repo, child_compare_live = directory_child_pull_views(
                 target=target,
                 capture_command=child_policy[2],
-                target_pull_view_repo=pull_view_repo,
-                target_pull_view_live=pull_view_live,
-                rule_pull_view_repo=child_policy[3],
-                rule_pull_view_live=child_policy[4],
+                target_compare_repo=compare_repo,
+                target_compare_live=compare_live,
+                rule_compare_repo=child_policy[3],
+                rule_compare_live=child_policy[4],
             )
             validate_directory_child_patch_capture(
                 package=package,
@@ -1077,8 +1208,8 @@ def plan_directory_action(
                 relative_path=relative_path,
                 render_command=child_policy[1],
                 capture_command=child_policy[2],
-                pull_view_repo=child_pull_view_repo,
-                pull_view_live=child_pull_view_live,
+                compare_repo=child_compare_repo,
+                compare_live=child_compare_live,
                 repo_path=source_path,
             )
             desired_bytes, _projection_kind = project_repo_file(
@@ -1113,8 +1244,13 @@ def plan_directory_action(
                         chmod=desired_chmod,
                         render_command=child_policy[1],
                         capture_command=child_policy[2],
-                        pull_view_repo=child_pull_view_repo,
-                        pull_view_live=child_pull_view_live,
+                        compare_repo=child_compare_repo,
+                        compare_live=child_compare_live,
+                        editor=child_policy[5],
+                        editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
+                        additional_sources=child_policy[6],
+                        additional_source_entries=child_policy[5].source_entries(),
+                        sync_policy=child_policy[7],
                         desired_bytes=desired_bytes,
                         review_before_bytes=live_bytes,
                         review_after_bytes=desired_bytes,
@@ -1134,14 +1270,18 @@ def plan_directory_action(
             path_rules,
             default_render=render_command,
             default_capture=capture_command,
+            default_editor=target.editor,
+            default_sync_policy=resolve_sync_policy(package=package, target=target),
         )
-        child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+        if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
+            continue
+        child_compare_repo, child_compare_live = directory_child_pull_views(
             target=target,
             capture_command=child_policy[2],
-            target_pull_view_repo=pull_view_repo,
-            target_pull_view_live=pull_view_live,
-            rule_pull_view_repo=child_policy[3],
-            rule_pull_view_live=child_policy[4],
+            target_compare_repo=compare_repo,
+            target_compare_live=compare_live,
+            rule_compare_repo=child_policy[3],
+            rule_compare_live=child_policy[4],
         )
         validate_directory_child_patch_capture(
             package=package,
@@ -1149,8 +1289,8 @@ def plan_directory_action(
             relative_path=relative_path,
             render_command=child_policy[1],
             capture_command=child_policy[2],
-            pull_view_repo=child_pull_view_repo,
-            pull_view_live=child_pull_view_live,
+            compare_repo=child_compare_repo,
+            compare_live=child_compare_live,
             repo_path=desired_files[relative_path],
         )
         directory_items.append(
@@ -1161,8 +1301,13 @@ def plan_directory_action(
                 live_path=live_path / relative_path,
                 render_command=child_policy[1],
                 capture_command=child_policy[2],
-                pull_view_repo=child_pull_view_repo,
-                pull_view_live=child_pull_view_live,
+                compare_repo=child_compare_repo,
+                compare_live=child_compare_live,
+                editor=child_policy[5],
+                editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
+                additional_sources=child_policy[6],
+                additional_source_entries=child_policy[5].source_entries(),
+                sync_policy=child_policy[7],
             )
         )
     for relative_path in sorted(live_rel_paths - desired_rel_paths):
@@ -1171,14 +1316,18 @@ def plan_directory_action(
             path_rules,
             default_render=render_command,
             default_capture=capture_command,
+            default_editor=target.editor,
+            default_sync_policy=resolve_sync_policy(package=package, target=target),
         )
-        child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+        if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
+            continue
+        child_compare_repo, child_compare_live = directory_child_pull_views(
             target=target,
             capture_command=child_policy[2],
-            target_pull_view_repo=pull_view_repo,
-            target_pull_view_live=pull_view_live,
-            rule_pull_view_repo=child_policy[3],
-            rule_pull_view_live=child_policy[4],
+            target_compare_repo=compare_repo,
+            target_compare_live=compare_live,
+            rule_compare_repo=child_policy[3],
+            rule_compare_live=child_policy[4],
         )
         validate_directory_child_patch_capture(
             package=package,
@@ -1186,8 +1335,8 @@ def plan_directory_action(
             relative_path=relative_path,
             render_command=child_policy[1],
             capture_command=child_policy[2],
-            pull_view_repo=child_pull_view_repo,
-            pull_view_live=child_pull_view_live,
+            compare_repo=child_compare_repo,
+            compare_live=child_compare_live,
             repo_path=repo_path / relative_path,
         )
         directory_items.append(
@@ -1198,8 +1347,13 @@ def plan_directory_action(
                 live_path=live_files[relative_path],
                 render_command=child_policy[1],
                 capture_command=child_policy[2],
-                pull_view_repo=child_pull_view_repo,
-                pull_view_live=child_pull_view_live,
+                compare_repo=child_compare_repo,
+                compare_live=child_compare_live,
+                editor=child_policy[5],
+                editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
+                additional_sources=child_policy[6],
+                additional_source_entries=child_policy[5].source_entries(),
+                sync_policy=child_policy[7],
             )
         )
     for relative_path in sorted(desired_rel_paths & live_rel_paths):
@@ -1210,14 +1364,18 @@ def plan_directory_action(
             path_rules,
             default_render=render_command,
             default_capture=capture_command,
+            default_editor=target.editor,
+            default_sync_policy=resolve_sync_policy(package=package, target=target),
         )
-        child_pull_view_repo, child_pull_view_live = directory_child_pull_views(
+        if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
+            continue
+        child_compare_repo, child_compare_live = directory_child_pull_views(
             target=target,
             capture_command=child_policy[2],
-            target_pull_view_repo=pull_view_repo,
-            target_pull_view_live=pull_view_live,
-            rule_pull_view_repo=child_policy[3],
-            rule_pull_view_live=child_policy[4],
+            target_compare_repo=compare_repo,
+            target_compare_live=compare_live,
+            rule_compare_repo=child_policy[3],
+            rule_compare_live=child_policy[4],
         )
         validate_directory_child_patch_capture(
             package=package,
@@ -1225,8 +1383,8 @@ def plan_directory_action(
             relative_path=relative_path,
             render_command=child_policy[1],
             capture_command=child_policy[2],
-            pull_view_repo=child_pull_view_repo,
-            pull_view_live=child_pull_view_live,
+            compare_repo=child_compare_repo,
+            compare_live=child_compare_live,
             repo_path=source_path,
         )
         repo_bytes = pull_view_bytes(
@@ -1236,7 +1394,7 @@ def plan_directory_action(
             target=target,
             repo_path=source_path,
             live_path=live_file,
-            view=child_pull_view_repo,
+            view=child_compare_repo,
             repo_side=True,
             render_command=child_policy[1],
             capture_command=child_policy[2],
@@ -1252,7 +1410,7 @@ def plan_directory_action(
             target=target,
             repo_path=source_path,
             live_path=live_file,
-            view=child_pull_view_live,
+            view=child_compare_live,
             repo_side=False,
             render_command=child_policy[1],
             capture_command=child_policy[2],
@@ -1270,8 +1428,13 @@ def plan_directory_action(
                     live_path=live_file,
                     render_command=child_policy[1],
                     capture_command=child_policy[2],
-                    pull_view_repo=child_pull_view_repo,
-                    pull_view_live=child_pull_view_live,
+                    compare_repo=child_compare_repo,
+                    compare_live=child_compare_live,
+                    editor=child_policy[5],
+                    editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
+                    additional_sources=child_policy[6],
+                    additional_source_entries=child_policy[5].source_entries(),
+                    sync_policy=child_policy[7],
                     review_before_bytes=repo_bytes,
                     review_after_bytes=live_bytes,
                 )
@@ -1291,8 +1454,8 @@ def validate_directory_child_patch_capture(
     relative_path: str,
     render_command: str | None,
     capture_command: str | None,
-    pull_view_repo: str,
-    pull_view_live: str,
+    compare_repo: str,
+    compare_live: str,
     repo_path: Path | None = None,
 ) -> None:
     label = f"{package.id}:{target.name}:{relative_path}"
@@ -1300,8 +1463,8 @@ def validate_directory_child_patch_capture(
         label=label,
         render_command=render_command,
         capture_command=capture_command,
-        pull_view_repo=pull_view_repo,
-        pull_view_live=pull_view_live,
+        compare_repo=compare_repo,
+        compare_live=compare_live,
         repo_path=repo_path,
     )
 
@@ -1316,16 +1479,14 @@ def directory_child_pull_views(
     *,
     target: TargetSpec,
     capture_command: str | None,
-    target_pull_view_repo: str,
-    target_pull_view_live: str,
-    rule_pull_view_repo: str | None,
-    rule_pull_view_live: str | None,
+    target_compare_repo: str,
+    target_compare_live: str,
+    rule_compare_repo: str | None,
+    rule_compare_live: str | None,
 ) -> tuple[str, str]:
-    pull_view_repo = rule_pull_view_repo or (target_pull_view_repo if target.pull_view_repo is not None else "raw")
-    pull_view_live = rule_pull_view_live or (
-        target_pull_view_live if target.pull_view_live is not None else default_pull_view_live(capture_command)
-    )
-    return pull_view_repo, pull_view_live
+    compare_repo = rule_compare_repo or target_compare_repo or "raw"
+    compare_live = rule_compare_live or target_compare_live or default_compare_live(capture_command)
+    return compare_repo, compare_live
 
 
 def directory_child_policy(
@@ -1334,26 +1495,51 @@ def directory_child_policy(
     *,
     default_render: str | None,
     default_capture: str | None,
-) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    default_editor: EditorSpec | None = None,
+    default_sync_policy: str | None = None,
+) -> tuple[str | None, str | None, str | None, str | None, str | None, EditorSpec, tuple[str, ...], str | None]:
     desired_chmod = None
     render_command = default_render
     capture_command = default_capture
-    pull_view_repo = None
-    pull_view_live = None
+    compare_repo = None
+    compare_live = None
+    editor = default_editor or EditorSpec()
+    sync_policy = default_sync_policy
     for rule in path_rules:
         if not target_path_rule_matches(relative_path, rule.pattern):
             continue
         if rule.chmod is not None:
             desired_chmod = rule.chmod
-        if rule.render is not None:
-            render_command = rule.render
-        if rule.capture is not None:
-            capture_command = rule.capture
-        if rule.pull_view_repo is not None:
-            pull_view_repo = rule.pull_view_repo
-        if rule.pull_view_live is not None:
-            pull_view_live = rule.pull_view_live
-    return desired_chmod, render_command, capture_command, pull_view_repo, pull_view_live
+        if rule.render_explicit:
+            render_command = None if rule.render == "raw" else rule.render
+        if rule.capture_explicit:
+            capture_command = None if rule.capture == "raw" else rule.capture
+        if rule.compare_repo_explicit:
+            compare_repo = rule.compare_repo
+        if rule.compare_live_explicit:
+            compare_live = rule.compare_live
+        if rule.editor_explicit:
+            editor = rule.editor
+        if rule.sync_policy_explicit:
+            sync_policy = rule.sync_policy
+        if compare_live == "capture" and capture_command is None:
+            compare_live = "raw"
+    return desired_chmod, render_command, capture_command, compare_repo, compare_live, editor, editor.additional_sources, sync_policy
+
+
+def directory_child_editor_explicit(
+    relative_path: str,
+    path_rules: tuple[TargetPathRule, ...],
+    *,
+    default_explicit: bool,
+) -> bool:
+    """Report whether a child receives an explicitly configured editor."""
+    if default_explicit:
+        return True
+    return any(
+        rule.editor_explicit and target_path_rule_matches(relative_path, rule.pattern)
+        for rule in path_rules
+    )
 
 
 def directory_child_chmod_differs(live_file: Path, desired_chmod: str | None) -> bool:
@@ -1382,6 +1568,10 @@ def plan_live_delete_directory_action(
     push_ignore: tuple[str, ...],
     skip_markers: tuple[str, ...],
     path_rules: tuple[TargetPathRule, ...],
+    compare_repo: str,
+    compare_live: str,
+    package: PackageSpec,
+    target: TargetSpec,
     context: dict[str, Any],
     target_env: dict[str, str],
     repo_name: str,
@@ -1417,15 +1607,42 @@ def plan_live_delete_directory_action(
         target_name=target_name,
         guard_skips=guard_skips,
     )
-    directory_items = tuple(
-        DirectoryPlanItem(
-            relative_path=relative_path,
-            action="delete",
-            repo_path=repo_path / relative_path,
-            live_path=live_file,
+    directory_items: list[DirectoryPlanItem] = []
+    for relative_path, live_file in sorted(live_files.items()):
+        child_policy = directory_child_policy(
+            relative_path,
+            path_rules,
+            default_render=None,
+            default_capture=None,
+            default_editor=target.editor,
+            default_sync_policy=resolve_sync_policy(package=package, target=target),
         )
-        for relative_path, live_file in sorted(live_files.items())
-    )
+        if not sync_policy_allows_operation(child_policy[7] or "both", operation="push"):
+            continue
+        child_compare_repo, child_compare_live = directory_child_pull_views(
+            target=target,
+            capture_command=child_policy[2],
+            target_compare_repo=compare_repo,
+            target_compare_live=compare_live,
+            rule_compare_repo=child_policy[3],
+            rule_compare_live=child_policy[4],
+        )
+        directory_items.append(
+            DirectoryPlanItem(
+                relative_path=relative_path,
+                action="delete",
+                repo_path=repo_path / relative_path,
+                live_path=live_file,
+                compare_repo=child_compare_repo,
+                compare_live=child_compare_live,
+                editor=child_policy[5],
+                editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
+                additional_sources=child_policy[6],
+                additional_source_entries=child_policy[5].source_entries(),
+                sync_policy=child_policy[7],
+            )
+        )
+    directory_items = tuple(directory_items)
     return ("delete", directory_items) if directory_items else ("noop", ())
 
 
@@ -1479,8 +1696,8 @@ def plan_file_action(
     selection: ResolvedPackageSelection,
     operation: str,
     inferred_os: str,
-    pull_view_repo: str,
-    pull_view_live: str,
+    compare_repo: str,
+    compare_live: str,
 ) -> str:
     if operation == "push":
         if not live_path.exists():
@@ -1504,7 +1721,7 @@ def plan_file_action(
         target=target,
         repo_path=repo_path,
         live_path=live_path,
-        view=pull_view_repo,
+        view=compare_repo,
         repo_side=True,
         render_command=render_command,
         capture_command=capture_command,
@@ -1520,7 +1737,7 @@ def plan_file_action(
         target=target,
         repo_path=repo_path,
         live_path=live_path,
-        view=pull_view_live,
+        view=compare_live,
         repo_side=False,
         render_command=render_command,
         capture_command=capture_command,
@@ -1547,8 +1764,8 @@ def build_file_review_bytes(
     selection: ResolvedPackageSelection,
     operation: str,
     inferred_os: str,
-    pull_view_repo: str,
-    pull_view_live: str,
+    compare_repo: str,
+    compare_live: str,
 ) -> tuple[bytes | None, bytes | None]:
     if operation == "push":
         try:
@@ -1564,7 +1781,7 @@ def build_file_review_bytes(
         target=target,
         repo_path=repo_path,
         live_path=live_path,
-        view=pull_view_repo,
+        view=compare_repo,
         repo_side=True,
         render_command=render_command,
         capture_command=capture_command,
@@ -1582,7 +1799,7 @@ def build_file_review_bytes(
         target=target,
         repo_path=repo_path,
         live_path=live_path,
-        view=pull_view_live,
+        view=compare_live,
         repo_side=False,
         render_command=render_command,
         capture_command=capture_command,
@@ -1637,7 +1854,7 @@ def pull_view_bytes(
                 f"target '{package.id}:{target.name}' reserves capture = 'patch' for reverse capture and does not expose a capture view"
             )
         if capture_command is None:
-            raise ValueError(f"target '{package.id}:{target.name}' does not define capture")
+            return read_bytes(live_path)
         return run_command_projection(
             command_runtime,
             repo=repo,
@@ -1645,13 +1862,13 @@ def pull_view_bytes(
             target=target,
             repo_path=repo_path,
             live_path=live_path,
-            command=capture_command,
+            command=_projection_command(capture_command),
             selection=selection,
             operation=operation,
             inferred_os=inferred_os,
             context=context,
         )
-    command = render_template_string(view, context, base_dir=target.declared_in, source_path=target.declared_in)
+    command = render_template_string(_projection_command(view), context, base_dir=target.declared_in, source_path=target.declared_in)
     return run_command_projection(
         command_runtime,
         repo=repo,
@@ -1716,14 +1933,39 @@ def run_command_projection(
         inferred_os=inferred_os,
         context=context,
     )
-    result = command_runtime.run(
-        CommandRequest(
-            command=ShellCommand(command),
-            cwd=target.declared_in,
-            env=env,
-            elevation="root" if needs_sudo_for_read(live_path) else "none",
+    # Projection providers are never elevated. If either managed input is not
+    # readable by the provider, Dotman reads it through the access layer and
+    # gives the command a private, readable staging copy instead.
+    stage_repo = repo_path.exists() and needs_sudo_for_read(repo_path)
+    stage_live = live_path.exists() and needs_sudo_for_read(live_path)
+    with tempfile.TemporaryDirectory(prefix="dotman-projection-") as stage_dir:
+        staged_env = dict(env)
+        if stage_repo:
+            staged_source = Path(stage_dir) / f"repo-{repo_path.name}"
+            staged_source.write_bytes(read_bytes(repo_path))
+            staged_source.chmod(0o444)
+            staged_env.update({
+                "DOTMAN_TARGET_REPO_PATH": str(staged_source),
+                "DOTMAN_REPO_PATH": str(staged_source),
+                "DOTMAN_SOURCE": str(staged_source),
+            })
+        if stage_live:
+            staged_live = Path(stage_dir) / f"live-{live_path.name}"
+            staged_live.write_bytes(read_bytes(live_path))
+            staged_live.chmod(0o444)
+            staged_env.update({
+                "DOTMAN_TARGET_LIVE_PATH": str(staged_live),
+                "DOTMAN_LIVE_PATH": str(staged_live),
+            })
+        result = command_runtime.run(
+            CommandRequest(
+                command=ShellCommand(_projection_command(command)),
+                cwd=target.declared_in,
+                env=staged_env,
+                # Projection commands are pure stdout producers; managed reads are performed by Dotman.
+                elevation="none",
+            )
         )
-    )
     raise_for_command_interruption(result)
     if result.exit_code != 0:
         stderr = result.stderr.decode("utf-8", errors="replace")

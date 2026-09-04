@@ -12,6 +12,7 @@ from typing import Callable, Sequence
 
 from dotman import cli_style
 from dotman.capture import BUILTIN_PATCH_CAPTURE
+from dotman.manifest import FORCED_COMMAND_PREFIX
 from dotman.command_runtime import (
     ArgvCommand,
     CommandRequest,
@@ -20,11 +21,15 @@ from dotman.command_runtime import (
     raise_for_command_interruption,
 )
 from dotman.file_access import needs_sudo_for_read, read_bytes
-from dotman.models import HookCommandSpec, HookPlan, PackagePlan
+from dotman.models import HookPlan, PackagePlan
 from dotman.reconcile import run_basic_reconcile
-from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
+from dotman.reconcile_helpers import run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_file, render_template_string
 from dotman.ui_context import current_ui_config
+
+
+def _projection_command(value: str) -> str:
+    return value[len(FORCED_COMMAND_PREFIX):] if value.startswith(FORCED_COMMAND_PREFIX) else value
 
 
 DEFAULT_REVIEW_PAGER = "less -FRX"
@@ -50,7 +55,9 @@ class ReviewItem:
     after_bytes_loader: ReviewBytesLoader | None = field(default=None, repr=False, compare=False)
     before_mode: int | None = None
     after_mode: int | None = None
-    reconcile: HookCommandSpec | None = None
+    editor: Any = None
+    editor_explicit: bool = False
+    additional_sources: tuple[str, ...] = ()
     command_cwd: Path | None = None
     command_env: dict[str, str] | None = field(default=None, repr=False)
     diff_unavailable_reason: str | None = None
@@ -58,6 +65,7 @@ class ReviewItem:
     is_probe: bool = False
     probe_command: str | None = field(default=None, repr=False)
     hook_command_summaries: tuple[str, ...] = ()
+
 
 
 def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[ReviewItem]:
@@ -159,7 +167,9 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                     after_bytes=target.review_after_bytes,
                     before_mode=_target_review_before_mode(target, operation=operation),
                     after_mode=_target_review_after_mode(target, operation=operation),
-                    reconcile=target.reconcile,
+                    editor=target.editor,
+                    editor_explicit=target.editor_explicit,
+                    additional_sources=target.additional_sources,
                     command_cwd=target.command_cwd,
                     command_env=target.command_env,
                     diff_unavailable_reason=diff_unavailable_reason,
@@ -201,8 +211,8 @@ def _hook_plan_matches_target(
 
 
 def edit_status(review_item: ReviewItem) -> str:
-    if review_item.operation == "pull" and review_item.reconcile is not None:
-        return "reconcile"
+    if review_item.operation == "pull" and review_item.editor is not None:
+        return "editor"
     if review_item.repo_path.exists() and review_item.live_path.exists():
         return "editor"
     return "edit unavailable"
@@ -271,38 +281,9 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
 
 
 def run_review_item_edit(review_item: ReviewItem) -> int:
-    if review_item.operation == "pull" and review_item.reconcile is not None:
-        with tempfile.TemporaryDirectory(prefix="dotman-reconcile-review-") as temp_dir:
-            review_env = dict(review_item.command_env or {})
-            review_paths = _materialize_review_edit_paths(review_item=review_item, root=Path(temp_dir))
-            if review_paths is not None:
-                review_repo_path, review_live_path = review_paths
-                review_env.update(
-                    {
-                        "DOTMAN_REVIEW_REPO_PATH": str(review_repo_path),
-                        "DOTMAN_REVIEW_LIVE_PATH": str(review_live_path),
-                    }
-                )
-            if review_item.reconcile.run == BUILTIN_JINJA_RECONCILE:
-                return run_jinja_reconcile(
-                    repo_path=str(review_item.repo_path),
-                    live_path=str(review_item.live_path),
-                    review_repo_path=review_env.get("DOTMAN_REVIEW_REPO_PATH"),
-                    review_live_path=review_env.get("DOTMAN_REVIEW_LIVE_PATH"),
-                )
-            result = current_command_runtime().run(
-                CommandRequest(
-                    command=ShellCommand(review_item.reconcile.run),
-                    cwd=review_item.command_cwd,
-                    env=review_env,
-                    io="tty",
-                    elevation=review_item.reconcile.elevation,
-                    elevation_reason="run privileged reconcile command",
-                )
-            )
-            return result.exit_code
-
-    if not review_item.repo_path.exists() or not review_item.live_path.exists():
+    if (not review_item.repo_path.exists() and review_item.before_bytes is None) or (
+        not review_item.live_path.exists() and review_item.after_bytes is None
+    ):
         raise ValueError("edit requires both repo and live paths to exist")
 
     with tempfile.TemporaryDirectory(prefix="dotman-editor-review-") as temp_dir:
@@ -313,13 +294,29 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
             review_repo_path, review_live_path = review_paths
 
         try:
-            return run_basic_reconcile(
+            editor = review_item.editor
+            if editor is not None and editor.type == "jinja":
+                return run_jinja_reconcile(
+                    repo_path=str(review_item.repo_path),
+                    live_path=str(review_item.live_path),
+                    review_repo_path=str(review_repo_path) if review_repo_path is not None else None,
+                    review_live_path=str(review_live_path) if review_live_path is not None else None,
+                )
+            result = run_basic_reconcile(
                 repo_path=str(review_item.repo_path),
                 live_path=str(review_item.live_path),
-                additional_sources=[],
+                additional_sources=list(review_item.additional_sources),
                 review_repo_path=str(review_repo_path) if review_repo_path is not None else None,
                 review_live_path=str(review_live_path) if review_live_path is not None else None,
+                editor=editor.run if editor is not None and editor.type is None else None,
+                source_bytes={review_item.repo_path: review_item.before_bytes} if review_item.before_bytes is not None else None,
+                review_repo_bytes=review_item.before_bytes,
+                review_live_bytes=review_item.after_bytes,
+                editor_env=review_item.command_env,
+                editor_io=editor.io if editor is not None else "tty",
+                editor_elevation=editor.elevation if editor is not None else "none",
             )
+            return result if isinstance(result, int) else result.exit_code
         except FileNotFoundError as exc:
             raise ValueError("editor command was not found") from exc
 
@@ -367,12 +364,12 @@ def _directory_item_projected_pull_loader(
 ) -> ReviewBytesLoader | None:
     if operation != "pull":
         return None
-    if before and not (item.action == "delete" and item.pull_view_repo != "raw"):
+    if before and not (item.action == "delete" and item.compare_repo != "raw"):
         return None
-    if not before and not (item.action == "create" and item.pull_view_live != "raw"):
+    if not before and not (item.action == "create" and item.compare_live != "raw"):
         return None
 
-    view = item.pull_view_repo if before else item.pull_view_live
+    view = item.compare_repo if before else item.compare_live
     context = build_template_context(
         plan.variables,
         profile=plan.requested_profile,
@@ -440,7 +437,7 @@ def _directory_item_rendered_repo_bytes(item, *, target, context: dict) -> bytes
 def _run_directory_item_view_command(item, *, target, command: str) -> bytes:
     result = current_command_runtime().run(
         CommandRequest(
-            command=ShellCommand(command),
+            command=ShellCommand(_projection_command(command)),
             cwd=target.command_cwd,
             env=_directory_item_command_env(item, target=target),
             elevation="root" if needs_sudo_for_read(item.live_path) else "none",

@@ -15,18 +15,7 @@ path = "~/.config/gtk-3.0"
 chmod = "700"
 
 [targets.gtk3_dir.ignore]
-push = [
-  "assets/*",
-  "bookmarks",
-  "*.backup.*",
-  "settings.ini",
-]
-pull = [
-  "assets/*",
-  "bookmarks",
-  "*.backup.*",
-  "settings.ini",
-]
+patterns = ["assets/*", "bookmarks", "*.backup.*", "settings.ini"]
 
 [targets.gtk3_settings]
 source = "files/config/gtk-3.0/settings.ini"
@@ -38,12 +27,7 @@ path = "~/.config/gtk-4.0"
 chmod = "700"
 
 [targets.gtk4_dir.ignore]
-push = [
-  "settings.ini",
-]
-pull = [
-  "settings.ini",
-]
+patterns = ["settings.ini"]
 
 [targets.gtk4_settings]
 source = "files/config/gtk-4.0/settings.ini"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,7 +12,11 @@ from dotman.reconcile import _reconcile_write_confirmation_prompt, run_basic_rec
 def _patch_editor_runtime(monkeypatch, fake_run) -> MemoryCommandRuntime:
     def run_editor(request):
         assert isinstance(request.command, ArgvCommand)
-        completed = fake_run(list(request.command.arguments), False)
+        command = list(request.command.arguments)
+        if len(inspect.signature(fake_run).parameters) >= 3:
+            completed = fake_run(command, False, request)
+        else:
+            completed = fake_run(command, False)
         return CommandResult(exit_code=completed.returncode)
 
     runtime = MemoryCommandRuntime([run_editor])
@@ -37,7 +42,7 @@ def test_run_basic_reconcile_pins_vim_like_editor_to_review_header(
     def fake_run(command: list[str], check: bool):
         recorded["command"] = command
         recorded["check"] = check
-        recorded["editable_text"] = Path(command[2]).read_text(encoding="utf-8")
+        recorded["editable_text"] = Path(command[1]).read_text(encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
     _patch_editor_runtime(monkeypatch, fake_run)
@@ -51,8 +56,7 @@ def test_run_basic_reconcile_pins_vim_like_editor_to_review_header(
 
     assert exit_code == 0
     assert recorded["command"][0] == "nvim"
-    assert Path(recorded["command"][1]).name == "reconcile-review.md"
-    editable_path = Path(recorded["command"][2])
+    editable_path = Path(recorded["command"][1])
     assert editable_path != repo_path.resolve()
     assert recorded["editable_text"] == "repo\n"
 
@@ -74,12 +78,12 @@ def test_run_basic_reconcile_opens_review_file_then_transactional_source_copies(
 
     recorded: dict[str, object] = {}
 
-    def fake_run(command: list[str], check: bool):
+    def fake_run(command: list[str], check: bool, request):
         recorded["command"] = command
         recorded["check"] = check
-        review_path = Path(command[1])
-        editable_repo_path = Path(command[2])
-        editable_include_path = Path(command[3])
+        review_path = Path(request.env["DOTMAN_EDITOR_REVIEW_PATH"])
+        editable_repo_path = Path(command[1])
+        editable_include_path = Path(command[2])
         assert review_path.name == "reconcile-review.md"
         assert review_path.stat().st_mode & 0o222 == 0
         assert editable_repo_path.read_text(encoding="utf-8") == "repo\n"
@@ -136,8 +140,8 @@ def test_run_basic_reconcile_opens_review_file_then_transactional_source_copies(
     assert recorded["check"] is False
     command = recorded["command"]
     assert command[0] == "nvim"
-    assert Path(command[2]) != repo_path.resolve()
-    assert Path(command[3]) != include_path.resolve()
+    assert Path(command[1]) != repo_path.resolve()
+    assert Path(command[2]) != include_path.resolve()
     assert repo_path.read_text(encoding="utf-8") == "edited repo\n"
     assert include_path.read_text(encoding="utf-8") == "edited include\n"
 
@@ -157,8 +161,8 @@ def test_run_basic_reconcile_reads_live_diff_through_sudo_aware_reader(
             return b"live\n"
         return path.read_bytes()
 
-    def fake_run(command: list[str], check: bool):
-        review_path = Path(command[1])
+    def fake_run(command: list[str], check: bool, request):
+        review_path = Path(request.env["DOTMAN_EDITOR_REVIEW_PATH"])
         assert "+live" in review_path.read_text(encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
@@ -194,11 +198,11 @@ def test_run_basic_reconcile_builds_review_file_from_provided_review_paths(
 
     recorded: dict[str, object] = {}
 
-    def fake_run(command: list[str], check: bool):
+    def fake_run(command: list[str], check: bool, request):
         recorded["command"] = command
         recorded["check"] = check
-        review_path = Path(command[1])
-        editable_repo_path = Path(command[2])
+        review_path = Path(request.env["DOTMAN_EDITOR_REVIEW_PATH"])
+        editable_repo_path = Path(command[1])
         assert review_path.name == "reconcile-review.md"
         assert review_path.read_text(encoding="utf-8") == "\n".join(
             [
@@ -245,7 +249,7 @@ def test_run_basic_reconcile_builds_review_file_from_provided_review_paths(
 
     assert exit_code == 0
     assert recorded["command"][0] == "nvim"
-    assert Path(recorded["command"][2]) != repo_path.resolve()
+    assert Path(recorded["command"][1]) != repo_path.resolve()
 
 
 def test_run_basic_reconcile_reports_no_changes_when_editor_makes_no_edits(
@@ -291,7 +295,7 @@ def test_run_basic_reconcile_accepts_assume_yes_without_prompting(
     live_path.write_text("live\n", encoding="utf-8")
 
     def fake_run(command: list[str], check: bool):
-        Path(command[2]).write_text("edited repo\n", encoding="utf-8")
+        Path(command[1]).write_text("edited repo\n", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
     _patch_editor_runtime(monkeypatch, fake_run)
@@ -326,7 +330,7 @@ def test_run_basic_reconcile_lists_only_changed_repo_sources_before_prompt(
     include_path.write_text("include\n", encoding="utf-8")
 
     def fake_run(command: list[str], check: bool):
-        Path(command[2]).write_text("edited repo\n", encoding="utf-8")
+        Path(command[1]).write_text("edited repo\n", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
     _patch_editor_runtime(monkeypatch, fake_run)
@@ -357,7 +361,7 @@ def test_run_basic_reconcile_discards_temp_edits_when_write_is_not_confirmed(
     live_path.write_text("live\n", encoding="utf-8")
 
     def fake_run(command: list[str], check: bool):
-        Path(command[2]).write_text("edited repo\n", encoding="utf-8")
+        Path(command[1]).write_text("edited repo\n", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
     _patch_editor_runtime(monkeypatch, fake_run)
@@ -385,7 +389,7 @@ def test_run_basic_reconcile_requires_explicit_confirmation_answer(
     live_path.write_text("live\n", encoding="utf-8")
 
     def fake_run(command: list[str], check: bool):
-        Path(command[2]).write_text("edited repo\n", encoding="utf-8")
+        Path(command[1]).write_text("edited repo\n", encoding="utf-8")
         return SimpleNamespace(returncode=0)
 
     answers = iter(["", "maybe", "y"])

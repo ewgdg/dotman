@@ -24,7 +24,7 @@ Focused CLI responsibilities live in dedicated modules:
 - `cli_parser.py` — argparse construction
 - `cli_emit.py` — text/JSON output formatting
 - `standalone_commands.py` — configuration-independent rewrite, transform,
-  elevation, capture, reconcile, and render workflows
+  elevation, capture, editor, and render workflows
 - `inspection_commands.py` — configuration-aware list, info, search, and doctor
   workflows
 - `state_commands.py` — track, untrack, add, and edit workflows composed with

@@ -73,7 +73,7 @@ def test_target_path_rule_rejects_unsupported_schema_fields(tmp_path: Path) -> N
         tmp_path,
         target_manifest=[
             "",
-            "[[targets.config.path_rules]]",
+            "[targets.config.path_rules.rule]",
             'pattern = "*.conf"',
             'unexpected = "value"',
         ],
@@ -81,7 +81,7 @@ def test_target_path_rule_rejects_unsupported_schema_fields(tmp_path: Path) -> N
 
     with pytest.raises(
         ValueError,
-        match=r"target 'config' path_rules\[1\] has unsupported keys: unexpected",
+        match=r"target 'config' path_rules.rule has unsupported keys: unexpected",
     ):
         load_manifest_repo(tmp_path, repo_root)
 
@@ -149,27 +149,20 @@ def test_canonical_manifest_vocabulary_loads_unchanged(
             'commands = [{ run = "echo ready", elevation = "root" }]',
             "",
             "[ignore]",
-            'push = ["repo.push"]',
-            'pull = ["repo.pull"]',
-            'shared = ["repo.shared"]',
+            'patterns = ["repo.one", "repo.two"]',
             'gitignore = ["push"]',
         ],
         target_manifest=[
             'type = "directory"',
             'render = "cat \\"$DOTMAN_REPO_PATH\\""',
-            'pull_view_repo = "render"',
-            'pull_view_live = "raw"',
+            'compare = { repo = "render", live = "raw" }',
             "",
-            "[[targets.config.path_rules]]",
+            "[targets.config.path_rules.rule]",
             'pattern = "*.conf"',
-            'pull_view_repo = "render"',
-            'pull_view_live = "raw"',
+            'compare = { repo = "render", live = "raw" }',
             "",
             "[targets.config.ignore]",
-            'push = ["target.push"]',
-            'pull = ["target.pull"]',
-            'shared = ["target.shared"]',
-            'gitignore = ["pull"]',
+            'patterns = ["target.one", "target.two"]',
         ],
     )
 
@@ -180,19 +173,9 @@ def test_canonical_manifest_vocabulary_loads_unchanged(
     pull_target = pull_plan.package_plans[0].target_plans[0]
 
     assert push_plan.repo_hooks["fixture"]["pre_push"][0].elevation == "root"
-    assert push_target.push_ignore == (
-        "repo.push",
-        "repo.shared",
-        "target.push",
-        "target.shared",
-    )
-    assert pull_target.pull_ignore == (
-        "repo.pull",
-        "repo.shared",
-        "target.pull",
-        "target.shared",
-    )
-    assert pull_target.pull_view_repo == "render"
-    assert pull_target.pull_view_live == "raw"
-    assert pull_target.path_rules[0].pull_view_repo == "render"
-    assert pull_target.path_rules[0].pull_view_live == "raw"
+    assert "push_ignore" not in push_target.to_dict()
+    assert "pull_ignore" not in pull_target.to_dict()
+    assert pull_target.compare_repo == "render"
+    assert pull_target.compare_live == "raw"
+    assert pull_target.path_rules[0].compare_repo == "render"
+    assert pull_target.path_rules[0].compare_live == "raw"

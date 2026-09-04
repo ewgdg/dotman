@@ -7,7 +7,7 @@ from typing import Any, TYPE_CHECKING
 from dotman.collisions import resolve_tracked_target_winners
 from dotman.config import expand_path
 from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
-from dotman.projection import default_pull_view_live, resolve_target_kind, validate_probe_target_config
+from dotman.projection import default_compare_live, resolve_target_kind, validate_probe_target_config
 from dotman.models import (
     FullSpecSelector,
     HookCommandSpec,
@@ -388,15 +388,6 @@ def summarize_targets(
             if target.capture is not None
             else None
         )
-        reconcile = (
-            HookCommandSpec(
-                run=render_template_string(target.reconcile.run, context, base_dir=target.declared_in, source_path=target.declared_in),
-                io=target.reconcile.io,
-                elevation=target.reconcile.elevation,
-            )
-            if target.reconcile is not None
-            else None
-        )
         target_summaries.append(
             TrackedTargetSummary(
                 target_name=target.name,
@@ -410,13 +401,12 @@ def summarize_targets(
                     file_symlink_mode=file_symlink_mode,
                     dir_symlink_mode=dir_symlink_mode,
                 ),
-                render_command=render_command,
-                capture_command=capture_command,
-                reconcile=reconcile,
-                pull_view_repo=target.pull_view_repo or "raw",
-                pull_view_live=target.pull_view_live or default_pull_view_live(capture_command),
-                push_ignore=merge_ignore_patterns(repo.ignore_defaults.push, target.push_ignore or ()),
-                pull_ignore=merge_ignore_patterns(repo.ignore_defaults.pull, target.pull_ignore or ()),
+                render=target.render or "raw",
+                capture=target.capture or "raw",
+                editor=target.editor,
+                compare_repo=target.compare_repo or "raw",
+                compare_live=target.compare_live or default_compare_live(capture_command),
+                additional_sources=target.additional_sources,
                 chmod=target.chmod,
             )
         )
@@ -431,13 +421,12 @@ def tracked_target_summary_from_plan(target: TargetPlan) -> TrackedTargetSummary
         live_path=target.live_path,
         target_kind=target.target_kind,
         probe_command=target.probe_command,
-        render_command=target.render_command,
-        capture_command=target.capture_command,
-        reconcile=target.reconcile,
-        pull_view_repo=target.pull_view_repo,
-        pull_view_live=target.pull_view_live,
-        push_ignore=target.push_ignore,
-        pull_ignore=target.pull_ignore,
+        render=target.render,
+        capture=target.capture,
+        editor=target.editor,
+        compare_repo=target.compare_repo,
+        compare_live=target.compare_live,
+        additional_sources=target.additional_sources,
         chmod=target.chmod,
     )
 

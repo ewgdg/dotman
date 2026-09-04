@@ -135,17 +135,15 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
     assert [binding["tracked_reason"] for binding in package["package_entries"]] == ["implicit", "explicit"]
     assert package["owned_targets"] == [
         {
-            "capture_command": None,
+            "additional_sources": [],
+            "capture": "raw",
             "chmod": "600",
+            "compare": {"live": "capture", "repo": "raw"},
+            "editor": {"elevation": "none", "io": "tty", "type": "default"},
             "live_path": str(home / ".gitconfig"),
             "package_id": "git",
             "profile": "basic",
-            "pull_ignore": [],
-            "pull_view_live": "raw",
-            "pull_view_repo": "raw",
-            "push_ignore": [],
-            "reconcile": None,
-            "render_command": "jinja",
+            "render": "jinja",
             "repo": "example",
             "repo_path": str(EXAMPLE_REPO / "packages" / "git" / "files" / "gitconfig"),
             "target_kind": "file",
@@ -155,10 +153,44 @@ def test_info_tracked_cli_emits_package_details_for_tracked_package(
     assert "target_refs" not in package
     target_names = {target["target_name"] for target in package["package_entries"][0]["targets"]}
     assert target_names == {"gitconfig"}
+    for target in package["package_entries"][0]["targets"] + package["owned_targets"]:
+        assert not {"render_command", "capture_command", "reconcile", "pull_view_repo", "pull_view_live"} & target.keys()
     assert package["package_entries"][0]["hooks"] == {}
     pre_push = package["package_entries"][1]["hooks"]["pre_push"]
     assert pre_push[0]["package_id"] == "git"
     assert "git" in pre_push[0]["command"]
+
+
+def test_info_trackable_cli_emits_resolved_target_schema(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    config_path = write_manager_config(tmp_path)
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--json",
+            "info",
+            "trackable",
+            "git",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    target = payload["trackable"]["targets"][0]
+    assert target["render"] == "jinja"
+    assert target["capture"] == "raw"
+    assert target["compare"] == {"repo": "raw", "live": "capture"}
+    assert target["editor"] == {"type": "default", "io": "tty", "elevation": "none"}
+    assert target["additional_sources"] == []
+    assert not {"render_command", "capture_command", "reconcile", "pull_view_repo", "pull_view_live"} & target.keys()
 
 
 def test_info_tracked_cli_does_not_build_push_plan(
@@ -500,10 +532,15 @@ def test_info_tracked_cli_shows_effective_values_for_target_preset(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     target = payload["package"]["owned_targets"][0]
-    assert target["render_command"] == "jinja"
-    assert target["pull_view_repo"] == "render"
-    assert target["pull_view_live"] == "raw"
-    assert target["reconcile"] == {"run": "jinja", "io": "tty", "elevation": "none", "run_noop": False}
+    assert target["render"] == "jinja"
+    assert target["capture"] == "raw"
+    assert target["compare"] == {"repo": "render", "live": "raw"}
+    assert target["editor"] == {"type": "jinja", "io": "tty", "elevation": "none"}
+    assert "render_command" not in target
+    assert "capture_command" not in target
+    assert "pull_view_repo" not in target
+    assert "pull_view_live" not in target
+    assert "reconcile" not in target
 
 
 def test_info_tracked_cli_shows_capture_and_editor_values_for_target_preset(
@@ -567,11 +604,15 @@ def test_info_tracked_cli_shows_capture_and_editor_values_for_target_preset(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     target = payload["package"]["owned_targets"][0]
-    assert target["render_command"] == "jinja"
-    assert target["capture_command"] == "patch"
-    assert target["pull_view_repo"] == "render"
-    assert target["pull_view_live"] == "raw"
-    assert target["reconcile"] == {"run": "jinja", "io": "tty", "elevation": "none", "run_noop": False}
+    assert target["render"] == "jinja"
+    assert target["capture"] == "patch"
+    assert target["compare"] == {"repo": "render", "live": "raw"}
+    assert target["editor"] == {"type": "jinja", "io": "tty", "elevation": "none"}
+    assert "render_command" not in target
+    assert "capture_command" not in target
+    assert "pull_view_repo" not in target
+    assert "pull_view_live" not in target
+    assert "reconcile" not in target
 
 
 
