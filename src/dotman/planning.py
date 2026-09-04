@@ -649,8 +649,7 @@ def _validate_preprojection_conflicts(
                 metadata.target,
                 metadata.repo_path,
                 metadata.live_path,
-                metadata.push_ignore,
-                metadata.pull_ignore,
+                metadata.ignore_patterns,
                 metadata.live_path_is_symlink,
                 metadata.live_path_symlink_target,
             )
@@ -666,11 +665,11 @@ def _validate_preprojection_conflicts(
 def _validate_preprojection_reserved_path_conflicts(
     planning_inputs: list[PackagePlanningInput],
     *,
-    rendered_targets: list[tuple[PackageSpec, Any, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
+    rendered_targets: list[tuple[PackageSpec, Any, Path, Path, tuple[str, ...], bool, str | None]],
 ) -> None:
     target_claims = [
         (metadata_package.id, f"{metadata_package.id}:{target.name}", live_path)
-        for metadata_package, target, _repo_path, live_path, _push_ignore, _pull_ignore, _is_symlink, _symlink_target in rendered_targets
+        for metadata_package, target, _repo_path, live_path, _ignore_patterns, _is_symlink, _symlink_target in rendered_targets
     ]
     reserved_claims: list[tuple[str, Path]] = []
     for planning_input in planning_inputs:
@@ -1133,7 +1132,6 @@ def _validate_direct_package_plan_conflicts(
                         target.repo_path,
                         target.live_path,
                         target_spec.ignore_patterns or (),
-                        target_spec.ignore_patterns or (),
                         target.live_path_is_symlink,
                         target.live_path_symlink_target,
                     )
@@ -1148,11 +1146,11 @@ def _validate_reserved_path_conflicts_for_package_plans(
     package_plans: list[PackagePlan],
     *,
     repo: Repository,
-    rendered_targets: list[tuple[PackageSpec, Any, Path, Path, tuple[str, ...], tuple[str, ...], bool, str | None]],
+    rendered_targets: list[tuple[PackageSpec, Any, Path, Path, tuple[str, ...], bool, str | None]],
 ) -> None:
     target_claims = [
         (package.id, f"{package.id}:{target.name}", live_path)
-        for package, target, _repo_path, live_path, _push_ignore, _pull_ignore, _live_path_is_symlink, _live_path_symlink_target in rendered_targets
+        for package, target, _repo_path, live_path, _ignore_patterns, _live_path_is_symlink, _live_path_symlink_target in rendered_targets
     ]
     reserved_claims: list[tuple[str, Path]] = []
     for plan in package_plans:

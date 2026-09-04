@@ -129,8 +129,7 @@ class Repository:
         patterns = normalize_string_list(ignore_payload.get("patterns")) or ()
         gitignore = normalize_gitignore_list(ignore_payload.get("gitignore")) or ()
         return RepoIgnoreDefaults(
-            push=patterns,
-            pull=patterns,
+            patterns=patterns,
             skip_markers=normalize_skip_markers(ignore_payload.get("skip_markers"), repo_config_path=repo_config_path),
             gitignore=gitignore,
         )

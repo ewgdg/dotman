@@ -179,3 +179,17 @@ def test_canonical_manifest_vocabulary_loads_unchanged(
     assert pull_target.compare_live == "raw"
     assert pull_target.path_rules[0].compare_repo == "render"
     assert pull_target.path_rules[0].compare_live == "raw"
+
+
+def test_ignore_schema_has_no_directional_or_anonymous_fields(tmp_path: Path) -> None:
+    repo_root = write_manifest_repo(tmp_path)
+    package_path = repo_root / "packages" / "app" / "package.toml"
+    package_path.write_text(
+        package_path.read_text(encoding="utf-8").replace(
+            '[targets.config]',
+            '[ignore]\npush = ["*.tmp"]\n\n[targets.config]',
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"package manifest .+ ignore has unsupported keys: push"):
+        load_manifest_repo(tmp_path, repo_root)

@@ -139,14 +139,14 @@ chmod = "600"
 - For file targets, `chmod` is the source of truth for the installed file mode when present.
 - For directory targets, `chmod` applies to the live directory root only; child files mirror Git semantics and carry only the executable bit, not full permission bits such as `600` vs `644`.
 - Directory targets may define target-level `render` and `capture`; for directory targets these apply as defaults for every child file.
-- Directory targets may define named `[targets.<name>.path_rules.<rule>]` tables for path-scoped child policy. Rule names contain only letters, numbers, `_`, or `-`; optional `priority` orders matches. Path rules support `pattern`, `preset`, `chmod`, `render`, `capture`, `compare.repo`, `compare.live`, and a guard-only `hooks` namespace.
+- Directory targets may define named `[targets.<name>.path_rules.<rule>]` tables for path-scoped child policy. Rule names contain only letters, numbers, `_`, or `-`; `priority` orders matches and rule names provide the lexical tie-break. Path rules support `pattern`, `preset`, `priority`, `chmod`, `render`, `capture`, `compare.repo`, `compare.live`, `editor`, `sync_policy`, and a guard-only `hooks` namespace.
 - Path-rule `pattern` values are relative glob-style patterns under the directory target root. They must not be absolute or contain `..` segments.
 - Path-rule `preset` reuses built-in target presets as defaults for matching child files. Useful example: `preset = "jinja-patch"` applies Jinja render, patch capture, and the required patch-review views for that path rule.
 - Path-rule `render`, `capture`, `compare`, `editor`, and `sync_policy` keys override the directory target defaults for matching child files. Rule fields override independently, and higher priority wins.
 - Child pull views are resolved per child: if `compare.live` is omitted, a child with effective `capture` defaults its live view to `capture`; otherwise it defaults to `raw`.
 - `capture = "patch"` is allowed for directory child files when the effective child settings satisfy the same file-like requirements: effective `render`, `compare.repo = "render"`, and `compare.live = "raw"`.
 - Path-rule `chmod` values apply during `push` only. `pull` still stores only bytes plus the Git executable bit because Git cannot represent full child file modes such as `600`.
-- If multiple path rules match the same child file, later non-empty scalar policy values win. Matching guards accumulate in declaration order and must all pass.
+- If multiple path rules match the same child file, fields compose independently in ascending priority and lexical rule-name order; an explicitly set field from a later rule wins without resetting other fields. Matching guards run in that same deterministic order and must all pass.
 - A path-rule guard becomes active when its pattern matches any managed repo-side or live-side candidate path after operation ignores, `.gitignore` control-file exclusions, and skip markers. Shared noop candidates still activate guards.
 - Each active path-rule guard runs once per operation plan, not once per child. Exit `100` removes its remaining matching child work; later guards run only when matching Effective Work remains.
 - Path-rule guard environments retain target-root `DOTMAN_REPO_PATH` / `DOTMAN_LIVE_PATH` values and add `DOTMAN_PATH_RULE_PATTERN`. They do not expose one child path.
@@ -217,22 +217,16 @@ preset = "jinja-patch"
 - A live-dump-style target should typically keep:
   - `compare.repo = "raw"`
   - `compare.live = "capture"`
-- Package manifests may define an `[ignore]` table with `patterns = [...]` and `gitignore = ["push", "pull"]`; these settings apply to every directory target in the package. Package patterns apply to both operations, while `gitignore` selects the operations that read repo-source `.gitignore` files.
-- Targets may define an `[targets.<name>.ignore]` table with gitignore-style patterns relative to the directory target root:
-  - `push = [...]` is operation-scoped: during `push`, matching repo and live child paths are ignored, so they are not created, updated, chmodded, or deleted.
-  - `pull = [...]` is operation-scoped: during `pull`, matching repo and live child paths are ignored, so they are not created, updated, or deleted in the repo.
-  - `shared = [...]` is appended to both `push` and `pull`.
-  - `gitignore = ["push", "pull"]` opts this target into reading repo-source `.gitignore` files for selected operations. Use `gitignore = []` to disable inherited repo defaults for one target.
+- Package manifests may define an `[ignore]` table with `patterns = [...]` and `gitignore = ["push", "pull"]`; these settings apply to every directory target in the package. Package patterns apply symmetrically to push and pull, while `gitignore` selects the operations that read repo-source `.gitignore` files.
+- Targets may define an `[targets.<name>.ignore]` table with `patterns = [...]` relative to the directory target root. Target patterns apply symmetrically to push and pull and are combined with package and repository patterns.
 - Patterns follow gitignore semantics: `**`, leading `/`, trailing `/`, and `!` negation are all supported.
 - Repos may define repo-wide ignore defaults in `repo.toml`:
   - `[ignore]`
-  - `push = [...]`
-  - `pull = [...]`
-  - `shared = [...]` for shared repo defaults appended to both `push` and `pull`
+  - `patterns = [...]` for patterns shared by every directory target
   - `gitignore = ["push", "pull"]` as a directory-target default; omitted means disabled
   - `skip_markers = [".dotman-skip"]` for marker filenames that skip whole directory subtrees
-- Repo-level ignore defaults are prepended to target-level ignore lists.
-- Target-level `ignore.gitignore` replaces repo-level `ignore.gitignore`; lists are not merged. `gitignore = []` means explicitly off.
+- Repository, package, and target patterns are applied to both repository and live directory censuses for both operations. Repository defaults are applied first, followed by package and target patterns.
+- Package-level `ignore.gitignore` replaces the repository default for packages that specify it; omitted package settings inherit the repository default. `gitignore = []` explicitly disables repository `.gitignore` reads for that package.
 - When `.gitignore` support is enabled for an operation, dotman reads `.gitignore` files from the repo source tree only, not the live tree. Matching repo and live child paths are unmanaged/preserved for that operation, and the `.gitignore` files themselves are treated as control files rather than synced payload. Control files cannot be re-included by `!` negation.
 - `skip_markers` entries are basenames, not patterns. If a scanned directory contains one of these marker names, dotman treats that directory subtree as unmanaged during both `push` and `pull`; marker file contents are ignored.
 - Recommended marker name: `.dotman-skip`. Dotman does not use `.dotmanignore` for this feature.
@@ -255,8 +249,7 @@ Example repo defaults:
 
 ```toml
 [ignore]
-shared = ["*.bak"]
-pull = ["*.dotdropbak"]
+patterns = ["*.bak", "*.dotdropbak"]
 skip_markers = [".dotman-skip"]
 ```
 

@@ -529,6 +529,7 @@ def test_target_sync_policy_overrides_package_sync_policy(
     assert push_plan.target_plans == []
     assert push_plan.hooks == {}
     assert [target.target_name for target in pull_plan.target_plans] == ["config"]
+    assert pull_plan.target_plans[0].sync_policy == "pull-only"
 
 
 def test_hook_filtering_stays_quiet_when_no_targets_are_eligible(
@@ -3178,3 +3179,35 @@ def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_target
 
     assert plan.target_plans[0].action == "noop"
     assert plan.target_plans[0].action == "noop"
+
+
+def test_sync_policy_resolution_survives_profile_and_local_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "packages" / "app" / "files"
+    source_root.mkdir(parents=True)
+    (source_root / "config").write_text("config\n", encoding="utf-8")
+    (repo_root / "profiles").mkdir()
+    (repo_root / "profiles" / "work.toml").write_text("", encoding="utf-8")
+    (repo_root / "local.example.toml").write_text('[vars]\nsuffix = "local"\n', encoding="utf-8")
+    (repo_root / "packages" / "app" / "package.toml").write_text(
+        '''id = "app"
+sync_policy = "push-only"
+
+[targets.config]
+source = "files/config"
+path = "~/.config/{{ profile }}-{{ suffix }}"
+''',
+        encoding="utf-8",
+    )
+    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+    engine = DotmanEngine.from_config_path(config_path)
+    push = single_package_plan(engine, "fixture:app@work", operation="push")
+    pull = single_package_plan(engine, "fixture:app@work", operation="pull")
+
+    assert push.target_plans[0].live_path == home / ".config" / "work-local"
+    assert push.target_plans[0].sync_policy == "push-only"
+    assert pull.target_plans == []

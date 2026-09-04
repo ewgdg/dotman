@@ -247,8 +247,7 @@ class ProfileSpec:
 
 @dataclass(frozen=True)
 class RepoIgnoreDefaults:
-    push: tuple[str, ...] = ()
-    pull: tuple[str, ...] = ()
+    patterns: tuple[str, ...] = ()
     skip_markers: tuple[str, ...] = ()
     gitignore: tuple[str, ...] = ()
 
@@ -746,6 +745,7 @@ class TargetPlan:
     capture: str = "raw"
     compare_repo: str = "raw"
     compare_live: str = "capture"
+    sync_policy: str = "both"
     editor: EditorSpec = field(default_factory=EditorSpec)
     editor_explicit: bool = field(default=False, repr=False, compare=False)
     additional_sources: tuple[str, ...] = ()
@@ -784,6 +784,7 @@ class TargetPlan:
             "editor": self.editor.to_dict(),
             "additional_sources": list(self.additional_sources),
             "compare": {"repo": _serialized_projection(self.compare_repo), "live": _serialized_projection(self.compare_live)},
+            "sync_policy": self.sync_policy,
             "projection_error": self.projection_error,
             "chmod": self.chmod,
             "path_rules": [rule.to_dict() for rule in self.path_rules],
