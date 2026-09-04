@@ -52,6 +52,10 @@ _Avoid_: Planned action, confirmed diff
 An active probe target presented by Sync as selectable auxiliary work that may activate applicable hooks. It has no repository/live payload, Resolution Intent, Proposal, Sync Base acknowledgment, or Converged result.
 _Avoid_: Sync Unit, Proposal
 
+**Directory Root Work**:
+Selectable target-owned auxiliary work that enforces an exact configured mode on an existing directory target root during live publication. It is not a Sync Unit and has no Proposal, Sync Base acknowledgment, or Converged result. It never creates an otherwise-empty directory target.
+_Avoid_: Directory Sync Unit, aggregate Proposal
+
 **Structured Transform**:
 Format-aware partitioning and recomposition of document content.
 _Avoid_: Render, capture, repository transform
