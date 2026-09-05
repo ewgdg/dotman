@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Mapping
 
 from dotman.atomic_files import write_text_atomic
+from dotman.models import AdditionalSource, EditorSpec
 from dotman.command_runtime import ArgvCommand, CommandRequest, CommandResult, ShellCommand, current_command_runtime
 from dotman.file_access import read_bytes, write_bytes_atomic as sudo_write_bytes_atomic
 from dotman.terminal import read_prompt_line
@@ -248,6 +249,39 @@ def _write_confirmed_sources(changed_sources: list[EditableSourceCopy]) -> None:
             sudo_write_bytes_atomic(changed_source.destination_path, content)
 
 
+def resolve_editor_additional_sources(
+    *,
+    editor: EditorSpec | None,
+    additional_sources: tuple[str, ...],
+    additional_source_entries: tuple[AdditionalSource, ...],
+    additional_sources_root: Path | None,
+    package_root: Path,
+) -> list[Path]:
+    # Resolve each configured entry against the package that declared it.
+    # Entries from inherited specs retain their parent root; appended entries
+    # carry the child root. Manual plans without provenance use package_root.
+    entries = list(additional_source_entries)
+    if not entries:
+        entries = list(editor.source_entries() if editor is not None else ())
+    if not entries:
+        fallback_root = additional_sources_root or package_root
+        entries = [AdditionalSource(path, fallback_root) for path in additional_sources]
+    elif additional_sources and len(entries) < len(additional_sources):
+        known = {entry.path for entry in entries}
+        entries.extend(AdditionalSource(path, additional_sources_root or package_root) for path in additional_sources if path not in known)
+
+    source_paths: list[Path] = []
+    for entry in entries:
+        root = (entry.root or package_root).expanduser().resolve()
+        source_path = (root / entry.path).resolve()
+        try:
+            source_path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"editor additional source escapes declaring package root: {entry.path}") from exc
+        source_paths.append(source_path)
+    return source_paths
+
+
 def run_basic_reconcile(
     *,
     repo_path: str,
@@ -261,6 +295,7 @@ def run_basic_reconcile(
     review_repo_bytes: bytes | None = None,
     review_live_bytes: bytes | None = None,
     editor_env: Mapping[str, str] | None = None,
+    editor_cwd: Path | None = None,
     editor_io: str = "tty",
     editor_elevation: str = "none",
     stream_output: bool = False,
@@ -345,6 +380,7 @@ def run_basic_reconcile(
             CommandRequest(
                 command=command,
                 env=command_env,
+                cwd=editor_cwd,
                 io=editor_io,
                 stream_output=stream_output if editor_io == "pipe" else False,
                 elevation=editor_elevation,

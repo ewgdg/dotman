@@ -38,23 +38,38 @@ def _parse_scope_selector(text: str) -> _ScopeSelector:
     child_path: str | None = None
     package_ref = remainder
     if "." in remainder:
-        package_ref, target_name = remainder.split(".", 1)
-        if not package_ref or not target_name:
-            raise ValueError(f"sync scope '{text}' is not canonical")
-        if "/" in target_name:
-            target_name, child_path = target_name.split("/", 1)
-            if not target_name or not child_path or "." in target_name:
+        # A profile instance may contain dots (for example ``app<work.v2>``).
+        # The target separator is therefore the first dot after the profile's
+        # closing angle bracket, when an instance is present.
+        separator = remainder.find(".")
+        profile_start = remainder.find("<")
+        # Child paths may contain angle brackets; only treat ``<`` as an
+        # instance opener when it occurs before the package-target separator.
+        if profile_start >= 0 and (separator < 0 or profile_start < separator):
+            profile_end = remainder.find(">", profile_start + 1)
+            if profile_end < 0:
                 raise ValueError(f"sync scope '{text}' is not canonical")
-            path = PurePosixPath(child_path)
-            if (
-                path.is_absolute()
-                or path.as_posix() != child_path
-                or any(part in {"", ".", ".."} for part in path.parts)
-                or "\\" in child_path
-            ):
-                raise ValueError(f"sync scope '{text}' child path must be normalized POSIX")
-        elif "." in target_name:
-            raise ValueError(f"sync scope '{text}' is not canonical")
+            separator = remainder.find(".", profile_end + 1)
+        if separator >= 0:
+            if separator == len(remainder) - 1:
+                raise ValueError(f"sync scope '{text}' is not canonical")
+            package_ref = remainder[:separator]
+            target_name = remainder[separator + 1 :]
+        if target_name is not None:
+            if "/" in target_name:
+                target_name, child_path = target_name.split("/", 1)
+                if not target_name or not child_path or "." in target_name:
+                    raise ValueError(f"sync scope '{text}' is not canonical")
+                path = PurePosixPath(child_path)
+                if (
+                    path.is_absolute()
+                    or path.as_posix() != child_path
+                    or any(part in {"", ".", ".."} for part in path.parts)
+                    or "\\" in child_path
+                ):
+                    raise ValueError(f"sync scope '{text}' child path must be normalized POSIX")
+            elif "." in target_name:
+                raise ValueError(f"sync scope '{text}' is not canonical")
     try:
         parsed_repo, package_id, bound_profile = parse_package_ref_text(f"{repo}:{package_ref}")
     except ValueError as exc:

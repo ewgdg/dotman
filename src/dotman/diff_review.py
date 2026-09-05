@@ -21,8 +21,8 @@ from dotman.command_runtime import (
     raise_for_command_interruption,
 )
 from dotman.file_access import needs_sudo_for_read, read_bytes
-from dotman.models import HookPlan, PackagePlan
-from dotman.reconcile import run_basic_reconcile
+from dotman.models import AdditionalSource, HookPlan, PackagePlan
+from dotman.reconcile import resolve_editor_additional_sources, run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
 from dotman.templates import build_template_context, render_template_file, render_template_string
 from dotman.ui_context import current_ui_config
@@ -58,6 +58,8 @@ class ReviewItem:
     editor: Any = None
     editor_explicit: bool = False
     additional_sources: tuple[str, ...] = ()
+    additional_source_entries: tuple[AdditionalSource, ...] = field(default=(), repr=False, compare=False)
+    additional_sources_root: Path | None = field(default=None, repr=False, compare=False)
     command_cwd: Path | None = None
     command_env: dict[str, str] | None = field(default=None, repr=False)
     diff_unavailable_reason: str | None = None
@@ -111,6 +113,11 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                             after_bytes_loader=after_loader,
                             before_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=True),
                             after_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=False),
+                            editor=item.editor,
+                            editor_explicit=item.editor_explicit,
+                            additional_sources=item.additional_sources,
+                            additional_source_entries=item.additional_source_entries,
+                            additional_sources_root=target.additional_sources_root,
                             command_cwd=target.command_cwd,
                             command_env=target.command_env,
                             bound_profile=plan.bound_profile,
@@ -170,6 +177,8 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
                     editor=target.editor,
                     editor_explicit=target.editor_explicit,
                     additional_sources=target.additional_sources,
+                    additional_source_entries=target.additional_source_entries,
+                    additional_sources_root=target.additional_sources_root,
                     command_cwd=target.command_cwd,
                     command_env=target.command_env,
                     diff_unavailable_reason=diff_unavailable_reason,
@@ -305,7 +314,17 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
             result = run_basic_reconcile(
                 repo_path=str(review_item.repo_path),
                 live_path=str(review_item.live_path),
-                additional_sources=list(review_item.additional_sources),
+                additional_sources=[
+                    str(path) for path in resolve_editor_additional_sources(
+                        editor=editor,
+                        additional_sources=review_item.additional_sources,
+                        additional_source_entries=review_item.additional_source_entries,
+                        additional_sources_root=review_item.additional_sources_root,
+                        package_root=Path(review_item.command_env["DOTMAN_PACKAGE_ROOT"])
+                        if review_item.command_env and review_item.command_env.get("DOTMAN_PACKAGE_ROOT")
+                        else review_item.repo_path.parent,
+                    )
+                ],
                 review_repo_path=str(review_repo_path) if review_repo_path is not None else None,
                 review_live_path=str(review_live_path) if review_live_path is not None else None,
                 editor=editor.run if editor is not None and editor.type is None else None,
@@ -313,6 +332,7 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
                 review_repo_bytes=review_item.before_bytes,
                 review_live_bytes=review_item.after_bytes,
                 editor_env=review_item.command_env,
+                editor_cwd=review_item.command_cwd,
                 editor_io=editor.io if editor is not None else "tty",
                 editor_elevation=editor.elevation if editor is not None else "none",
             )

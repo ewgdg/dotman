@@ -47,9 +47,9 @@ For pull, you usually also want:
 
 For the common Jinja editor workflow, you can use the built-in shortcut:
 
-- `editor = { run = "jinja", io = "tty" }`
+- `editor = { type = "jinja" }`
 
-`editor = { run = "jinja", io = "tty" }` recursively discovers static Jinja template dependencies such as `{% include %}`, `{% extends %}`, `{% import %}`, and `{% from ... import ... %}`, then runs the built-in editor flow with those files added as extra editable sources.
+`editor = { type = "jinja" }` recursively discovers static Jinja template dependencies such as `{% include %}`, `{% extends %}`, `{% import %}`, and `{% from ... import ... %}`, then runs the built-in editor flow with those files added as extra editable sources.
 
 The string shorthand `editor = "jinja"` is also accepted and normalizes to the same tty-backed builtin workflow.
 
@@ -62,7 +62,7 @@ That preset supplies default values for:
 - `render = "jinja"`
 - `compare.repo = "render"`
 - `compare.live = "raw"`
-- `editor = { run = "jinja", io = "tty" }`
+- `editor = { type = "jinja" }`
 
 Explicit target keys still win over the preset.
 
@@ -117,7 +117,7 @@ If you want the same patch-first workflow but also want built-in interactive fal
 
 That preset supplies the same defaults as `jinja-patch`, plus:
 
-- `editor = { run = "jinja", io = "tty" }`
+- `editor = { type = "jinja" }`
 
 ## Example
 
@@ -145,7 +145,7 @@ path = "~/.profile"
 render = "jinja"
 compare.repo = "render"
 compare.live = "raw"
-editor = { run = "jinja", io = "tty" }
+editor = { type = "jinja" }
 ```
 
 Or, if you want a fully explicit custom editor command:
@@ -210,7 +210,7 @@ export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
   - pull review compares against the actual live file
 - `editor = { run = "...", io = "tty" }`
   - explicit editor-based reverse-sync workflow
-- `editor = { run = "jinja", io = "tty" }`
+- `editor = { type = "jinja" }`
   - shortcut for the built-in Jinja editor helper
   - auto-adds recursively discovered static template dependencies as editable sources
 - `editor = { run = "...", io = "tty" }`
@@ -261,9 +261,9 @@ Notes:
 
 If your template uses `{% include %}`, shared fragments, or helper files, add them with `--additional-source`. Otherwise the editor flow only edits the top-level source file.
 
-## Built-In `editor = { run = "jinja", io = "tty" }` and `dotman reconcile jinja`
+## Built-In `editor = { type = "jinja" }` and `dotman reconcile jinja`
 
-`editor = { run = "jinja", io = "tty" }` is the shortcut form for the common Jinja editor workflow.
+`editor = { type = "jinja" }` is the shortcut form for the common Jinja editor workflow.
 
 It uses the same helper as:
 

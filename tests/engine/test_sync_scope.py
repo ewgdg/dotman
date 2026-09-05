@@ -6,6 +6,7 @@ import pytest
 
 from dotman.engine import DotmanEngine
 from dotman.models import ResolvedSyncScope
+from dotman.sync_scope import sync_unit_identity_bytes
 from tests.helpers import write_named_manager_config, write_tracked_packages_state
 
 
@@ -57,6 +58,22 @@ def test_resolved_sync_scope_accepts_exact_target_and_directory_child(tmp_path: 
     assert isinstance(scope, ResolvedSyncScope)
     assert [item.canonical for item in scope.targets] == ["main:app.settings/nested.conf"]
     assert [selection.package_id for selection in scope.package_selections] == ["app"]
+
+
+def test_resolved_sync_scope_preserves_angle_brackets_in_directory_child_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    settings_root = repo_root / "packages" / "app" / "files" / "settings"
+    (settings_root / "foo<bar>.txt").write_text("bracketed\n", encoding="utf-8")
+    (settings_root / "foo<bar").write_text("unclosed\n", encoding="utf-8")
+    write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "default")])
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    for child_name in ("foo<bar>.txt", "foo<bar"):
+        scope = engine.resolve_sync_scope([f"main:app.settings/{child_name}"])
+        assert scope.targets[0].canonical == f"main:app.settings/{child_name}"
 
 
 def test_resolved_sync_scope_expands_dependencies_and_deduplicates_union(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,6 +149,28 @@ def test_resolved_sync_scope_rejects_noncanonical_or_group_inputs(tmp_path: Path
         engine.resolve_sync_scope(["main:app.settings/../nested.conf"])
     with pytest.raises(ValueError, match="directory target"):
         engine.resolve_sync_scope(["main:app.config/missing.conf"])
+
+
+def test_resolved_sync_scope_accepts_multi_instance_profile_with_dot_and_roundtrips_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main", multi_instance=True)
+    (repo_root / "profiles" / "work.v2.toml").write_text("", encoding="utf-8")
+    write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "work.v2")])
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope(["main:app<work.v2>.settings"])
+
+    assert scope.targets[0].canonical == "main:app<work.v2>.settings"
+    assert scope.targets[0].bound_profile == "work.v2"
+    assert sync_unit_identity_bytes(scope.targets[0]) == b"main:app<work.v2>.settings"
+
+    package_scope = engine.resolve_sync_scope(["main:app<work.v2>"])
+    assert {target.canonical for target in package_scope.targets} == {
+        "main:app<work.v2>.config",
+        "main:app<work.v2>.settings",
+    }
 
 
 def test_resolved_sync_scope_accepts_exact_multi_instance_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
