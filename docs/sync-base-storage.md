@@ -50,8 +50,9 @@ Store handles hold **no lifetime transaction or exclusive lock**.
 - Multiple readers share the repository storage lock.
 - Mutations acquire an exclusive repository storage lock only for their
   transaction. Contention fails immediately rather than waiting.
-- These locks are separate from the manager operation lock. Future mutation
-  callers take the manager lock first; inspection never takes it.
+- These locks are separate from the manager operation lock. Real SyncSession
+  opening takes the manager lock first; inspection never takes it. Direct
+  infrastructure mutation callers must provide their own operation lifetime.
 
 Keep an explicit read transaction short: collect inspection data, exit the
 transaction, then render it or wait for user review. Holding it across review

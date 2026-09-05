@@ -67,6 +67,9 @@ Current responsibility split:
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `projection.py` — target projection and file/directory action planning through `ProjectionContext`
 - `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
+- `sync_session.py` — one-shot file session, immutable views, semantic commands, typed dispatch/results and lifecycle events
+- `sync_observation.py` — file endpoint evidence, policy comparisons, frozen Guards/Git/Base facts and opening-time Base lifecycle
+- `operation_lock.py` — manager-wide non-blocking real-operation ownership shared by sessions and Push/Pull command workflows
 - `sync_base_lifecycle.py` — configured-policy Base eligibility, frozen Git facts, input fingerprints, applicability inspection, and per-unit acknowledgment/deletion decisions
 - `sync_base_store.py` — secure fixed-epoch, per-repository SQLite storage for exact Sync Base records and content-addressed payloads
 
@@ -97,8 +100,8 @@ ordered completion boundary. Acknowledgment failures are typed results with
 `converged = false`; the store transaction preserves the old record.
 
 Session/operation adapters own the manager lock, exclusions, actual Observation,
-final effect execution, and invoking these boundaries in order. These foundation
-seams do not themselves add a SyncSession or Base inspection CLI. Aggregate
+final effect execution, and invoking these boundaries in order. Base inspection
+CLI behavior is separate from these foundation seams. Aggregate
 directory discovery and orphan reclamation are not responsibilities of the
 per-unit lifecycle.
 
@@ -156,3 +159,48 @@ Before adding more logic to `cli.py` or `engine.py`, ask:
 - Or is it a focused responsibility that belongs in a dedicated module?
 
 Prefer the dedicated module unless there is a strong reason not to.
+
+## File SyncSession clients
+
+Resolve selectors with `engine.resolve_sync_scope(...)`, then call
+`engine.open_sync_session(scope, preview=..., event_sink=...)`. Opening returns
+a `SyncSession` or typed `SessionOpenFailed`. File-target scope only is supported;
+directory children, Proposals, Approval, Editors and publication are separate
+responsibilities, not simulated by empty execution plans.
+
+Read `session.view` rather than private plans. `SetIncluded`, `Execute` and
+`Abort` carry the view's session ID and revision. Dispatch returns
+`CommandAccepted(view, result)` or mutation-free `CommandRejected(view, reason)`.
+Row-local allowed commands distinguish drift from non-approvable diagnostics.
+Convenience `execute()` and `abort()` act on the current view; adapters holding
+cached views should dispatch explicit revision-bearing commands.
+Accepted commands yield new immutable snapshots; old views remain valid evidence.
+Terminal views allow no further commands.
+
+`SessionOpened`, `SessionChanged` and `SessionFinished` are immutable lifecycle
+events for recording or presentation sinks. Callback programming failures
+escape; failed opening still releases owned resources. Context-manager exit
+aborts an unfinished session. The session's observation-only Execute result
+reports direct agreement, pending/excluded drift and visible failures, never
+Converged.
+
+The operation lock is a POSIX advisory `flock(LOCK_EX | LOCK_NB)` on the
+owner-only `$XDG_STATE_HOME/dotman/operation.lock` file. Never unlink this file on
+release: another process may already hold its inode. The manager directory must
+be current-user-owned and not writable by other users; Base storage additionally
+requires its documented exact private-directory modes. Lock acquisition rejects
+symlink/nonregular/hard-linked or insecure lock files without repair.
+Low-level planning and execution helpers do not acquire a second nested lock;
+their direct callers must own an operation lifetime explicitly.
+Restore and unrelated state commands do not participate in this Push/Pull/Sync
+operation lock. It coordinates cooperating operations, not external filesystem
+writers or hostile same-user code.
+
+Projection providers receive private read-only copies of frozen Primary/live
+endpoints; custom commands retain configured dependency access and cwd.
+Jinja renders frozen Primary bytes through the shared template renderer.
+The public view exposes no staging paths, mutable configuration dictionaries,
+store handles or execution steps.
+
+References: [Python file locking](https://docs.python.org/3/library/fcntl.html#fcntl.flock)
+and [descriptor-relative file access](https://docs.python.org/3/library/os.html#os.open).

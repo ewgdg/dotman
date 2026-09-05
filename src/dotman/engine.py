@@ -39,6 +39,7 @@ from dotman import planning, tracked_packages, tracking, variable_inspection
 
 if TYPE_CHECKING:
     from dotman.progress import ProgressSink
+    from dotman.sync_session import SessionEventSink, SessionOpenFailed, SyncSession
 
 
 def _search_match_reason(
@@ -269,8 +270,19 @@ class DotmanEngine:
             considered_repo_names=result.considered_repo_names,
         )
 
+    def open_sync_session(
+        self, scope: ResolvedSyncScope, *, preview: bool = False,
+        event_sink: SessionEventSink | None = None,
+    ) -> SyncSession | SessionOpenFailed:
+        """Observe a resolved file scope through the one-shot Sync boundary."""
+        from dotman.sync_session import SyncSession
+
+        return SyncSession.open(
+            self._planning_context, scope, preview=preview, event_sink=event_sink,
+        )
+
     def resolve_sync_scope(self, selectors: Sequence[str] | None = None) -> ResolvedSyncScope:
-        """Resolve exact tracked identities for a future SyncSession."""
+        """Resolve exact tracked identities for a SyncSession."""
         return resolve_sync_scope(self._planning_context, selectors)
 
     def plan_push_query(self, query_text: str, *, profile: str | None = None, run_noop: bool = False) -> OperationPlan:

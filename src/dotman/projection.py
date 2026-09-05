@@ -2043,3 +2043,89 @@ def build_repo_hook_env(
     for flat_key, value in flatten_vars(context.get("vars", {})).items():
         env[f"DOTMAN_VAR_{flat_key}"] = value
     return env
+
+
+def project_frozen_file(
+    command_runtime: CommandRuntime,
+    *,
+    metadata: TargetMetadata,
+    context: dict[str, Any],
+    repository: bytes | None,
+    live: bytes | None,
+    view: str,
+    repo_side: bool,
+) -> bytes | None:
+    """Project once from frozen endpoints; None is Missing, never empty bytes.
+
+    Command providers receive private readable endpoint copies. Their configured
+    cwd and repository dependency access remain unchanged; as with other
+    projections, providers are trusted side-effect-free stdout producers.
+    """
+    source = repository if repo_side else live
+    if source is None or view == "raw":
+        return source
+    command = view
+    if view == "render":
+        if metadata.render_command is None:
+            return repository
+        if metadata.render_command == "jinja":
+            if repository is None:
+                return None
+            return render_template_file(
+                metadata.repo_path,
+                context,
+                source_bytes=repository,
+            )[0]
+        command = metadata.render_command
+    elif view == "capture":
+        if metadata.capture_command is None:
+            return live
+        if metadata.capture_command == BUILTIN_PATCH_CAPTURE:
+            raise ValueError("patch Capture is not a comparison view")
+        command = metadata.capture_command
+    else:
+        command = render_template_string(
+            _projection_command(command),
+            context,
+            base_dir=metadata.target.declared_in,
+            source_path=metadata.target.declared_in,
+        )
+    with tempfile.TemporaryDirectory(prefix="dotman-observation-") as directory:
+        root = Path(directory)
+        repo_copy, live_copy = root / "repository", root / "live"
+        for path, content in ((repo_copy, repository), (live_copy, live)):
+            if content is not None:
+                path.write_bytes(content)
+                path.chmod(0o400)
+        env = {
+            **metadata.command_env,
+            "DOTMAN_OPERATION": "sync",
+            "DOTMAN_TARGET_REPO_PATH": str(repo_copy),
+            "DOTMAN_REPO_PATH": str(repo_copy),
+            "DOTMAN_SOURCE": str(repo_copy),
+            "DOTMAN_TARGET_LIVE_PATH": str(live_copy),
+            "DOTMAN_LIVE_PATH": str(live_copy),
+        }
+        result = command_runtime.run(
+            CommandRequest(
+                ShellCommand(_projection_command(command)),
+                cwd=metadata.command_cwd,
+                env=env,
+                elevation="none",
+            )
+        )
+        raise_for_command_interruption(result)
+        if result.exit_code:
+            # Provider diagnostics name managed endpoints, never the private
+            # staging paths used to keep comparison inputs frozen.
+            detail = (
+                result.stderr.decode(errors="replace")
+                .strip()
+                .replace(str(repo_copy), str(metadata.repo_path))
+                .replace(str(live_copy), str(metadata.live_path))
+                .replace(str(root), "<projection>")
+            )
+            raise ValueError(
+                f"comparison projection failed with exit {result.exit_code}: {detail}"
+            )
+        return result.stdout
