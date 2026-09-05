@@ -66,6 +66,7 @@ Current responsibility split:
 - `planning_guards.py` — repo/package-instance/target/path-rule planning eligibility and guard diagnostics
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `projection.py` — target projection and file/directory action planning through `ProjectionContext`
+- `sync_base_store.py` — secure fixed-epoch, per-repository SQLite storage for exact Sync Base records and content-addressed payloads
 
 The engine composes those immutable contexts once. Internal modules receive configuration, repositories, tracked state, and command execution directly; they do not receive `DotmanEngine` or call back through private facade methods.
 
