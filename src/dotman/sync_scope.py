@@ -345,3 +345,30 @@ def resolve_sync_scope(
         package_selections=public_selections,
         targets=tuple(selected_targets),
     )
+
+
+def sync_unit_identity_bytes(identity: ResolvedSyncTarget) -> bytes:
+    """Validate the exact file/child identity before using it as a storage key."""
+    selector = _parse_scope_selector(identity.canonical)
+    if (
+        selector.target_name is None
+        or (
+            selector.repo,
+            selector.package_id,
+            selector.bound_profile,
+            selector.target_name,
+            selector.child_path,
+        )
+        != (
+            identity.repo,
+            identity.package_id,
+            identity.bound_profile,
+            identity.target_name,
+            identity.child_path,
+        )
+        or "\x00" in identity.canonical
+    ):
+        raise ValueError(
+            "Sync Base requires a canonical file or directory-child identity"
+        )
+    return identity.canonical.encode("utf-8")

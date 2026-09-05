@@ -53,12 +53,14 @@ Add a one-shot `SyncSession` that observes selected repository and live state on
 - [x] Complete #58 policy, named Path Rule, and unified exclusion hard cut (1,058 tests passing; independent review accepted).
 - [x] Complete #59 canonical Sync scope and identity resolution (1,067 tests passing; independent review accepted).
 - [x] Complete #60 secure fixed-epoch Sync Base storage (1,162 tests passing; independent security and portability review accepted; native macOS unverified).
-- [ ] Complete #61–#78 in dependency order.
-- [ ] Run final validation and open the PR.
+- [x] Complete #61 Base applicability and lifecycle (1,261 tests passing; independent review accepted).
+- [x] Run final validation for the #57–#61 foundations checkpoint.
+- [ ] Open one combined foundations PR; keep #56 open.
+- Remaining #62–#78 work is paused by explicit user direction. Do not start it without new authorization.
 
 ## Decisions
 
-- Use one branch and PR because the user explicitly requested the umbrella implementation together.
+- Submit the existing #57–#61 work in one PR; the user declined splitting this checkpoint. Stop implementation after #61.
 - Keep commits bounded by subissue/checkpoint even though the PR is aggregated.
 - Use the public `SyncSession` seam required by #56 rather than exposing private plans or persistence handles.
 
@@ -107,3 +109,69 @@ Pending.
   tracked/untracked whitespace checks passed.
 - Real-resource fault injection runs on Linux, not native macOS. No same-UID/root
   isolation or preflight redesign added. No commit or push made.
+
+
+## #61 implementation checkpoint — review pending
+
+- Read the exact #61 scope, full parent #56, domain context, current scope/store
+  contracts, and current Git plumbing documentation before implementation.
+- Added one shared Base lifecycle seam for configured-policy eligibility,
+  canonical file/child identities, frozen Git facts and profile/input
+  fingerprints, read-only applicability, direct acknowledgment, approved
+  unit-owned completion, and pre-Guard/pre-review policy deletion.
+- Extended the unshipped fixed-epoch record schema with required commit OID,
+  object format, fingerprint, and provenance. No migration or compatibility
+  path was added; envelope and payload replacement remain one transaction.
+- Real Git checks cover SHA-1/SHA-256, committed checkout conversion, unchanged
+  real index, literal paths, one batched Primary-path status observation,
+  ignored/untracked/staged provenance, Missing, executable children, ancestry,
+  and ambient Git/replace-ref isolation. Git infrastructure failure is not
+  silently treated as a missing commit.
+- Lifecycle tests cover all configured policies, each approved intent,
+  no-write results, direct sharpening, skipped/reused/preview work, changed
+  Pull non-acknowledgment, early selected-policy maintenance, hidden unavailable
+  metadata, record/payload corruption, and failed real SQLite replacement
+  preserving both the prior unit record and an earlier committed unit.
+- TDD began with the missing public lifecycle seam. Additional red regressions
+  reproduced fatal Git failures being labeled missing commits, acceptance of
+  a Primary Source of dot, and an untyped missing Git executable failure.
+  A final red regression showed a bad committed shape discarded successful peers;
+  checkout now retains unit-local typed failures while sharing the one frozen
+  status observation. Real required-filter failure isolation is also covered.
+  Each regression was fixed and rerun before broad validation.
+- Validation: 192 focused lifecycle/store tests passed in 4.60s; full suite
+  1,259 passed in 9.54s. Compileall, focused Ruff check/format, and tracked
+  whitespace validation passed. Native macOS execution remains unverified.
+- Shared lifecycle docs, storage documentation, contributor module orientation,
+  and the documentation index are current. No user-facing command or UI changed.
+- Scope boundaries remain explicit: no SyncSession/Observation orchestration,
+  Base CLI, manager-lock adapter, or directory census/orphan reclamation.
+  Operation adapters must pass configured (not Guard-narrowed) policy, resolved
+  JSON-compatible profile/variable context, and truthful final unit-owned effect
+  outcomes, then invoke lifecycle boundaries in the documented order.
+- Await independent review; not accepted or committed. No push performed.
+
+
+### #61 read-only Git and real-ancestry correction — review pending
+
+- Reproduced both review blockers with new tests before editing production code.
+  A real `file://` single-branch promisor clone downloaded an absent remote Base
+  commit during read-only inspection and added four pack-related files. A real
+  `info/grafts` entry made an unrelated root commit appear to be a usable Base.
+- Base Git commands now require `--no-lazy-fetch` and bind `GIT_GRAFT_FILE` to
+  the platform null device, alongside the existing disabled replace refs and
+  isolated ambient Git selectors. There is no fallback that can enable fetching.
+- The partial-clone test verifies the commit exists remotely but not locally,
+  snapshots all Git file contents, and checks Git Trace2 for absence of fetch or
+  upload-pack child execution. Inspection now reports `commit_missing` without
+  Git object-store changes. The graft test first proves ordinary Git accepts the
+  forged edge, then proves Base inspection reports `history_changed` and leaves
+  the graft input untouched.
+- Consulted the current Git manual for local-only object access and current
+  upstream environment/setup/commit implementation for graft-input control.
+  Updated lifecycle and contributor docs with local availability and actual
+  committed-parent semantics.
+- Validation: 194 focused lifecycle/store tests passed in 4.90s; full suite
+  1,261 passed in 9.50s. Compileall, focused Ruff check/format, and whitespace
+  checks passed. All regression subprocesses use Command Runtime.
+- Still bounded to #61, pending review; no later ticket, commit, or push.

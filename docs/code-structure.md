@@ -66,7 +66,48 @@ Current responsibility split:
 - `planning_guards.py` — repo/package-instance/target/path-rule planning eligibility and guard diagnostics
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `projection.py` — target projection and file/directory action planning through `ProjectionContext`
+- `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
+- `sync_base_lifecycle.py` — configured-policy Base eligibility, frozen Git facts, input fingerprints, applicability inspection, and per-unit acknowledgment/deletion decisions
 - `sync_base_store.py` — secure fixed-epoch, per-repository SQLite storage for exact Sync Base records and content-addressed payloads
+
+The Base foundation exposes explicit boundaries rather than running a session.
+`BaseUnit` carries successfully resolved selected configuration, never a
+Guard-narrowed policy. `SyncBaseGit` freezes real HEAD/object format, one batched
+Primary-path status observation, and isolated-checkout payloads through
+Command Runtime. It uses an alternate index/worktree, disables replace refs,
+repository graft input and ambient Git selectors, and never updates the
+repository's real index. All Base Git operations require Git's `--no-lazy-fetch`
+control: a commit available only from a promisor remote is missing locally,
+not permission to fetch or modify the object store. Status is
+batched once; checkout is path-local so unsupported committed shapes or a failed
+conversion produce unit-local frozen failures without discarding successful
+peers or re-observing status. Repository-wide Git failures still abort freezing.
+`BaseInputs` accepts effective projection strings, named Path Rule identities,
+profile context (including type-preserving frozen JSON variable inputs), and
+symlink modes; it deliberately cannot accept policy, Guards,
+Pull Views, chmod, or live referent paths.
+
+`SyncBaseLifecycle.inspect` is read-only and needs no checkout or live access.
+Unavailable results omit stored metadata. Git infrastructure errors and
+store-level failures remain errors rather than being reclassified as missing
+ancestry. `selected_policy_resolved` is the pre-Guard/pre-review maintenance
+boundary; `direct_agreement` is the fresh-Observation boundary; `complete`
+consumes explicit Approval and final unit-owned effect results at the earliest
+ordered completion boundary. Acknowledgment failures are typed results with
+`converged = false`; the store transaction preserves the old record.
+
+Session/operation adapters own the manager lock, exclusions, actual Observation,
+final effect execution, and invoking these boundaries in order. These foundation
+seams do not themselves add a SyncSession or Base inspection CLI. Aggregate
+directory discovery and orphan reclamation are not responsibilities of the
+per-unit lifecycle.
+
+Git plumbing references: [status porcelain](https://git-scm.com/docs/git-status),
+[alternate-index read-tree](https://git-scm.com/docs/git-read-tree),
+[checkout-index](https://git-scm.com/docs/git-checkout-index), and
+[batch object lookup](https://git-scm.com/docs/git-cat-file),
+[local-only object access](https://git-scm.com/docs/git#Documentation/git.txt---no-lazy-fetch),
+and Git's [ancestry input environment control](https://github.com/git/git/blob/master/environment.h).
 
 The engine composes those immutable contexts once. Internal modules receive configuration, repositories, tracked state, and command execution directly; they do not receive `DotmanEngine` or call back through private facade methods.
 

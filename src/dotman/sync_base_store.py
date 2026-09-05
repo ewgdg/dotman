@@ -4,6 +4,7 @@ import errno
 import fcntl
 import hashlib
 import os
+import re
 import sqlite3
 import stat
 from collections.abc import Iterator
@@ -39,6 +40,10 @@ _BASE_RECORDS_SQL = """CREATE TABLE base_records (
     shape TEXT NOT NULL CHECK (shape IN ('missing', 'file', 'directory-child')),
     payload_id INTEGER REFERENCES payloads(id) ON DELETE RESTRICT,
     executable INTEGER,
+    commit_oid TEXT NOT NULL,
+    object_format TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    provenance TEXT NOT NULL,
     CHECK (
         (shape = 'missing' AND payload_id IS NULL AND executable IS NULL)
         OR (shape = 'file' AND payload_id IS NOT NULL AND executable IS NULL)
@@ -91,7 +96,14 @@ class SyncBaseStoreCorruptionError(SyncBaseStoreError):
 class SyncBaseRecordCorruptionError(SyncBaseStoreError):
     """One record or shared payload failed its content integrity contract."""
 
-    def __init__(self, detail: str, *, affected_identities: tuple[bytes, ...]) -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        affected_identities: tuple[bytes, ...],
+        reason: str = "record_corrupt",
+    ) -> None:
+        self.reason = reason
         self.detail = detail
         self.affected_identities = affected_identities
         super().__init__(detail)
@@ -137,17 +149,53 @@ SyncBasePayload: TypeAlias = Missing | FilePresent | DirectoryChildPresent
 
 
 @dataclass(frozen=True)
+class SyncBaseEnvelope:
+    commit_oid: str
+    object_format: str
+    fingerprint: str
+    provenance: str
+
+    def __post_init__(self) -> None:
+        oid_length = {"sha1": 40, "sha256": 64}.get(self.object_format)
+        if oid_length is None:
+            raise ValueError("unsupported Git object format")
+        if (
+            type(self.commit_oid) is not str
+            or re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", self.commit_oid) is None
+            or set(self.commit_oid) == {"0"}
+        ):
+            raise ValueError("invalid real commit OID")
+        if (
+            type(self.fingerprint) is not str
+            or re.fullmatch(rf"[0-9a-f]{{{_DIGEST_SIZE * 2}}}", self.fingerprint)
+            is None
+        ):
+            raise ValueError("invalid effective-input fingerprint")
+        if self.provenance not in ("exact", "conservative"):
+            raise ValueError("invalid Sync Base provenance")
+
+
+@dataclass(frozen=True)
 class SyncBaseRecord:
     """One Base keyed by its caller-produced canonical Sync Unit identity bytes."""
 
     identity: bytes
     payload: SyncBasePayload
+    envelope: SyncBaseEnvelope
 
     def __post_init__(self) -> None:
         _require_bytes(
             self.identity,
             field_name="canonical identity",
             allow_empty=False,
+        )
+        if type(self.envelope) is not SyncBaseEnvelope:
+            raise TypeError("Sync Base envelope must be a SyncBaseEnvelope")
+        SyncBaseEnvelope(
+            self.envelope.commit_oid,
+            self.envelope.object_format,
+            self.envelope.fingerprint,
+            self.envelope.provenance,
         )
         if not isinstance(self.payload, (Missing, FilePresent, DirectoryChildPresent)):
             raise TypeError(
@@ -766,7 +814,8 @@ class SyncBaseStore:
         try:
             row = connection.execute(
                 """SELECT r.shape, r.payload_id, r.executable,
-                          p.digest, p.byte_length, p.content
+                          p.digest, p.byte_length, p.content,
+                          r.commit_oid, r.object_format, r.fingerprint, r.provenance
                    FROM base_records AS r
                    LEFT JOIN payloads AS p ON p.id = r.payload_id
                    WHERE r.identity = ?""",
@@ -779,16 +828,23 @@ class SyncBaseStore:
         if row is None:
             return None
 
-        shape, payload_id, executable, digest, byte_length, content = row
+        shape, payload_id, executable, digest, byte_length, content = row[:6]
+        try:
+            envelope = SyncBaseEnvelope(*row[6:])
+        except (TypeError, ValueError) as exc:
+            raise SyncBaseRecordCorruptionError(
+                f"invalid Sync Base envelope: {exc}",
+                affected_identities=(canonical_identity,),
+            ) from exc
         if shape == "missing":
-            if any(value is not None for value in row[1:]):
+            if any(value is not None for value in row[1:6]):
                 self._raise_record_corruption(
                     connection,
                     "Missing Sync Base unexpectedly references a payload",
                     canonical_identity,
                     payload_id,
                 )
-            return SyncBaseRecord(canonical_identity, Missing())
+            return SyncBaseRecord(canonical_identity, Missing(), envelope)
         if shape not in {"file", "directory-child"}:
             self._raise_record_corruption(
                 connection,
@@ -811,6 +867,7 @@ class SyncBaseStore:
                 "Sync Base payload failed digest or length validation",
                 canonical_identity,
                 payload_id,
+                reason="payload_corrupt",
             )
         if shape == "file":
             if executable is not None:
@@ -820,7 +877,7 @@ class SyncBaseStore:
                     canonical_identity,
                     payload_id,
                 )
-            return SyncBaseRecord(canonical_identity, FilePresent(content))
+            return SyncBaseRecord(canonical_identity, FilePresent(content), envelope)
         if executable not in (0, 1) or type(executable) is not int:
             self._raise_record_corruption(
                 connection,
@@ -831,6 +888,7 @@ class SyncBaseStore:
         return SyncBaseRecord(
             canonical_identity,
             DirectoryChildPresent(content, executable=bool(executable)),
+            envelope,
         )
 
     @staticmethod
@@ -839,9 +897,11 @@ class SyncBaseStore:
         detail: str,
         identity: bytes,
         payload_id: object,
+        *,
+        reason: str = "record_corrupt",
     ) -> None:
         affected_identities = (identity,)
-        if type(payload_id) is int:
+        if reason == "payload_corrupt" and type(payload_id) is int:
             try:
                 rows = connection.execute(
                     "SELECT identity FROM base_records WHERE payload_id = ? ORDER BY identity",
@@ -856,6 +916,7 @@ class SyncBaseStore:
         raise SyncBaseRecordCorruptionError(
             detail,
             affected_identities=affected_identities,
+            reason=reason,
         )
 
     def replace(self, record: SyncBaseRecord) -> None:
@@ -863,7 +924,7 @@ class SyncBaseStore:
             raise TypeError("record must be a SyncBaseRecord")
         # Re-run dataclass validation so an object forged through low-level
         # construction cannot enter a transaction with malformed values.
-        record = SyncBaseRecord(record.identity, record.payload)
+        record = SyncBaseRecord(record.identity, record.payload, record.envelope)
         if type(record.payload) is FilePresent:
             payload: SyncBasePayload = FilePresent(record.payload.content)
         elif type(record.payload) is DirectoryChildPresent:
@@ -874,7 +935,7 @@ class SyncBaseStore:
             payload = Missing()
         else:
             raise TypeError("Sync Base payload must have an exact supported type")
-        record = SyncBaseRecord(record.identity, payload)
+        record = SyncBaseRecord(record.identity, payload, record.envelope)
         with self._write_transaction() as connection:
             prior_row = connection.execute(
                 "SELECT payload_id FROM base_records WHERE identity = ?",
@@ -902,13 +963,28 @@ class SyncBaseStore:
                     shape = "directory-child"
                     executable = int(record.payload.executable)
             connection.execute(
-                """INSERT INTO base_records (identity, shape, payload_id, executable)
-                   VALUES (?, ?, ?, ?)
+                """INSERT INTO base_records (
+                       identity, shape, payload_id, executable,
+                       commit_oid, object_format, fingerprint, provenance)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(identity) DO UPDATE SET
                        shape = excluded.shape,
                        payload_id = excluded.payload_id,
-                       executable = excluded.executable""",
-                (record.identity, shape, payload_id, executable),
+                       executable = excluded.executable,
+                       commit_oid = excluded.commit_oid,
+                       object_format = excluded.object_format,
+                       fingerprint = excluded.fingerprint,
+                       provenance = excluded.provenance""",
+                (
+                    record.identity,
+                    shape,
+                    payload_id,
+                    executable,
+                    record.envelope.commit_oid,
+                    record.envelope.object_format,
+                    record.envelope.fingerprint,
+                    record.envelope.provenance,
+                ),
             )
             self._garbage_collect_payload(connection, prior_payload_id)
 
@@ -948,6 +1024,7 @@ class SyncBaseStore:
                     raise SyncBaseRecordCorruptionError(
                         "stored Sync Base payload failed digest or length validation",
                         affected_identities=tuple(row[0] for row in reference_rows),
+                        reason="payload_corrupt",
                     )
                 raise SyncBaseStoreCorruptionError(
                     "unreferenced Sync Base payload failed digest or length validation"
@@ -1038,6 +1115,7 @@ __all__ = [
     "DirectoryChildPresent",
     "FilePresent",
     "Missing",
+    "SyncBaseEnvelope",
     "SyncBasePayload",
     "SyncBaseRecord",
     "SyncBaseRecordCorruptionError",

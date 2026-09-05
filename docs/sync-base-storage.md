@@ -16,7 +16,13 @@ or delete rejected evidence.
 A record uses the exact canonical Sync Unit identity bytes supplied by
 resolution. Its value is `Missing`, a present file with exact bytes, or a present
 directory child with exact bytes and boolean executable state. Inputs are
-recursively validated before starting a mutation.
+recursively validated before starting a mutation. Every record also requires an
+envelope containing the full real commit OID, Git object format (SHA-1 or
+SHA-256), effective-input SHA-256 fingerprint, and exact/conservative provenance.
+The envelope and payload are replaced together in the same transaction.
+
+The shared [Base lifecycle](sync.md) owns applicability, provenance construction,
+and acknowledgment/deletion timing; the store does not infer any of them.
 
 Present content is shared only when SHA-256, byte length, **and exact bytes**
 match. Digest and length narrow the lookup; they are not a unique identity.
@@ -88,8 +94,10 @@ main database and apparently stale or empty sidecars. This intentionally
 preserves interrupted-transaction evidence rather than letting SQLite recover
 or delete it. A live cooperating writer is reported as lock contention instead.
 
-Payload digest/length failures are distinct from container corruption and
-report every referencing record identity. No automatic record cleanup occurs.
+Envelope validation failures report `record_corrupt` for the affected record.
+Payload digest/length failures report `payload_corrupt` and every referencing
+record identity. Both remain distinct from container corruption. The storage
+and read-only applicability seams perform no automatic record cleanup.
 
 SQLite temporary tables and indexes stay in memory. A SQLite build that forces
 disk temporary storage is rejected; preflight makes no disk copy.
