@@ -14,6 +14,7 @@ from dotman.sync_base_store import (
     DirectoryChildPresent,
     FilePresent,
     Missing,
+    SyncBaseEnvelope,
     SyncBaseRecord,
     SyncBaseRecordCorruptionError,
     SyncBaseStore,
@@ -24,6 +25,8 @@ from dotman.sync_base_store import (
     SyncBaseStoreSecurityError,
     SyncBaseStoreUnsupportedRuntimeError,
 )
+
+ENVELOPE = SyncBaseEnvelope("a" * 40, "sha1", "b" * 64, "exact")
 
 
 def _open_store(tmp_path: Path) -> SyncBaseStore:
@@ -40,12 +43,15 @@ def _row_count(database_path: Path, table: str) -> int:
 
 
 def test_round_trips_typed_records_and_reuses_exact_payloads(tmp_path: Path) -> None:
-    file_record = SyncBaseRecord(b"main:app.config", FilePresent(b"same"))
+    file_record = SyncBaseRecord(
+        b"main:app.config", FilePresent(b"same"), envelope=ENVELOPE
+    )
     child_record = SyncBaseRecord(
         b"main:app.settings/bin/tool",
         DirectoryChildPresent(b"same", executable=True),
+        envelope=ENVELOPE,
     )
-    missing_record = SyncBaseRecord(b"main:app.absent", Missing())
+    missing_record = SyncBaseRecord(b"main:app.absent", Missing(), envelope=ENVELOPE)
 
     with _open_store(tmp_path) as store:
         store.replace(file_record)
@@ -71,8 +77,8 @@ def test_equal_digest_and_length_uses_exact_bytes_and_retains_collisions(
         "dotman.sync_base_store._sha256_digest",
         lambda _content: b"x" * hashlib.sha256().digest_size,
     )
-    one = SyncBaseRecord(b"one", FilePresent(b"aaaa"))
-    two = SyncBaseRecord(b"two", FilePresent(b"bbbb"))
+    one = SyncBaseRecord(b"one", FilePresent(b"aaaa"), envelope=ENVELOPE)
+    two = SyncBaseRecord(b"two", FilePresent(b"bbbb"), envelope=ENVELOPE)
 
     with _open_store(tmp_path) as store:
         store.replace(one)
@@ -87,13 +93,13 @@ def test_equal_digest_and_length_uses_exact_bytes_and_retains_collisions(
 def test_replace_and_delete_garbage_collect_only_unreferenced_payloads(
     tmp_path: Path,
 ) -> None:
-    shared_one = SyncBaseRecord(b"one", FilePresent(b"shared"))
-    shared_two = SyncBaseRecord(b"two", FilePresent(b"shared"))
+    shared_one = SyncBaseRecord(b"one", FilePresent(b"shared"), envelope=ENVELOPE)
+    shared_two = SyncBaseRecord(b"two", FilePresent(b"shared"), envelope=ENVELOPE)
 
     with _open_store(tmp_path) as store:
         store.replace(shared_one)
         store.replace(shared_two)
-        store.replace(SyncBaseRecord(b"one", FilePresent(b"new")))
+        store.replace(SyncBaseRecord(b"one", FilePresent(b"new"), envelope=ENVELOPE))
         assert store.delete(b"missing") is False
         assert store.delete(b"two") is True
         assert store.read(b"two") is None
@@ -104,11 +110,13 @@ def test_replace_and_delete_garbage_collect_only_unreferenced_payloads(
 
 
 def test_invalid_input_cannot_partially_replace_existing_record(tmp_path: Path) -> None:
-    original = SyncBaseRecord(b"one", FilePresent(b"original"))
+    original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
     with _open_store(tmp_path) as store:
         store.replace(original)
         with pytest.raises(TypeError):
-            store.replace(SyncBaseRecord(b"one", FilePresent("not bytes")))  # type: ignore[arg-type]
+            store.replace(
+                SyncBaseRecord(b"one", FilePresent("not bytes"), envelope=ENVELOPE)
+            )  # type: ignore[arg-type]
         assert store.read(b"one") == original
 
 
@@ -131,7 +139,9 @@ def test_created_store_layout_is_private(tmp_path: Path) -> None:
 
     store.close()
     with _open_store(tmp_path) as reopened:
-        reopened.replace(SyncBaseRecord(b"key", FilePresent(b"value")))
+        reopened.replace(
+            SyncBaseRecord(b"key", FilePresent(b"value"), envelope=ENVELOPE)
+        )
         assert not list(repo_state.glob("*-wal"))
         assert not list(repo_state.glob("*-shm"))
         assert not list(repo_state.glob("*-journal"))
@@ -223,9 +233,13 @@ def test_payload_corruption_reports_every_reference_without_cleanup(
     tmp_path: Path,
 ) -> None:
     with _open_store(tmp_path) as store:
-        store.replace(SyncBaseRecord(b"one", FilePresent(b"shared")))
+        store.replace(SyncBaseRecord(b"one", FilePresent(b"shared"), envelope=ENVELOPE))
         store.replace(
-            SyncBaseRecord(b"two", DirectoryChildPresent(b"shared", executable=False))
+            SyncBaseRecord(
+                b"two",
+                DirectoryChildPresent(b"shared", executable=False),
+                envelope=ENVELOPE,
+            )
         )
     database_path = _database_path(tmp_path)
     with sqlite3.connect(database_path) as connection:
@@ -242,9 +256,9 @@ def test_payload_corruption_reports_every_reference_without_cleanup(
 
 def test_rejects_non_bytes_or_empty_canonical_identity(tmp_path: Path) -> None:
     with pytest.raises((TypeError, ValueError)):
-        SyncBaseRecord(b"", Missing())
+        SyncBaseRecord(b"", Missing(), envelope=ENVELOPE)
     with pytest.raises(TypeError):
-        SyncBaseRecord("main:app.target", Missing())  # type: ignore[arg-type]
+        SyncBaseRecord("main:app.target", Missing(), envelope=ENVELOPE)  # type: ignore[arg-type]
 
     with _open_store(tmp_path) as store, pytest.raises(TypeError):
         store.read("main:app.target")  # type: ignore[arg-type]
@@ -278,7 +292,7 @@ def _evidence(directory: Path) -> dict[str, tuple[int, int, bytes | str]]:
         ("DROP INDEX payload_lookup", SyncBaseStoreCorruptionError),
         ("PRAGMA journal_mode = WAL", SyncBaseStoreCorruptionError),
         (
-            "INSERT INTO base_records VALUES (x'78', 'file', 999, NULL)",
+            "INSERT INTO base_records VALUES (x'78', 'file', 999, NULL, 'a', 'sha1', 'b', 'exact')",
             SyncBaseStoreCorruptionError,
         ),
     ],
@@ -324,7 +338,9 @@ def test_rejects_sidecar_evidence_without_touching_it(
 
 def test_full_integrity_check_rejects_index_inconsistency(tmp_path: Path) -> None:
     with _open_store(tmp_path) as store:
-        store.replace(SyncBaseRecord(b"one", FilePresent(b"original")))
+        store.replace(
+            SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
+        )
     path = _database_path(tmp_path)
     connection = sqlite3.connect(path)
     # Make SQLite maintain the index using different columns, then restore its
@@ -374,7 +390,7 @@ def test_replace_recursively_validates_forged_payload_before_transaction(
     value: object,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original = SyncBaseRecord(b"one", FilePresent(b"original"))
+    original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
     with _open_store(tmp_path) as store:
         store.replace(original)
         payload = object.__new__(payload_type)
@@ -382,7 +398,7 @@ def test_replace_recursively_validates_forged_payload_before_transaction(
         if payload_type is DirectoryChildPresent:
             object.__setattr__(payload, "executable", False)
         object.__setattr__(payload, field, value)
-        record = SyncBaseRecord(b"one", payload)
+        record = SyncBaseRecord(b"one", payload, envelope=ENVELOPE)
         with pytest.raises(TypeError):
             store.replace(record)
         assert store.read(b"one") == original
@@ -393,7 +409,7 @@ def test_read_only_open_is_side_effect_free_and_readers_do_not_take_writer_lifet
     tmp_path: Path,
 ) -> None:
     with _open_store(tmp_path) as writer:
-        original = SyncBaseRecord(b"one", FilePresent(b"original"))
+        original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
         writer.replace(original)
         before = _evidence(writer.repo_state_directory)
         with SyncBaseStore.open(
@@ -401,15 +417,17 @@ def test_read_only_open_is_side_effect_free_and_readers_do_not_take_writer_lifet
         ) as reader:
             assert reader.read(b"one") == original
             with pytest.raises(SyncBaseStoreError, match="read.only"):
-                reader.replace(SyncBaseRecord(b"one", Missing()))
+                reader.replace(SyncBaseRecord(b"one", Missing(), envelope=ENVELOPE))
             with pytest.raises(SyncBaseStoreError, match="read.only"):
                 reader.delete(b"one")
             with reader.read_transaction():
                 assert reader.read(b"one") == original
                 with pytest.raises(SyncBaseStoreLockedError):
-                    writer.replace(SyncBaseRecord(b"one", Missing()))
-            writer.replace(SyncBaseRecord(b"one", Missing()))
-            assert reader.read(b"one") == SyncBaseRecord(b"one", Missing())
+                    writer.replace(SyncBaseRecord(b"one", Missing(), envelope=ENVELOPE))
+            writer.replace(SyncBaseRecord(b"one", Missing(), envelope=ENVELOPE))
+            assert reader.read(b"one") == SyncBaseRecord(
+                b"one", Missing(), envelope=ENVELOPE
+            )
         assert _evidence(writer.repo_state_directory).keys() == before.keys()
 
 
@@ -426,7 +444,9 @@ def test_real_crashed_writer_evidence_is_never_recovered_on_open(
     journal_mode: str,
 ) -> None:
     with _open_store(tmp_path) as store:
-        store.replace(SyncBaseRecord(b"one", FilePresent(b"original")))
+        store.replace(
+            SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
+        )
     path = _database_path(tmp_path)
     script = """
 import os, sqlite3, sys
@@ -617,14 +637,14 @@ def test_open_store_rejects_later_directory_substitution(
     relative: str,
 ) -> None:
     with _open_store(tmp_path) as store:
-        original = SyncBaseRecord(b"one", FilePresent(b"original"))
+        original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
         store.replace(original)
         path = tmp_path / "state" / "dotman" / relative
         saved = path.with_name("saved-" + path.name)
         path.rename(saved)
         path.mkdir(mode=0o700)
         with pytest.raises(SyncBaseStoreSecurityError, match="substituted"):
-            store.replace(SyncBaseRecord(b"one", Missing()))
+            store.replace(SyncBaseRecord(b"one", Missing(), envelope=ENVELOPE))
         assert list(path.iterdir()) == []
         path.rmdir()
         saved.rename(path)
@@ -638,7 +658,7 @@ def test_sidecar_created_at_sqlite_open_is_rejected_without_consuming_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with _open_store(tmp_path) as store:
-        original = SyncBaseRecord(b"one", FilePresent(b"original"))
+        original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
         store.replace(original)
         path = _database_path(tmp_path)
         sidecar = path.with_name(path.name + suffix)
@@ -655,7 +675,7 @@ def test_sidecar_created_at_sqlite_open_is_rejected_without_consuming_evidence(
         monkeypatch.setattr(sqlite3, "connect", add_sidecar)
         before = path.read_bytes()
         with pytest.raises(SyncBaseStoreCorruptionError, match="sidecar"):
-            store.replace(SyncBaseRecord(b"one", Missing()))
+            store.replace(SyncBaseRecord(b"one", Missing(), envelope=ENVELOPE))
         assert sidecar.read_bytes() == b"raced sidecar evidence"
         assert path.read_bytes() == before
 
@@ -667,7 +687,7 @@ def test_precommit_security_failure_rolls_back_record_and_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with _open_store(tmp_path) as store:
-        original = SyncBaseRecord(b"one", FilePresent(b"original"))
+        original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
         store.replace(original)
         original_check = store._layout.check
 
@@ -680,7 +700,11 @@ def test_precommit_security_failure_rolls_back_record_and_payload(
             patch.setattr(store._layout, "check", fail_precommit)
             with pytest.raises(SyncBaseStoreSecurityError, match="injected"):
                 if operation == "replace":
-                    store.replace(SyncBaseRecord(b"one", FilePresent(b"replacement")))
+                    store.replace(
+                        SyncBaseRecord(
+                            b"one", FilePresent(b"replacement"), envelope=ENVELOPE
+                        )
+                    )
                 else:
                     store.delete(b"one")
         assert store.read(b"one") == original
@@ -713,7 +737,9 @@ def test_sidecars_are_private_under_permissive_umask_and_sqlite_temp_is_memory(
                 original_collect(connection, payload_id)
 
             monkeypatch.setattr(store, "_garbage_collect_payload", inspect_sqlite)
-            store.replace(SyncBaseRecord(b"one", FilePresent(b"payload")))
+            store.replace(
+                SyncBaseRecord(b"one", FilePresent(b"payload"), envelope=ENVELOPE)
+            )
             assert observed
             assert all(stat.S_IMODE(status.st_mode) == 0o600 for status in observed)
             assert all(status.st_uid == os.geteuid() for status in observed)
@@ -759,7 +785,9 @@ def test_successful_mutation_never_runs_security_validation_after_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with _open_store(tmp_path) as store:
-        store.replace(SyncBaseRecord(b"one", FilePresent(b"original")))
+        store.replace(
+            SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
+        )
         original_connect = sqlite3.connect
         original_check = store._layout.check
         committed = False
@@ -782,7 +810,7 @@ def test_successful_mutation_never_runs_security_validation_after_commit(
         monkeypatch.setattr(sqlite3, "connect", traced_connect)
         monkeypatch.setattr(store._layout, "check", reject_after_commit)
         if operation == "replace":
-            store.replace(SyncBaseRecord(b"one", Missing()))
+            store.replace(SyncBaseRecord(b"one", Missing(), envelope=ENVELOPE))
         else:
             assert store.delete(b"one") is True
         assert committed
@@ -795,7 +823,7 @@ def test_sql_failure_after_record_dml_rolls_back_payload_gc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with _open_store(tmp_path) as store:
-        original = SyncBaseRecord(b"one", FilePresent(b"original"))
+        original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
         store.replace(original)
         original_gc = store._garbage_collect_payload
 
@@ -809,7 +837,11 @@ def test_sql_failure_after_record_dml_rolls_back_payload_gc(
             patch.setattr(store, "_garbage_collect_payload", fail_after_gc)
             with pytest.raises(SyncBaseStoreCorruptionError, match="injected"):
                 if operation == "replace":
-                    store.replace(SyncBaseRecord(b"one", FilePresent(b"replacement")))
+                    store.replace(
+                        SyncBaseRecord(
+                            b"one", FilePresent(b"replacement"), envelope=ENVELOPE
+                        )
+                    )
                 else:
                     store.delete(b"one")
         assert store.read(b"one") == original
@@ -848,7 +880,9 @@ def test_database_substitution_at_sqlite_open_cannot_change_either_inode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with _open_store(tmp_path) as store:
-        store.replace(SyncBaseRecord(b"one", FilePresent(b"original")))
+        store.replace(
+            SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
+        )
         path = _database_path(tmp_path)
         saved = path.with_name("saved-database")
         before = path.read_bytes()
@@ -865,7 +899,7 @@ def test_database_substitution_at_sqlite_open_cannot_change_either_inode(
 
         monkeypatch.setattr(sqlite3, "connect", substitute)
         with pytest.raises(SyncBaseStoreSecurityError, match="substituted"):
-            store.replace(SyncBaseRecord(b"one", Missing()))
+            store.replace(SyncBaseRecord(b"one", Missing(), envelope=ENVELOPE))
         assert path.read_bytes() == saved.read_bytes() == before
 
 
@@ -902,7 +936,9 @@ def test_forged_payload_does_not_even_enter_sqlite_transaction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with _open_store(tmp_path) as store:
-        store.replace(SyncBaseRecord(b"one", FilePresent(b"original")))
+        store.replace(
+            SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
+        )
         payload = object.__new__(DirectoryChildPresent)
         object.__setattr__(payload, "content", b"replacement")
         object.__setattr__(payload, "executable", 1)
@@ -916,7 +952,7 @@ def test_forged_payload_does_not_even_enter_sqlite_transaction(
 
         monkeypatch.setattr(sqlite3, "connect", traced_connect)
         with pytest.raises(TypeError, match="bool"):
-            store.replace(SyncBaseRecord(b"one", payload))
+            store.replace(SyncBaseRecord(b"one", payload, envelope=ENVELOPE))
         assert not statements
 
 
@@ -924,7 +960,7 @@ def test_multiple_reader_transactions_can_coexist_and_writers_fail_nonblocking(
     tmp_path: Path,
 ) -> None:
     with _open_store(tmp_path) as writer:
-        original = SyncBaseRecord(b"one", FilePresent(b"original"))
+        original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
         writer.replace(original)
         root = tmp_path / "state" / "dotman"
         with SyncBaseStore.open(root, "main", read_only=True) as one:
@@ -943,7 +979,7 @@ def test_reader_snapshots_and_write_contention_work_across_processes(
     tmp_path: Path,
 ) -> None:
     with _open_store(tmp_path) as writer:
-        original = SyncBaseRecord(b"one", FilePresent(b"original"))
+        original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
         writer.replace(original)
         root = tmp_path / "state" / "dotman"
         # The writer handle remains open; another process can still read.
@@ -951,7 +987,7 @@ def test_reader_snapshots_and_write_contention_work_across_processes(
 import sys
 from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreLockedError, FilePresent, SyncBaseRecord
 with SyncBaseStore.open(sys.argv[1], 'main', read_only=True) as reader:
-    assert reader.read(b'one') == SyncBaseRecord(b'one', FilePresent(b'original'))
+    assert reader.read(b'one').payload == FilePresent(b'original')
 """
         subprocess.run([sys.executable, "-c", script, str(root)], check=True, timeout=5)
         with writer.read_transaction():
@@ -1069,8 +1105,8 @@ def test_writes_use_portable_database_uri_without_descriptor_filesystem(
         return original_connect(database, *args, **kwargs)
 
     monkeypatch.setattr(sqlite3, "connect", connect)
-    original = SyncBaseRecord(b"one", FilePresent(b"original"))
-    replacement = SyncBaseRecord(b"one", FilePresent(b"replacement"))
+    original = SyncBaseRecord(b"one", FilePresent(b"original"), envelope=ENVELOPE)
+    replacement = SyncBaseRecord(b"one", FilePresent(b"replacement"), envelope=ENVELOPE)
     with SyncBaseStore.open(root, "main") as store:
         store.replace(original)
         assert store.read(b"one") == original
