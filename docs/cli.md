@@ -156,6 +156,14 @@ Examples:
   - `dotman track main:git@default`
   - `dotman track git`
 
+## Operation locking
+
+Real `push` and `pull` acquire the manager-wide non-blocking operation lock before
+planning and hold it through review and execution. Another real Push, Pull or
+engine SyncSession using the same manager state area fails immediately with the
+normal error presentation. Preview does not acquire or create the lock.
+Restore and unrelated state commands are outside this lock.
+
 ## Push
 
 - `push` is the repo-to-live command.

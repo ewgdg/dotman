@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any, Literal
 
 from dotman import cli_emit, cli_interaction
 from dotman.engine import DotmanEngine
+from dotman.config import default_state_root
+from dotman.operation_lock import OperationLock
 from dotman.models import OperationPlan, SnapshotConfig
 from dotman.operation_runner import run_restore_operation, run_sync_operation
 from dotman.progress import ProgressSink, make_planning_sink
@@ -34,12 +37,15 @@ class SyncCommandRunner:
         full_paths = args.full_path if args.full_path is not None else engine.config.ui.full_paths
         with ui_config_scope(engine.config.ui):
             if args.command in {"push", "pull"}:
-                return self._run_sync(
-                    args=args,
-                    engine=engine,
-                    operation=args.command,
-                    full_paths=full_paths,
-                )
+                # Own the operation before planning and retain it throughout
+                # review, early returns and execution. Preview never takes it.
+                with nullcontext() if args.dry_run else OperationLock.acquire(default_state_root()):
+                    return self._run_sync(
+                        args=args,
+                        engine=engine,
+                        operation=args.command,
+                        full_paths=full_paths,
+                    )
             return self._run_restore(args=args, engine=engine, full_paths=full_paths)
 
     def _plan_operation(

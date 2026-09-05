@@ -178,9 +178,15 @@ def discover_template_file_dependencies(path: Path) -> tuple[Path, ...]:
 
 
 
-def render_template_file(path: Path, context: dict[str, Any]) -> tuple[bytes, str]:
+def render_template_file(
+    path: Path, context: dict[str, Any], *, source_bytes: bytes | None = None,
+) -> tuple[bytes, str]:
     try:
-        source_text = path.read_text(encoding="utf-8")
+        source_text = (
+            path.read_text(encoding="utf-8")
+            if source_bytes is None
+            else source_bytes.decode("utf-8")
+        )
     except IsADirectoryError as exc:
         raise JinjaRenderError(path=path, detail="source path must be a file") from exc
     except UnicodeDecodeError as exc:

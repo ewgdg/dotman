@@ -3,6 +3,61 @@
 A file target is one **Sync Unit**. Each regular-file child of a directory target
 is an independent Sync Unit; a directory root has no aggregate Base.
 
+## Frozen file Observation
+
+A SyncSession observes its resolved file-target scope once. For each direction,
+repository, package and target Guards narrow capability before endpoint reads
+and comparison. It retains the resolved scope order, effective projections, typed
+endpoint bytes, live mode/link evidence, Git facts and applicable Base evidence.
+
+| Effective policy | Direct comparison |
+| --- | --- |
+| `push-only` | Repository-derived live bytes and configured file mode against live |
+| `pull-only`, `both` | Configured repository and live comparison projections |
+| `push-only-delete` | Desired `Missing` against live presence |
+
+`Missing` differs from a present empty file. Each unit is exactly **Directly
+InSync**, **Drifted**, or **Observation Failed**. Direct agreement has no drift
+row; drift has one stable canonical row, initially unapproved. Failed
+Observation and Base acknowledgment diagnostics stay visible and non-approvable.
+A Guard-removed route is a visible diagnostic, not permission to use the opposite
+direction. A unit-local failure does not discard unrelated evidence.
+
+Base availability describes frozen pre-acknowledgment evidence; a separate
+acknowledgment flag records successful opening-time maintenance.
+
+External changes never refresh an open session. Start another session to see
+new filesystem, configuration or Git state.
+
+## Session lifetime and current engine boundary
+
+The engine currently opens file-target sessions. It supports immutable views,
+whole-unit inclusion/exclusion, semantic abort and a terminal observation-only
+Execute result. Inclusion is not Approval. This boundary does not yet materialize
+or approve Proposals, edit sources, publish changes, run hooks, or discover
+directory children or auxiliary work; it adds no `sync` CLI command.
+
+Execute never claims drift is Converged: included drift is `pending` and makes
+the result `incomplete`; deliberately excluded healthy drift is `excluded`.
+Observation or acknowledgment failures make the result `failed`. A result with
+only direct agreement or deliberately excluded healthy rows is `completed`.
+Abort returns `aborted`; it does not undo Base maintenance already committed
+while opening.
+
+A real session owns the manager's non-blocking operation lock from opening until
+execute or abort. Real Push and Pull command workflows take the same lock before
+planning and retain it during review and execution. A conflicting operation
+fails immediately. Use a session context manager or explicitly abort an
+abandoned session; session state is neither persisted nor resumable.
+
+Preview cannot execute and does not take or create the manager lock, write
+managed repository/live/Git/state files, acknowledge or clean up Bases, run
+hooks, or create snapshots. Cleaned-up private scratch for projections and
+isolated Git checkout is permitted. Configured projection providers remain
+trusted side-effect-free stdout producers, not sandboxed arbitrary programs.
+Comparison-owned Capture views may run during Observation; no Proposal Capture
+or reconciliation is performed.
+
 ## Sync Bases
 
 A Sync Base is committed repository ancestry, not the latest working-tree,
