@@ -33,10 +33,10 @@ from dotman.file_access import (
     request_sudo,
     write_bytes_atomic as sudo_write_bytes_atomic,
 )
-from dotman.models import AdditionalSource, DirectoryPlanItem, ElevationMode, GuardSkip, HookPlan, OperationPlan, PackagePlan, TargetPlan, package_plans_for_operation_plan, repo_qualified_target_text
+from dotman.models import DirectoryPlanItem, ElevationMode, GuardSkip, HookPlan, OperationPlan, PackagePlan, TargetPlan, package_plans_for_operation_plan, repo_qualified_target_text
 from dotman.repo_access import restore_repo_path_access_for_invoking_user
 from dotman.reconcile_helpers import BUILTIN_JINJA_RECONCILE, run_jinja_reconcile
-from dotman.reconcile import run_basic_reconcile
+from dotman.reconcile import resolve_editor_additional_sources, run_basic_reconcile
 from dotman.templates import discover_template_file_dependencies
 from dotman.manifest import FORCED_COMMAND_PREFIX
 from dotman.templates import build_template_context, render_template_string
@@ -1364,27 +1364,13 @@ def _run_editor_target_plan(
     package_root_value = _build_target_env(target_plan).get("DOTMAN_PACKAGE_ROOT")
     package_root = Path(package_root_value).expanduser().resolve() if package_root_value else target_plan.repo_path.parent
 
-    # Resolve each configured entry against the package that declared it.
-    # Entries from inherited specs retain their parent root; appended entries
-    # carry the child root. Manual plans without provenance use package_root.
-    entries = list(target_plan.additional_source_entries)
-    if not entries:
-        entries = list(target_plan.editor.source_entries())
-    if not entries:
-        fallback_root = target_plan.additional_sources_root or package_root
-        entries = [AdditionalSource(path, fallback_root) for path in target_plan.additional_sources]
-    elif target_plan.additional_sources and len(entries) < len(target_plan.additional_sources):
-        known = {entry.path for entry in entries}
-        entries.extend(AdditionalSource(path, target_plan.additional_sources_root or package_root) for path in target_plan.additional_sources if path not in known)
-
-    for entry in entries:
-        root = (entry.root or package_root).expanduser().resolve()
-        source_path = (root / entry.path).resolve()
-        try:
-            source_path.relative_to(root)
-        except ValueError as exc:
-            raise ValueError(f"editor additional source escapes declaring package root: {entry.path}") from exc
-        source_paths.append(source_path)
+    source_paths.extend(resolve_editor_additional_sources(
+        editor=target_plan.editor,
+        additional_sources=target_plan.additional_sources,
+        additional_source_entries=target_plan.additional_source_entries,
+        additional_sources_root=target_plan.additional_sources_root,
+        package_root=package_root,
+    ))
     if target_plan.editor.type == "jinja":
         # Dependency discovery is static by design; dynamic includes are
         # rejected instead of silently omitting editable inputs.
@@ -1418,6 +1404,7 @@ def _run_editor_target_plan(
         review_repo_bytes=target_plan.review_before_bytes,
         review_live_bytes=target_plan.review_after_bytes,
         editor_env=_build_target_env(target_plan),
+        editor_cwd=target_plan.command_cwd,
         editor_io=target_plan.editor.io,
         editor_elevation=target_plan.editor.elevation,
         stream_output=stream_output,

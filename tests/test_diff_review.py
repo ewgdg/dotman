@@ -867,7 +867,7 @@ def test_run_review_item_edit_prefers_pull_editor(monkeypatch, tmp_path: Path) -
     assert request.command.arguments[:2] == ("sh", "hooks/editor.sh")
     assert len(request.command.arguments) == 3
     assert request.io == "tty"
-    assert request.cwd is None
+    assert request.cwd == tmp_path
     assert request.env["DOTMAN_REPO_PATH"] == request.env["DOTMAN_EDITOR_PRIMARY_PATH"]
     assert request.env["DOTMAN_LIVE_PATH"] == request.env["DOTMAN_REVIEW_LIVE_PATH"]
     assert request.env["DOTMAN_TARGET_NAME"] == "init_lua"
@@ -1021,3 +1021,67 @@ def test_edit_status_keeps_editor_pull_only(tmp_path: Path) -> None:
 
     assert edit_status(push_item) == "editor"
     assert edit_status(pull_item) == "editor"
+
+
+@pytest.mark.parametrize("directory", [False, True])
+@pytest.mark.parametrize("provenance", [False, True])
+def test_review_editor_preserves_effective_child_sources_and_declaring_roots(
+    tmp_path: Path, directory: bool, provenance: bool,
+) -> None:
+    from dotman.models import AdditionalSource
+
+    parent_root = tmp_path / "parent"
+    child_root = tmp_path / "child"
+    parent_root.mkdir()
+    child_root.mkdir()
+    (parent_root / "shared").write_bytes(b"parent source")
+    (child_root / "shared").write_bytes(b"child source")
+    repo_path = child_root / "primary"
+    live_path = tmp_path / "live"
+    repo_path.write_bytes(b"repo")
+    live_path.write_bytes(b"live")
+    editor = EditorSpec(type=None, run="sh hooks/editor.sh", io="pipe")
+    entries = (
+        (AdditionalSource("shared", parent_root), AdditionalSource("shared", child_root))
+        if provenance else ()
+    )
+    policy = dict(
+        editor=editor, editor_explicit=True,
+        additional_sources=("shared", "shared") if provenance else ("shared",),
+        additional_source_entries=entries,
+    )
+    target = TargetPlan(
+        package_id="app", target_name="config", action="update",
+        target_kind="directory" if directory else "file", projection_kind="raw",
+        repo_path=child_root if directory else repo_path,
+        live_path=tmp_path if directory else live_path,
+        command_cwd=child_root,
+        command_env={"DOTMAN_PACKAGE_ROOT": str(child_root)},
+        additional_sources_root=parent_root,
+        directory_items=(DirectoryPlanItem(
+            relative_path="primary", action="update", repo_path=repo_path,
+            live_path=live_path, review_before_bytes=b"repo", review_after_bytes=b"live",
+            **policy,
+        ),) if directory else (),
+        **({} if directory else policy),
+    )
+    plan = make_package_plan(
+        operation="pull", repo_name="example", package_id="app",
+        requested_profile="default", variables={}, hooks={}, target_plans=[target],
+    )
+    item, = build_review_items([plan], operation="pull")
+    assert item.editor == editor
+    assert item.editor_explicit
+
+    def check_editor(request):
+        assert request.cwd == child_root
+        assert request.command.arguments[:2] == ("sh", "hooks/editor.sh")
+        paths = request.env["DOTMAN_EDITOR_ADDITIONAL_SOURCE_PATHS"].split(os.pathsep)
+        assert [Path(path).read_bytes() for path in paths] == (
+            [b"parent source", b"child source"] if provenance else [b"parent source"]
+        )
+        assert all(Path(path).parent != parent_root for path in paths)
+        return CommandResult(exit_code=0)
+
+    with command_runtime_session(MemoryCommandRuntime([check_editor])):
+        assert run_review_item_edit(item) == 0

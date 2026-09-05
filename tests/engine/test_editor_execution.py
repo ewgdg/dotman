@@ -510,3 +510,22 @@ additional_sources = ["child.txt"]
     )
     assert result.status == "ok"
     assert (child_root / "files" / "config").read_text(encoding="utf-8") == "edited\n"
+
+
+def test_custom_editor_runs_from_package_root(tmp_path):
+    repo_path, _include, package = _editor_plan(
+        tmp_path, EditorSpec(type=None, run="sh hooks/editor.sh", io="pipe"),
+    )
+
+    def run(request):
+        assert request.cwd == repo_path.parent.parent
+        assert request.command.arguments[:2] == ("sh", "hooks/editor.sh")
+        return CommandResult(exit_code=0)
+
+    result = execute_session(
+        build_execution_session([package], operation="pull"),
+        stream_output=False,
+        assume_yes=True,
+        command_runtime=MemoryCommandRuntime([run]),
+    )
+    assert result.status == "ok"

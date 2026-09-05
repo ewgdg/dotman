@@ -20,6 +20,7 @@ This document captures the current repository structure and configuration schema
 - `multi_instance` means the package definition may produce multiple independent package instances, keyed by bound profile.
 - Human-facing target labels use `repo:package.target` and `repo:package<profile>.target`.
 - `.` is reserved for the package/target separator and must not appear inside package IDs or target names.
+- `/` is reserved for the target/child separator and must not appear inside target names. Package IDs may still use `/` for namespaces, and profile IDs may contain dots inside `<profile>`.
 - Packages may declare `depends` for hard requirements.
 - `depends` entries may reference either package IDs or group selectors.
 - Group dependencies expand to their member packages during dependency resolution.
@@ -198,7 +199,7 @@ preset = "jinja-patch"
 - `capture = "patch"` is reserved for automatic patch-first reverse capture of rendered/template file targets, not for arbitrary shell-based stdout capture.
 - Targets may define `editor` as the actual reverse-sync action used during `pull`.
 - `editor` may be interactive and should receive both repo and live paths.
-- Built-in editor helpers are also available; for example, `editor = { run = "jinja", io = "tty" }` uses dotman's Jinja-aware editor flow for static template dependency trees.
+- Built-in editor helpers are also available; for example, `editor = { type = "jinja" }` uses dotman's Jinja-aware editor flow for static template dependency trees.
 - Targets may define `compare.repo` to control how repo-side content is projected during pull planning.
 - Targets may define `compare.live` to control how live-side content is projected during pull planning.
 - `compare.repo` and `compare.live` may use built-in values such as `raw`, `render`, and `capture`, or an explicit script/command string when needed.

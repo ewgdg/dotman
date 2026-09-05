@@ -55,7 +55,13 @@ def validate_package_id(package_id: str) -> None:
 
 
 def validate_target_name(target_name: str) -> None:
-    if not target_name.strip() or "." in target_name or any(character.isspace() for character in target_name):
+    if (
+        not target_name.strip()
+        or "." in target_name
+        # `/` separates directory-child paths in canonical sync identities.
+        or "/" in target_name
+        or any(character.isspace() for character in target_name)
+    ):
         raise ValueError(f"invalid target name '{target_name}'")
 
 
