@@ -34,4 +34,30 @@ Core tests cover opt-in Approval, immutable exact outcomes, preview isolation, r
 Keep push/pull orchestration unchanged; add a dedicated Sync CLI adapter rather than extending their plan workflow. Use existing prompt-toolkit dependency for the initial persistent Deck.
 
 ## Outcomes
-Pending implementation and verification.
+Implementation remains unfinished. Agent coordination failed globally with
+`invariant_violation: Message has duplicate Deliveries`, preventing clarification,
+completion delivery and cancellation. No completion claim or issue closure.
+
+## Resume checkpoint
+- Uncommitted core changes add immutable Proposals, cached materialization,
+  Approval, Proposal Review and Preview in `sync_session.py`, with frozen paths
+  in `sync_observation.py` and tests in `tests/engine/test_sync_convergence.py`.
+- Real publication still calls a missing `_publish_effects` integration. Bridge
+  frozen session `_inputs` (identity to package input/target metadata) to existing
+  execution mechanics without re-projecting. Preserve per-unit completion even
+  when an enclosing post-hook fails, and expose operation failure separately.
+- Healthy deliberately unapproved supported rows must finish successfully rather
+  than making preview/execution incomplete. Unsupported/blocking work still fails.
+- CLI uses global `--unattended` for Sync only, with no implicit nonterminal or
+  JSON consent. Existing Push/Pull confirmation flags remain outside this slice.
+  JSON now omits payload bytes; stage outcomes still need real public result facts.
+- Delegate-reported validation: existing session tests and seven nonpublication
+  core tests pass; 50 CLI parser/composition/runner tests pass. Deck tests expose
+  missing publication and healthy-unselected exit status. Final integration and
+  broader validation have not run.
+- Durable CLI/lifecycle/architecture docs were restored to the established
+  boundary rather than advertise incomplete behavior. Update them after the
+  implementation passes. The draft is available in commit `2ac99b8`.
+- Restore agent coordination before resuming outstanding delegated work, or use
+  a fresh workflow with explicit takeover of this checkpoint. Do not launch
+  overlapping writers while the current worker requests remain unresolved.

@@ -31,9 +31,6 @@ Focused CLI responsibilities live in dedicated modules:
   command-specific resolution and editor interfaces
 - `sync_commands.py` — typed push, pull, and restore planning, review, preview,
   and execution workflows
-- `sync_deck_command.py` — Sync CLI authorization and final output over public
-  session views and commands
-- `sync_deck.py` — persistent Sync workset, focused review and confirmation
 - `cli_interaction.py` — shared terminal selection, resolution, diff review,
   and focused runtime adapters used by command runners
 - `cli_style.py` — labels, colors, and display helpers
@@ -168,12 +165,11 @@ Prefer the dedicated module unless there is a strong reason not to.
 Resolve selectors with `engine.resolve_sync_scope(...)`, then call
 `engine.open_sync_session(scope, preview=..., event_sink=...)`. Opening returns
 a `SyncSession` or typed `SessionOpenFailed`. File-target scope only is supported;
-push-only drift can materialize, receive Approval and publish. Directory children,
-Editors and Base-Eligible drift resolution remain outside this boundary.
+directory children, Proposals, Approval, Editors and publication are separate
+responsibilities, not simulated by empty execution plans.
 
-Read `session.view` rather than private plans. `SetIncluded`, `SetApproval`,
-`PrepareProposalReview`, `Preview`, `Execute` and `Abort` carry the view's session
-ID and revision. Dispatch returns
+Read `session.view` rather than private plans. `SetIncluded`, `Execute` and
+`Abort` carry the view's session ID and revision. Dispatch returns
 `CommandAccepted(view, result)` or mutation-free `CommandRejected(view, reason)`.
 Row-local allowed commands distinguish drift from non-approvable diagnostics.
 Convenience `execute()` and `abort()` act on the current view; adapters holding
@@ -184,11 +180,9 @@ Terminal views allow no further commands.
 `SessionOpened`, `SessionChanged` and `SessionFinished` are immutable lifecycle
 events for recording or presentation sinks. Callback programming failures
 escape; failed opening still releases owned resources. Context-manager exit
-aborts an unfinished session. Review and Approval materialize immutable Proposals
-from frozen inputs. Preview reports approved effects without mutation; Execute
-publishes those same effects without re-observation or projection. Results keep
-direct agreement, approved convergence, pending/excluded drift and failures
-distinct. Inclusion never substitutes for Approval.
+aborts an unfinished session. The session's observation-only Execute result
+reports direct agreement, pending/excluded drift and visible failures, never
+Converged.
 
 The operation lock is a POSIX advisory `flock(LOCK_EX | LOCK_NB)` on the
 owner-only `$XDG_STATE_HOME/dotman/operation.lock` file. Never unlink this file on
