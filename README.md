@@ -124,12 +124,14 @@ dotman edit config
 
 - `push` applies managed changes from the repo to the live system
 - `pull` updates the repo from the live system
+- `sync` opens an opt-in Command Deck for frozen push-only file convergence
 
 Example:
 
 ```sh
 dotman push
 dotman pull
+dotman --unattended sync --dry-run main:app.settings
 ```
 
 ### Interactive selection and review workflow
