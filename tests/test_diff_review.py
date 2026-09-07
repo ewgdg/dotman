@@ -206,7 +206,13 @@ def test_build_review_items_for_push_directory_reuses_planned_desired_bytes(tmp_
     assert review_items[0].after_bytes == b"new rendered value\n"
 
 
-def test_build_review_items_for_pull_directory_create_lazily_loads_capture_view(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("capture_command", "expected_bytes"),
+    [(None, b"raw live\n"), ("printf 'captured live\\n'", b"captured live\n")],
+)
+def test_build_review_items_for_pull_directory_create_lazily_loads_capture_view(
+    tmp_path: Path, capture_command: str | None, expected_bytes: bytes,
+) -> None:
     live_path = tmp_path / "live-file"
     live_path.write_text("raw live\n", encoding="utf-8")
     repo_path = tmp_path / "repo-file"
@@ -234,7 +240,7 @@ def test_build_review_items_for_pull_directory_create_lazily_loads_capture_view(
                         action="create",
                         repo_path=repo_path,
                         live_path=live_path,
-                        capture_command="printf 'captured live\\n'",
+                        capture_command=capture_command,
                         compare_live="capture",
                     ),
                 ),
@@ -247,7 +253,7 @@ def test_build_review_items_for_pull_directory_create_lazily_loads_capture_view(
     assert review_item.before_bytes == b""
     assert review_item.after_bytes is None
     assert review_item.after_bytes_loader is not None
-    assert _review_item_bytes(review_item, before=False) == b"captured live\n"
+    assert _review_item_bytes(review_item, before=False) == expected_bytes
 
 
 def test_build_review_items_for_pull_directory_delete_lazily_loads_render_view(tmp_path: Path) -> None:
@@ -294,7 +300,10 @@ def test_build_review_items_for_pull_directory_delete_lazily_loads_render_view(t
     assert _review_item_bytes(review_item, before=True) == b"rendered repo\n"
 
 
-def test_pull_directory_lazy_capture_view_uses_sudo_when_live_read_needs_it(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("capture_command", [None, "capture-cmd"])
+def test_pull_directory_lazy_capture_view_uses_sudo_when_live_read_needs_it(
+    monkeypatch, tmp_path: Path, capture_command: str | None,
+) -> None:
     live_path = tmp_path / "live-file"
     live_path.write_text("raw live\n", encoding="utf-8")
     repo_path = tmp_path / "repo-file"
@@ -322,7 +331,7 @@ def test_pull_directory_lazy_capture_view_uses_sudo_when_live_read_needs_it(monk
                         action="create",
                         repo_path=repo_path,
                         live_path=live_path,
-                        capture_command="capture-cmd",
+                        capture_command=capture_command,
                         compare_live="capture",
                     ),
                 ),
@@ -333,6 +342,15 @@ def test_pull_directory_lazy_capture_view_uses_sudo_when_live_read_needs_it(monk
 
     monkeypatch.setattr("dotman.diff_review.needs_sudo_for_read", lambda path: path == live_path)
 
+    reads: list[Path] = []
+
+    def privileged_read(path: Path) -> bytes:
+        if path == repo_path:
+            raise FileNotFoundError(path)
+        reads.append(path)
+        return b"captured live\n"
+
+    monkeypatch.setattr("dotman.diff_review.read_bytes", privileged_read)
     runtime = MemoryCommandRuntime(
         [CommandResult(exit_code=0, stdout=b"captured live\n")]
     )
@@ -341,8 +359,12 @@ def test_pull_directory_lazy_capture_view_uses_sudo_when_live_read_needs_it(monk
     with command_runtime_session(runtime):
         assert _review_item_bytes(review_item, before=False) == b"captured live\n"
 
-    assert runtime.requests[0].command == ShellCommand("capture-cmd")
-    assert runtime.requests[0].elevation == "root"
+    if capture_command is None:
+        assert reads == [live_path]
+        assert runtime.requests == []
+    else:
+        assert runtime.requests[0].command == ShellCommand("capture-cmd")
+        assert runtime.requests[0].elevation == "root"
 
 
 def test_push_directory_raw_live_review_bytes_use_privileged_file_access(monkeypatch, tmp_path: Path) -> None:

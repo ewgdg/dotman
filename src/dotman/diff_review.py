@@ -429,7 +429,8 @@ def _directory_item_pull_view_bytes(
         if item.capture_command == BUILTIN_PATCH_CAPTURE:
             raise ValueError("capture = 'patch' does not expose a capture review view")
         if item.capture_command is None:
-            raise ValueError("directory item does not define capture")
+            # Without a capture transform, the capture view is the live file itself.
+            return read_bytes(item.live_path)
         return _run_directory_item_view_command(item, target=target, command=item.capture_command)
     command = render_template_string(
         view,
