@@ -212,13 +212,14 @@ def test_publication_does_not_rerun_frozen_render(tmp_path, monkeypatch):
     assert (tmp_path / "live/unit").read_bytes() == b"rendered"
 
 
-def test_interrupted_materialization_is_typed_and_not_approved(tmp_path, monkeypatch):
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, InterruptedError])
+def test_interrupted_materialization_is_typed_and_not_approved(tmp_path, monkeypatch, interruption):
     import dotman.sync_session as boundary
 
     engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
 
     def interrupt(_observation):
-        raise KeyboardInterrupt
+        raise interruption
 
     with open_session(engine, preview=False) as session:
         monkeypatch.setattr(boundary, "materialize", interrupt)
@@ -282,7 +283,19 @@ def test_post_hook_failure_preserves_convergence_and_reports_actual_steps(tmp_pa
         assert result.status == "failed"
         assert result.units[0].status == "converged"
         assert result.diagnostics
-        assert any(step.step.action == "post_push" and step.status == "failed"
+        from dataclasses import fields
+        assert {field.name for field in fields(result.steps[0])} == {
+            "stage", "kind", "action", "scope", "repo", "package_id",
+            "status", "skip_reason", "exit_code", "error",
+        }
+        assert all(
+            value is None or isinstance(value, (str, int))
+            for step in result.steps
+            for value in (getattr(step, field.name) for field in fields(step))
+        )
+        with pytest.raises(FrozenInstanceError):
+            result.steps[0].status = "other"
+        assert any(step.action == "post_push" and step.status == "failed"
                    for step in result.steps)
     assert (tmp_path / "live/unit").read_bytes() == b"repo"
 

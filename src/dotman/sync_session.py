@@ -8,7 +8,6 @@ from typing import Callable, Literal
 from pathlib import Path
 from uuid import uuid4
 
-from dotman.execution import ExecutionStepResult
 from dotman.models import ResolvedSyncScope
 from dotman.planning import PlanningContext
 from dotman.sync_base_store import SyncBaseStoreError, FilePresent, Missing
@@ -171,11 +170,27 @@ class SyncUnitResult:
 
 
 @dataclass(frozen=True)
+class SyncStepOutcome:
+    """Semantic execution evidence without private plans or captured payloads."""
+
+    stage: Literal["live-publication"]
+    kind: str
+    action: str
+    scope: str
+    repo: str
+    package_id: str | None
+    status: str
+    skip_reason: str | None = None
+    exit_code: int | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class SyncResult:
     status: Literal["completed", "incomplete", "failed", "aborted"]
     units: tuple[SyncUnitResult, ...]
     diagnostics: tuple[Diagnostic, ...] = ()
-    steps: tuple[ExecutionStepResult, ...] = ()
+    steps: tuple[SyncStepOutcome, ...] = ()
 
     @property
     def exit_code(self) -> int:
@@ -380,11 +395,11 @@ class SyncSession:
                 try:
                     proposal = materialize(row.observation)
                     diagnostics = ()
-                except (ValueError, OSError) as exc:
-                    diagnostics = (Diagnostic("materialization-failed", str(exc)),)
-                    approved = False
                 except (KeyboardInterrupt, InterruptedError):
                     diagnostics = (Diagnostic("interrupted", "Materialization interrupted"),)
+                    approved = False
+                except (ValueError, OSError) as exc:
+                    diagnostics = (Diagnostic("materialization-failed", str(exc)),)
                     approved = False
             updated = replace(row, approved=approved, proposal=proposal, diagnostics=diagnostics)
             self._view = replace(view, revision=view.revision + 1, rows=tuple(
@@ -446,7 +461,7 @@ class SyncSession:
     def _publish(self) -> tuple[
         dict[str, tuple[str, tuple[Diagnostic, ...]]],
         tuple[Diagnostic, ...],
-        tuple[ExecutionStepResult, ...],
+        tuple[SyncStepOutcome, ...],
     ]:
         selected = tuple(
             row for row in self.view.rows
@@ -462,7 +477,7 @@ class SyncSession:
     def _publish_effects(self, selected: tuple[SessionRow, ...]) -> tuple[
         dict[str, tuple[str, tuple[Diagnostic, ...]]],
         tuple[Diagnostic, ...],
-        tuple[ExecutionStepResult, ...],
+        tuple[SyncStepOutcome, ...],
     ]:
         result = execute_publication(
             self._publication_metadata,
@@ -481,7 +496,22 @@ class SyncSession:
             )
             for unit in result.units
         }
-        return units, diagnostics, result.steps
+        steps = tuple(
+            SyncStepOutcome(
+                stage="live-publication",
+                kind=item.step.kind,
+                action=item.step.action,
+                scope=item.step.scope_kind,
+                repo=item.step.repo_name,
+                package_id=item.step.package_id,
+                status=item.status,
+                skip_reason=item.skip_reason,
+                exit_code=item.exit_code,
+                error=item.error,
+            )
+            for item in result.steps
+        )
+        return units, diagnostics, steps
 
     def _finish(self, *, aborted: bool) -> SyncResult:
         try:
