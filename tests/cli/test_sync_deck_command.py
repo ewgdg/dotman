@@ -303,9 +303,45 @@ def test_json_reports_actual_failed_hook_without_leaking_captured_output(tmp_pat
     assert payload["sync_units"][0]["result"] == "converged"
     assert payload["summary"]["diagnostics"]
     assert all(set(step) == {
-        "stage", "kind", "action", "scope", "repo", "package_id",
+        "stage", "kind", "action", "scope", "scope_identity", "repo", "package_id",
         "status", "skip_reason", "exit_code", "error",
     } for step in payload["stages"])
     assert all(step["stage"] == "live-publication" for step in payload["stages"])
     assert any(step["action"] == "post_push" and step["status"] == "failed"
                and step["exit_code"] == 7 for step in payload["stages"])
+
+
+@pytest.mark.parametrize("unsupported_policy", ["both", "pull-only"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_unattended_unsupported_drift_blocks_all_publication(tmp_path, monkeypatch, capsys, unsupported_policy, dry_run):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("supported", "push-only", b"repo", b"live", ""),
+        ("unsupported", unsupported_policy, b"repo", b"live", ""),
+    ])
+    assert runner_for(engine).run(arguments(dry_run=dry_run)) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert (tmp_path / "live/supported").read_bytes() == b"live"
+    assert payload["status"] == "failed"
+    assert payload["summary"]["diagnostics"][0]["code"] == "unattended-decision"
+    assert payload["stages"] == []
+
+
+def test_json_failed_hook_identifies_exact_instance_target(tmp_path, monkeypatch, capsys):
+    from dotman.engine import DotmanEngine
+
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "push-only", b"repo", b"live",
+         '[targets.unit.hooks]\npost_push = "exit 7"'),
+    ])
+    manifest = tmp_path / "repo/packages/app/package.toml"
+    manifest.write_text(manifest.read_text().replace(
+        'id = "app"', 'id = "app"\nbinding_mode = "multi_instance"',
+    ))
+    engine = DotmanEngine(engine.config)
+    assert runner_for(engine).run(arguments(dry_run=False)) == 1
+    payload = json.loads(capsys.readouterr().out)
+    failed_hook = next(step for step in payload["stages"] if step["status"] == "failed")
+    assert failed_hook["scope_identity"] == "main:app<default>.unit"
+    assert failed_hook["scope"] == "target"
+    assert payload["sync_units"][0]["identity"] == failed_hook["scope_identity"]
+    assert payload["sync_units"][0]["result"] == "converged"

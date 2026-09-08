@@ -94,6 +94,16 @@ class SyncDeckCommandRunner:
                         "code": "interrupted", "message": "Sync materialization interrupted",
                     } if interrupted else None)
                     return 130 if interrupted else 1
+                if not interactive and any(
+                    row.included and row.kind == "drift"
+                    and "set-approval" not in row.allowed_commands
+                    for row in session.view.rows
+                ):
+                    self._emit(args, session, None, diagnostic={
+                        "code": "unattended-decision",
+                        "message": "Participating drift has no supported automatic resolution.",
+                    })
+                    return 1
                 if args.dry_run:
                     view = session.view
                     dispatched = session.dispatch(Preview(view.session_id, view.revision))
@@ -200,6 +210,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
                 "kind": item.kind,
                 "action": item.action,
                 "scope": item.scope,
+                "scope_identity": item.scope_identity,
                 "repo": item.repo,
                 "package_id": item.package_id,
                 "status": item.status,
