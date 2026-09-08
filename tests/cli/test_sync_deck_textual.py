@@ -246,6 +246,8 @@ def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, s
                     ]
                 else:
                     assert app.deck.reviewing
+                    # Opening review queues its resize after the input batch settles.
+                    await pilot.pause()
                     assert f"Proposal Review — main:app.unit_{expected:02}" in "\n".join(
                         line.text for line in app.query_one(RichLog).lines
                     )
@@ -279,7 +281,40 @@ def test_batched_mouse_and_keyboard_share_target(tmp_path, monkeypatch, column, 
                 assert app.deck.focused_row.row_id == session.view.rows[focused].row_id
                 assert [row.approved for row in session.view.rows] == approvals
                 if keys[-1] == "enter":
+                    await pilot.pause()
                     assert "Proposal Review — main:app.two" in "\n".join(
                         line.text for line in app.query_one(RichLog).lines
                     )
+        run(interact())
+
+
+def test_help_area_click_cannot_authorize_after_clear_key(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo", b"live", ""),
+        ("two", "push-only", b"repo", b"live", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 12)) as pilot:
+                await pilot.pause()
+                # Terminal coordinates previously hit the clickable Approve all
+                # footer. No yielding before U: a deferred click must not grant
+                # Approval after the later explicit clear action.
+                for event_type in (events.MouseDown, events.MouseUp):
+                    app.post_message(event_type(
+                        app.screen, 49, 11, 0, 0, 1, False, False, False,
+                        screen_x=49, screen_y=11,
+                    ))
+                app.post_message(events.Key("u", "u"))
+                await pilot.pause()
+                assert not any(row.approved for row in session.view.rows)
+                await pilot.resize_terminal(40, 12)
+                help_widget = app.query_one("#help", Static)
+                assert help_widget.size.height == 2
+                rendered_help = " ".join(
+                    help_widget.render_line(y).text for y in range(help_widget.size.height)
+                )
+                assert "Esc abort" in rendered_help and "X confirm" in rendered_help
         run(interact())

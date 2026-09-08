@@ -63,6 +63,8 @@ both-policy drift cannot yet be approved.
   Its Textual table aligns Approval, Target, Policy, and Resolution columns.
   `Space` toggles Approval, `A` approves eligible rows, and `U` clears Approval.
   A single click in the Approval column toggles that row; other cells only focus it.
+  The bottom help text lists keyboard shortcuts; it is not clickable. It adapts
+  to workset, review, and confirmation, wrapping to two lines on narrow terminals.
   Arrow keys navigate; narrow terminals scroll horizontally and long worksets
   scroll vertically without losing column alignment.
 - `Enter` opens focused Proposal Review; `Esc` returns to the same workset.

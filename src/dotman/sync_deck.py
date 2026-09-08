@@ -9,7 +9,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.errors import NoWidget
-from textual.widgets import DataTable, Footer, RichLog, Static
+from textual.widgets import DataTable, RichLog, Static
 
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import FilePresent, Missing
@@ -227,6 +227,7 @@ class SyncDeckApp(App[bool]):
     #review { height: 1fr; }
     #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
     #notice { height: auto; padding: 0 1; color: $warning; }
+    #help { dock: bottom; height: auto; max-height: 2; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
         *[
@@ -294,7 +295,7 @@ class SyncDeckApp(App[bool]):
         yield RichLog(id="review", wrap=False, auto_scroll=False, min_width=1)
         yield Static(id="confirmation", markup=False)
         yield Static(id="notice", markup=False)
-        yield Footer()
+        yield Static(id="help", markup=False)
 
     def on_mount(self) -> None:
         table = self.query_one(WorksetTable)
@@ -322,6 +323,13 @@ class SyncDeckApp(App[bool]):
                               update_width=True)
         self.update_detail()
         self.query_one("#notice", Static).update(self.deck.notice)
+        if self.deck.confirming:
+            help_text = "Enter confirm · Esc return · Ctrl+C abort"
+        elif self.deck.reviewing:
+            help_text = "Esc return · Space Approval · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
+        else:
+            help_text = "Esc abort · Space Approval · Enter review · A all · U clear · X confirm"
+        self.query_one("#help", Static).update(help_text)
 
     def update_detail(self) -> None:
         row = self.deck.focused_row

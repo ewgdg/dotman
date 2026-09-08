@@ -120,3 +120,28 @@ convergence or engine migration-rejection path was added.
   Captures and probe sources are alongside previous evidence as
   `review-mouse-keyboard-pty.txt`, `review-mouse-only-pty.txt`,
   `dotman-review-mouse-pty.py`, and `dotman-review-mouse-only-pty.py`.
+
+## Review correction: noninteractive keyboard help
+- RED reproduced a click in the built-in Footer's Approve all area followed by
+  U in the same terminal batch: all rows ended approved, despite U being later.
+  The real 80x12 PTY showed the same failure for all 25 fixture rows; spaced
+  input correctly left none approved.
+- Removed Textual Footer rather than adding dispatch machinery for optional
+  clickable shortcuts. Bottom help is now ordinary muted Static text, without
+  button styling, links, hover actions or mouse authorization. Table mouse
+  interactions remain unchanged.
+- Help changes with workset/review/confirmation and wraps to at most two lines.
+  At 40 columns, both Escape and confirmation shortcuts remain visible; the
+  two-line maximum preserves space for the workset in smaller terminals.
+- The no-yield help-area click+U regression now passes. Its narrow-layout
+  assertion confirms readable two-line instructions. Batched review tests also
+  explicitly settle the newly visible RichLog's resize before reading rendered
+  lines, rather than relying on Footer's incidental event/render timing.
+- Focused Deck/adapter/Pull UI suite: **62 passed in 19.80s**; diff check clean.
+  No full suite rerun, per review instruction.
+- Real PTY batch and spaced help-area probes both report
+  `FOCUS 0 APPROVED []`; the mouse target+Space probe still approves only row 1.
+  The full 110x24 rendered-table/review/confirmation PTY validation also passed.
+  Evidence: `review-help-batch-pty.txt`, `review-help-spaced-pty.txt` and copied
+  footer repro sources in the existing artifact directory. Workset/review/
+  confirmation captures now show the plain keyboard instructions.
