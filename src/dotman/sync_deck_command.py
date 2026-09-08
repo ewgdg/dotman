@@ -196,7 +196,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "effects": [effect_summary(effect) for effect in proposal.publication_effects] if proposal else [],
             "base": {
                 "status": observation.base.status,
-                "provenance": observation.base.record.provenance if observation.base.record else None,
+                "provenance": observation.base.record.envelope.provenance if observation.base.record else None,
                 # Availability/provenance remain frozen opening evidence; eligible
                 # convergence additionally proves execution-time acknowledgment.
                 "acknowledged": observation.base.acknowledged or bool(
