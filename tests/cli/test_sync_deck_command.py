@@ -302,5 +302,10 @@ def test_json_reports_actual_failed_hook_without_leaking_captured_output(tmp_pat
     assert payload["status"] == "failed"
     assert payload["sync_units"][0]["result"] == "converged"
     assert payload["summary"]["diagnostics"]
+    assert all(set(step) == {
+        "stage", "kind", "action", "scope", "repo", "package_id",
+        "status", "skip_reason", "exit_code", "error",
+    } for step in payload["stages"])
+    assert all(step["stage"] == "live-publication" for step in payload["stages"])
     assert any(step["action"] == "post_push" and step["status"] == "failed"
                and step["exit_code"] == 7 for step in payload["stages"])

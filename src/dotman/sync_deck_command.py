@@ -196,12 +196,12 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
         # never infer successful execution from a materialized Proposal.
         "stages": [
             {
-                "stage": "live-publication",
-                "kind": item.step.kind,
-                "action": item.step.action,
-                "scope": item.step.scope_kind,
-                "repo": item.step.repo_name,
-                "package_id": item.step.package_id,
+                "stage": item.stage,
+                "kind": item.kind,
+                "action": item.action,
+                "scope": item.scope,
+                "repo": item.repo,
+                "package_id": item.package_id,
                 "status": item.status,
                 "skip_reason": item.skip_reason,
                 "exit_code": item.exit_code,
