@@ -14,7 +14,7 @@ from prompt_toolkit.mouse_events import MouseEventType
 
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import FilePresent, Missing
-from dotman.sync_deck_command import approve, review, effect_summary
+from dotman.sync_deck_command import approve, review, effect_summary, primary_change_summary, resolution_label
 from dotman.sync_session import CommandRejected, SyncSession
 
 
@@ -122,7 +122,7 @@ class CommandDeck:
                 use_color=self.use_color,
             )
             marker = "[x]" if row.approved else "[ ]" if "set-approval" in row.allowed_commands else "[-]"
-            resolution = render_sync_term("Use repository", use_color=self.use_color) if "set-approval" in row.allowed_commands else render_sync_term("blocked", use_color=self.use_color)
+            resolution = render_sync_term(resolution_label(row.proposal.intent if row.proposal else row.allowed_intents[0]), use_color=self.use_color) if "set-approval" in row.allowed_commands else render_sync_term("blocked", use_color=self.use_color)
             lines.append(f"{'>' if index == self.focus else ' '} {marker}  {label}  {row.observation.effective_policy}  {resolution}")
             lines.extend(f"       {item.message}" for item in (*row.observation.diagnostics, *row.diagnostics))
         if not self.session.view.rows:
@@ -136,17 +136,22 @@ class CommandDeck:
         if row is None:
             return ""
         proposal = row.proposal
+        intent = proposal.intent if proposal else row.allowed_intents[0] if row.allowed_intents else None
+        pull = intent == "use-live"
+        primary = primary_change_summary(proposal, row.observation.repository_path)
         lines = [f":: Proposal Review — {row.row_id}",
                  f"  Selection: {'approved' if row.approved else 'unapproved'}",
                  f"  Observation: {row.observation.state}",
                  f"  Policy: {row.observation.effective_policy}",
                  f"  Repository path: {row.observation.repository_path}",
                  f"  Live path: {row.observation.live_path}",
-                 "  Resolution: Use repository",
+                 f"  Resolution: {render_sync_term(resolution_label(intent), use_color=self.use_color) if intent else 'blocked'}",
                  f"  Sync Base: {row.observation.base.status}",
-                 "  Primary Source Change: none",
-                 "  Capture: not required",
-                 "  Reconciliation: frozen repository outcome"]
+                 f"  Primary Source Change: {primary['kind'] if primary else 'none'}",
+                 f"  Capture: {'frozen live' if proposal else 'pending'}" if pull else "  Capture: not required",
+                 "  Reconciliation: captured repository outcome" if pull else "  Reconciliation: frozen repository outcome"]
+        if primary:
+            lines.append(f"    {primary['path']} (authorized by Proposal Approval)")
         lines.extend(f"  {item.message}" for item in (*row.observation.diagnostics, *row.diagnostics))
         if proposal is not None:
             lines += ["", "  Frozen Publication Effects:"]
@@ -160,8 +165,11 @@ class CommandDeck:
                 lines.append(detail)
             if not proposal.publication_effects:
                 lines.append("    none (Approval still required)")
-            before = row.observation.live
-            after = proposal.live
+            side = "repository" if pull else "live"
+            before = row.observation.repository if pull else row.observation.live
+            after = proposal.repository if pull else proposal.live
+            if pull:
+                lines.append("  Live remains unchanged")
             before_bytes = before.content if isinstance(before, FilePresent) else b""
             after_bytes = after.content if isinstance(after, FilePresent) else b""
             if before_bytes != after_bytes:
@@ -169,8 +177,8 @@ class CommandDeck:
                     diff = unified_diff(
                         before_bytes.decode("utf-8").splitlines(keepends=True),
                         after_bytes.decode("utf-8").splitlines(keepends=True),
-                        fromfile="/dev/null" if isinstance(before, Missing) else "frozen live",
-                        tofile="/dev/null" if isinstance(after, Missing) else "approved live outcome",
+                        fromfile="/dev/null" if isinstance(before, Missing) else f"frozen {side}",
+                        tofile="/dev/null" if isinstance(after, Missing) else f"approved {side} outcome",
                         lineterm="\n",
                     )
                     for line in diff:
@@ -179,9 +187,9 @@ class CommandDeck:
                         if not line.endswith("\n"):
                             lines.append("\\ No newline at end of file")
                 except UnicodeDecodeError:
-                    lines.append(f"  Binary live outcome: {len(before_bytes)} → {len(after_bytes)} bytes")
-            lines.append(f"  Frozen live: {'missing' if isinstance(before, Missing) else 'present'}")
-            lines.append(f"  Live outcome: {'missing' if isinstance(after, Missing) else 'present'}")
+                    lines.append(f"  Binary {side} outcome: {len(before_bytes)} → {len(after_bytes)} bytes")
+            lines.append(f"  Frozen {side}: {'missing' if isinstance(before, Missing) else 'present'}")
+            lines.append(f"  {side.capitalize()} outcome: {'missing' if isinstance(after, Missing) else 'present'}")
         lines += ["", "  ↑/↓ scroll  Space Selection  Esc return to workset"]
         return "\n".join(lines)
 

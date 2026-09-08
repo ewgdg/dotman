@@ -56,7 +56,8 @@ unattended, and non-terminal resolution fails rather than guessing.
 
 `dotman [--config PATH] [--json] [--unattended] sync [-d | --dry-run] [<tracked-scope> ...]`
 opens a one-shot file-target session. The current convergence path supports
-push-only files with **Use repository**; other drift cannot be approved.
+push-only files with **Use repository** and pull-only files with **Use live**;
+both-policy drift cannot yet be approved.
 
 - Interactive Sync opens a persistent Command Deck with Approval initially off.
   `Space` toggles Selection, `A` selects eligible rows, and `U` clears Selection.
@@ -67,14 +68,21 @@ push-only files with **Use repository**; other drift cannot be approved.
 - `--unattended` explicitly selects supported Proposals and confirms execution.
   Missing terminals and `--json` do not grant consent. Required interactive
   decisions without a terminal fail rather than selecting work implicitly.
-  A workset containing unsupported drift is rejected before publication, rather
-  than publishing only its supported subset.
+  A workset containing unsupported drift is rejected before mutation, rather
+  than executing only its supported subset.
 - `--dry-run` reports frozen approved outcomes without hooks, managed writes,
   snapshots, Base acknowledgment or cleanup. Use `--unattended` to select the
   supported set for a noninteractive preview.
+- Pull-only review lazily Captures frozen live evidence, shows the repository
+  outcome and leaves live unchanged. Confirmation counts repository changes
+  separately from live effects. Even a no-write drift resolution requires Approval
+  and successful Base acknowledgment to become Converged.
 - JSON emits one final document containing operation, mode, status, scope,
   summary, Sync Units, auxiliary/source work categories and stages. It reports
   evidence and effect metadata, never file content bytes or private workspaces.
+  Each unit's `primary_source_change` describes its repository write/deletion
+  (or is null); `effects` contains only live Publication Effects. Summary
+  `repository_changes` counts selected Primary Source Changes.
   Execution outcomes identify their repository, package instance or target scope
   canonically, including failed hooks whose units already converged.
 - Exit codes are `0` for healthy completion, `1` for blocked or failed work or

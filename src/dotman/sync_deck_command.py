@@ -6,6 +6,7 @@ import json
 import sys
 
 from dotman.cli_style import render_sync_term
+from dotman.sync_base_store import FilePresent
 from dotman.sync_session import (
     CommandRejected, PrepareProposalReview, Preview, SessionOpenFailed,
     SetApproval, SyncSession,
@@ -126,6 +127,10 @@ class SyncDeckCommandRunner:
         for unit in payload["sync_units"]:
             selection = "approved" if unit["approved"] else "unapproved"
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {unit['identity']}")
+            if unit["resolution_intent"]:
+                print(f"      {render_sync_term(resolution_label(unit['resolution_intent']), use_color=self._use_color)}")
+            if unit["primary_source_change"]:
+                print(f"      repository {unit['primary_source_change']['kind']}")
             for effect in unit["effects"]:
                 print(f"      {effect['kind']}")
             for item in unit["diagnostics"]:
@@ -173,6 +178,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "selected": bool(row and row.approved),
             "approved": bool(row and row.approved),
             "materialization": materialization,
+            "primary_source_change": primary_change_summary(proposal, observation.repository_path),
             "effects": [effect_summary(effect) for effect in proposal.publication_effects] if proposal else [],
             "base": {
                 "status": observation.base.status,
@@ -190,6 +196,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
         "summary": {
             "sync_units": len(units),
             "approved_units": sum(unit["approved"] for unit in units),
+            "repository_changes": sum(unit["primary_source_change"] is not None for unit in units if unit["selected"]),
             "live_writes": sum(effect["kind"] == "write" for unit in units if unit["selected"] for effect in unit["effects"]),
             "live_deletions": sum(effect["kind"] == "delete" for unit in units if unit["selected"] for effect in unit["effects"]),
             "diagnostics": ([diagnostic] if diagnostic else []) + [
@@ -202,8 +209,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
         "probe_work": [],
         "directory_root_work": [],
         "hook_work": [],
-        # This push-only slice has only Live Publication; report actual steps,
-        # never infer successful execution from a materialized Proposal.
+        # Report actual steps, not success inferred from materialized Proposals.
         "stages": [
             {
                 "stage": item.stage,
@@ -229,4 +235,18 @@ def effect_summary(effect) -> dict:
         summary["bytes"] = len(effect.content)
     if effect.mode is not None:
         summary["mode"] = format(effect.mode, "04o")
+    return summary
+
+
+def resolution_label(intent: str) -> str:
+    return {"use-repository": "Use repository", "use-live": "Use live"}[intent]
+
+
+def primary_change_summary(proposal, path) -> dict | None:
+    if proposal is None or proposal.primary_source_change is None:
+        return None
+    change = proposal.primary_source_change
+    summary = {"kind": "write" if isinstance(change, FilePresent) else "delete", "path": str(path)}
+    if isinstance(change, FilePresent):
+        summary["bytes"] = len(change.content)
     return summary

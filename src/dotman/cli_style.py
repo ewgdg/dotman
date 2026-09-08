@@ -444,6 +444,7 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "approved": ("1", "32"),
     "unapproved": ("2",),
     "Use repository": ("1", "36"),
+    "Use live": ("1", "36"),
     "converged": ("1", "32"),
     "directly-in-sync": ("2", "32"),
     "diagnostic": ("1", "31"),

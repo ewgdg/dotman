@@ -29,9 +29,10 @@ acknowledgment flag records successful opening-time maintenance.
 External changes never refresh an open session. Start another session to see
 new filesystem, configuration or Git state.
 
-## Push-only Proposals and the Command Deck
+## One-sided Proposals and the Command Deck
 
-Drifted push-only files offer **Use repository**. Proposal Approval starts off;
+Drifted push-only files offer **Use repository**; pull-only files offer only
+**Use live**. Proposal Approval starts off;
 opening a review does not approve it. Review or Approval materializes the
 Proposal from frozen Observation, retaining the repository representation,
 policy-derived live outcome, exclusive Primary Source Change, and exact
@@ -40,12 +41,24 @@ observing again. Inclusion is separate from Approval.
 
 The persistent Command Deck shows drift and blocked diagnostics, not directly
 agreeing units. **Selection** controls Proposal Approval. Focused review shows
-the frozen evidence and publication changes; returning preserves the workset.
+the frozen evidence, repository changes and publication changes; returning
+preserves the workset.
 Confirmation authorizes the selected, already-materialized outcomes.
 
-Real execution publishes approved outcomes through push hooks. A drifted unit
-becomes **Converged** when its required effects succeed, without creating a Base
-for push-only policy. An approved drifted Proposal with no writes still needs
+For pull-only files, review or Approval lazily Captures frozen live evidence into
+the repository outcome. Capture does not read live again. Review shows the
+Primary Source Change (write, deletion, or none) authorized by Proposal Approval;
+live remains unchanged. Confirmation counts repository changes separately from
+live effects. JSON reports `primary_source_change` metadata separately from
+Publication `effects`, without exposing payload bytes.
+
+Real execution applies approved repository outcomes through pull hooks before
+publishing approved live outcomes through push hooks. Pull-only work creates no
+live snapshot and cannot mutate live. A pull-only unit becomes **Converged** only
+after its required repository effect and Base acknowledgment succeed. Even a
+drifted Capture result needing no repository write requires Approval and Base
+acknowledgment; it is not **Directly InSync**. A drifted push-only unit
+becomes **Converged** when its required effects succeed, without creating a Base. An approved drifted Proposal with no writes still needs
 this completion boundary; it is not **Directly InSync**. Failed publication
 does not claim convergence or roll back earlier successful units.
 No-write completion runs no hooks and creates no snapshot. An enclosing
@@ -53,18 +66,20 @@ post-hook failure fails the operation without undoing a unit's convergence.
 
 ## Session lifetime and current engine boundary
 
-File-target sessions support frozen Observation, push-only Proposals, Approval,
-review, preview and publication. Directory children, auxiliary work, Proposal
-editing and drift resolution for Base-Eligible policies are not yet supported.
+File-target sessions support frozen Observation, push-only and pull-only
+Proposals, Approval, review, preview, Repository Apply and Live Publication.
+Directory children, auxiliary work, Proposal editing and both-policy drift
+resolution are not yet supported.
 Unapproved or excluded healthy work remains untouched. Abort does not undo Base
 maintenance already committed while opening.
 Deliberately unapproved supported drift remains `pending` without failing the
 operation. Included unsupported drift makes the result `incomplete`; diagnostics
-and publication failures remain failures. Unattended Sync rejects a blocked or
-unsupported workset before publication.
+and execution failures remain failures. Unattended Sync rejects a blocked or
+unsupported workset before mutation.
 
-A live symlink requiring prompt-mode replacement remains a typed blocker in
-this initial workflow; Approval does not implicitly authorize replacing it.
+Live publication requiring prompt-mode symlink replacement remains a typed
+blocker; Approval does not implicitly authorize replacing it. Pull-only work
+does not replace live symlinks.
 
 A real session owns the manager's non-blocking operation lock from opening until
 execute or abort. Real Push and Pull command workflows take the same lock before
