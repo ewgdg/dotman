@@ -210,3 +210,6 @@ Returning a deleted identity to an eligible policy requires fresh establishment.
 
 Storage security, transactions, and inspection locking are documented in
 [Sync Base storage](sync-base-storage.md).
+
+See [endpoint convergence](sync-endpoints.md) for typed Missing, deletion-only,
+unsupported endpoint evidence, and approved no-write completion.

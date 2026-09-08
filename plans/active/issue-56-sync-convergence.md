@@ -223,3 +223,22 @@ Pending.
 
 - Parent independently verified the existing 35 pull convergence, repository
   apply and pull UI tests; all passed and affected documentation is current.
+
+
+## #64–#66 integrated validation checkpoint
+
+- #64 was already implemented on entry. Verified all acceptance contracts in the
+  existing frozen Capture, Repository Apply and Pull UI coverage; 35 focused tests
+  passed. No duplicate implementation was added.
+- #65 adds both-policy Base-backed Merge, intent selection, typed retries and
+  intent-specific completion; its implementation checkpoint is recorded above.
+- #66 required no additional production branch: existing typed endpoint,
+  deletion-only and no-write completion paths satisfy its contract. Added 17
+  real-resource and public-session regression cases and endpoint documentation.
+  Unsupported directory, FIFO and socket evidence remains unit-local; deletion
+  retains repository sources; eligible no-write acknowledgment failure blocks
+  convergence while ineligible completion creates no receipt.
+- Integrated full suite: **1,521 passed in 34.88s**. Compileall and
+  `git diff --check` passed. Native macOS remains unverified.
+- Scope ends at #66. The remaining parent-issue work is not implemented by this
+  checkpoint. Independent parent review remains the next step.
