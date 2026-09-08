@@ -92,8 +92,11 @@ managed repository/live/Git/state files, acknowledge or clean up Bases, run
 hooks, or create snapshots. Cleaned-up private scratch for projections and
 isolated Git checkout is permitted. Configured projection providers remain
 trusted side-effect-free stdout producers, not sandboxed arbitrary programs.
-Comparison-owned Capture views may run during Observation. Push-only Proposal
-materialization needs no Capture or three-way reconciliation.
+Comparison-owned Capture views may run during Observation. Pull-only Proposal
+materialization reuses that frozen Capture result when the configured live
+comparison already required it, rather than running Capture again. Otherwise,
+Capture is delayed until review or Approval. Push-only Proposal materialization
+needs no Capture or three-way reconciliation.
 
 ## Sync Bases
 
