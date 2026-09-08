@@ -56,3 +56,11 @@ this task does not add an unfinished directory session path.
 Probe/hook work has no file Observation, Proposal, Approval, Base or Converged
 result, and auxiliary-only execution creates no snapshot. Hard hook failures
 remain operation/stage diagnostics rather than invented auxiliary convergence.
+
+
+## Review validation
+- Execution metadata preserves frozen scope target order across mixed policies
+  and mixed Probe/file work while retaining empty hook scopes. Parameterized
+  shell-log regressions failed before the ordering correction.
+- Focused session, auxiliary, directional execution, pull and both-policy
+  convergence suites: 132 passed in 10.00s; `git diff --check` passed.

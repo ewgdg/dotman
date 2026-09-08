@@ -426,9 +426,10 @@ class SyncSession:
                         key = item.selection.identity
                         if key not in selected_inputs:
                             selected_inputs[key] = replace(item, target_metadata=[])
-                        targets = selected_inputs[key].target_metadata
-                        names = {target.target_name for target in targets}
-                        targets.extend(target for target in item.target_metadata if target.target_name not in names)
+                # Directional candidates retain empty hook scopes, but their
+                # policy filtering must not reorder the frozen target workset.
+                for item, target in resolved_inputs[0].values():
+                    selected_inputs[item.selection.identity].target_metadata.append(target)
                 publication_metadata = retain_directional_hooks(prepare_publication(
                     tuple(selected_inputs.values()), file_symlink_mode=context.config.file_symlink_mode,
                 ), observed.hook_scopes["push"])

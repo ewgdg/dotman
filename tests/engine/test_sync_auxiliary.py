@@ -214,3 +214,33 @@ pre_push = "echo $DOTMAN_OPERATION >> {log}"
         include(session, session.view.rows[0])
         assert session.execute().result.status == 'completed'
     assert log.read_text().splitlines() == ['pull', 'push']
+
+
+@pytest.mark.parametrize('first_is_probe', [False, True])
+def test_mixed_policy_execution_keeps_frozen_target_order(tmp_path, monkeypatch, first_is_probe):
+    log = tmp_path / 'order'
+    engine = make_engine(tmp_path, monkeypatch, [
+        ('first', 'pull-only', b'repo', b'live', f'[targets.first.hooks]\npre_pull = "echo first >> {log}"'),
+        ('second', 'both', b'repo', b'live', f'[targets.second.hooks]\npre_pull = "echo second >> {log}"'),
+    ])
+    if first_is_probe:
+        manifest = tmp_path / 'repo/packages/app/package.toml'
+        text = manifest.read_text()
+        start = text.index('[targets.first]')
+        end = text.index('[targets.first.hooks]')
+        manifest.write_text(text[:start] + '[targets.first]\nprobe = "true"\nsync_policy = "pull-only"\n' + text[end:])
+        engine = DotmanEngine.from_config_path(engine.config.config_path)
+
+    with open_session(engine, preview=False) as session:
+        assert [target.target_name for target in engine.resolve_sync_scope().targets] == ['first', 'second']
+        if not first_is_probe:
+            assert [row.row_id for row in session.view.rows] == ['main:app.first', 'main:app.second']
+        for row in session.view.rows:
+            if row.kind == 'probe':
+                include(session, row)
+            else:
+                view = session.view
+                session.dispatch(SetApproval(view.session_id, view.revision, row.row_id, True))
+        result = session.execute().result
+        assert result.status == 'completed'
+    assert log.read_text().splitlines() == ['first', 'second']
