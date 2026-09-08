@@ -82,7 +82,9 @@ both-policy drift cannot yet be approved.
   evidence and effect metadata, never file content bytes or private workspaces.
   Each unit's `primary_source_change` describes its repository write/deletion
   (or is null); `effects` contains only live Publication Effects. Summary
-  `repository_changes` counts selected Primary Source Changes.
+  `repository_changes` counts selected Primary Source Changes. Base status and
+  provenance remain frozen opening evidence; `base.acknowledged` also reports
+  successful real-operation acknowledgment of a Converged Base-Eligible unit.
   Execution outcomes identify their repository, package instance or target scope
   canonically, including failed hooks whose units already converged.
 - Exit codes are `0` for healthy completion, `1` for blocked or failed work or

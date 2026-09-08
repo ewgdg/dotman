@@ -50,3 +50,48 @@ def test_pull_review_and_document_show_repository_effect(tmp_path, monkeypatch, 
 
 def test_use_live_uses_shared_resolution_style():
     assert render_sync_term("Use live", use_color=True) == render_sync_term("Use repository", use_color=True).replace("Use repository", "Use live")
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_mixed_cli_reports_repository_and_live_effects(tmp_path, monkeypatch, capsys, dry_run):
+    import json
+    from tests.cli.test_sync_deck_command import arguments, runner_for
+
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("push", "push-only", b"push-repo", b"push-live", ""),
+        ("pull", "pull-only", b"pull-repo", b"pull-live", ""),
+    ])
+    assert runner_for(engine).run(arguments(dry_run=dry_run)) == 0
+    document = json.loads(capsys.readouterr().out)
+    units = {unit["identity"]: unit for unit in document["sync_units"]}
+    push = units["main:app.push"]
+    pull = units["main:app.pull"]
+    assert document["summary"]["repository_changes"] == 1
+    assert document["summary"]["live_writes"] == 1
+    assert document["summary"]["live_deletions"] == 0
+    assert push["resolution_intent"] == "use-repository"
+    assert push["primary_source_change"] is None
+    assert [effect["kind"] for effect in push["effects"]] == ["write"]
+    assert pull["resolution_intent"] == "use-live"
+    assert pull["primary_source_change"] == {
+        "kind": "write", "path": str(tmp_path / "repo/packages/app/pull"),
+        "bytes": len(b"pull-live"),
+    }
+    assert pull["effects"] == []
+    assert pull["base"] == {
+        "status": "unavailable", "provenance": None, "acknowledged": not dry_run,
+    }
+    assert push["base"]["acknowledged"] is False
+    assert {unit["result"] for unit in units.values()} == {
+        "would-converge" if dry_run else "converged"
+    }
+    assert (tmp_path / "repo/packages/app/pull").read_bytes() == (b"pull-repo" if dry_run else b"pull-live")
+    assert (tmp_path / "live/pull").read_bytes() == b"pull-live"
+    assert (tmp_path / "repo/packages/app/push").read_bytes() == b"push-repo"
+    assert (tmp_path / "live/push").read_bytes() == (b"push-live" if dry_run else b"push-repo")
+    if dry_run:
+        assert document["stages"] == []
+    else:
+        stages = [step["stage"] for step in document["stages"]]
+        assert "repository-apply" in stages and "live-publication" in stages
+        assert stages.index("repository-apply") < stages.index("live-publication")

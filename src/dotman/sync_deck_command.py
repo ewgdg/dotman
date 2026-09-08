@@ -183,7 +183,12 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "base": {
                 "status": observation.base.status,
                 "provenance": observation.base.record.provenance if observation.base.record else None,
-                "acknowledged": observation.base.acknowledged,
+                # Availability/provenance remain frozen opening evidence; eligible
+                # convergence additionally proves execution-time acknowledgment.
+                "acknowledged": observation.base.acknowledged or bool(
+                    not args.dry_run and outcome and outcome.status == "converged"
+                    and observation.configured_policy in ("pull-only", "both")
+                ),
             },
             "result": outcome.status if outcome else None,
             "diagnostics": diagnostics,

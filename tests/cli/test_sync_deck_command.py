@@ -311,7 +311,7 @@ def test_json_reports_actual_failed_hook_without_leaking_captured_output(tmp_pat
                and step["exit_code"] == 7 for step in payload["stages"])
 
 
-@pytest.mark.parametrize("unsupported_policy", ["both", "pull-only"])
+@pytest.mark.parametrize("unsupported_policy", ["both"])
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_unattended_unsupported_drift_blocks_all_publication(tmp_path, monkeypatch, capsys, unsupported_policy, dry_run):
     engine = make_engine(tmp_path, monkeypatch, [
