@@ -225,60 +225,68 @@ class ProductionCommandRuntime(_CancellationLatch):
             # process group so interruption can stop the complete shell tree.
             owns_process_group = request.elevation == "none" and request.isolate_process_group
             self.check_cancelled()
-            process = subprocess.Popen(
-                _process_arguments(command),
-                **_process_command_options(command),
-                cwd=str(request.cwd) if request.cwd is not None else None,
-                env=environment,
-                stdin=subprocess.PIPE if request.input is not None else subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=owns_process_group,
-            )
-            stdout_thread = Thread(
-                target=pump,
-                args=(process.stdout, stdout_buffer, stdout_sink),
-                daemon=True,
-            )
-            stderr_thread = Thread(
-                target=pump,
-                args=(process.stderr, stderr_buffer, stderr_sink),
-                daemon=True,
-            )
-            stdout_thread.start()
-            stderr_thread.start()
-            input_thread: Thread | None = None
-            if request.input is not None:
-                if process.stdin is None:
-                    raise AssertionError("pipe command stdin was not created")
-                input_thread = Thread(
-                    target=write_input,
-                    args=(process.stdin, request.input),
+            process: subprocess.Popen[bytes] | None = None
+            stream_threads: list[tuple[Thread, object]] = []
+            try:
+                process = subprocess.Popen(
+                    _process_arguments(command),
+                    **_process_command_options(command),
+                    cwd=str(request.cwd) if request.cwd is not None else None,
+                    env=environment,
+                    stdin=subprocess.PIPE if request.input is not None else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=owns_process_group,
+                )
+                stdout_thread = Thread(
+                    target=pump,
+                    args=(process.stdout, stdout_buffer, stdout_sink),
                     daemon=True,
                 )
-                input_thread.start()
-            try:
+                stderr_thread = Thread(
+                    target=pump,
+                    args=(process.stderr, stderr_buffer, stderr_sink),
+                    daemon=True,
+                )
+                stream_threads.extend(((stdout_thread, process.stdout), (stderr_thread, process.stderr)))
+                if request.input is not None:
+                    if process.stdin is None:
+                        raise AssertionError("pipe command stdin was not created")
+                    input_thread = Thread(
+                        target=write_input,
+                        args=(process.stdin, request.input),
+                        daemon=True,
+                    )
+                    stream_threads.append((input_thread, process.stdin))
+                for thread, _stream in stream_threads:
+                    thread.start()
                 return_code = self._wait(process)
                 # A shell may exit while its descendants still hold the pipes.
                 # Continue observing cancellation until all owned I/O completes.
-                for thread in (input_thread, stdout_thread, stderr_thread):
-                    if thread is not None:
-                        while thread.is_alive():
-                            self.check_cancelled()
-                            thread.join(_CANCELLATION_POLL_SECONDS)
+                for thread, _stream in stream_threads:
+                    while thread.is_alive():
+                        self.check_cancelled()
+                        thread.join(_CANCELLATION_POLL_SECONDS)
                 self.check_cancelled()
             except (KeyboardInterrupt, InterruptedError):
                 self.request_cancel()
                 with _defer_repeated_interrupts():
-                    _stop_process(process, owns_process_group=owns_process_group)
-                    for thread in (input_thread, stdout_thread, stderr_thread):
-                        if thread is not None:
-                            thread.join(_INTERRUPT_GRACE_SECONDS)
+                    if process is not None:
+                        _stop_process(process, owns_process_group=owns_process_group)
+                        deadline = time.monotonic() + _INTERRUPT_GRACE_SECONDS
+                        for thread, _stream in stream_threads:
+                            if thread.ident is not None:
+                                thread.join(max(0, deadline - time.monotonic()))
+                        # A startup interruption can leave streams without a
+                        # pump. Close only those: closing a live pump's buffered
+                        # stream can block on its read lock indefinitely.
+                        pumped_streams = {
+                            stream for thread, stream in stream_threads if thread.ident is not None
+                        }
+                        for stream in (process.stdin, process.stdout, process.stderr):
+                            if stream is not None and stream not in pumped_streams:
+                                stream.close()
                 raise
-            finally:
-                for thread in (input_thread, stdout_thread, stderr_thread):
-                    if thread is not None:
-                        thread.join(_INTERRUPT_GRACE_SECONDS)
         return CommandResult(
             exit_code=_normalize_return_code(return_code),
             stdout=b"".join(stdout_buffer),
@@ -293,27 +301,27 @@ class ProductionCommandRuntime(_CancellationLatch):
         environment: dict[str, str],
     ) -> CommandResult:
         with preserve_terminal_state():
-            process = subprocess.Popen(
-                _process_arguments(command),
-                **_process_command_options(command),
-                cwd=str(request.cwd) if request.cwd is not None else None,
-                env=environment,
-            )
             previous_sigint_handler = signal.getsignal(signal.SIGINT)
             main_thread = threading.current_thread() is threading.main_thread()
-            # The foreground child owns Ctrl-C; ignoring it in Dotman prevents a
-            # second interruption path and duplicate UI after the child exits.
-            # Signal handlers are process-global, so this is only safe from the
-            # main thread; off-main-thread runs (e.g. the elevation broker)
-            # must skip it.
-            if main_thread:
-                signal.signal(signal.SIGINT, signal.SIG_IGN)
+            process: subprocess.Popen[bytes] | None = None
+            self.check_cancelled()
             try:
+                process = subprocess.Popen(
+                    _process_arguments(command),
+                    **_process_command_options(command),
+                    cwd=str(request.cwd) if request.cwd is not None else None,
+                    env=environment,
+                )
+                # The foreground child owns Ctrl-C. Signal handlers are global,
+                # so worker-thread commands must leave them untouched.
+                if main_thread:
+                    signal.signal(signal.SIGINT, signal.SIG_IGN)
                 return_code = self._wait(process)
             except (KeyboardInterrupt, InterruptedError):
                 self.request_cancel()
                 with _defer_repeated_interrupts():
-                    _stop_process(process, owns_process_group=False)
+                    if process is not None:
+                        _stop_process(process, owns_process_group=False)
                 raise
             finally:
                 if main_thread:

@@ -352,3 +352,77 @@ def test_cancellation_stops_descendants_after_group_leader_exits(tmp_path: Path)
         thread.join(3)
     assert not thread.is_alive()
     assert len(errors) == 1 and isinstance(errors[0], InterruptedError)
+
+@pytest.mark.parametrize("io_mode", ["pipe", "tty"])
+def test_cancel_during_elevation_prevents_spawn(monkeypatch, io_mode) -> None:
+    class CancellingElevation:
+        def prepare(self, command, env, mode, reason):
+            runtime.request_cancel()
+            return command, dict(env)
+    runtime = ProductionCommandRuntime(elevation=CancellingElevation())
+    def forbidden_spawn(*args, **kwargs):
+        pytest.fail("cancelled command was launched")
+    monkeypatch.setattr("dotman.command_runtime.subprocess.Popen", forbidden_spawn)
+    with pytest.raises(InterruptedError):
+        runtime.run(CommandRequest(command=ArgvCommand(("unused",)), io=io_mode))
+
+
+@pytest.mark.parametrize("started_threads", [0, 1, 2])
+def test_interrupt_during_pipe_startup_reaps_process(monkeypatch, started_threads) -> None:
+    import subprocess
+    runtime = ProductionCommandRuntime()
+    original_spawn = subprocess.Popen
+    original_start = Thread.start
+    spawned = []
+    starts = 0
+    def spawn(*args, **kwargs):
+        process = original_spawn(*args, **kwargs)
+        spawned.append(process)
+        return process
+    def start(thread):
+        nonlocal starts
+        if starts == started_threads:
+            raise KeyboardInterrupt
+        starts += 1
+        original_start(thread)
+    monkeypatch.setattr("dotman.command_runtime.subprocess.Popen", spawn)
+    monkeypatch.setattr("dotman.command_runtime.Thread.start", start)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            runtime.run(CommandRequest(
+                command=ArgvCommand((sys.executable, "-c", "import time; time.sleep(30)")),
+                input=b"input",
+            ))
+        assert spawned[0].poll() is not None
+        assert all(stream.closed for stream in (spawned[0].stdin, spawned[0].stdout, spawned[0].stderr))
+    finally:
+        # Keep the regression test leak-free even against the broken runtime.
+        for process in spawned:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=1)
+
+def test_interrupt_during_tty_signal_setup_reaps_process(monkeypatch) -> None:
+    import subprocess
+    runtime = ProductionCommandRuntime()
+    original_spawn = subprocess.Popen
+    original_signal = signal.signal
+    spawned = []
+    interrupted = False
+    def spawn(*args, **kwargs):
+        process = original_spawn(*args, **kwargs)
+        spawned.append(process)
+        return process
+    def install_signal(sig, handler):
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+        return original_signal(sig, handler)
+    monkeypatch.setattr("dotman.command_runtime.subprocess.Popen", spawn)
+    monkeypatch.setattr("dotman.command_runtime.signal.signal", install_signal)
+    with pytest.raises(KeyboardInterrupt):
+        runtime.run(CommandRequest(
+            command=ArgvCommand((sys.executable, "-c", "import time; time.sleep(30)")), io="tty",
+        ))
+    assert spawned[0].poll() is not None
