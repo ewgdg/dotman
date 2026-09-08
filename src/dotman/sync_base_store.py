@@ -211,7 +211,9 @@ def _identity(status: os.stat_result) -> tuple[int, int]:
     return status.st_dev, status.st_ino
 
 
-def _validate_status(path: Path, status: os.stat_result, *, directory: bool) -> None:
+def _validate_type_and_owner(
+    path: Path, status: os.stat_result, *, directory: bool
+) -> None:
     if stat.S_ISLNK(status.st_mode):
         raise SyncBaseStoreSecurityError(
             f"Sync Base store path must not be a symlink: {path}"
@@ -226,6 +228,10 @@ def _validate_status(path: Path, status: os.stat_result, *, directory: bool) -> 
         raise SyncBaseStoreSecurityError(
             f"Sync Base store path has wrong owner: {path}"
         )
+
+
+def _validate_status(path: Path, status: os.stat_result, *, directory: bool) -> None:
+    _validate_type_and_owner(path, status, directory=directory)
     expected_mode = _PRIVATE_DIRECTORY_MODE if directory else _PRIVATE_FILE_MODE
     if stat.S_IMODE(status.st_mode) != expected_mode:
         raise SyncBaseStoreSecurityError(
@@ -264,19 +270,28 @@ class _PrivateLayout:
                 before = os.stat(
                     path.name, dir_fd=parent_descriptor, follow_symlinks=False
                 )
-                # mkdir does not return an inode handle. Never chmod its path:
-                # it could already have been replaced, even just after creation.
-                _validate_status(path, before, directory=True)
+                _validate_type_and_owner(path, before, directory=True)
                 descriptor = os.open(
                     path.name,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                     dir_fd=parent_descriptor,
                 )
                 self._directories.append((path, descriptor))
-                if _identity(os.fstat(descriptor)) != _identity(before):
+                opened = os.fstat(descriptor)
+                if _identity(opened) != _identity(before):
                     raise SyncBaseStoreSecurityError(
                         f"Sync Base directory changed while opening: {path}"
                     )
+                _validate_type_and_owner(path, opened, directory=True)
+                if stat.S_IMODE(opened.st_mode) != _PRIVATE_DIRECTORY_MODE:
+                    # Only chmod the verified inode: its pathname can be replaced
+                    # even immediately after mkdir or the no-follow open.
+                    try:
+                        os.fchmod(descriptor, _PRIVATE_DIRECTORY_MODE)
+                    except OSError as exc:
+                        raise SyncBaseStoreSecurityError(
+                            f"cannot secure Sync Base directory permissions: {path}: {exc}"
+                        ) from exc
                 _validate_status(path, os.fstat(descriptor), directory=True)
                 self.check_directories()
                 parent_descriptor = descriptor

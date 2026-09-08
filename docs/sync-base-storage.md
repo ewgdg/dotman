@@ -71,9 +71,13 @@ The manager state directory, `repos`, and repository state directory must be
 current-user-owned directories with exact mode `0700`. The database, lock, and
 SQLite sidecars must be current-user-owned regular files with exact mode `0600`.
 Symlinks, hard-linked files, unexpected store filenames, nonregular files,
-wrong owners, and incorrect modes are rejected without permission repair.
-A umask that removes required owner directory permissions therefore fails
-rather than causing Dotman to chmod an unbound directory pathname.
+and wrong owners are rejected. When opening a store (including read-only
+access), Dotman automatically sets these three owned directories to `0700`
+through verified directory descriptors, then revalidates their modes and
+bindings. No root access is requested. The XDG parent directory and existing
+file permissions are not changed; incorrect file modes are still rejected.
+If a directory cannot be opened safely or its permissions cannot be secured,
+the operation fails with a filesystem security error.
 
 Managed directories, the database, and the lock are pinned by file descriptors.
 Opens use no-follow flags and compare `fstat` device/inode identities against

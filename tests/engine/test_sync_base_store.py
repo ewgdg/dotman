@@ -160,12 +160,7 @@ def test_rejects_symlink_nonregular_and_insecure_storage_without_mutation(
     assert list(target.iterdir()) == []
 
     manager_root.unlink()
-    manager_root.mkdir(mode=0o755)
-    with pytest.raises(SyncBaseStoreSecurityError, match="mode"):
-        SyncBaseStore.open(manager_root, "main")
-    assert stat.S_IMODE(manager_root.stat().st_mode) == 0o755
-
-    os.chmod(manager_root, 0o700)
+    manager_root.mkdir(mode=0o700)
     (manager_root / "repos").mkdir(mode=0o700)
     repo_state = manager_root / "repos" / "main"
     repo_state.mkdir(mode=0o700)
@@ -606,6 +601,7 @@ def test_directory_substitution_between_validation_and_open_is_rejected(
     with _open_store(tmp_path):
         pass
     path = tmp_path / "state" / "dotman" / relative
+    path.chmod(0o755)
     saved = path.with_name("saved-" + path.name)
     original_open = os.open
     substituted = False
@@ -620,14 +616,16 @@ def test_directory_substitution_between_validation_and_open_is_rejected(
             if replacement == "symlink":
                 path.symlink_to(saved, target_is_directory=True)
             else:
-                path.mkdir(mode=0o700)
+                path.mkdir(mode=0o755)
         return original_open(file, flags, *args, **kwargs)
 
     monkeypatch.setattr(os, "open", swap_before_open)
     with pytest.raises(SyncBaseStoreSecurityError):
         _open_store(tmp_path)
     assert substituted
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o755
     if replacement == "directory":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o755
         assert list(path.iterdir()) == []
 
 
@@ -752,7 +750,7 @@ def test_sidecars_are_private_under_permissive_umask_and_sqlite_temp_is_memory(
 
 
 @pytest.mark.parametrize("name", ["repos", "main"])
-def test_directory_substituted_immediately_after_mkdir_is_not_chmodded(
+def test_symlink_substituted_immediately_after_mkdir_is_not_chmodded(
     tmp_path: Path,
     name: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -767,7 +765,9 @@ def test_directory_substituted_immediately_after_mkdir_is_not_chmodded(
             root = tmp_path / "state" / "dotman"
             actual = root / "repos" if path == "repos" else root / "repos" / "main"
             actual.rename(actual.with_name("original-" + str(path)))
-            original_mkdir(path, 0o755, **kwargs)
+            target = tmp_path / "untrusted-directory"
+            target.mkdir(mode=0o755)
+            actual.symlink_to(target, target_is_directory=True)
             substituted = actual
 
     monkeypatch.setattr(os, "mkdir", swap_after_mkdir)
@@ -1122,3 +1122,106 @@ def test_writes_use_portable_database_uri_without_descriptor_filesystem(
         path.name,
         path.name + ".lock",
     }
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_open_tightens_owned_private_directories(
+    tmp_path: Path, read_only: bool
+) -> None:
+    with _open_store(tmp_path):
+        pass
+    root = tmp_path / "state" / "dotman"
+    paths = [root, root / "repos", root / "repos" / "main"]
+    for path in paths:
+        path.chmod(0o755)
+    parent_mode = stat.S_IMODE(root.parent.stat().st_mode)
+    before = _database_path(tmp_path).read_bytes()
+    with SyncBaseStore.open(root, "main", read_only=read_only):
+        assert all(stat.S_IMODE(path.stat().st_mode) == 0o700 for path in paths)
+    assert stat.S_IMODE(root.parent.stat().st_mode) == parent_mode
+    assert _database_path(tmp_path).read_bytes() == before
+
+
+@pytest.mark.parametrize("failure", ["denied", "ineffective"])
+def test_directory_permission_repair_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    root = tmp_path / "state" / "dotman"
+    root.mkdir(parents=True)
+    root.chmod(0o755)
+
+    chmod_called = False
+
+    def fail_chmod(descriptor: int, mode: int) -> None:
+        nonlocal chmod_called
+        chmod_called = True
+        if failure == "denied":
+            raise PermissionError("injected chmod denial")
+
+    monkeypatch.setattr(os, "fchmod", fail_chmod)
+    with pytest.raises(SyncBaseStoreSecurityError, match="permissions|mode"):
+        SyncBaseStore.open(root, "main")
+    assert chmod_called
+    assert list(root.iterdir()) == []
+    assert stat.S_IMODE(root.stat().st_mode) == 0o755
+
+
+def test_directory_replacement_during_chmod_never_repairs_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "state" / "dotman"
+    root.mkdir(parents=True)
+    root.chmod(0o755)
+    saved = root.with_name("saved")
+    original_fchmod = os.fchmod
+
+    def swap_during_chmod(descriptor: int, mode: int) -> None:
+        root.rename(saved)
+        root.mkdir(mode=0o755)
+        original_fchmod(descriptor, mode)
+
+    monkeypatch.setattr(os, "fchmod", swap_during_chmod)
+    with pytest.raises(SyncBaseStoreSecurityError):
+        SyncBaseStore.open(root, "main")
+    assert stat.S_IMODE(root.stat().st_mode) == 0o755
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o700
+    assert list(root.iterdir()) == list(saved.iterdir()) == []
+
+
+@pytest.mark.parametrize("boundary", ["path", "descriptor"])
+def test_wrong_owner_directory_is_never_chmodded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    root = tmp_path / "state" / "dotman"
+    root.mkdir(parents=True)
+    root.chmod(0o755)
+    inode = root.stat().st_ino
+    original = os.stat if boundary == "path" else os.fstat
+
+    def wrong_owner(*args: object, **kwargs: object) -> os.stat_result:
+        status = original(*args, **kwargs)
+        if status.st_ino == inode:
+            values = list(status)
+            values[4] = os.geteuid() + 1
+            return os.stat_result(values)
+        return status
+
+    def unexpected_chmod(descriptor: int, mode: int) -> None:
+        pytest.fail("wrong-owner directory must not be chmodded")
+
+    monkeypatch.setattr(os, "stat" if boundary == "path" else "fstat", wrong_owner)
+    monkeypatch.setattr(os, "fchmod", unexpected_chmod)
+    with pytest.raises(SyncBaseStoreSecurityError, match="owner"):
+        SyncBaseStore.open(root, "main")
+
+
+def test_operation_lock_allows_store_to_secure_existing_manager_root(
+    tmp_path: Path,
+) -> None:
+    from dotman.operation_lock import OperationLock
+
+    root = tmp_path / "state" / "dotman"
+    root.mkdir(parents=True)
+    root.chmod(0o755)
+    with OperationLock.acquire(root), SyncBaseStore.open(root, "main"):
+        assert stat.S_IMODE(root.stat().st_mode) == 0o700
