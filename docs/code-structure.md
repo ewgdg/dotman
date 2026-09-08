@@ -212,7 +212,11 @@ owner-only `$XDG_STATE_HOME/dotman/operation.lock` file. Never unlink this file 
 release: another process may already hold its inode. The manager directory must
 be current-user-owned and not writable by other users; Base storage additionally
 requires its documented exact private-directory modes. Lock acquisition rejects
-symlink/nonregular/hard-linked or insecure lock files without repair.
+symlink, nonregular, hard-linked, and wrong-owner lock files. For a verified
+current-user-owned regular single-link file, acquisition automatically sets
+its mode to `0600` through the open descriptor and revalidates it. This needs
+no root access; failed permission repair aborts acquisition without replacing
+or unlinking the lock.
 Low-level planning and execution helpers do not acquire a second nested lock;
 their direct callers must own an operation lifetime explicitly.
 Restore and unrelated state commands do not participate in this Push/Pull/Sync

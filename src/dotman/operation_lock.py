@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 LOCK_FILE_NAME = "operation.lock"
+_PRIVATE_FILE_MODE = 0o600
 
 
 class OperationLockError(ValueError):
@@ -18,6 +19,17 @@ class OperationLockError(ValueError):
 
 class OperationBusy(OperationLockError):
     """A real operation already owns this manager."""
+
+
+def _validate_lock_file(status: os.stat_result) -> None:
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or status.st_uid != os.geteuid()
+        or status.st_nlink != 1
+    ):
+        raise OperationLockError(
+            "manager operation lock must be a current-user-owned regular file without hard links"
+        )
 
 
 class OperationLock:
@@ -41,19 +53,27 @@ class OperationLock:
             descriptor = os.open(
                 LOCK_FILE_NAME,
                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
-                0o600,
+                _PRIVATE_FILE_MODE,
                 dir_fd=directory,
             )
             status = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(status.st_mode)
-                or status.st_uid != os.geteuid()
-                or stat.S_IMODE(status.st_mode) != 0o600
-                or status.st_nlink != 1
-            ):
-                raise OperationLockError(
-                    "manager operation lock must be an owner-only regular file"
-                )
+            _validate_lock_file(status)
+            if stat.S_IMODE(status.st_mode) != _PRIVATE_FILE_MODE:
+                # Repair only the verified inode, never a replaceable pathname.
+                try:
+                    os.fchmod(descriptor, _PRIVATE_FILE_MODE)
+                except OSError as exc:
+                    raise OperationLockError(
+                        "cannot secure manager operation lock permissions: "
+                        f"{state_root / LOCK_FILE_NAME}: {exc}"
+                    ) from exc
+                status = os.fstat(descriptor)
+                _validate_lock_file(status)
+                if stat.S_IMODE(status.st_mode) != _PRIVATE_FILE_MODE:
+                    raise OperationLockError(
+                        f"manager operation lock mode must be {_PRIVATE_FILE_MODE:#05o}: "
+                        f"{state_root / LOCK_FILE_NAME}"
+                    )
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
