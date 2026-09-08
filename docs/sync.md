@@ -29,20 +29,42 @@ acknowledgment flag records successful opening-time maintenance.
 External changes never refresh an open session. Start another session to see
 new filesystem, configuration or Git state.
 
+## Push-only Proposals and the Command Deck
+
+Drifted push-only files offer **Use repository**. Proposal Approval starts off;
+opening a review does not approve it. Review or Approval materializes the
+Proposal from frozen Observation, retaining the repository representation,
+policy-derived live outcome, exclusive Primary Source Change, and exact
+Publication Effects. Execution consumes that outcome rather than rendering or
+observing again. Inclusion is separate from Approval.
+
+The persistent Command Deck shows drift and blocked diagnostics, not directly
+agreeing units. **Selection** controls Proposal Approval. Focused review shows
+the frozen evidence and publication changes; returning preserves the workset.
+Confirmation authorizes the selected, already-materialized outcomes.
+
+Real execution publishes approved outcomes through push hooks. A drifted unit
+becomes **Converged** when its required effects succeed, without creating a Base
+for push-only policy. An approved drifted Proposal with no writes still needs
+this completion boundary; it is not **Directly InSync**. Failed publication
+does not claim convergence or roll back earlier successful units.
+No-write completion runs no hooks and creates no snapshot. An enclosing
+post-hook failure fails the operation without undoing a unit's convergence.
+
 ## Session lifetime and current engine boundary
 
-The engine currently opens file-target sessions. It supports immutable views,
-whole-unit inclusion/exclusion, semantic abort and a terminal observation-only
-Execute result. Inclusion is not Approval. This boundary does not yet materialize
-or approve Proposals, edit sources, publish changes, run hooks, or discover
-directory children or auxiliary work; it adds no `sync` CLI command.
+File-target sessions support frozen Observation, push-only Proposals, Approval,
+review, preview and publication. Directory children, auxiliary work, Proposal
+editing and drift resolution for Base-Eligible policies are not yet supported.
+Unapproved or excluded healthy work remains untouched. Abort does not undo Base
+maintenance already committed while opening.
+Deliberately unapproved supported drift remains `pending` without failing the
+operation. Included unsupported drift makes the result `incomplete`; diagnostics
+and publication failures remain failures. Unattended Sync rejects a blocked or
+unsupported workset before publication.
 
-Execute never claims drift is Converged: included drift is `pending` and makes
-the result `incomplete`; deliberately excluded healthy drift is `excluded`.
-Observation or acknowledgment failures make the result `failed`. A result with
-only direct agreement or deliberately excluded healthy rows is `completed`.
-Abort returns `aborted`; it does not undo Base maintenance already committed
-while opening.
+A live symlink requiring prompt-mode replacement remains a typed blocker in
+this initial workflow; Approval does not implicitly authorize replacing it.
 
 A real session owns the manager's non-blocking operation lock from opening until
 execute or abort. Real Push and Pull command workflows take the same lock before
@@ -55,8 +77,8 @@ managed repository/live/Git/state files, acknowledge or clean up Bases, run
 hooks, or create snapshots. Cleaned-up private scratch for projections and
 isolated Git checkout is permitted. Configured projection providers remain
 trusted side-effect-free stdout producers, not sandboxed arbitrary programs.
-Comparison-owned Capture views may run during Observation; no Proposal Capture
-or reconciliation is performed.
+Comparison-owned Capture views may run during Observation. Push-only Proposal
+materialization needs no Capture or three-way reconciliation.
 
 ## Sync Bases
 

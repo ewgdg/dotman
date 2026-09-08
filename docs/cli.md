@@ -52,6 +52,38 @@ selectors, not tracked identities, and are never returned as Sync scope
 members. Partial or ambiguous lookup remains an interactive concern; JSON,
 unattended, and non-terminal resolution fails rather than guessing.
 
+## Sync
+
+`dotman [--config PATH] [--json] [--unattended] sync [-d | --dry-run] [<tracked-scope> ...]`
+opens a one-shot file-target session. The current convergence path supports
+push-only files with **Use repository**; other drift cannot be approved.
+
+- Interactive Sync opens a persistent Command Deck with Approval initially off.
+  `Space` toggles Selection, `A` selects eligible rows, and `U` clears Selection.
+  Selection indicators also accept mouse clicks.
+- `Enter` opens focused Proposal Review; `Esc` returns to the same workset.
+  `X` opens compact preview/execution confirmation; cancelling returns without
+  changing Approval. `Esc` from the workset or `Ctrl-C` aborts.
+- `--unattended` explicitly selects supported Proposals and confirms execution.
+  Missing terminals and `--json` do not grant consent. Required interactive
+  decisions without a terminal fail rather than selecting work implicitly.
+- `--dry-run` reports frozen approved outcomes without hooks, managed writes,
+  snapshots, Base acknowledgment or cleanup. Use `--unattended` to select the
+  supported set for a noninteractive preview.
+- JSON emits one final document containing operation, mode, status, scope,
+  summary, Sync Units, auxiliary/source work categories and stages. It reports
+  evidence and effect metadata, never file content bytes or private workspaces.
+- Exit codes are `0` for healthy completion, `1` for blocked or failed work or
+  an unavailable required decision, `2` for invalid syntax, and `130` for abort.
+
+Examples:
+
+```sh
+dotman sync main:app.settings
+dotman --json --unattended sync --dry-run main:app.settings
+dotman --unattended sync main:app.settings
+```
+
 ## Selectors
 
 - Normal CLI usage should accept a type-less selector.

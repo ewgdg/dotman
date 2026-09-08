@@ -29,35 +29,31 @@ Core tests cover opt-in Approval, immutable exact outcomes, preview isolation, r
   CLI and architecture documentation maintained separately.
 - Checked the parent contract: unattended authorization is explicit; JSON and a
   missing terminal never imply consent. Structured output must omit content bytes.
+- Resumed original core, CLI and read-only review agents after verifying their
+  outstanding assignments and restored message delivery. Restored documentation
+  draft; final claims remain gated on integration validation.
 
 ## Decisions
 Keep push/pull orchestration unchanged; add a dedicated Sync CLI adapter rather than extending their plan workflow. Use existing prompt-toolkit dependency for the initial persistent Deck.
 
 ## Outcomes
-Implementation remains unfinished. Agent coordination failed globally with
-`invariant_violation: Message has duplicate Deliveries`, preventing clarification,
-completion delivery and cancellation. No completion claim or issue closure.
+Push-only file convergence and the initial Command Deck are complete. Approval,
+review, preview and publication consume frozen outcomes; publication preserves
+per-unit completion independently of enclosing hook failures. Documentation is
+current. Final integrated validation: `uv run pytest -q` reports **1377 passed in
+12.68s**; `git diff --check` is clean.
 
-## Resume checkpoint
-- Uncommitted core changes add immutable Proposals, cached materialization,
-  Approval, Proposal Review and Preview in `sync_session.py`, with frozen paths
-  in `sync_observation.py` and tests in `tests/engine/test_sync_convergence.py`.
-- Real publication still calls a missing `_publish_effects` integration. Bridge
-  frozen session `_inputs` (identity to package input/target metadata) to existing
-  execution mechanics without re-projecting. Preserve per-unit completion even
-  when an enclosing post-hook fails, and expose operation failure separately.
-- Healthy deliberately unapproved supported rows must finish successfully rather
-  than making preview/execution incomplete. Unsupported/blocking work still fails.
-- CLI uses global `--unattended` for Sync only, with no implicit nonterminal or
-  JSON consent. Existing Push/Pull confirmation flags remain outside this slice.
-  JSON now omits payload bytes; stage outcomes still need real public result facts.
-- Delegate-reported validation: existing session tests and seven nonpublication
-  core tests pass; 50 CLI parser/composition/runner tests pass. Deck tests expose
-  missing publication and healthy-unselected exit status. Final integration and
-  broader validation have not run.
-- Durable CLI/lifecycle/architecture docs were restored to the established
-  boundary rather than advertise incomplete behavior. Update them after the
-  implementation passes. The draft is available in commit `2ac99b8`.
-- Restore agent coordination before resuming outstanding delegated work, or use
-  a fresh workflow with explicit takeover of this checkpoint. Do not launch
-  overlapping writers while the current worker requests remain unresolved.
+## Implementation checkpoints
+- Commits `1a5c463`, `b1949e6`, `361eaed` implement frozen publication and core
+  session commands; `523ca96` implements CLI/Deck. Reported targeted validation:
+  72 engine tests and 70 CLI tests pass.
+- First review fixes preserve materialization diagnostics on unapproval, reject
+  mixed unsupported unattended worksets before mutation, and preserve interruption
+  outcomes. Enclosing post-hook failures preserve already-converged units.
+- Final review fixes in `e9dd722` and `6422537` validate every endpoint before
+  snapshot capture (including later selected FIFOs), catch InterruptedError before
+  OSError, and expose immutable semantic results instead of execution plans.
+  CLI adaptation is committed in `a192336`. Targeted validation: 75 engine tests
+  and 70 CLI tests pass.
+- Existing Push/Pull flags remain unchanged; Sync alone uses explicit
+  `--unattended`. Remaining #56 capabilities stay outside this slice.
