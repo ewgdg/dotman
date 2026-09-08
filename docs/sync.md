@@ -134,7 +134,10 @@ receives isolated Primary and permitted Additional Source copies and read-only
 review evidence, not writable tracked paths. Cancelling discards the attempted
 transaction and preserves the previous Proposal and Approval. Saving produces
 an **Edited** generation and derives policy-appropriate effects; tracked sources
-and live endpoints remain unchanged until execution. Byte-identical saves retain
+and live endpoints remain unchanged until execution. Deliberate Primary writes
+activate Repository Apply pull hooks even when automatic live-to-repository flow
+is forbidden by policy or Guards. Guards are not rerun; no-write editing does not
+activate these hooks. Byte-identical saves retain
 valid projection results rather than repeating provider work.
 
 Additional Source edits remain staged for review and later Editor attempts.

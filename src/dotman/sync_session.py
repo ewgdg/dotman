@@ -460,12 +460,14 @@ class SyncSession:
                 publication_metadata = retain_directional_hooks(prepare_publication(
                     tuple(selected_inputs.values()), file_symlink_mode=context.config.file_symlink_mode,
                 ), observed.hook_scopes["push"])
-                repository_metadata = retain_directional_hooks(
-                    prepare_repository_apply(tuple(selected_inputs.values())), observed.hook_scopes["pull"],
-                )
+                # Guards gate automatic flow, not deliberate Editor repository
+                # writes. Freeze all destination-stage hooks; execution activates
+                # them only for actual Primary writes or admitted auxiliary work.
+                repository_metadata = prepare_repository_apply(tuple(selected_inputs.values()))
                 auxiliary = plan_auxiliary(
                     resolved_inputs[0], observed.directional,
-                    {"pull": repository_metadata, "push": publication_metadata},
+                    {"pull": retain_directional_hooks(repository_metadata, observed.hook_scopes["pull"]),
+                     "push": publication_metadata},
                     command_runtime=context.projection.command_runtime, run_noop=run_noop,
                 )
             except OperationBusy as exc:

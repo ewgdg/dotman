@@ -242,3 +242,28 @@ def test_editor_generations_never_revive_after_intent_changes(tmp_path, monkeypa
     dispatch(session, SetResolutionIntent, intent='use-repository')
     second = dispatch(session, EditProposal).view.rows[0].proposal.generation
     assert second > first
+
+
+@pytest.mark.parametrize("policy", ["push-only", "push-only-delete", "pull-only", "both"])
+@pytest.mark.parametrize("edited", [False, True, "identical"])
+def test_editor_primary_activates_pull_hooks_only_for_repository_write(tmp_path, monkeypatch, policy, edited):
+    import json
+    log = tmp_path / "pull-hooks"
+    guard_log = tmp_path / "pull-guards"
+    engine = make_engine(tmp_path, monkeypatch, [("a", policy, b"edited" if edited == "identical" else b"repo", b"live",
+        'editor = { run = "printf edited > \\"$DOTMAN_SOURCE\\"", io = "pipe" }\n'
+        '[targets.a.hooks]\n'
+        f'pre_pull = {json.dumps(f"echo pre >> {log}")}\n'
+        f'post_pull = {json.dumps(f"echo post >> {log}")}\n'
+        f'guard_pull = {json.dumps(f"echo guard >> {guard_log}; exit 100" if policy in ("push-only", "push-only-delete", "both") else f"echo guard >> {guard_log}")}')])
+    session = open_session(engine, preview=False)
+    guards = guard_log.read_bytes() if guard_log.exists() else None
+    if edited:
+        assert dispatch(session, EditProposal).result.status == "saved"
+    dispatch(session, SetApproval, approved=True)
+    result = session.execute()
+    assert result.result.units[0].status == "converged"
+    repository_write = edited is True or (not edited and policy == "pull-only")
+    assert (log.read_text().splitlines() if log.exists() else []) == (
+        ["pre", "post"] if repository_write else [])
+    assert (guard_log.read_bytes() if guard_log.exists() else None) == guards

@@ -94,3 +94,17 @@ Includes real PTY canonical-mode handoff, SIGINT cancellation and restoration.
 Full project suite intentionally not run; the targeted suites cover changed seams.
 Additional Approval/execution remains #69; directory-child Sync remains out of scope.
 
+
+## Independent review corrections
+
+- P1: frozen Repository Apply metadata must retain destination-stage pull hooks
+  for deliberate Editor Primary writes, independently of automatic pull capability.
+  Auxiliary planning still uses Guard-filtered metadata. Execution activates hooks
+  only for actual Primary writes or admitted auxiliary work; Guards never rerun.
+  Added a real-provider matrix across all policies, blocked pull flow, ordinary
+  execution and byte-identical editing. Red: three missing-hook failures. Green:
+  114 Session, Editor, Repository Apply and auxiliary tests.
+- P2: the shared Editor shell path now supplies staged Primary then Additional
+  copies as actual shell positional arguments, not appended shell source. Real
+  shell regressions for $1 and ordered "$@" failed before the fix. Shared Editor,
+  reconcile, edit and Sync UI callers: 61 tests passed.
