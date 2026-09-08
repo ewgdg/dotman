@@ -29,10 +29,13 @@ from dotman.sync_repository_apply import (
 )
 
 
+from dotman.sync_editor import AdditionalEdit, EditorCommandFailed, edit_sources, freeze_additional_sources, repository_workspace
+
+
 ResolutionIntent = Literal["use-repository", "use-live", "merge"]
 
 
-CommandName = Literal["set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
+CommandName = Literal["edit-proposal", "set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
 
 
 @dataclass(frozen=True)
@@ -49,9 +52,11 @@ class Proposal:
     live: FilePresent | Missing
     primary_source_change: FilePresent | Missing | None
     publication_effects: tuple[PublicationEffect, ...]
-    intent: ResolutionIntent = "use-repository"
+    intent: ResolutionIntent | Literal["editor"] = "use-repository"
     capture: FilePresent | Missing | None = None
     reconciliation: str | None = None
+    generation: int = 0
+    additional_changes: tuple[AdditionalEdit, ...] = ()
 
 
 def materialize(
@@ -148,6 +153,8 @@ class SessionRow:
     observation: Observation
     allowed_commands: tuple[CommandName, ...]
     approved: bool = False
+    editor_io: Literal["tty", "pipe"] = "tty"
+    additional_changes: tuple[AdditionalEdit, ...] = ()
     proposal: Proposal | None = None
     allowed_intents: tuple[ResolutionIntent, ...] = ()
     intent: ResolutionIntent | None = None
@@ -222,7 +229,21 @@ class Preview:
     revision: int
 
 
-SessionCommand = SetResolutionIntent | RetryMaterialization | SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
+@dataclass(frozen=True)
+class EditProposal:
+    session_id: str
+    revision: int
+    row_id: str
+
+
+@dataclass(frozen=True)
+class ProposalEdit:
+    row_id: str
+    status: Literal["saved", "cancelled", "command-failed", "materialization-failed"]
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+
+SessionCommand = EditProposal | SetResolutionIntent | RetryMaterialization | SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
 
 
 @dataclass(frozen=True)
@@ -303,7 +324,7 @@ class SyncResult:
 @dataclass(frozen=True)
 class CommandAccepted:
     view: SessionView
-    result: InclusionChanged | ApprovalChanged | ProposalReview | SyncResult
+    result: InclusionChanged | ApprovalChanged | ProposalReview | ProposalEdit | SyncResult
 
 
 @dataclass(frozen=True)
@@ -355,6 +376,12 @@ class SyncSession:
         event_sink: SessionEventSink | None = None,
     ) -> None:
         self._command_operation = CommandOperation()
+        self._editor_operation = CommandOperation()
+        self._additional_edits = {}
+        self._edited_outcomes = {}
+        self._proposal_generations = {}
+        self._editor_preimages = {}
+        self._editor_input_errors = {}
         self._captures = {}
         # A comparison Render is already a valid projection of these frozen
         # repository inputs. Reusing it also avoids volatile provider reruns.
@@ -379,7 +406,7 @@ class SyncSession:
                     else "diagnostic",
                     unit.state == "drifted" and not unit.diagnostics,
                     unit,
-                    ("set-included", "set-approval", "prepare-proposal-review", "set-resolution-intent", "retry-materialization")
+                    ("set-included", "set-approval", "prepare-proposal-review", "set-resolution-intent", "retry-materialization", "edit-proposal")
                     if supports_proposal(unit)
                     else ("set-included",)
                     if unit.state == "drifted" and not unit.diagnostics
@@ -461,6 +488,22 @@ class SyncSession:
             session._context = context
             session._command_operation = operation
             session._resolved_inputs = resolved_inputs[0]
+            session._view = replace(session.view, rows=tuple(
+                replace(row, editor_io=resolved_inputs[0][row.observation.identity][1].editor.io)
+                if isinstance(row, SessionRow) and supports_proposal(row.observation) else row
+                for row in session.view.rows
+            ))
+            for observation in observations:
+                if not supports_proposal(observation):
+                    continue
+                item, metadata = resolved_inputs[0][observation.identity]
+                try:
+                    session._editor_preimages[observation.identity] = freeze_additional_sources(
+                        metadata=metadata, repo_root=item.repo.root,
+                        primary_paths=tuple(unit.repository_path for unit in observations),
+                    )
+                except (ValueError, OSError) as exc:
+                    session._editor_input_errors[observation.identity] = str(exc)
             session._frozen_bases = {
                 observation.identity: FrozenBaseUnit(
                     _base_unit(context, observation.identity, *resolved_inputs[0][observation.identity]),
@@ -477,9 +520,13 @@ class SyncSession:
             resources.pop_all()
             return session
 
+    def request_editor_cancel(self) -> None:
+        self._editor_operation.request_cancel()
+
     def request_cancel(self) -> None:
         """Cancel owned commands without racing a session view mutation."""
         self._command_operation.request_cancel()
+        self._editor_operation.request_cancel()
 
     def check_cancelled(self) -> None:
         self._command_operation.check_cancelled()
@@ -498,7 +545,7 @@ class SyncSession:
 
     def _dispatch(self, command: SessionCommand) -> CommandAccepted | CommandRejected:
         view = self.view
-        if type(command) not in (SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
+        if type(command) not in (EditProposal, SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
             return CommandRejected(view, "invalid")
         if view.terminal:
             return CommandRejected(view, "terminal")
@@ -508,6 +555,15 @@ class SyncSession:
             return CommandRejected(view, "foreign-session")
         if command.revision != view.revision:
             return CommandRejected(view, "stale")
+        if isinstance(command, EditProposal):
+            if type(command.row_id) is not str:
+                return CommandRejected(view, "invalid")
+            row = next((row for row in view.rows if row.row_id == command.row_id), None)
+            if row is None:
+                return CommandRejected(view, "unknown-row")
+            if "edit-proposal" not in row.allowed_commands:
+                return CommandRejected(view, "disallowed")
+            return self._edit_proposal(row)
         if isinstance(command, SetIncluded):
             if type(command.row_id) is not str or type(command.included) is not bool:
                 return CommandRejected(view, "invalid")
@@ -550,6 +606,7 @@ class SyncSession:
                     return CommandRejected(view, "invalid")
                 if command.intent not in row.allowed_intents:
                     return CommandRejected(view, "disallowed")
+                self._edited_outcomes.pop(row.row_id, None)
                 row = replace(row, intent=command.intent, proposal=None, diagnostics=())
             if isinstance(command, RetryMaterialization):
                 row = replace(row, proposal=None)
@@ -557,10 +614,7 @@ class SyncSession:
             approved = command.approved if isinstance(command, SetApproval) else row.approved
             if proposal is None and (approved or isinstance(command, (PrepareProposalReview, RetryMaterialization))):
                 try:
-                    proposal = materialize(
-                        row.observation, intent=row.intent, capture=self._capture,
-                        render=self._render, merge=self._merge,
-                    )
+                    proposal = self._materialize_row(row)
                     self.check_cancelled()
                     diagnostics = ()
                 except (KeyboardInterrupt, InterruptedError):
@@ -592,6 +646,106 @@ class SyncSession:
             return CommandRejected(view, "preview")
         result = self._finish(aborted=isinstance(command, Abort))
         return CommandAccepted(self.view, result)
+
+
+    def _next_generation(self, row_id: str) -> int:
+        generation = self._proposal_generations.get(row_id, 0) + 1
+        self._proposal_generations[row_id] = generation
+        return generation
+
+    def _materialize_row(self, row: SessionRow) -> Proposal:
+        if row.row_id not in self._edited_outcomes:
+            proposal = materialize(
+                row.observation, intent=row.intent, capture=self._capture,
+                render=self._render, merge=self._merge,
+            )
+            return replace(proposal, generation=self._next_generation(row.row_id))
+        repository, generation = self._edited_outcomes[row.row_id]
+        observation = row.observation
+        if observation.effective_policy in ("push-only", "both"):
+            live = self._render(observation, repository)
+        elif observation.effective_policy == "push-only-delete":
+            live = Missing()
+        else:
+            live = observation.live
+        proposal = materialize(
+            replace(observation, repository=repository, comparison_repository=live),
+            intent="use-repository", render=lambda *_: live,
+        )
+        return replace(
+            proposal, primary_source_change=repository if repository != observation.repository else None,
+            intent="editor", generation=generation, reconciliation="edited repository outcome",
+            additional_changes=self._additional_edits.get(row.row_id, ()),
+        )
+
+    def _edit_proposal(self, row: SessionRow) -> CommandAccepted:
+        # The idle operation also holds cancellation admitted before dispatch.
+        operation = self._editor_operation
+        status, diagnostics = "saved", ()
+        updated = row
+        prior_edited = self._edited_outcomes.get(row.row_id)
+        prior_additional = self._additional_edits.get(row.row_id, ())
+        try:
+            with command_operation(operation):
+                operation.check_cancelled()
+                self.check_cancelled()
+                item, metadata = self._resolved_inputs[row.observation.identity]
+                if row.observation.identity in self._editor_input_errors:
+                    raise ValueError(self._editor_input_errors[row.observation.identity])
+                output = edit_sources(
+                    observation=row.observation, proposal=row.proposal,
+                    metadata=metadata, repo_root=item.repo.root,
+                    additional=prior_additional,
+                    preimages=self._editor_preimages[row.observation.identity],
+                )
+                operation.check_cancelled()
+                if output.exit_code in (130, 143):
+                    raise InterruptedError("Editor cancelled")
+                if output.exit_code:
+                    status = "command-failed"
+                    diagnostics = (Diagnostic("editor-command-failed", f"Editor exited with status {output.exit_code}"),)
+                else:
+                    previous = row.proposal
+                    generation = self._next_generation(row.row_id)
+                    # Commit saved sources before projection: a failed Render must
+                    # remain retryable from the user's edits, not automatic intent.
+                    self._edited_outcomes[row.row_id] = (output.repository, generation)
+                    self._additional_edits[row.row_id] = output.additional
+                    if previous is not None and output.repository == previous.repository:
+                        proposal = replace(
+                            previous, intent="editor", generation=generation,
+                            reconciliation="edited repository outcome",
+                            additional_changes=output.additional,
+                        )
+                    else:
+                        proposal = self._materialize_row(row)
+                    operation.check_cancelled()
+                    updated = replace(row, proposal=proposal, diagnostics=(),
+                                      additional_changes=output.additional)
+        except (KeyboardInterrupt, InterruptedError):
+            status = "cancelled"
+            diagnostics = (Diagnostic("editor-cancelled", "Editor cancelled"),)
+            if prior_edited is None:
+                self._edited_outcomes.pop(row.row_id, None)
+            else:
+                self._edited_outcomes[row.row_id] = prior_edited
+            self._additional_edits[row.row_id] = prior_additional
+        except EditorCommandFailed as exc:
+            status = "command-failed"
+            diagnostics = (Diagnostic("editor-command-failed", str(exc)),)
+        except (ValueError, OSError) as exc:
+            status = "materialization-failed"
+            diagnostics = (Diagnostic("editor-materialization-failed", str(exc)),)
+        finally:
+            self._editor_operation = CommandOperation()
+        if status not in ("saved", "cancelled"):
+            updated = replace(row, approved=False, proposal=None, diagnostics=diagnostics,
+                              additional_changes=self._additional_edits.get(row.row_id, ()))
+        self._view = replace(self.view, revision=self.view.revision + 1, rows=tuple(
+            updated if candidate.row_id == row.row_id else candidate for candidate in self.view.rows
+        ))
+        self._emit(SessionChanged(self.view))
+        return CommandAccepted(self.view, ProposalEdit(row.row_id, status, diagnostics))
 
     def execute(self) -> CommandAccepted | CommandRejected:
         """Execute the current view; adapters with cached views use Execute tokens."""
@@ -655,13 +809,19 @@ class SyncSession:
         key = (observation.identity, repository)
         if key not in self._renders:
             item, metadata = self._resolved_inputs[observation.identity]
-            outcome = project_frozen_file(
-                self._context.projection.command_runtime, metadata=metadata,
-                context=item.package_context.context,
-                repository=repository.content if isinstance(repository, FilePresent) else None,
-                live=observation.live.content if isinstance(observation.live, FilePresent) else None,
-                view="render", repo_side=True,
-            )
+            with ExitStack() as resources:
+                preimages = self._editor_preimages.get(observation.identity, {})
+                if preimages:
+                    metadata, _, _ = resources.enter_context(repository_workspace(
+                        metadata=metadata, repo_root=item.repo.root, preimages=preimages,
+                    ))
+                outcome = project_frozen_file(
+                    self._context.projection.command_runtime, metadata=metadata,
+                    context=item.package_context.context,
+                    repository=repository.content if isinstance(repository, FilePresent) else None,
+                    live=observation.live.content if isinstance(observation.live, FilePresent) else None,
+                    view="render", repo_side=True,
+                )
             self._renders[key] = Missing() if outcome is None else FilePresent(outcome)
         return self._renders[key]
 

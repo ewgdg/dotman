@@ -220,10 +220,11 @@ def _reconcile_write_confirmation_prompt() -> str:
     )
 
 
-def _confirm_reconcile_write(*, changed_sources: list[EditableSourceCopy], assume_yes: bool = False) -> bool:
-    print("Reconciled repo source changes:")
-    for changed_source in changed_sources:
-        print(f"  - {changed_source.destination_path}")
+def _confirm_reconcile_write(*, changed_sources: list[EditableSourceCopy], assume_yes: bool = False, quiet: bool = False) -> bool:
+    if not quiet:
+        print("Reconciled repo source changes:")
+        for changed_source in changed_sources:
+            print(f"  - {changed_source.destination_path}")
     if assume_yes:
         return True
     while True:
@@ -300,6 +301,7 @@ def run_basic_reconcile(
     editor_elevation: str = "none",
     stream_output: bool = False,
     return_result: bool = False,
+    quiet: bool = False,
 ) -> int | CommandResult:
     resolved_repo_path = Path(repo_path).expanduser().resolve()
     if not resolved_repo_path.exists() and (
@@ -391,9 +393,10 @@ def run_basic_reconcile(
 
         changed_sources = _changed_editable_sources(editable_sources)
         if not changed_sources:
-            print("No reconciled repo source changes.")
+            if not quiet:
+                print("No reconciled repo source changes.")
             return result if return_result else 0
-        if not _confirm_reconcile_write(changed_sources=changed_sources, assume_yes=assume_yes):
+        if not _confirm_reconcile_write(changed_sources=changed_sources, assume_yes=assume_yes, quiet=quiet):
             return result if return_result else 0
         _write_confirmed_sources(changed_sources)
         return result if return_result else 0
