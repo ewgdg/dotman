@@ -76,6 +76,8 @@ class Observation:
     live_is_symlink: bool = False
     live_mode: int | None = None
     diagnostics: tuple[Diagnostic, ...] = ()
+    repository_path: Path | None = None
+    live_path: Path | None = None
 
 
 def _identity(metadata: projection.TargetMetadata) -> ResolvedSyncTarget:
@@ -194,6 +196,8 @@ def _observe_file(
         git,
         base,
         chmod=metadata.chmod,
+        repository_path=metadata.repo_path,
+        live_path=metadata.live_path,
     )
     if effective == "no-route":
         return replace(
@@ -270,8 +274,9 @@ def observe_scope(
     scope: ResolvedSyncScope,
     *,
     preview: bool,
+    resolved_inputs: tuple[_ResolvedInputs, dict[str, list[planning.PackagePlanningInput]]] | None = None,
 ) -> tuple[Observation, ...]:
-    inputs, directional = _resolve_inputs(context, scope)
+    inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(context, scope)
     units = {
         identity: _base_unit(context, identity, item, metadata)
         for identity, (item, metadata) in inputs.items()
