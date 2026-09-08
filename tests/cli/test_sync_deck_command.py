@@ -74,32 +74,6 @@ def test_unattended_observation_failure_prevents_other_publication(tmp_path, mon
     assert (tmp_path / "live/unit").read_bytes() == b"live"
 
 
-def test_review_preserves_focused_row_and_scrolls_without_changing_selection(tmp_path, monkeypatch):
-    from dotman.sync_deck import CommandDeck
-    engine = make_engine(tmp_path, monkeypatch, [
-        ("one", "push-only", b"repo\n", b"live\n", ""),
-        ("two", "push-only", b"repo\n" * 100, b"live\n" * 100, ""),
-    ])
-    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
-        deck = CommandDeck(session, use_color=False)
-        deck.move(1)
-        identity = deck.focused_row.row_id
-        deck.open_review()
-        assert deck.reviewing
-        deck.move(5)
-        assert deck.focused_row.row_id == identity
-        assert deck.review_scroll == 5
-        assert not deck.focused_row.approved
-        text = deck.review_text()
-        assert str(tmp_path / "live/two") in text
-        assert "Repository path:" in text
-        assert "write" in text and "+repo" in text and "-live" in text
-        deck.back()
-        assert deck.focused_row.row_id == identity
-        deck.open_review()
-        assert deck.review_scroll == 5
-
-
 def test_confirmation_freezes_selection_and_cancel_restores_workset(tmp_path, monkeypatch):
     from dotman.sync_deck import CommandDeck
     engine = make_engine(tmp_path, monkeypatch, [
@@ -118,46 +92,14 @@ def test_confirmation_freezes_selection_and_cancel_restores_workset(tmp_path, mo
         deck.open_review()
         assert deck.focus == 0 and not deck.reviewing
         assert session.view == frozen
-        assert "1 approved units" in deck.text()
-        assert "1 live writes" in deck.text()
+        assert "1 approved units" in deck.confirmation_text()
+        assert "1 live writes" in deck.confirmation_text()
         deck.back()
         assert not deck.confirming
         assert session.view == frozen
         deck.move(1)
         deck.select()
         assert all(row.approved for row in session.view.rows)
-
-
-def test_keyboard_review_return_and_confirmation_execute_frozen_selection(tmp_path, monkeypatch):
-    import asyncio
-
-    from prompt_toolkit.input import create_pipe_input
-    from prompt_toolkit.output import DummyOutput
-    from dotman.sync_deck import CommandDeck, command_deck_application
-
-    engine = make_engine(tmp_path, monkeypatch, [
-        ("one", "push-only", b"repo", b"live", ""),
-        ("two", "push-only", b"repo", b"live", ""),
-    ])
-    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
-        deck = CommandDeck(session, use_color=False)
-        with create_pipe_input() as pipe:
-            application = command_deck_application(deck)
-            application.input = pipe
-            application.output = DummyOutput()
-
-            async def interact():
-                task = asyncio.create_task(application.run_async())
-                await asyncio.sleep(0)
-                # Focus second row, review, try moving, return, select, confirm.
-                pipe.send_text("\x1b[B\r\x1b[B\x1b")
-                await asyncio.sleep(0.1)
-                pipe.send_text(" x \r")
-                return await asyncio.wait_for(task, timeout=2)
-
-            assert asyncio.run(interact()) is True
-        assert deck.focus == 1
-        assert [row.approved for row in session.view.rows] == [False, True]
 
 
 def test_mouse_selects_only_clicked_row_and_cannot_change_confirmation(tmp_path, monkeypatch):

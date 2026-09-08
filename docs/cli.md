@@ -60,11 +60,21 @@ push-only files with **Use repository** and pull-only files with **Use live**;
 both-policy drift cannot yet be approved.
 
 - Interactive Sync opens a persistent Command Deck with Approval initially off.
-  `Space` toggles Selection, `A` selects eligible rows, and `U` clears Selection.
-  Selection indicators also accept mouse clicks.
+  Its Textual table aligns Approval, Target, Policy, and Resolution columns.
+  `Space` toggles Approval, `A` approves eligible rows, and `U` clears Approval.
+  A single click in the Approval column toggles that row; other cells only focus it.
+  Arrow keys navigate; narrow terminals scroll horizontally and long worksets
+  scroll vertically without losing column alignment.
 - `Enter` opens focused Proposal Review; `Esc` returns to the same workset.
   `X` opens compact preview/execution confirmation; cancelling returns without
-  changing Approval. `Esc` from the workset or `Ctrl-C` aborts.
+  changing Approval. Review scroll position is retained per target; arrow keys,
+  Page Up/Down, and the mouse wheel scroll frozen evidence.
+  `Esc` from the workset or `Ctrl-C` aborts.
+- **Unsupported** means the session offers no resolution capability (including
+  both-policy drift), not that observing the filesystem failed. **Observation
+  failed** and **Proposal failed** retain their diagnostic details below the table.
+  Current Sync supports one-sided file targets; directory scopes cannot open a
+  file Sync session. This UI does not add directory or both-policy convergence.
 - `--unattended` explicitly selects supported Proposals and confirms execution.
   Missing terminals and `--json` do not grant consent. Required interactive
   decisions without a terminal fail rather than selecting work implicitly.

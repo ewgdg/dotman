@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from difflib import unified_diff
 
-from prompt_toolkit.application import Application
-from prompt_toolkit.data_structures import Point
-from prompt_toolkit.formatted_text import ANSI, to_formatted_text
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Layout, ScrollOffsets, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.mouse_events import MouseEventType
+from rich.text import Text
+from textual import events
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.widgets import DataTable, Footer, RichLog, Static
 
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import FilePresent, Missing
@@ -59,29 +57,15 @@ class CommandDeck:
         self.reviewing = False
         self.confirming = False
         self.notice = ""
-        self._review_scroll: dict[str, int] = {}
 
     @property
     def focused_row(self):
         rows = self.session.view.rows
         return rows[self.focus] if rows else None
 
-    @property
-    def review_scroll(self) -> int:
-        row = self.focused_row
-        return self._review_scroll.get(row.row_id, 0) if row else 0
-
     def move(self, offset: int) -> None:
-        if self.confirming:
-            return
-        if self.reviewing:
-            row = self.focused_row
-            if row:
-                self._review_scroll[row.row_id] = max(
-                    0, min(self.review_scroll + offset, len(self.review_text().splitlines()) - 1)
-                )
-            return
-        self.focus = max(0, min(self.focus + offset, len(self.session.view.rows) - 1))
+        if not self.confirming and not self.reviewing:
+            self.focus = max(0, min(self.focus + offset, len(self.session.view.rows) - 1))
 
     def back(self) -> bool:
         """Return False only when Escape requests abort from the workset."""
@@ -133,36 +117,16 @@ class CommandDeck:
         else:
             self.reviewing = True
 
-    def text(self) -> str:
-        if self.confirming:
-            selected = [row for row in self.session.view.rows if row.approved]
-            effects = [effect for row in selected if row.proposal
-                       for effect in row.proposal.publication_effects]
-            writes = sum(effect.kind == "write" for effect in effects)
-            deletions = sum(effect.kind == "delete" for effect in effects)
-            modes = sum(effect.kind == "chmod" for effect in effects)
-            repository_changes = sum(row.proposal.primary_source_change is not None for row in selected if row.proposal)
-            verb = "Preview" if self.session.view.preview else "Execute"
-            return f":: {verb} {len(selected)} approved units / {repository_changes} repository changes / {writes} live writes / {deletions} live deletions / {modes} mode changes?\n\n  Enter confirm  Esc return"
-        if self.reviewing:
-            return self.review_text()
-        lines = [":: Sync Command Deck", "", "  Selection    Target    Policy    Resolution"]
-        for index, row in enumerate(self.session.view.rows):
-            identity = row.observation.identity
-            label = render_package_label(
-                repo_name=identity.repo, package_id=identity.package_id,
-                target_name=identity.target_name, bound_profile=identity.bound_profile,
-                use_color=self.use_color,
-            )
-            marker = "[x]" if row.approved else "[ ]" if "set-approval" in row.allowed_commands else "[-]"
-            resolution = render_sync_term(resolution_label(row.proposal.intent if row.proposal else row.allowed_intents[0]), use_color=self.use_color) if "set-approval" in row.allowed_commands else render_sync_term("blocked", use_color=self.use_color)
-            lines.append(f"{'>' if index == self.focus else ' '} {marker}  {label}  {row.observation.effective_policy}  {resolution}")
-            lines.extend(f"       {item.message}" for item in (*row.observation.diagnostics, *row.diagnostics))
-        if not self.session.view.rows:
-            lines.append("  No drifted work.")
-        lines += ["", "  ↑/↓ focus  Space Selection  A select all  U unselect all",
-                  "  Enter review  X preview/execute  Esc abort", self.notice]
-        return "\n".join(lines)
+    def confirmation_text(self) -> str:
+        selected = [row for row in self.session.view.rows if row.approved]
+        effects = [effect for row in selected if row.proposal
+                   for effect in row.proposal.publication_effects]
+        writes = sum(effect.kind == "write" for effect in effects)
+        deletions = sum(effect.kind == "delete" for effect in effects)
+        modes = sum(effect.kind == "chmod" for effect in effects)
+        repository_changes = sum(row.proposal.primary_source_change is not None for row in selected if row.proposal)
+        verb = "Preview" if self.session.view.preview else "Execute"
+        return f":: {verb} {len(selected)} approved units / {repository_changes} repository changes / {writes} live writes / {deletions} live deletions / {modes} mode changes?\n\n  Enter confirm  Esc return"
 
     def review_text(self) -> str:
         row = self.focused_row
@@ -173,7 +137,7 @@ class CommandDeck:
         pull = intent == "use-live"
         primary = primary_change_summary(proposal, row.observation.repository_path)
         lines = [f":: Proposal Review — {row.row_id}",
-                 f"  Selection: {'approved' if row.approved else 'unapproved'}",
+                 f"  Approval: {'approved' if row.approved else 'unapproved'}",
                  f"  Observation: {row.observation.state}",
                  f"  Policy: {row.observation.effective_policy}",
                  f"  Repository path: {row.observation.repository_path}",
@@ -224,88 +188,218 @@ class CommandDeck:
             ))
             lines.append(f"  Frozen {side}: {'missing' if isinstance(before, Missing) else 'present'}")
             lines.append(f"  {side.capitalize()} outcome: {'missing' if isinstance(after, Missing) else 'present'}")
-        lines += ["", "  ↑/↓ scroll  Space Selection  Esc return to workset"]
+        lines += ["", "  ↑/↓ scroll  Space Approval  Esc return to workset"]
         return "\n".join(lines)
 
 
-def command_deck_application(deck: CommandDeck) -> Application[bool]:
-    keys = KeyBindings()
+def row_resolution(row) -> str:
+    """Capability absence is not a failed filesystem observation."""
+    if row.observation.diagnostics or row.observation.state == "observation-failed":
+        return "Observation failed"
+    if row.diagnostics:
+        return "Proposal failed"
+    if not row.allowed_intents:
+        return "Unsupported"
+    return resolution_label(row.proposal.intent if row.proposal else row.allowed_intents[0])
 
-    @keys.add("up")
-    def up(event):
-        deck.move(-1)
 
-    @keys.add("down")
-    def down(event):
-        deck.move(1)
+class WorksetTable(DataTable):
+    """Single click focuses a row; only its Approval cell toggles it."""
 
-    @keys.add(" ")
-    def toggle(event):
-        deck.select()
+    def on_click(self, event: events.Click) -> None:
+        # DataTable's default selection requires clicking the same cell twice.
+        # Rendered cell metadata keeps single-click hit testing correct after scrolling.
+        row = event.style.meta.get("row", -1)
+        column = event.style.meta.get("column", -1)
+        if row >= 0 and column >= 0 and not event.style.meta.get("out_of_bounds"):
+            app = self.app
+            app.deck.click(row, selection=column == 0)
+            self.move_cursor(row=row, column=column)
+            app.update_workset()
+            event.stop()
 
-    @keys.add("a")
-    @keys.add("A")
-    def select_all(event):
-        deck.select_all(True)
 
-    @keys.add("u")
-    @keys.add("U")
-    def unselect_all(event):
-        deck.select_all(False)
+class SyncDeckApp(App[bool]):
+    """Terminal adapter: the public session remains the sole mutation authority."""
 
-    @keys.add("enter")
-    def enter(event):
-        if deck.confirming:
-            event.app.exit(result=True)
-        elif not deck.reviewing:
-            deck.open_review()
+    ENABLE_COMMAND_PALETTE = False
+    CSS = """
+    Screen { background: $surface; }
+    #title { height: auto; padding: 0 1; text-style: bold; color: $accent; }
+    #workset { height: 1fr; }
+    #detail { height: auto; max-height: 5; padding: 0 1; overflow-y: auto; }
+    #review { height: 1fr; }
+    #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
+    #notice { height: auto; padding: 0 1; color: $warning; }
+    """
+    BINDINGS = [
+        Binding("up", "move_up", "Up", show=False, priority=True),
+        Binding("down", "move_down", "Down", show=False, priority=True),
+        Binding("space", "approve", "Approval", priority=True),
+        Binding("a,A", "approve_all", "Approve all", priority=True),
+        Binding("u,U", "clear_all", "Clear all", priority=True),
+        Binding("enter", "review_or_confirm", "Review / Confirm", priority=True),
+        Binding("x,X", "confirm", "Preview / Execute", priority=True),
+        Binding("escape", "back", "Back / Abort", priority=True),
+        Binding("ctrl+c", "abort", "Abort", priority=True),
+    ]
 
-    @keys.add("x")
-    @keys.add("X")
-    def execute(event):
-        deck.confirm()
+    def __init__(self, deck: CommandDeck) -> None:
+        super().__init__(ansi_color=True)
+        self.theme = "ansi-dark"
+        self.deck = deck
+        self.review_positions: dict[str, tuple[float, float]] = {}
 
-    @keys.add("escape")
-    def back(event):
-        if not deck.back():
-            event.app.exit(result=False)
+    def compose(self) -> ComposeResult:
+        yield Static(":: Sync Command Deck", id="title", markup=False)
+        yield WorksetTable(id="workset", cursor_type="cell", zebra_stripes=True)
+        yield Static(id="detail", markup=False)
+        yield RichLog(id="review", wrap=False, auto_scroll=False, min_width=1)
+        yield Static(id="confirmation", markup=False)
+        yield Static(id="notice", markup=False)
+        yield Footer()
 
-    @keys.add("c-c")
-    def abort(event):
-        event.app.exit(result=False)
+    def on_mount(self) -> None:
+        table = self.query_one(WorksetTable)
+        table.add_columns("Approval", "Target", "Policy", "Resolution")
+        for row in self.deck.session.view.rows:
+            identity = row.observation.identity
+            label = render_package_label(
+                repo_name=identity.repo, package_id=identity.package_id,
+                target_name=identity.target_name, bound_profile=identity.bound_profile,
+                use_color=self.deck.use_color,
+            )
+            table.add_row("", Text.from_ansi(label), row.observation.effective_policy, "", key=row.row_id)
+        self.show_workset()
 
-    def fragments():
-        if deck.reviewing or deck.confirming:
-            return to_formatted_text(ANSI(deck.text()))
-        # Each row carries its own mouse action; path cells remain identities.
-        result = []
-        row_index = 0
-        for line in deck.text().splitlines(keepends=True):
-            is_row = line.startswith(("> [", "  ["))
-            if is_row:
-                index = row_index
-                row_index += 1
+    def update_workset(self) -> None:
+        table = self.query_one(WorksetTable)
+        for row in self.deck.session.view.rows:
+            marker = "[x]" if row.approved else "[ ]" if "set-approval" in row.allowed_commands else "[-]"
+            term = "approved" if row.approved else "unapproved"
+            table.update_cell(row.row_id, table.ordered_columns[0].key,
+                              Text.from_ansi(render_sync_term(term, use_color=self.deck.use_color).replace(term, marker)),
+                              update_width=True)
+            table.update_cell(row.row_id, table.ordered_columns[3].key,
+                              Text.from_ansi(render_sync_term(row_resolution(row), use_color=self.deck.use_color)),
+                              update_width=True)
+        self.update_detail()
+        self.query_one("#notice", Static).update(self.deck.notice)
 
-                def click(mouse_event, index=index):
-                    if mouse_event.event_type == MouseEventType.MOUSE_UP:
-                        deck.click(index, selection=mouse_event.position.x <= 5)
-                result.extend((style, text, click) for style, text in to_formatted_text(ANSI(line)))
-            else:
-                result.extend(to_formatted_text(ANSI(line)))
-        return result
+    def update_detail(self) -> None:
+        row = self.deck.focused_row
+        if row is None:
+            detail = "No drifted work."
+        else:
+            diagnostics = (*row.observation.diagnostics, *row.diagnostics)
+            detail = "\n".join(item.message for item in diagnostics)
+            if not diagnostics and not row.allowed_intents:
+                detail = "Unsupported: this session has no resolution for this target. Sync currently supports one-sided file targets, not both-policy or directory convergence."
+            detail = f"{row.row_id}\n{detail}" if detail else row.row_id
+        self.query_one("#detail", Static).update(detail)
 
-    control = FormattedTextControl(
-        fragments, focusable=True,
-        get_cursor_position=lambda: Point(0, deck.review_scroll if deck.reviewing else 0 if deck.confirming else deck.focus + 3),
-    )
-    return Application(
-        layout=Layout(Window(
-            control, wrap_lines=True, scroll_offsets=ScrollOffsets(),
-            get_vertical_scroll=lambda window: deck.review_scroll if deck.reviewing else window.vertical_scroll,
-        )),
-        key_bindings=keys, full_screen=True, mouse_support=True,
-    )
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        if not self.deck.reviewing and not self.deck.confirming:
+            self.deck.focus = event.coordinate.row
+            self.update_detail()
+
+    def show_workset(self) -> None:
+        self.query_one("#workset").display = True
+        self.query_one("#detail").display = True
+        self.query_one("#review").display = False
+        self.query_one("#confirmation").display = False
+        self.query_one("#title", Static).update(":: Sync Command Deck")
+        self.update_workset()
+        self.query_one(WorksetTable).focus()
+
+    def action_move_up(self) -> None:
+        self.move_vertical(-1)
+
+    def action_move_down(self) -> None:
+        self.move_vertical(1)
+
+    def move_vertical(self, offset: int) -> None:
+        # Route navigation and Enter through the same queue so rapid keys review
+        # the newly focused row, rather than outrunning a widget key event.
+        if self.deck.confirming:
+            return
+        if self.deck.reviewing:
+            log = self.query_one(RichLog)
+            log.scroll_relative(y=offset, animate=False)
+        else:
+            table = self.query_one(WorksetTable)
+            self.sync_focus()
+            self.deck.move(offset)
+            table.move_cursor(row=self.deck.focus)
+
+    def sync_focus(self) -> None:
+        # A following key may arrive before CellHighlighted is delivered (paste/PTY).
+        # Read the widget cursor at the action boundary, not the queued notification.
+        if not self.deck.reviewing and not self.deck.confirming:
+            self.deck.focus = self.query_one(WorksetTable).cursor_row
+
+    def action_approve(self) -> None:
+        self.sync_focus()
+        self.deck.select()
+        self.update_workset()
+        if self.deck.reviewing:
+            self.show_review()
+
+    def action_approve_all(self) -> None:
+        self.deck.select_all(True)
+        self.update_workset()
+
+    def action_clear_all(self) -> None:
+        self.deck.select_all(False)
+        self.update_workset()
+
+    def show_review(self) -> None:
+        log = self.query_one("#review", RichLog)
+        position = self.review_positions.get(self.deck.focused_row.row_id, (0, 0))
+        if log.display:
+            position = (log.scroll_x, log.scroll_y)
+        self.query_one("#workset").display = False
+        self.query_one("#detail").display = False
+        log.display = True
+        log.clear()
+        log.write(Text.from_ansi(self.deck.review_text()), scroll_end=False)
+        self.query_one("#title", Static).update(":: Proposal Review")
+        log.focus()
+        self.call_after_refresh(log.scroll_to, *position, animate=False)
+
+    def action_review_or_confirm(self) -> None:
+        self.sync_focus()
+        if self.deck.confirming:
+            self.exit(True)
+        elif not self.deck.reviewing:
+            self.deck.open_review()
+            if self.deck.reviewing:
+                self.show_review()
+            self.update_workset()
+
+    def action_confirm(self) -> None:
+        self.deck.confirm()
+        if self.deck.confirming:
+            self.query_one("#workset").display = False
+            self.query_one("#detail").display = False
+            self.query_one("#confirmation").display = True
+            self.query_one("#confirmation", Static).update(self.deck.confirmation_text())
+            self.query_one("#title", Static).update(":: Confirmation")
+            self.set_focus(None)
+        self.update_workset()
+
+    def action_back(self) -> None:
+        if self.deck.reviewing:
+            log = self.query_one("#review", RichLog)
+            self.review_positions[self.deck.focused_row.row_id] = (log.scroll_x, log.scroll_y)
+        if not self.deck.back():
+            self.exit(False)
+        else:
+            self.show_workset()
+
+    def action_abort(self) -> None:
+        self.exit(False)
 
 
 def run_command_deck(session: SyncSession, *, use_color: bool) -> bool:
-    return command_deck_application(CommandDeck(session, use_color=use_color)).run()
+    return bool(SyncDeckApp(CommandDeck(session, use_color=use_color)).run())

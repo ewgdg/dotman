@@ -33,7 +33,9 @@ Focused CLI responsibilities live in dedicated modules:
   and execution workflows
 - `sync_deck_command.py` — Sync CLI authorization and final output over public
   session views and commands
-- `sync_deck.py` — persistent Sync workset, focused review and confirmation
+- `sync_deck.py` — Textual DataTable workset, scrollable frozen review and
+  confirmation over public SyncSession commands; ordinary terminal prompts
+  continue to use `prompt_toolkit`
 - `cli_interaction.py` — shared terminal selection, resolution, diff review,
   and focused runtime adapters used by command runners
 - `cli_style.py` — labels, colors, and display helpers

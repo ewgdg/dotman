@@ -39,8 +39,12 @@ policy-derived live outcome, exclusive Primary Source Change, and exact
 Publication Effects. Execution consumes that outcome rather than rendering or
 observing again. Inclusion is separate from Approval.
 
-The persistent Command Deck shows drift and blocked diagnostics, not directly
-agreeing units. **Selection** controls Proposal Approval. Focused review shows
+The persistent Textual Command Deck shows drift and diagnostics, not directly
+agreeing units. Its aligned table uses canonical target identities and an
+**Approval** column. Unsupported resolution capability is labeled separately
+from Observation and Proposal failures; focused diagnostic details explain the
+current row. Directory scopes are outside the file session's current capability.
+Focused review shows
 the frozen repository/live Pull Views separately from repository-effect and
 publication previews. A no-write Proposal still shows the observed drift even
 when Capture returns the unchanged repository representation. Returning preserves

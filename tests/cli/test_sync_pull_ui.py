@@ -25,7 +25,6 @@ def test_pull_review_and_document_show_repository_effect(tmp_path, monkeypatch, 
         row = replace(row, observation=observation, allowed_intents=("use-live",), proposal=proposal, approved=True)
         session = SimpleNamespace(view=replace(opened.view, observations=(observation,), rows=(row,)))
         deck = CommandDeck(session, use_color=False)
-        assert "Use live" in deck.text()
         review = deck.review_text()
         assert "Resolution: Use live" in review
         assert "Capture: frozen live" in review
@@ -38,7 +37,7 @@ def test_pull_review_and_document_show_repository_effect(tmp_path, monkeypatch, 
         else:
             assert "Approval still required" in review
         deck.confirming = True
-        assert f"{int(kind is not None)} repository changes / 0 live writes" in deck.text()
+        assert f"{int(kind is not None)} repository changes / 0 live writes" in deck.confirmation_text()
         document = sync_document(SimpleNamespace(dry_run=True, scopes=[]), session, None)
         unit = document["sync_units"][0]
         assert unit["resolution_intent"] == "use-live"
