@@ -12,7 +12,7 @@ from typing import Mapping
 
 from dotman.atomic_files import write_text_atomic
 from dotman.models import AdditionalSource, EditorSpec
-from dotman.command_runtime import ArgvCommand, CommandRequest, CommandResult, ShellCommand, current_command_runtime
+from dotman.command_runtime import ArgvCommand, CommandRequest, CommandResult, current_command_runtime
 from dotman.file_access import read_bytes, write_bytes_atomic as sudo_write_bytes_atomic
 from dotman.terminal import read_prompt_line
 
@@ -373,9 +373,8 @@ def run_basic_reconcile(
             *(str(editable_source.editable_copy_path) for editable_source in editable_sources),
         ]
         if "$" in editor_value:
-            command = ShellCommand(
-                editor_value + " " + " ".join(shlex.quote(path) for path in positional_paths)
-            )
+            # sh -c reserves its first argument for $0; staged sources start at $1.
+            command = ArgvCommand(("/bin/sh", "-c", editor_value, "dotman-editor", *positional_paths))
         else:
             command = ArgvCommand((*editor_command, *positional_paths))
         result = current_command_runtime().run(

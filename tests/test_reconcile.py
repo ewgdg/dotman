@@ -406,3 +406,48 @@ def test_run_basic_reconcile_requires_explicit_confirmation_answer(
     assert exit_code == 0
     assert repo_path.read_text(encoding="utf-8") == "edited repo\n"
     assert capsys.readouterr().err.count("invalid confirmation: enter 'y' or 'n'") == 2
+
+
+def test_shell_editor_receives_primary_as_first_positional_argument(tmp_path: Path) -> None:
+    repo_path = tmp_path / "primary source"
+    live_path = tmp_path / "live"
+    repo_path.write_text("original")
+    live_path.write_text("live")
+
+    assert run_basic_reconcile(
+        repo_path=str(repo_path),
+        live_path=str(live_path),
+        additional_sources=[],
+        editor='printf edited > "$1"',
+        editor_io="pipe",
+        assume_yes=True,
+    ) == 0
+
+    assert repo_path.read_text() == "edited"
+    assert live_path.read_text() == "live"
+
+
+def test_shell_editor_receives_only_sources_in_primary_then_additional_order(
+    tmp_path: Path,
+) -> None:
+    sources = [tmp_path / name for name in ("primary source", "second source", "third source")]
+    for index, source in enumerate(sources):
+        source.write_text(str(index))
+    live_path = tmp_path / "live"
+    live_path.write_text("live")
+
+    assert run_basic_reconcile(
+        repo_path=str(sources[0]),
+        live_path=str(live_path),
+        additional_sources=[str(source) for source in sources[1:]],
+        editor=(
+            'test "$#" -eq 3 || exit 1; i=0; '
+            'for source in "$@"; do printf "edited %s" "$i" > "$source"; '
+            'i=$((i + 1)); done'
+        ),
+        editor_io="pipe",
+        assume_yes=True,
+    ) == 0
+
+    assert [source.read_text() for source in sources] == ["edited 0", "edited 1", "edited 2"]
+    assert live_path.read_text() == "live"

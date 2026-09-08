@@ -193,8 +193,13 @@ def test_custom_editor_that_mentions_dotman_uses_transactional_contract(tmp_path
 
     def run(request):
         seen["request"] = request
-        assert request.command.source.endswith("editable-2-include")
-        assert request.env["DOTMAN_EDITOR_REVIEW_PATH"] not in request.command.source
+        assert isinstance(request.command, ArgvCommand)
+        assert request.command.arguments[2] == 'dotman reconcile editor --repo-path "$DOTMAN_REPO_PATH"'
+        assert request.command.arguments[4:] == (
+            request.env["DOTMAN_EDITOR_PRIMARY_PATH"],
+            request.env["DOTMAN_EDITOR_ADDITIONAL_SOURCE_PATHS"],
+        )
+        assert request.env["DOTMAN_EDITOR_REVIEW_PATH"] not in request.command.arguments
         Path(request.env["DOTMAN_REPO_PATH"]).write_text("edited\n", encoding="utf-8")
         return CommandResult(exit_code=0)
 
