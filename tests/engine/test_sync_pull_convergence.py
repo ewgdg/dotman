@@ -116,7 +116,7 @@ def test_failed_lazy_capture_remains_unapproved_and_retry_uses_frozen_inputs(tmp
         command(session, SetApproval, 'main:app.unit', True)
         row = session.view.rows[0]
         assert not row.approved and row.proposal is None
-        assert row.diagnostics[0].code == 'materialization-failed'
+        assert row.diagnostics[0].code == 'capture-failed'
         marker.touch()
         (tmp_path / 'live/unit').write_bytes(b'external')
         command(session, SetApproval, row.row_id, True)

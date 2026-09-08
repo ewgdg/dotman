@@ -203,7 +203,7 @@ def test_json_preflight_failure_is_one_document(tmp_path, monkeypatch, capsys, f
 def test_interrupted_materialization_reports_abort_without_publication(tmp_path, monkeypatch, capsys):
     from dotman import sync_session
     engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
-    def interrupt(*args):
+    def interrupt(*args, **kwargs):
         raise KeyboardInterrupt()
     monkeypatch.setattr(sync_session, "materialize", interrupt)
     assert runner_for(engine).run(arguments(dry_run=False)) == 130
@@ -253,19 +253,20 @@ def test_json_reports_actual_failed_hook_without_leaking_captured_output(tmp_pat
                and step["exit_code"] == 7 for step in payload["stages"])
 
 
-@pytest.mark.parametrize("unsupported_policy", ["both"])
 @pytest.mark.parametrize("dry_run", [False, True])
-def test_unattended_unsupported_drift_blocks_all_publication(tmp_path, monkeypatch, capsys, unsupported_policy, dry_run):
+def test_unattended_both_fallback_reports_reason(tmp_path, monkeypatch, capsys, dry_run):
     engine = make_engine(tmp_path, monkeypatch, [
-        ("supported", "push-only", b"repo", b"live", ""),
-        ("unsupported", unsupported_policy, b"repo", b"live", ""),
+        ("push", "push-only", b"repo", b"live", ""),
+        ("both", "both", b"repo", b"live", ""),
     ])
-    assert runner_for(engine).run(arguments(dry_run=dry_run)) == 1
+    assert runner_for(engine).run(arguments(dry_run=dry_run)) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert (tmp_path / "live/supported").read_bytes() == b"live"
-    assert payload["status"] == "failed"
-    assert payload["summary"]["diagnostics"][0]["code"] == "unattended-decision"
-    assert payload["stages"] == []
+    unit = next(unit for unit in payload["sync_units"] if unit["policy"] == "both")
+    assert unit["resolution_intent"] == "use-live"
+    assert unit["fallback_reason"] == "absent"
+    assert unit["allowed_intents"] == ["use-repository", "use-live"]
+    assert (tmp_path / "repo/packages/app/both").read_bytes() == (b"repo" if dry_run else b"live")
+    assert (tmp_path / "live/push").read_bytes() == (b"live" if dry_run else b"repo")
 
 
 def test_json_failed_hook_identifies_exact_instance_target(tmp_path, monkeypatch, capsys):

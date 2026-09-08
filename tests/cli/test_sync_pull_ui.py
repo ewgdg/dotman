@@ -21,13 +21,16 @@ def test_pull_review_and_document_show_repository_effect(tmp_path, monkeypatch, 
             repository=outcome if outcome is not None else observation.repository,
             live=observation.live, primary_source_change=outcome,
             publication_effects=(), intent="use-live",
+            capture=outcome if outcome is not None else observation.repository,
+            reconciliation="replacement",
         )
-        row = replace(row, observation=observation, allowed_intents=("use-live",), proposal=proposal, approved=True)
+        row = replace(row, observation=observation, allowed_intents=("use-live",), intent="use-live", proposal=proposal, approved=True)
         session = SimpleNamespace(view=replace(opened.view, observations=(observation,), rows=(row,)))
         deck = CommandDeck(session, use_color=False)
         review = deck.review_text()
         assert "Resolution: Use live" in review
-        assert "Capture: frozen live" in review
+        assert f"Capture: {'missing' if isinstance(outcome, Missing) else 'present'}" in review
+        assert "Reconciliation: replacement" in review
         assert f"Primary Source Change: {kind or 'none'}" in review
         assert "Live remains unchanged" in review
         if kind == "write":
@@ -128,3 +131,29 @@ def test_no_write_review_separates_frozen_pull_views_from_repository_effect(tmp_
         assert session.view.rows[0].approved
         assert deck.review_text().replace('approved', 'unapproved') == text
         assert marker.read_text().splitlines() == ['capture']
+
+
+def test_merge_review_reports_capture_reconciliation_and_both_outcomes(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'both', b'repo', b'live', '')])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as opened:
+        row = opened.view.rows[0]
+        proposal = Proposal(
+            repository=FilePresent(b'merged'), live=FilePresent(b'rendered'),
+            primary_source_change=FilePresent(b'merged'), publication_effects=(),
+            intent='merge', capture=FilePresent(b'captured'), reconciliation='three-way merge',
+        )
+        row = replace(row, intent='merge', proposal=proposal, fallback_reason=None)
+        session = SimpleNamespace(view=replace(opened.view, rows=(row,)))
+        review = CommandDeck(session, use_color=False).review_text()
+        assert 'Resolution: Merge' in review
+        assert 'Capture result' in review and '+captured' in review
+        assert 'Reconciliation: three-way merge' in review
+        assert '+merged' in review
+        assert '+rendered' in review
+        assert 'Live remains unchanged' not in review
+        unit = sync_document(SimpleNamespace(dry_run=True, scopes=[]), session, None)['sync_units'][0]
+        assert unit['resolution_intent'] == 'merge'
+        assert unit['capture'] == 'present'
+        assert unit['reconciliation'] == 'three-way merge'
+        assert unit['fallback_reason'] is None
+        assert 'captured' not in str(unit)

@@ -175,3 +175,46 @@ Pending.
   1,261 passed in 9.50s. Compileall, focused Ruff check/format, and whitespace
   checks passed. All regression subprocesses use Command Runtime.
 - Still bounded to #61, pending review; no later ticket, commit, or push.
+
+
+## #65 both-policy Merge checkpoint
+
+### Scope and intention
+
+- Authorized continuation after the #62–#64 file-session slices: implement #65
+  only; leave the #66 Missing/deletion/no-write expansion to the next checkpoint.
+- Expose policy-constrained intent selection with a usable-Base Merge default and
+  an explicit Use live fallback. Preserve frozen inputs, standing Approval and
+  independent unit completion.
+
+### Implementation and decisions
+
+- Added lazy three-way reconciliation using the established Git merge-file
+  provider through Command Runtime. Consulted the current Git merge-file manual
+  for clean/conflict/error exit semantics; no custom text merge algorithm.
+- Capture results and valid Render projections are retained by frozen inputs.
+  A failed Capture is retryable; reconciliation conflict and provider failure
+  remain distinct typed diagnostics without an implicit intent change.
+- Both-policy outcomes freeze Primary and publication effects; Use repository
+  does not Capture. Use live and Merge Render their repository outcome, not the
+  observation's arbitrary comparison view.
+- Repository Apply acknowledges only units with no remaining live effects.
+  Live Publication completes each eligible unit after its own exact effects,
+  before its post-hooks or later work. Completion passes the actual intent and
+  required-effect statuses into the shared Base lifecycle.
+- The existing deck now exposes Resolution selection and explicit Retry via
+  semantic commands, with visible fallback, Capture/reconciliation evidence,
+  effect previews, structured metadata and shared styles.
+
+### Validation progress
+
+- Tests-first red runs exposed the absent semantic intent contract and redundant
+  comparison Render execution; both are corrected.
+- 120 focused engine session/convergence/publication tests passed in 5.00s,
+  including frozen three-way inputs, Capture reuse, conflicts/provider retry,
+  intent-specific live facts, failed publication/acknowledgment and earlier-unit
+  Base durability.
+- 72 affected CLI/UI tests passed in 20.33s. Compileall and whitespace checks
+  passed. Independent bounded engine review accepted with no #65 blockers.
+- No full suite run: validation stayed within the affected file-session,
+  execution and CLI surfaces. No #66 implementation added.

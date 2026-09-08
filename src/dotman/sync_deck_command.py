@@ -6,10 +6,10 @@ import json
 import sys
 
 from dotman.cli_style import render_sync_term
-from dotman.sync_base_store import FilePresent
+from dotman.sync_base_store import FilePresent, Missing
 from dotman.sync_session import (
     CommandRejected, PrepareProposalReview, Preview, SessionOpenFailed,
-    SetApproval, SyncSession,
+    SetApproval, SetResolutionIntent, RetryMaterialization, SyncSession,
 )
 from dotman.ui_context import ui_config_scope
 
@@ -22,6 +22,16 @@ def approve(session: SyncSession, row_id: str, approved: bool):
 def review(session: SyncSession, row_id: str):
     view = session.view
     return session.dispatch(PrepareProposalReview(view.session_id, view.revision, row_id))
+
+
+def set_resolution_intent(session: SyncSession, row_id: str, intent: str):
+    view = session.view
+    return session.dispatch(SetResolutionIntent(view.session_id, view.revision, row_id, intent))
+
+
+def retry_materialization(session: SyncSession, row_id: str):
+    view = session.view
+    return session.dispatch(RetryMaterialization(view.session_id, view.revision, row_id))
 
 
 class SyncDeckCommandRunner:
@@ -129,6 +139,8 @@ class SyncDeckCommandRunner:
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {unit['identity']}")
             if unit["resolution_intent"]:
                 print(f"      {render_sync_term(resolution_label(unit['resolution_intent']), use_color=self._use_color)}")
+            if unit["fallback_reason"]:
+                print(f"      {render_sync_term('Fallback', use_color=self._use_color)}: {unit['fallback_reason']}")
             if unit["primary_source_change"]:
                 print(f"      repository {unit['primary_source_change']['kind']}")
             for effect in unit["effects"]:
@@ -159,9 +171,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             {"code": item.code, "message": item.message}
             for item in unit_diagnostics
         ]
-        intent = proposal.intent if proposal else (
-            row.allowed_intents[0] if row and len(row.allowed_intents) == 1 else None
-        )
+        intent = row.intent if row else None
         if proposal:
             materialization = "ready"
         elif row and row.diagnostics:
@@ -175,6 +185,10 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "policy": observation.effective_policy,
             "observation": observation.state,
             "resolution_intent": intent,
+            "allowed_intents": list(row.allowed_intents) if row else [],
+            "fallback_reason": row.fallback_reason if row else None,
+            "capture": ("missing" if isinstance(proposal.capture, Missing) else "present") if proposal and proposal.capture is not None else None,
+            "reconciliation": proposal.reconciliation if proposal else None,
             "selected": bool(row and row.approved),
             "approved": bool(row and row.approved),
             "materialization": materialization,
@@ -244,7 +258,7 @@ def effect_summary(effect) -> dict:
 
 
 def resolution_label(intent: str) -> str:
-    return {"use-repository": "Use repository", "use-live": "Use live"}[intent]
+    return {"use-repository": "Use repository", "use-live": "Use live", "merge": "Merge"}[intent]
 
 
 def primary_change_summary(proposal, path) -> dict | None:

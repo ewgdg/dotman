@@ -110,7 +110,7 @@ def test_mouse_click_focuses_identity_and_toggles_only_approval(tmp_path, monkey
         run(interact())
 
 
-def test_unsupported_capability_is_distinct_from_observation_failure(tmp_path, monkeypatch):
+def test_both_fallback_is_distinct_from_observation_failure(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
         ("both", "both", b"repo", b"live", ""),
         ("bad", "push-only", b"repo", b"live", ""),
@@ -124,11 +124,11 @@ def test_unsupported_capability_is_distinct_from_observation_failure(tmp_path, m
         async def interact():
             async with app.run_test(size=(110, 24)) as pilot:
                 table = app.query_one(DataTable)
-                assert "Unsupported" in table.render_line(1).text
+                assert "Use live" in table.render_line(1).text
                 assert "Observation failed" in table.render_line(2).text
-                assert "one-sided file" in str(app.query_one("#detail", Static).render())
+                assert "Fallback: absent" in str(app.query_one("#detail", Static).render())
                 await pilot.press("space", "a")
-                assert not any(row.approved for row in session.view.rows)
+                assert [row.approved for row in session.view.rows] == [True, False]
                 await pilot.press("down")
                 assert "regular file" in str(app.query_one("#detail", Static).render())
         run(interact())
@@ -317,4 +317,81 @@ def test_help_area_click_cannot_authorize_after_clear_key(tmp_path, monkeypatch)
                     help_widget.render_line(y).text for y in range(help_widget.size.height)
                 )
                 assert "Esc abort" in rendered_help and "X confirm" in rendered_help
+        run(interact())
+
+
+def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
+    from textual.widgets import OptionList
+
+    engine = make_engine(tmp_path, monkeypatch, [
+        ('unit', 'both', b'repo', b'live', ''),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test() as pilot:
+                assert session.view.rows[0].intent == 'use-live'
+                assert 'Fallback' in str(app.query_one('#detail', Static).render())
+                await pilot.press('r')
+                menu = app.query_one(OptionList)
+                assert menu.display
+                assert menu.option_count == len(session.view.rows[0].allowed_intents)
+                await pilot.press('home', 'enter')
+                assert session.view.rows[0].intent == session.view.rows[0].allowed_intents[0]
+                assert not session.view.rows[0].approved
+                assert not menu.display
+                await pilot.press('r', 'escape')
+                assert not menu.display
+                assert app.return_value is None
+        run(interact())
+
+
+def test_resolution_cell_and_menu_support_mouse(tmp_path, monkeypatch):
+    from textual.widgets import OptionList
+
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'both', b'repo', b'live', '')])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(100, 24)) as pilot:
+                table = app.query_one(DataTable)
+                resolution_x = table.render_line(0).text.index('Resolution')
+                post_cell_click(app, (resolution_x, 1))
+                await pilot.pause()
+                assert app.query_one(OptionList).display
+                await pilot.click('#resolution', offset=(2, 1))
+                assert session.view.rows[0].intent == 'use-repository'
+                assert not session.view.rows[0].approved
+                assert not app.query_one(OptionList).display
+        run(interact())
+
+
+def test_retry_key_rematerializes_failed_review_without_approval(tmp_path, monkeypatch):
+    from dotman import sync_session
+
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'both', b'repo', b'live', '')])
+    materialize = sync_session.materialize
+    calls = []
+
+    def fail_once(*args, **kwargs):
+        calls.append(None)
+        if len(calls) == 1:
+            raise ValueError('Capture unavailable')
+        return materialize(*args, **kwargs)
+
+    monkeypatch.setattr(sync_session, 'materialize', fail_once)
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test() as pilot:
+                await pilot.press('enter')
+                assert session.view.rows[0].diagnostics
+                await pilot.press('t')
+                assert session.view.rows[0].proposal is not None
+                assert not session.view.rows[0].diagnostics
+                assert not session.view.rows[0].approved
+                assert len(calls) == 2
         run(interact())

@@ -9,11 +9,11 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.errors import NoWidget
-from textual.widgets import DataTable, RichLog, Static
+from textual.widgets import DataTable, OptionList, RichLog, Static
 
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import FilePresent, Missing
-from dotman.sync_deck_command import approve, review, effect_summary, primary_change_summary, resolution_label
+from dotman.sync_deck_command import approve, review, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
 from dotman.sync_session import CommandRejected, SyncSession
 
 
@@ -134,8 +134,8 @@ class CommandDeck:
         if row is None:
             return ""
         proposal = row.proposal
-        intent = proposal.intent if proposal else row.allowed_intents[0] if row.allowed_intents else None
-        pull = intent == "use-live"
+        intent = row.intent
+        pull = intent in ("use-live", "merge")
         primary = primary_change_summary(proposal, row.observation.repository_path)
         lines = [f":: Proposal Review — {row.row_id}",
                  f"  Approval: {'approved' if row.approved else 'unapproved'}",
@@ -146,8 +146,17 @@ class CommandDeck:
                  f"  Resolution: {render_sync_term(resolution_label(intent), use_color=self.use_color) if intent else 'blocked'}",
                  f"  Sync Base: {row.observation.base.status}",
                  f"  Primary Source Change: {primary['kind'] if primary else 'none'}",
-                 f"  Capture: {'frozen live' if proposal else 'pending'}" if pull else "  Capture: not required",
-                 "  Reconciliation: captured repository outcome" if pull else "  Reconciliation: frozen repository outcome"]
+                 f"  Capture: {('missing' if isinstance(proposal.capture, Missing) else 'present') if proposal and proposal.capture is not None else 'pending' if pull else 'not required'}",
+                 f"  Reconciliation: {proposal.reconciliation if proposal else 'pending'}"]
+        if row.fallback_reason:
+            lines.append(f"  {render_sync_term('Fallback', use_color=self.use_color)}: {row.fallback_reason}")
+        if proposal and proposal.capture is not None:
+            lines.append("  Capture result vs frozen repository:")
+            lines.extend(_frozen_difference(
+                row.observation.repository, proposal.capture,
+                before_label="frozen repository", after_label="Capture result",
+                description="Capture",
+            ))
         if primary:
             lines.append(f"    {primary['path']} (authorized by Proposal Approval)")
         lines.extend(f"  {item.message}" for item in (*row.observation.diagnostics, *row.diagnostics))
@@ -177,16 +186,24 @@ class CommandDeck:
                 lines.append(detail)
             if not proposal.publication_effects:
                 lines.append("    none (Approval still required)")
-            side = "repository" if pull else "live"
-            before = row.observation.repository if pull else row.observation.live
-            after = proposal.repository if pull else proposal.live
-            if pull:
+            repository_effect = pull or row.observation.effective_policy == "both"
+            side = "repository" if repository_effect else "live"
+            before = row.observation.repository if repository_effect else row.observation.live
+            after = proposal.repository if repository_effect else proposal.live
+            if row.observation.effective_policy == "pull-only":
                 lines.append("  Live remains unchanged")
             lines.append(f"  {side.capitalize()} effect preview:")
             lines.extend(_frozen_difference(
                 before, after, before_label=f"frozen {side}",
                 after_label=f"approved {side} outcome", description=f"{side} outcome",
             ))
+            if row.observation.effective_policy == "both":
+                lines.append("  Live effect preview:")
+                lines.extend(_frozen_difference(
+                    row.observation.live, proposal.live,
+                    before_label="frozen live", after_label="approved live outcome",
+                    description="live outcome",
+                ))
             lines.append(f"  Frozen {side}: {'missing' if isinstance(before, Missing) else 'present'}")
             lines.append(f"  {side.capitalize()} outcome: {'missing' if isinstance(after, Missing) else 'present'}")
         lines += ["", "  ↑/↓ scroll  Space Approval  Esc return to workset"]
@@ -201,7 +218,7 @@ def row_resolution(row) -> str:
         return "Proposal failed"
     if not row.allowed_intents:
         return "Unsupported"
-    return resolution_label(row.proposal.intent if row.proposal else row.allowed_intents[0])
+    return resolution_label(row.intent)
 
 
 class WorksetTable(DataTable):
@@ -224,6 +241,7 @@ class SyncDeckApp(App[bool]):
     #title { height: auto; padding: 0 1; text-style: bold; color: $accent; }
     #workset { height: 1fr; }
     #detail { height: auto; max-height: 5; padding: 0 1; overflow-y: auto; }
+    #resolution { height: auto; max-height: 5; border: round $accent; margin: 0 1; }
     #review { height: 1fr; }
     #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
     #notice { height: auto; padding: 0 1; color: $warning; }
@@ -246,6 +264,8 @@ class SyncDeckApp(App[bool]):
                 ("ctrl+end", "scroll_bottom", "scroll_end"),
             )
         ],
+        Binding("r,R", "resolution", "Resolution", priority=True),
+        Binding("t,T", "retry", "Retry", priority=True),
         Binding("space", "approve", "Approval", priority=True),
         Binding("a,A", "approve_all", "Approve all", priority=True),
         Binding("u,U", "clear_all", "Clear all", priority=True),
@@ -283,7 +303,10 @@ class SyncDeckApp(App[bool]):
                     if row >= 0 and column >= 0 and not metadata.get("out_of_bounds"):
                         widget.move_cursor(row=row, column=column)
                         self.deck.click(row, selection=column == 0)
+                        self.close_resolution()
                         self.update_workset()
+                        if column == 3:
+                            self.action_resolution()
                 self._workset_mouse_down = False
         # Preserve native focus, mouse capture, selection cleanup and scrolling.
         await super().on_event(event)
@@ -292,12 +315,14 @@ class SyncDeckApp(App[bool]):
         yield Static(":: Sync Command Deck", id="title", markup=False)
         yield WorksetTable(id="workset", cursor_type="cell", zebra_stripes=True)
         yield Static(id="detail", markup=False)
+        yield OptionList(id="resolution")
         yield RichLog(id="review", wrap=False, auto_scroll=False, min_width=1)
         yield Static(id="confirmation", markup=False)
         yield Static(id="notice", markup=False)
         yield Static(id="help", markup=False)
 
     def on_mount(self) -> None:
+        self.query_one(OptionList).display = False
         table = self.query_one(WorksetTable)
         table.add_columns("Approval", "Target", "Policy", "Resolution")
         for row in self.deck.session.view.rows:
@@ -323,12 +348,14 @@ class SyncDeckApp(App[bool]):
                               update_width=True)
         self.update_detail()
         self.query_one("#notice", Static).update(self.deck.notice)
-        if self.deck.confirming:
+        if self.query_one(OptionList).display:
+            help_text = "↑/↓ choose Resolution · Enter select · Esc dismiss"
+        elif self.deck.confirming:
             help_text = "Enter confirm · Esc return · Ctrl+C abort"
         elif self.deck.reviewing:
-            help_text = "Esc return · Space Approval · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
+            help_text = "Esc return · Space Approval · T retry · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
         else:
-            help_text = "Esc abort · Space Approval · Enter review · A all · U clear · X confirm"
+            help_text = "Esc abort · X confirm · Space Approval · Enter review · R resolve · T retry"
         self.query_one("#help", Static).update(help_text)
 
     def update_detail(self) -> None:
@@ -339,7 +366,9 @@ class SyncDeckApp(App[bool]):
             diagnostics = (*row.observation.diagnostics, *row.diagnostics)
             detail = "\n".join(item.message for item in diagnostics)
             if not diagnostics and not row.allowed_intents:
-                detail = "Unsupported: this session has no resolution for this target. Sync currently supports one-sided file targets, not both-policy or directory convergence."
+                detail = "Unsupported: this session has no resolution for this target. Directory convergence is not supported."
+            if row.fallback_reason:
+                detail += f"\nFallback: {row.fallback_reason}"
             detail = f"{row.row_id}\n{detail}" if detail else row.row_id
         self.query_one("#detail", Static).update(detail)
 
@@ -362,6 +391,11 @@ class SyncDeckApp(App[bool]):
         # batched terminal keys can approve the old row before navigation runs.
         if self.deck.confirming:
             return
+        if self.query_one(OptionList).display:
+            menu_action = {"cursor_up": "cursor_up", "cursor_down": "cursor_down", "scroll_home": "first", "scroll_end": "last"}.get(table_action)
+            if menu_action:
+                await self.query_one(OptionList).run_action(menu_action)
+            return
         if self.deck.reviewing:
             await self.query_one(RichLog).run_action(review_action)
         else:
@@ -377,6 +411,8 @@ class SyncDeckApp(App[bool]):
             self.deck.focus = self.query_one(WorksetTable).cursor_row
 
     def action_approve(self) -> None:
+        if self.query_one(OptionList).display:
+            return
         self.sync_focus()
         self.deck.select()
         self.update_workset()
@@ -384,10 +420,14 @@ class SyncDeckApp(App[bool]):
             self.show_review()
 
     def action_approve_all(self) -> None:
+        if self.query_one(OptionList).display:
+            return
         self.deck.select_all(True)
         self.update_workset()
 
     def action_clear_all(self) -> None:
+        if self.query_one(OptionList).display:
+            return
         self.deck.select_all(False)
         self.update_workset()
 
@@ -406,6 +446,11 @@ class SyncDeckApp(App[bool]):
         self.call_after_refresh(log.scroll_to, *position, animate=False)
 
     def action_review_or_confirm(self) -> None:
+        menu = self.query_one(OptionList)
+        if menu.display:
+            if menu.highlighted is not None:
+                self.choose_resolution(menu.highlighted)
+            return
         self.sync_focus()
         if self.deck.confirming:
             self.exit(True)
@@ -416,6 +461,7 @@ class SyncDeckApp(App[bool]):
             self.update_workset()
 
     def action_confirm(self) -> None:
+        self.close_resolution()
         self.deck.confirm()
         if self.deck.confirming:
             self.query_one("#workset").display = False
@@ -427,6 +473,10 @@ class SyncDeckApp(App[bool]):
         self.update_workset()
 
     def action_back(self) -> None:
+        if self.query_one(OptionList).display:
+            self.close_resolution()
+            self.update_workset()
+            return
         if self.deck.reviewing:
             log = self.query_one("#review", RichLog)
             self.review_positions[self.deck.focused_row.row_id] = (log.scroll_x, log.scroll_y)
@@ -434,6 +484,50 @@ class SyncDeckApp(App[bool]):
             self.exit(False)
         else:
             self.show_workset()
+
+    def close_resolution(self) -> None:
+        self.query_one(OptionList).display = False
+        self.query_one(WorksetTable).focus()
+
+    def action_resolution(self) -> None:
+        if self.deck.reviewing or self.deck.confirming:
+            return
+        self.sync_focus()
+        row = self.deck.focused_row
+        if row is None or "set-resolution-intent" not in row.allowed_commands:
+            return
+        menu = self.query_one(OptionList)
+        menu.clear_options()
+        menu.add_options([Text.from_ansi(render_sync_term(resolution_label(intent), use_color=self.deck.use_color))
+                          for intent in row.allowed_intents])
+        menu.highlighted = row.allowed_intents.index(row.intent)
+        menu.display = True
+        menu.focus()
+        self.update_workset()
+
+    def choose_resolution(self, index: int) -> None:
+        row = self.deck.focused_row
+        result = set_resolution_intent(self.deck.session, row.row_id, row.allowed_intents[index])
+        self.deck.notice = result.reason if isinstance(result, CommandRejected) else ""
+        self.close_resolution()
+        self.update_workset()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if self.query_one(OptionList).display:
+            self.choose_resolution(event.option_index)
+
+    def action_retry(self) -> None:
+        if self.deck.confirming:
+            return
+        self.sync_focus()
+        row = self.deck.focused_row
+        if row is None or "retry-materialization" not in row.allowed_commands:
+            return
+        result = retry_materialization(self.deck.session, row.row_id)
+        self.deck.notice = result.reason if isinstance(result, CommandRejected) else ""
+        self.update_workset()
+        if self.deck.reviewing:
+            self.show_review()
 
     def action_abort(self) -> None:
         self.exit(False)

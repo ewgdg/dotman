@@ -9,7 +9,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from dotman.execution import ExecutionStep
+from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
+from dotman.sync_reconciliation import reconcile, ReconciliationConflict, ReconciliationFailed
+from dotman.projection import project_frozen_file
 from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
 from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError, FilePresent, Missing
@@ -24,7 +27,10 @@ from dotman.sync_repository_apply import (
 )
 
 
-CommandName = Literal["set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
+ResolutionIntent = Literal["use-repository", "use-live", "merge"]
+
+
+CommandName = Literal["set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
 
 
 @dataclass(frozen=True)
@@ -41,27 +47,46 @@ class Proposal:
     live: FilePresent | Missing
     primary_source_change: FilePresent | Missing | None
     publication_effects: tuple[PublicationEffect, ...]
-    intent: Literal["use-repository", "use-live"] = "use-repository"
+    intent: ResolutionIntent = "use-repository"
+    capture: FilePresent | Missing | None = None
+    reconciliation: str | None = None
 
 
 def materialize(
     observation: Observation,
     *,
     capture: Callable[[Observation], FilePresent | Missing] | None = None,
+    intent: ResolutionIntent | None = None,
+    render: Callable[[Observation, FilePresent | Missing], FilePresent | Missing] | None = None,
+    merge: Callable[[Observation, FilePresent | Missing], FilePresent | Missing] | None = None,
 ) -> Proposal:
-    if observation.effective_policy == "pull-only":
-        if capture is None or observation.live is None:
-            raise ValueError("Use live requires a frozen Capture provider")
-        repository = capture(observation)
-        return Proposal(
-            repository, observation.live,
-            repository if repository != observation.repository else None,
-            (), "use-live",
-        )
+    intent = intent or ("use-live" if observation.effective_policy == "pull-only" else "use-repository")
     repository = observation.repository
-    live = observation.comparison_repository
-    if repository is None or live is None:
+    captured = None
+    if repository is None or observation.live is None:
         raise ValueError("Proposal requires successfully frozen file endpoints")
+    if intent in ("use-live", "merge"):
+        if capture is None:
+            raise ValueError("Resolution requires a frozen Capture provider")
+        captured = capture(observation)
+        if intent == "merge":
+            if merge is None:
+                raise ValueError("Merge requires usable frozen ancestry")
+            repository = merge(observation, captured)
+        else:
+            repository = captured
+    primary = repository if repository != observation.repository else None
+    if observation.effective_policy == "pull-only":
+        return Proposal(repository, observation.live, primary, (), intent, captured,
+                        "captured repository outcome")
+    if observation.effective_policy == "both":
+        if render is None:
+            raise ValueError("Both-policy publication requires frozen outcome projection")
+        live = render(observation, repository)
+    else:
+        live = observation.comparison_repository
+    if live is None:
+        raise ValueError("Proposal requires successfully frozen publication outcome")
     effects = []
     path = observation.live_path
     if live != observation.live:
@@ -84,15 +109,33 @@ def materialize(
         and any(effect.kind != "delete" for effect in effects)
     ):
         raise ValueError("Live symlink replacement requires explicit authorization")
-    return Proposal(repository, live, None, tuple(effects))
+    return Proposal(repository, live, primary, tuple(effects), intent, captured,
+                    "three-way merged repository outcome" if intent == "merge" else
+                    "captured repository outcome" if intent == "use-live" else "frozen repository outcome")
 
 
 def supports_proposal(unit: Observation) -> bool:
     return (
         unit.state == "drifted" and not unit.diagnostics
-        and unit.configured_policy in ("push-only", "push-only-delete", "pull-only")
-        and unit.effective_policy in ("push-only", "push-only-delete", "pull-only")
+        and unit.configured_policy in ("push-only", "push-only-delete", "pull-only", "both")
+        and unit.effective_policy in ("push-only", "push-only-delete", "pull-only", "both")
     )
+
+
+def allowed_intents(unit: Observation) -> tuple[ResolutionIntent, ...]:
+    if not supports_proposal(unit):
+        return ()
+    if unit.effective_policy == "both":
+        return ("use-repository", "use-live", "merge") if unit.base.status == "usable" else ("use-repository", "use-live")
+    return ("use-live",) if unit.effective_policy == "pull-only" else ("use-repository",)
+
+
+def default_intent(unit: Observation) -> ResolutionIntent | None:
+    if not supports_proposal(unit):
+        return None
+    if unit.effective_policy == "both":
+        return "merge" if unit.base.status == "usable" else "use-live"
+    return allowed_intents(unit)[0]
 
 
 @dataclass(frozen=True)
@@ -104,7 +147,9 @@ class SessionRow:
     allowed_commands: tuple[CommandName, ...]
     approved: bool = False
     proposal: Proposal | None = None
-    allowed_intents: tuple[Literal["use-repository", "use-live"], ...] = ()
+    allowed_intents: tuple[ResolutionIntent, ...] = ()
+    intent: ResolutionIntent | None = None
+    fallback_reason: str | None = None
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
@@ -155,12 +200,27 @@ class PrepareProposalReview:
 
 
 @dataclass(frozen=True)
+class SetResolutionIntent:
+    session_id: str
+    revision: int
+    row_id: str
+    intent: ResolutionIntent
+
+
+@dataclass(frozen=True)
+class RetryMaterialization:
+    session_id: str
+    revision: int
+    row_id: str
+
+
+@dataclass(frozen=True)
 class Preview:
     session_id: str
     revision: int
 
 
-SessionCommand = SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
+SessionCommand = SetResolutionIntent | RetryMaterialization | SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
 
 
 @dataclass(frozen=True)
@@ -291,6 +351,14 @@ class SyncSession:
         preview: bool,
         event_sink: SessionEventSink | None = None,
     ) -> None:
+        self._captures = {}
+        # A comparison Render is already a valid projection of these frozen
+        # repository inputs. Reusing it also avoids volatile provider reruns.
+        self._renders = {
+            (unit.identity, unit.repository): unit.comparison_repository
+            for unit in observations
+            if unit.compare_repo == "render" and unit.comparison_repository is not None
+        }
         self._event_sink = event_sink
         self._operation_lock: OperationLock | None = None
         self._view = SessionView(
@@ -307,12 +375,15 @@ class SyncSession:
                     else "diagnostic",
                     unit.state == "drifted" and not unit.diagnostics,
                     unit,
-                    ("set-included", "set-approval", "prepare-proposal-review")
+                    ("set-included", "set-approval", "prepare-proposal-review", "set-resolution-intent", "retry-materialization")
                     if supports_proposal(unit)
                     else ("set-included",)
                     if unit.state == "drifted" and not unit.diagnostics
                     else (),
-                    allowed_intents=(("use-live",) if unit.effective_policy == "pull-only" else ("use-repository",)) if supports_proposal(unit) else (),
+                    allowed_intents=allowed_intents(unit),
+                    intent=default_intent(unit),
+                    fallback_reason=(unit.base.reason or "absent")
+                    if unit.effective_policy == "both" and unit.base.status != "usable" else None,
                 )
                 for unit in observations
                 if unit.state != "directly-in-sync" or unit.diagnostics
@@ -377,7 +448,7 @@ class SyncSession:
                     observation.git.primary_clean,
                 )
                 for observation in observations
-                if observation.configured_policy == "pull-only" and not observation.diagnostics
+                if observation.configured_policy in ("pull-only", "both") and not observation.diagnostics
             }
             session._publication_metadata = publication_metadata
             session._repository_metadata = repository_metadata
@@ -396,7 +467,7 @@ class SyncSession:
 
     def dispatch(self, command: SessionCommand) -> CommandAccepted | CommandRejected:
         view = self.view
-        if type(command) not in (SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
+        if type(command) not in (SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
             return CommandRejected(view, "invalid")
         if view.terminal:
             return CommandRejected(view, "terminal")
@@ -429,7 +500,7 @@ class SyncSession:
             )
             self._emit(SessionChanged(self.view))
             return result
-        if isinstance(command, (SetApproval, PrepareProposalReview)):
+        if isinstance(command, (SetApproval, PrepareProposalReview, SetResolutionIntent, RetryMaterialization)):
             if type(command.row_id) is not str or (
                 isinstance(command, SetApproval) and type(command.approved) is not bool
             ):
@@ -437,21 +508,39 @@ class SyncSession:
             row = next((row for row in view.rows if row.row_id == command.row_id), None)
             if row is None:
                 return CommandRejected(view, "unknown-row")
-            name = "set-approval" if isinstance(command, SetApproval) else "prepare-proposal-review"
+            name = {
+                SetApproval: "set-approval", PrepareProposalReview: "prepare-proposal-review",
+                SetResolutionIntent: "set-resolution-intent", RetryMaterialization: "retry-materialization",
+            }[type(command)]
             if name not in row.allowed_commands:
                 return CommandRejected(view, "disallowed")
+            if isinstance(command, SetResolutionIntent):
+                if command.intent not in ("use-repository", "use-live", "merge"):
+                    return CommandRejected(view, "invalid")
+                if command.intent not in row.allowed_intents:
+                    return CommandRejected(view, "disallowed")
+                row = replace(row, intent=command.intent, proposal=None, diagnostics=())
+            if isinstance(command, RetryMaterialization):
+                row = replace(row, proposal=None)
             proposal, diagnostics = row.proposal, row.diagnostics
             approved = command.approved if isinstance(command, SetApproval) else row.approved
-            if proposal is None and (approved or isinstance(command, PrepareProposalReview)):
+            if proposal is None and (approved or isinstance(command, (PrepareProposalReview, RetryMaterialization))):
                 try:
-                    proposal = (
-                        materialize(row.observation, capture=self._capture)
-                        if row.observation.effective_policy == "pull-only"
-                        else materialize(row.observation)
+                    proposal = materialize(
+                        row.observation, intent=row.intent, capture=self._capture,
+                        render=self._render, merge=self._merge,
                     )
                     diagnostics = ()
                 except (KeyboardInterrupt, InterruptedError):
                     diagnostics = (Diagnostic("interrupted", "Materialization interrupted"),)
+                    approved = False
+                except CaptureError as exc:
+                    diagnostics = (Diagnostic("capture-failed", str(exc)),)
+                    approved = False
+                except (ReconciliationConflict, ReconciliationFailed) as exc:
+                    diagnostics = (Diagnostic(
+                        "reconciliation-conflict" if isinstance(exc, ReconciliationConflict)
+                        else "reconciliation-failed", str(exc)),)
                     approved = False
                 except (ValueError, OSError) as exc:
                     diagnostics = (Diagnostic("materialization-failed", str(exc)),)
@@ -515,8 +604,37 @@ class SyncSession:
 
     def _capture(self, observation: Observation) -> FilePresent | Missing:
         item, metadata = self._resolved_inputs[observation.identity]
-        return capture_observation(
-            observation, metadata=metadata, context=item.package_context.context,
+        if observation.identity not in self._captures:
+            try:
+                self._captures[observation.identity] = capture_observation(
+                    observation, metadata=metadata, context=item.package_context.context,
+                    command_runtime=self._context.projection.command_runtime,
+                )
+            except CaptureError:
+                raise
+            except (ValueError, OSError) as exc:
+                raise CaptureError(observation.repository_path, str(exc)) from exc
+        return self._captures[observation.identity]
+
+    def _render(self, observation: Observation, repository: FilePresent | Missing) -> FilePresent | Missing:
+        key = (observation.identity, repository)
+        if key not in self._renders:
+            item, metadata = self._resolved_inputs[observation.identity]
+            outcome = project_frozen_file(
+                self._context.projection.command_runtime, metadata=metadata,
+                context=item.package_context.context,
+                repository=repository.content if isinstance(repository, FilePresent) else None,
+                live=observation.live.content if isinstance(observation.live, FilePresent) else None,
+                view="render", repo_side=True,
+            )
+            self._renders[key] = Missing() if outcome is None else FilePresent(outcome)
+        return self._renders[key]
+
+    def _merge(self, observation: Observation, captured: FilePresent | Missing) -> FilePresent | Missing:
+        if observation.base.status != "usable" or observation.base.record is None:
+            raise ValueError("Merge requires a usable Sync Base")
+        return reconcile(
+            observation.base.record.payload, observation.repository, captured,
             command_runtime=self._context.projection.command_runtime,
         )
 
@@ -533,7 +651,8 @@ class SyncSession:
             completion = lifecycle.complete(
                 self._frozen_bases[observation.identity],
                 ProposalCompletion(
-                    intent="use-live", approved=True,
+                    intent=row.proposal.intent, approved=True,
+                    publication_effects="succeeded" if row.proposal.publication_effects else "not-required",
                     primary_effect="succeeded" if row.proposal.primary_source_change is not None else "not-required",
                 ),
             )
@@ -554,13 +673,13 @@ class SyncSession:
         if not selected:
             return {}, (), ()
         units, diagnostics, steps = {}, (), ()
-        if any(row.proposal.intent == "use-live" for row in selected):
+        if any(row.observation.configured_policy in ("pull-only", "both") or row.proposal.primary_source_change is not None for row in selected):
             by_id = {row.row_id: row for row in selected}
             acknowledgment_failures = {}
 
             def complete(unit: RepositoryApplyUnit) -> None:
                 row = by_id[unit.row_id]
-                if row.proposal.intent == "use-live":
+                if row.observation.configured_policy in ("pull-only", "both") and not row.proposal.publication_effects:
                     try:
                         self._acknowledge(row)
                     except InterruptedError:
@@ -581,7 +700,7 @@ class SyncSession:
             for row in selected:
                 if row.row_id in acknowledgment_failures:
                     units[row.row_id] = ("execution-failed", (acknowledgment_failures[row.row_id],))
-                elif row.proposal.publication_effects:
+                elif row.proposal.publication_effects and units[row.row_id][0] == "converged":
                     # Repository Apply success does not complete pending live work.
                     units[row.row_id] = ("skipped", ())
             if result.error is not None:
@@ -601,15 +720,33 @@ class SyncSession:
         tuple[Diagnostic, ...],
         tuple[SyncStepOutcome, ...],
     ]:
+        by_id = {row.row_id: row for row in selected}
+        acknowledgment_failures = {}
+
+        def complete(unit: PublicationUnit) -> None:
+            row = by_id[unit.row_id]
+            if row.observation.configured_policy in ("pull-only", "both"):
+                try:
+                    self._acknowledge(row)
+                except InterruptedError:
+                    raise
+                except (SyncBaseStoreError, SyncBaseGitError, OSError) as exc:
+                    acknowledgment_failures[row.row_id] = Diagnostic("base-acknowledgment-failed", str(exc))
+                    raise
+
         result = execute_publication(
             self._publication_metadata,
             tuple(PublicationUnit(
                 row.row_id, row.observation.identity, row.proposal.publication_effects
             ) for row in selected),
+            complete=complete,
             snapshot_config=self._context.config.snapshots,
             command_runtime=self._context.projection.command_runtime,
         )
-        return self._execution_outcome(result, "live-publication")
+        units, diagnostics, steps = self._execution_outcome(result, "live-publication")
+        for row_id, failure in acknowledgment_failures.items():
+            units[row_id] = ("execution-failed", (failure,))
+        return units, diagnostics, steps
 
     @staticmethod
     def _execution_outcome(

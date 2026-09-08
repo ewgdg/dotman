@@ -5,7 +5,7 @@ from __future__ import annotations
 import stat
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, Protocol, Sequence
+from typing import Callable, Literal, Protocol, Sequence
 
 from dotman import file_access
 from dotman.command_runtime import INTERRUPTED_EXIT_CODE, CommandRuntime, command_runtime_session, current_command_runtime
@@ -137,6 +137,7 @@ def execute_publication(
     units: Sequence[PublicationUnit],
     *,
     snapshot_config: SnapshotConfig,
+    complete: Callable[[PublicationUnit], None] | None = None,
     command_runtime: CommandRuntime | None = None,
     stream_output: bool = False,
     assume_yes: bool = False,
@@ -266,6 +267,10 @@ def execute_publication(
                                     failure.error, interrupted=failure.status == "interrupted",
                                 ) from exc
                             steps.append(ExecutionStepResult(step, "ok"))
+                        # Complete at this unit's own effect boundary, before hooks
+                        # or a later unit can fail and conceal successful ancestry.
+                        if complete is not None:
+                            complete(current_unit)
                         results[current_unit.row_id] = PublicationUnitResult(current_unit.row_id, "ok")
                         current_unit = None
                         run_hooks(target_hooks, "post_push", package, target)

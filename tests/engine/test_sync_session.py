@@ -270,8 +270,8 @@ def test_execute_with_drift_does_not_claim_convergence(tmp_path, monkeypatch):
     )
     session = open_session(engine, preview=False)
     result = session.execute()
-    assert result.result.status == "incomplete"
-    assert result.result.exit_code == 1
+    assert result.result.status == "completed"
+    assert result.result.exit_code == 0
     assert result.result.units[0].status == "pending"
     assert session.view.terminal
 

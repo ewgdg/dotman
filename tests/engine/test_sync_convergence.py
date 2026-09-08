@@ -98,14 +98,14 @@ def test_direct_agreement_distinct_from_approved_drift_no_write(tmp_path, monkey
         assert session.execute().result.units[0].status == "converged"
 
 
-def test_guard_narrowed_eligible_drift_cannot_approve_in_this_slice(tmp_path, monkeypatch):
+def test_guard_narrowed_both_exposes_only_repository_intent(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
         ("unit", "both", b"repo", b"live", '[targets.unit.hooks]\nguard_pull = "exit 100"'),
     ])
     with open_session(engine) as session:
-        rejected = command(session, SetApproval, "main:app.unit", True)
-        assert isinstance(rejected, CommandRejected)
-        assert rejected.reason == "disallowed"
+        assert session.view.rows[0].allowed_intents == ("use-repository",)
+        command(session, SetApproval, "main:app.unit", True)
+        assert session.view.rows[0].approved
 
 
 @pytest.mark.parametrize("policy,source", [("push-only", None), ("push-only-delete", b"retain")])
@@ -218,7 +218,7 @@ def test_interrupted_materialization_is_typed_and_not_approved(tmp_path, monkeyp
 
     engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
 
-    def interrupt(_observation):
+    def interrupt(_observation, **_providers):
         raise interruption
 
     with open_session(engine, preview=False) as session:
@@ -257,7 +257,7 @@ def test_successful_materialization_clears_prior_failure(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
     materialize = boundary.materialize
 
-    def fail(_observation):
+    def fail(_observation, **_providers):
         raise OSError("temporary failure")
 
     with open_session(engine) as session:

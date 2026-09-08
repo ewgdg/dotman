@@ -29,10 +29,13 @@ acknowledgment flag records successful opening-time maintenance.
 External changes never refresh an open session. Start another session to see
 new filesystem, configuration or Git state.
 
-## One-sided Proposals and the Command Deck
+## Resolution Intents and the Command Deck
 
 Drifted push-only files offer **Use repository**; pull-only files offer only
-**Use live**. Proposal Approval starts off;
+**Use live**. Both-policy files offer **Use repository**, **Use live**, and
+**Merge** when a usable Sync Base exists. Their default is Merge with a usable
+Base; otherwise Use live is an explicit fallback, with the Base reason shown in
+the focused detail, review, and command output. Proposal Approval starts off;
 opening a review does not approve it. Review or Approval materializes the
 Proposal from frozen Observation, retaining the repository representation,
 policy-derived live outcome, exclusive Primary Source Change, and exact
@@ -49,6 +52,12 @@ the frozen repository/live Pull Views separately from repository-effect and
 publication previews. A no-write Proposal still shows the observed drift even
 when Capture returns the unchanged repository representation. Returning preserves
 the workset.
+Press **R** or click a Resolution cell to open the focused row's policy-allowed
+choices. Use arrows and Enter, or click a choice; Escape dismisses the menu.
+Changing Resolution Intent preserves Approval, discards the prior Proposal, and
+rematerializes approved work. **T** explicitly retries failed materialization.
+Review exposes the frozen Capture result and Reconciliation evidence separately
+from both repository and live effect previews.
 Confirmation authorizes the selected, already-materialized outcomes.
 
 For pull-only files, review or Approval lazily Captures frozen live evidence into
@@ -70,12 +79,29 @@ does not claim convergence or roll back earlier successful units.
 No-write completion runs no hooks and creates no snapshot. An enclosing
 post-hook failure fails the operation without undoing a unit's convergence.
 
+### Both-policy reconciliation
+
+Merge lazily reconciles the usable Base payload, frozen repository representation,
+and frozen Capture result. Equal sides agree; when one side still equals the Base,
+the other side wins. Otherwise present file contents use Git's three-way
+`merge-file` through Command Runtime. Conflicts and provider failures remain
+distinct typed, blocked, retryable diagnostics. They clear the affected Approval,
+not its Resolution Intent; Dotman never selects another intent or opens an Editor
+automatically. Successful Capture and Render results are reused for unchanged
+frozen inputs.
+
+Use repository never Captures. Use live and Merge derive live publication by
+Rendering their repository outcome under policy, so Use live can require live
+writes or mode changes as well as a Primary Source Change. Both stages consume
+only approved frozen effects. An eligible unit acknowledges after its own last
+required effect, before later units or enclosing post-hooks; failure preserves
+the prior Base and does not undo earlier committed acknowledgments.
+
 ## Session lifetime and current engine boundary
 
-File-target sessions support frozen Observation, push-only and pull-only
+File-target sessions support frozen Observation, push-only, pull-only and both-policy
 Proposals, Approval, review, preview, Repository Apply and Live Publication.
-Directory children, auxiliary work, Proposal editing and both-policy drift
-resolution are not yet supported.
+Directory children, auxiliary work and Proposal editing are not yet supported.
 Unapproved or excluded healthy work remains untouched. Abort does not undo Base
 maintenance already committed while opening.
 Deliberately unapproved supported drift remains `pending` without failing the
