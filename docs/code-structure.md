@@ -73,6 +73,7 @@ Current responsibility split:
 - `projection.py` — target projection and file/directory action planning through `ProjectionContext`
 - `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
 - `sync_session.py` — one-shot file and auxiliary session, immutable views, semantic commands, typed dispatch/results and lifecycle events
+- `sync_editor.py` — isolated configured/default Editor invocation and permitted source staging
 - `sync_observation.py` — file endpoint evidence, policy comparisons, frozen Guards/Git/Base facts and opening-time Base lifecycle
 - `sync_auxiliary.py` — immutable Probe/hook rows, one-shot Probe activity and Guard-admitted directional hook retention
 - `operation_lock.py` — manager-wide non-blocking real-operation ownership shared by sessions and Push/Pull command workflows
@@ -96,6 +97,14 @@ is lexical, so a session can dispatch from a copied context without resetting a
 token created in another context. `check_cancelled()` raises typed
 `InterruptedError`. Cancellation never uses Textual thread-worker cancellation as
 evidence that provider cleanup finished.
+
+Explicit Proposal editing shares the same admission lane. TTY providers run while
+Textual is suspended; pipe providers leave the deck visible. Each Editor attempt
+has a separate cancellation scope: cancelling an attempt drains its subprocess
+and discards only that transaction, without poisoning the enclosing SyncSession.
+Session abort still cancels active Editor work. The public row retains staged
+Additional metadata independently from the current Proposal; these unapproved
+candidates are review-only and never projection or execution inputs.
 
 The Base foundation exposes explicit boundaries rather than running a session.
 `BaseUnit` carries successfully resolved selected configuration, never a

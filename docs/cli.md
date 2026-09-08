@@ -80,6 +80,16 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   materialization and the remaining batch, waits for owned process cleanup, and
   exits 130. Completed effects are not rolled back; detached descendants are not
   covered by owned-process cleanup.
+- **E** opens the focused drifted file's Proposal Editor from the workset or
+  review, including one-sided policies and recoverable Proposal failures.
+  The Editor works on isolated repository source copies; saving shows **Edited**
+  and rematerializes policy-appropriate effects without writing tracked sources.
+  Successful editing preserves Approval; cancellation preserves the previous
+  Proposal. Failed materialization clears only that unit's Approval.
+  **T** retries materialization; Editor attempts can be retried with **E**.
+  During editing, **Ctrl-C** cancels only the Editor attempt.
+  Terminal Editors take terminal ownership temporarily and return to the same
+  focused deck. No Editor runs automatically or under `--unattended`.
 - **Unsupported** means the session offers no resolution capability, not that
   observing the filesystem failed. **Observation failed** and **Proposal failed**
   retain their diagnostic details below the table. Current Sync supports file
@@ -107,6 +117,11 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   `probe_work` and `hook_work` contain canonical `identity`, `selected`,
   `directions` and `diagnostics`, without file/Proposal/Base fields.
   `summary.selected_auxiliary` counts directly selected auxiliary rows.
+  Each unit's `resolution_intent` retains its selected automatic intent;
+  `resolution` reports `editor` for an Edited Proposal and `generation` identifies
+  the materialized generation. `staged_additional_sources` exposes retained
+  Additional edit paths and byte counts as unapproved, non-executable metadata;
+  these candidates do not enter the final execution set.
   Each unit's `primary_source_change` describes its repository write/deletion
   (or is null); `effects` contains only live Publication Effects. Summary
   `repository_changes` counts selected Primary Source Changes. Base status and

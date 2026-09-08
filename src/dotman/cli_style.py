@@ -450,6 +450,7 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "Use repository": ("1", "36"),
     "Use live": ("1", "36"),
     "Merge": ("1", "36"),
+    "Edited": ("1", "36"),
     "Fallback": ("33",),
     "converged": ("1", "32"),
     "directly-in-sync": ("2", "32"),

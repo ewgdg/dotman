@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import copy_context
+from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor
 from difflib import unified_diff
 import signal
@@ -12,14 +13,14 @@ from rich.spinner import Spinner
 
 from rich.text import Text
 from textual import events
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
 from textual.errors import NoWidget
 from textual.widgets import DataTable, OptionList, RichLog, Static
 
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import FilePresent, Missing
-from dotman.sync_deck_command import set_selected, row_diagnostics, auxiliary_label, review, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
+from dotman.sync_deck_command import set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
 from dotman.sync_session import AuxiliaryRow, CommandRejected, SyncSession
 
 
@@ -129,6 +130,18 @@ class CommandDeck:
         else:
             self.reviewing = True
 
+    def edit(self) -> None:
+        row = self.focused_row
+        if row is None or self.confirming or "edit-proposal" not in row.allowed_commands:
+            return
+        result = edit_proposal(self.session, row.row_id)
+        if isinstance(result, CommandRejected):
+            self.notice = result.reason
+        elif result.result.status == "cancelled":
+            self.notice = "Editor cancelled; previous Proposal preserved."
+        else:
+            self.notice = "\n".join(item.message for item in result.result.diagnostics)
+
     def confirmation_text(self) -> str:
         selected = [row for row in self.session.view.rows if not isinstance(row, AuxiliaryRow) and row.approved]
         auxiliary_count = sum(row.included for row in self.session.view.rows if isinstance(row, AuxiliaryRow))
@@ -148,6 +161,7 @@ class CommandDeck:
         proposal = row.proposal
         intent = row.intent
         pull = intent in ("use-live", "merge")
+        capture_required = pull and not (proposal and proposal.intent == "editor")
         primary = primary_change_summary(proposal, row.observation.repository_path)
         lines = [f":: Proposal Review — {row.row_id}",
                  f"  Approval: {'approved' if row.approved else 'unapproved'}",
@@ -155,10 +169,10 @@ class CommandDeck:
                  f"  Policy: {row.observation.effective_policy}",
                  f"  Repository path: {row.observation.repository_path}",
                  f"  Live path: {row.observation.live_path}",
-                 f"  Resolution: {render_sync_term(resolution_label(intent), use_color=self.use_color) if intent else 'blocked'}",
+                 f"  Resolution: {render_sync_term(row_resolution(row), use_color=self.use_color) if intent else 'blocked'}",
                  f"  Sync Base: {row.observation.base.status}",
                  f"  Primary Source Change: {primary['kind'] if primary else 'none'}",
-                 f"  Capture: {('missing' if isinstance(proposal.capture, Missing) else 'present') if proposal and proposal.capture is not None else 'pending' if pull else 'not required'}",
+                 f"  Capture: {('missing' if isinstance(proposal.capture, Missing) else 'present') if proposal and proposal.capture is not None else 'pending' if capture_required else 'not required'}",
                  f"  Reconciliation: {proposal.reconciliation if proposal else 'pending'}"]
         if row.fallback_reason:
             lines.append(f"  {render_sync_term('Fallback', use_color=self.use_color)}: {row.fallback_reason}")
@@ -198,7 +212,7 @@ class CommandDeck:
                 lines.append(detail)
             if not proposal.publication_effects:
                 lines.append("    none (Approval still required)")
-            repository_effect = pull or row.observation.effective_policy == "both"
+            repository_effect = pull or row.observation.effective_policy == "both" or proposal.intent == "editor"
             side = "repository" if repository_effect else "live"
             before = row.observation.repository if repository_effect else row.observation.live
             after = proposal.repository if repository_effect else proposal.live
@@ -209,7 +223,7 @@ class CommandDeck:
                 before, after, before_label=f"frozen {side}",
                 after_label=f"approved {side} outcome", description=f"{side} outcome",
             ))
-            if row.observation.effective_policy == "both":
+            if repository_effect and row.observation.effective_policy != "pull-only":
                 lines.append("  Live effect preview:")
                 lines.extend(_frozen_difference(
                     row.observation.live, proposal.live,
@@ -218,7 +232,17 @@ class CommandDeck:
                 ))
             lines.append(f"  Frozen {side}: {'missing' if isinstance(before, Missing) else 'present'}")
             lines.append(f"  {side.capitalize()} outcome: {'missing' if isinstance(after, Missing) else 'present'}")
-        lines += ["", "  ↑/↓ scroll  Space Approval  Esc return to workset"]
+        if row.additional_changes:
+            lines += ["", "  Additional Source Changes (staged, unapproved; not executable):"]
+            for change in row.additional_changes:
+                lines.append(f"    {change.path}")
+                lines.extend(_frozen_difference(
+                    FilePresent(change.before), FilePresent(change.candidate),
+                    before_label="frozen Additional Source",
+                    after_label="staged Additional Source",
+                    description="Additional Source",
+                ))
+        lines += ["", "  ↑/↓ scroll  Space Approval  E edit  T retry  Esc return to workset"]
         return "\n".join(lines)
 
 
@@ -232,7 +256,7 @@ def row_resolution(row) -> str:
         return "Proposal failed"
     if not row.allowed_intents:
         return "Unsupported"
-    return resolution_label(row.intent)
+    return resolution_label(row.proposal.intent if row.proposal else row.intent)
 
 
 class WorksetTable(DataTable):
@@ -281,6 +305,7 @@ class SyncDeckApp(App[bool]):
         ],
         Binding("r,R", "resolution", "Resolution", priority=True),
         Binding("t,T", "retry", "Retry", priority=True),
+        Binding("e,E", "editor", "Editor", priority=True),
         Binding("space", "approve", "Select", priority=True),
         Binding("a,A", "approve_all", "Select all", priority=True),
         Binding("u,U", "clear_all", "Clear all", priority=True),
@@ -299,24 +324,35 @@ class SyncDeckApp(App[bool]):
         self._lane = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sync-materialization")
         self._materialization: asyncio.Task | None = None
         self._aborting = False
+        self._editing = False
 
     @property
     def busy(self) -> bool:
-        return self._materialization is not None or self._aborting
+        # Completed dispatch has drained even before its done callback clears the handle.
+        return self._aborting or (
+            self._materialization is not None and not self._materialization.done()
+        )
 
-    def materialize(self, action) -> None:
+    def materialize(self, action, *, editor_io: str | None = None) -> None:
         """Admit one mutation; all further input is rejected until actual work drains."""
         if self.busy:
             return
+        self._editing = editor_io is not None
+        self.query_one("#busy", Static).update(Spinner(
+            "dots", text="Editing Proposal · Ctrl+C cancel Editor" if self._editing
+            else "Materializing Proposal · Ctrl+C abort",
+        ))
         self.query_one("#busy").display = True
-        self._materialization = asyncio.create_task(self._materialize(action))
+        self._materialization = asyncio.create_task(self._materialize(action, editor_io=editor_io))
         self._materialization.add_done_callback(self._materialization_finished)
 
     def _materialization_finished(self, task: asyncio.Task) -> None:
+        if self._materialization is task:
+            self._materialization = None
         if not task.cancelled() and (error := task.exception()) is not None:
             self._handle_exception(error)
 
-    async def _materialize(self, action) -> None:
+    async def _materialize(self, action, *, editor_io: str | None = None) -> None:
         def dispatch():
             # KeyboardInterrupt must not escape a Future into the asyncio runner.
             try:
@@ -326,23 +362,36 @@ class SyncDeckApp(App[bool]):
             except KeyboardInterrupt as exc:
                 raise InterruptedError("Materialization interrupted") from exc
 
-        work = asyncio.get_running_loop().run_in_executor(self._lane, copy_context().run, dispatch)
         try:
-            await asyncio.shield(work)
-        except asyncio.CancelledError:
-            self._aborting = True
-            self.deck.session.request_cancel()
-            try:
-                await asyncio.shield(work)
-            except InterruptedError:
-                pass
-        except InterruptedError:
-            self._aborting = True
-        except Exception:
-            self._aborting = True
-            raise
+            with ExitStack() as terminal:
+                if editor_io == "tty":
+                    suspension = self.suspend()
+                    suspension.__enter__()
+                    # Textual resumes after its yield only on normal context exit.
+                    # Always restore the terminal, including unexpected dispatch errors.
+                    terminal.callback(suspension.__exit__, None, None, None)
+                work = asyncio.get_running_loop().run_in_executor(
+                    self._lane, copy_context().run, dispatch,
+                )
+                try:
+                    await asyncio.shield(work)
+                except asyncio.CancelledError:
+                    self._aborting = True
+                    self.deck.session.request_cancel()
+                    try:
+                        await asyncio.shield(work)
+                    except InterruptedError:
+                        pass
+                except InterruptedError:
+                    self._aborting = True
+                except Exception:
+                    self._aborting = True
+                    raise
+        except SuspendNotSupported:
+            self.deck.notice = "Terminal Editor requires a suspend-capable terminal."
         finally:
             self._materialization = None
+            self._editing = False
             self.query_one("#busy").display = False
         if self._aborting or any(d.code == "interrupted" for row in self.deck.session.view.rows for d in row.diagnostics):
             self.exit(False)
@@ -447,9 +496,9 @@ class SyncDeckApp(App[bool]):
         elif self.deck.confirming:
             help_text = "Enter confirm · Esc return · Ctrl+C abort"
         elif self.deck.reviewing:
-            help_text = "Esc return · Space Approval · T retry · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
+            help_text = "Esc return · Space Approval · E edit · T retry · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
         else:
-            help_text = "Esc abort · X confirm · Space select · Enter review · R resolve · T retry"
+            help_text = "Esc abort · X confirm · Space mark · Enter view · R intent · E edit · T retry"
         self.query_one("#help", Static).update(help_text)
 
     def update_detail(self) -> None:
@@ -627,6 +676,15 @@ class SyncDeckApp(App[bool]):
         if self.query_one(OptionList).display:
             self.choose_resolution(event.option_index)
 
+    def action_editor(self) -> None:
+        if self.busy or self.deck.confirming or self.query_one(OptionList).display:
+            return
+        self.sync_focus()
+        row = self.deck.focused_row
+        if row is None or "edit-proposal" not in row.allowed_commands:
+            return
+        self.materialize(self.deck.edit, editor_io=row.editor_io)
+
     def action_retry(self) -> None:
         if self.busy:
             return
@@ -642,9 +700,12 @@ class SyncDeckApp(App[bool]):
         self.materialize(retry)
 
     def action_abort(self) -> None:
+        if self._editing:
+            self.deck.session.request_editor_cancel()
+            return
         self._aborting = True
         self.deck.session.request_cancel()
-        if self._materialization is None:
+        if self._materialization is None or self._materialization.done():
             self.exit(False)
 
 

@@ -118,6 +118,38 @@ does not claim convergence or roll back earlier successful units.
 No-write completion runs no hooks and creates no snapshot. An enclosing
 post-hook failure fails the operation without undoing a unit's convergence.
 
+### Transactional Proposal Editor
+
+Press **E** from the workset or Proposal Review to deliberately edit a drifted
+file unit with a surviving route. One-sided policies permit this explicit
+repository edit, including deletion-only units; they still prohibit automatic
+flow in the forbidden direction. Observation failures and Guard-blocked units
+have no Editor. Dotman never launches an Editor automatically or in unattended
+Sync.
+
+The Editor starts from the current Proposal's repository outcome. If no Proposal
+exists, including after a Capture failure or conflict, it starts from frozen
+repository sources without requiring Capture. The configured/default Editor
+receives isolated Primary and permitted Additional Source copies and read-only
+review evidence, not writable tracked paths. Cancelling discards the attempted
+transaction and preserves the previous Proposal and Approval. Saving produces
+an **Edited** generation and derives policy-appropriate effects; tracked sources
+and live endpoints remain unchanged until execution. Byte-identical saves retain
+valid projection results rather than repeating provider work.
+
+Additional Source edits remain staged for review and later Editor attempts.
+This file-session increment does not yet offer independent Additional Approval
+or execution: their candidates are not written and are not inputs to Proposal
+previews. Render uses their frozen repository preimages. Review explicitly marks
+these retained edits as unapproved and not executable.
+
+Successful rematerialization preserves standing Approval. Failed materialization
+clears only the affected Approval and leaves a typed diagnostic with local retry.
+Conflict, Capture failure, command failure and Editor cancellation remain
+distinct; none silently chooses another Resolution Intent. **T** retries failed
+materialization; **E** can retry an Editor attempt. During an Editor attempt, **Ctrl-C** cancels that attempt rather than aborting
+the session. Terminal Editors temporarily own the terminal and return to the same focused workset or review when finished.
+
 ### Both-policy reconciliation
 
 Merge lazily reconciles the usable Base payload, frozen repository representation,
@@ -140,7 +172,8 @@ the prior Base and does not undo earlier committed acknowledgments.
 
 File-target sessions support frozen Observation, push-only, pull-only and both-policy
 Proposals, Approval, review, preview, Repository Apply and Live Publication.
-Directory children, auxiliary work and Proposal editing are not yet supported.
+File sessions also support auxiliary work and explicit Proposal editing.
+Directory children are not yet supported.
 Unapproved or excluded healthy work remains untouched. Abort does not undo Base
 maintenance already committed while opening.
 Deliberately unapproved supported drift remains `pending` without failing the

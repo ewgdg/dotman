@@ -9,7 +9,7 @@ from dotman.cli_style import render_sync_term, render_package_label, style_text,
 from dotman.sync_scope import _parse_scope_selector
 from dotman.sync_base_store import FilePresent, Missing
 from dotman.sync_session import (
-    AuxiliaryRow, CommandRejected, PrepareProposalReview, Preview, SessionOpenFailed,
+    AuxiliaryRow, CommandRejected, EditProposal, PrepareProposalReview, Preview, SessionOpenFailed,
     SetApproval, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession,
 )
 from dotman.ui_context import ui_config_scope
@@ -48,6 +48,11 @@ def auxiliary_label(scope: str, kind: str, directions, *, use_color: bool = Fals
 def review(session: SyncSession, row_id: str):
     view = session.view
     return session.dispatch(PrepareProposalReview(view.session_id, view.revision, row_id))
+
+
+def edit_proposal(session: SyncSession, row_id: str):
+    view = session.view
+    return session.dispatch(EditProposal(view.session_id, view.revision, row_id))
 
 
 def set_resolution_intent(session: SyncSession, row_id: str, intent: str):
@@ -165,8 +170,8 @@ class SyncDeckCommandRunner:
         for unit in payload["sync_units"]:
             selection = "approved" if unit["approved"] else "unapproved"
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {unit['identity']}")
-            if unit["resolution_intent"]:
-                print(f"      {render_sync_term(resolution_label(unit['resolution_intent']), use_color=self._use_color)}")
+            if unit["resolution"]:
+                print(f"      {render_sync_term(resolution_label(unit['resolution']), use_color=self._use_color)}")
             if unit["fallback_reason"]:
                 print(f"      {render_sync_term('Fallback', use_color=self._use_color)}: {unit['fallback_reason']}")
             if unit["primary_source_change"]:
@@ -228,6 +233,13 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "policy": observation.effective_policy,
             "observation": observation.state,
             "resolution_intent": intent,
+            "resolution": proposal.intent if proposal else intent,
+            "generation": proposal.generation if proposal else None,
+            "staged_additional_sources": [
+                {"path": str(change.path), "bytes": len(change.candidate),
+                 "approved": False, "executable": False}
+                for change in row.additional_changes
+            ] if row else [],
             "allowed_intents": list(row.allowed_intents) if row else [],
             "fallback_reason": row.fallback_reason if row else None,
             "capture": ("missing" if isinstance(proposal.capture, Missing) else "present") if proposal and proposal.capture is not None else None,
@@ -302,7 +314,7 @@ def effect_summary(effect) -> dict:
 
 
 def resolution_label(intent: str) -> str:
-    return {"use-repository": "Use repository", "use-live": "Use live", "merge": "Merge"}[intent]
+    return {"use-repository": "Use repository", "use-live": "Use live", "merge": "Merge", "editor": "Edited"}[intent]
 
 
 def primary_change_summary(proposal, path) -> dict | None:
