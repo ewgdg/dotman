@@ -351,6 +351,7 @@ class SyncSession:
         preview: bool,
         event_sink: SessionEventSink | None = None,
     ) -> None:
+        self._command_runtime = None
         self._captures = {}
         # A comparison Render is already a valid projection of these frozen
         # repository inputs. Reusing it also avoids volatile provider reruns.
@@ -440,6 +441,7 @@ class SyncSession:
             session = cls(observations, preview=preview, event_sink=event_sink)
             session._operation_lock = lock
             session._context = context
+            session._command_runtime = context.projection.command_runtime
             session._resolved_inputs = resolved_inputs[0]
             session._frozen_bases = {
                 observation.identity: FrozenBaseUnit(
@@ -456,6 +458,15 @@ class SyncSession:
             session._emit(SessionOpened(session.view))
             resources.pop_all()
             return session
+
+    def request_cancel(self) -> None:
+        """Cancel owned commands without racing a session view mutation."""
+        if self._command_runtime is not None:
+            self._command_runtime.request_cancel()
+
+    def check_cancelled(self) -> None:
+        if self._command_runtime is not None:
+            self._command_runtime.check_cancelled()
 
     @property
     def view(self) -> SessionView:
@@ -530,8 +541,10 @@ class SyncSession:
                         row.observation, intent=row.intent, capture=self._capture,
                         render=self._render, merge=self._merge,
                     )
+                    self.check_cancelled()
                     diagnostics = ()
                 except (KeyboardInterrupt, InterruptedError):
+                    self.request_cancel()
                     diagnostics = (Diagnostic("interrupted", "Materialization interrupted"),)
                     approved = False
                 except CaptureError as exc:
@@ -603,6 +616,7 @@ class SyncSession:
         return SyncResult(status, tuple(units), operation_diagnostics, steps)
 
     def _capture(self, observation: Observation) -> FilePresent | Missing:
+        self.check_cancelled()
         item, metadata = self._resolved_inputs[observation.identity]
         if observation.identity not in self._captures:
             try:
@@ -610,13 +624,14 @@ class SyncSession:
                     observation, metadata=metadata, context=item.package_context.context,
                     command_runtime=self._context.projection.command_runtime,
                 )
-            except CaptureError:
+            except (KeyboardInterrupt, InterruptedError, CaptureError):
                 raise
             except (ValueError, OSError) as exc:
                 raise CaptureError(observation.repository_path, str(exc)) from exc
         return self._captures[observation.identity]
 
     def _render(self, observation: Observation, repository: FilePresent | Missing) -> FilePresent | Missing:
+        self.check_cancelled()
         key = (observation.identity, repository)
         if key not in self._renders:
             item, metadata = self._resolved_inputs[observation.identity]
@@ -631,6 +646,7 @@ class SyncSession:
         return self._renders[key]
 
     def _merge(self, observation: Observation, captured: FilePresent | Missing) -> FilePresent | Missing:
+        self.check_cancelled()
         if observation.base.status != "usable" or observation.base.record is None:
             raise ValueError("Merge requires a usable Sync Base")
         return reconcile(

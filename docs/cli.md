@@ -71,7 +71,12 @@ both-policy drift cannot yet be approved.
   `X` opens compact preview/execution confirmation; cancelling returns without
   changing Approval. Review scroll position is retained per target; arrow keys,
   Page Up/Down, and the mouse wheel scroll frozen evidence.
-  `Esc` from the workset or `Ctrl-C` aborts.
+  `Esc` from the idle workset or `Ctrl-C` aborts. During Capture, Merge, and Render,
+  the visible deck animates a busy indicator; other keyboard/mouse actions are
+  ignored until materialization finishes. `Ctrl-C` or OS SIGINT cancels running
+  materialization and the remaining batch, waits for owned process cleanup, and
+  exits 130. Completed effects are not rolled back; detached descendants are not
+  covered by owned-process cleanup.
 - **Unsupported** means the session offers no resolution capability (including
   both-policy drift), not that observing the filesystem failed. **Observation
   failed** and **Proposal failed** retain their diagnostic details below the table.

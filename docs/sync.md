@@ -60,6 +60,18 @@ Review exposes the frozen Capture result and Reconciliation evidence separately
 from both repository and live effect previews.
 Confirmation authorizes the selected, already-materialized outcomes.
 
+During Capture, Merge, or Render, the deck remains visible with an animated
+**Materializing Proposal** indicator. Review, Approval, batch actions, Resolution
+changes, and retries share one serialized execution lane. While it is busy,
+competing keyboard and mouse actions are ignored rather than queued. **Ctrl-C**
+(or OS SIGINT) cancels the operation, including the remainder of a batch, and exits
+with status 130. Repeated Ctrl-C is safe. Dotman waits for materialization and
+owned subprocess cleanup before discarding temporary files or releasing its lock.
+The Command Runtime interrupts an owned process group and escalates to termination
+if it does not stop promptly. Cancellation cannot undo completed provider effects
+or control deliberately detached descendants. Apply and Publication still consume
+frozen approved outcomes; this does not make those stages background work.
+
 For pull-only files, review or Approval lazily Captures frozen live evidence into
 the repository outcome. Capture does not read live again. Review shows the
 Primary Source Change (write, deletion, or none) authorized by Proposal Approval;

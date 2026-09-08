@@ -78,6 +78,18 @@ Current responsibility split:
 - `sync_base_lifecycle.py` — configured-policy Base eligibility, frozen Git facts, input fingerprints, applicability inspection, and per-unit acknowledgment/deletion decisions
 - `sync_base_store.py` — secure fixed-epoch, per-repository SQLite storage for exact Sync Base records and content-addressed payloads
 
+Interactive Sync materialization uses one dedicated thread in `sync_deck.py`.
+Its awaitable dispatch copies ContextVars, rejects competing deck input while busy,
+and drains the actual thread before session abort or operation-lock release.
+Observation-time SQLite stores are already closed; only frozen evidence and static
+metadata cross into materialization. Apply and Publication remain synchronous.
+`command_runtime.py` owns the sticky cancellation latch and child process handles;
+its `request_cancel()` is thread-safe and `check_cancelled()` raises typed
+`InterruptedError`. An interrupted runtime must not be reused for another operation:
+embedding callers supply a fresh runtime or `command_runtime_session` scope. The
+CLI default runtime lasts for its single process invocation. Cancellation never
+uses Textual thread-worker cancellation as evidence that provider cleanup finished.
+
 The Base foundation exposes explicit boundaries rather than running a session.
 `BaseUnit` carries successfully resolved selected configuration, never a
 Guard-narrowed policy. `SyncBaseGit` freezes real HEAD/object format, one batched

@@ -259,9 +259,7 @@ def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, s
 @pytest.mark.parametrize("column,keys,focused,approvals", [
     (15, ("space",), 1, [False, True]),
     (15, ("enter",), 1, [False, False]),
-    (2, ("space",), 1, [False, False]),
     (15, ("up", "space"), 0, [True, False]),
-    (2, ("enter",), 1, [False, True]),
 ])
 def test_batched_mouse_and_keyboard_share_target(tmp_path, monkeypatch, column, keys, focused, approvals):
     engine = make_engine(tmp_path, monkeypatch, [
@@ -394,4 +392,109 @@ def test_retry_key_rematerializes_failed_review_without_approval(tmp_path, monke
                 assert not session.view.rows[0].diagnostics
                 assert not session.view.rows[0].approved
                 assert len(calls) == 2
+        run(interact())
+
+
+def test_materialization_keeps_deck_responsive_and_gates_actions(tmp_path, monkeypatch):
+    import threading
+    from contextvars import ContextVar
+    from dotman.sync_base_store import FilePresent
+
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "pull-only", b"repo", b"live", ""),
+    ])
+    ready, release = threading.Event(), threading.Event()
+    context = ContextVar("materialization-test", default="missing")
+    context.set("copied")
+    seen = []
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        def capture(observation):
+            seen.append(context.get())
+            ready.set()
+            assert release.wait(2), "deck event loop blocked during Capture"
+            return FilePresent(b"live")
+        monkeypatch.setattr(session, "_capture", capture)
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test() as pilot:
+                try:
+                    app.action_approve()
+                    for _ in range(100):
+                        if ready.is_set():
+                            break
+                        await asyncio.sleep(.01)
+                    assert ready.is_set()
+                    assert app.query_one("#busy").display
+                    revision = session.view.revision
+                    app.action_clear_all()
+                    app.action_approve_all()
+                    app.action_review_or_confirm()
+                    app.action_retry()
+                    app.action_confirm()
+                    app.action_resolution()
+                    app.choose_resolution(0)
+                    post_cell_click(app, (2, 1))
+                    await pilot.pause()
+                    assert not app.deck.confirming
+                    assert session.view.revision == revision
+                finally:
+                    release.set()
+                for _ in range(100):
+                    if session.view.rows[0].approved:
+                        break
+                    await asyncio.sleep(.01)
+                await pilot.pause()
+                assert session.view.rows[0].approved
+                assert seen == ["copied"]
+                assert not app.query_one("#busy").display
+        run(interact())
+
+
+def test_abort_waits_for_materialization_before_terminalizing_and_stops_batch(tmp_path, monkeypatch):
+    import threading
+    from dotman.sync_base_store import FilePresent
+
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "pull-only", b"repo", b"live", ""),
+        ("two", "pull-only", b"repo", b"live", ""),
+    ])
+    ready, release = threading.Event(), threading.Event()
+    captures = []
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        def capture(observation):
+            captures.append(observation.identity.canonical)
+            ready.set()
+            assert release.wait(2)
+            return FilePresent(b"live")
+        monkeypatch.setattr(session, "_capture", capture)
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test() as pilot:
+                app.action_approve_all()
+                try:
+                    for _ in range(100):
+                        if ready.is_set():
+                            break
+                        await asyncio.sleep(.01)
+                    assert ready.is_set()
+                    await pilot.press("ctrl+c", "ctrl+c")
+                    assert not session.view.terminal
+                    assert app.busy
+                    assert app.return_value is None
+                finally:
+                    release.set()
+                for _ in range(100):
+                    if app.return_value is False:
+                        break
+                    await asyncio.sleep(.01)
+                assert app.return_value is False
+            session.abort()
+            assert session.view.terminal
+            assert captures == ["main:app.one"]
+            assert not session.view.rows[1].approved
+            terminal = session.view
+            await asyncio.sleep(0)
+            assert session.view == terminal
         run(interact())

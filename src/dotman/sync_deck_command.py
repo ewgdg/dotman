@@ -91,6 +91,8 @@ class SyncDeckCommandRunner:
                     for row in session.view.rows:
                         if "set-approval" in row.allowed_commands:
                             approve(session, row.row_id, True)
+                            if any(d.code == "interrupted" for item in session.view.rows for d in item.diagnostics):
+                                break
 
                 # Unattended failures must not permit a partially understood
                 # workset to mutate unrelated units.

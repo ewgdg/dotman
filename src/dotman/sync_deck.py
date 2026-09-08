@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextvars import copy_context
+from concurrent.futures import ThreadPoolExecutor
 from difflib import unified_diff
+import signal
+
+from rich.spinner import Spinner
 
 from rich.text import Text
 from textual import events
@@ -105,6 +111,7 @@ class CommandDeck:
         if self.reviewing or self.confirming:
             return
         for row in self.session.view.rows:
+            self.session.check_cancelled()
             if "set-approval" in row.allowed_commands:
                 approve(self.session, row.row_id, approved)
 
@@ -245,6 +252,7 @@ class SyncDeckApp(App[bool]):
     #review { height: 1fr; }
     #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
     #notice { height: auto; padding: 0 1; color: $warning; }
+    #busy { height: auto; padding: 0 1; color: $accent; text-style: bold; }
     #help { dock: bottom; height: auto; max-height: 2; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
@@ -281,8 +289,77 @@ class SyncDeckApp(App[bool]):
         self.deck = deck
         self.review_positions: dict[str, tuple[float, float]] = {}
         self._workset_mouse_down = False
+        self._lane = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sync-materialization")
+        self._materialization: asyncio.Task | None = None
+        self._aborting = False
+
+    @property
+    def busy(self) -> bool:
+        return self._materialization is not None or self._aborting
+
+    def materialize(self, action) -> None:
+        """Admit one mutation; all further input is rejected until actual work drains."""
+        if self.busy:
+            return
+        self.query_one("#busy").display = True
+        self._materialization = asyncio.create_task(self._materialize(action))
+        self._materialization.add_done_callback(self._materialization_finished)
+
+    def _materialization_finished(self, task: asyncio.Task) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._handle_exception(error)
+
+    async def _materialize(self, action) -> None:
+        def dispatch():
+            # KeyboardInterrupt must not escape a Future into the asyncio runner.
+            try:
+                self.deck.session.check_cancelled()
+                action()
+                self.deck.session.check_cancelled()
+            except KeyboardInterrupt as exc:
+                raise InterruptedError("Materialization interrupted") from exc
+
+        work = asyncio.get_running_loop().run_in_executor(self._lane, copy_context().run, dispatch)
+        try:
+            await asyncio.shield(work)
+        except asyncio.CancelledError:
+            self._aborting = True
+            self.deck.session.request_cancel()
+            try:
+                await asyncio.shield(work)
+            except InterruptedError:
+                pass
+        except InterruptedError:
+            self._aborting = True
+        except Exception:
+            self._aborting = True
+            raise
+        finally:
+            self._materialization = None
+            self.query_one("#busy").display = False
+        if self._aborting or any(d.code == "interrupted" for row in self.deck.session.view.rows for d in row.diagnostics):
+            self.exit(False)
+            return
+        self.update_workset()
+        if self.deck.reviewing:
+            self.show_review()
+
+    async def on_unmount(self) -> None:
+        if self._materialization is not None:
+            self._aborting = True
+            self.deck.session.request_cancel()
+            await asyncio.shield(self._materialization)
+        # Textual cancellation is not a thread join. Release the lane only after
+        # its dispatch and provider temporary-resource cleanup have really ended.
+        self._lane.shutdown(wait=True)
 
     async def on_event(self, event: events.Event) -> None:
+        if self.busy and isinstance(event, events.InputEvent):
+            if isinstance(event, events.Key) and event.key == "ctrl+c":
+                self.action_abort()
+            event.stop()
+            event.prevent_default()
+            return
         # App receives terminal input in order, before forwarding mouse events to
         # widget queues. Resolve row clicks here alongside priority key actions;
         # neither input modality may overtake the other when bytes arrive together.
@@ -302,7 +379,9 @@ class SyncDeckApp(App[bool]):
                     row, column = metadata.get("row", -1), metadata.get("column", -1)
                     if row >= 0 and column >= 0 and not metadata.get("out_of_bounds"):
                         widget.move_cursor(row=row, column=column)
-                        self.deck.click(row, selection=column == 0)
+                        self.deck.focus = row
+                        if column == 0:
+                            self.materialize(self.deck.select)
                         self.close_resolution()
                         self.update_workset()
                         if column == 3:
@@ -319,9 +398,12 @@ class SyncDeckApp(App[bool]):
         yield RichLog(id="review", wrap=False, auto_scroll=False, min_width=1)
         yield Static(id="confirmation", markup=False)
         yield Static(id="notice", markup=False)
+        yield Static(Spinner("dots", text="Materializing Proposal · Ctrl+C abort"), id="busy")
         yield Static(id="help", markup=False)
 
     def on_mount(self) -> None:
+        self.query_one("#busy").display = False
+        self.query_one("#busy").auto_refresh = 1 / 10
         self.query_one(OptionList).display = False
         table = self.query_one(WorksetTable)
         table.add_columns("Approval", "Target", "Policy", "Resolution")
@@ -373,7 +455,7 @@ class SyncDeckApp(App[bool]):
         self.query_one("#detail", Static).update(detail)
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
-        if not self.deck.reviewing and not self.deck.confirming:
+        if not self.busy and not self.deck.reviewing and not self.deck.confirming:
             self.sync_focus()
             self.update_detail()
 
@@ -387,6 +469,8 @@ class SyncDeckApp(App[bool]):
         self.query_one(WorksetTable).focus()
 
     async def action_navigate(self, table_action: str, review_action: str) -> None:
+        if self.busy:
+            return
         # Every native cursor action shares the Approval/Review queue. Otherwise
         # batched terminal keys can approve the old row before navigation runs.
         if self.deck.confirming:
@@ -411,25 +495,26 @@ class SyncDeckApp(App[bool]):
             self.deck.focus = self.query_one(WorksetTable).cursor_row
 
     def action_approve(self) -> None:
+        if self.busy:
+            return
         if self.query_one(OptionList).display:
             return
         self.sync_focus()
-        self.deck.select()
-        self.update_workset()
-        if self.deck.reviewing:
-            self.show_review()
+        self.materialize(self.deck.select)
 
     def action_approve_all(self) -> None:
+        if self.busy:
+            return
         if self.query_one(OptionList).display:
             return
-        self.deck.select_all(True)
-        self.update_workset()
+        self.materialize(lambda: self.deck.select_all(True))
 
     def action_clear_all(self) -> None:
+        if self.busy:
+            return
         if self.query_one(OptionList).display:
             return
-        self.deck.select_all(False)
-        self.update_workset()
+        self.materialize(lambda: self.deck.select_all(False))
 
     def show_review(self) -> None:
         log = self.query_one("#review", RichLog)
@@ -446,6 +531,8 @@ class SyncDeckApp(App[bool]):
         self.call_after_refresh(log.scroll_to, *position, animate=False)
 
     def action_review_or_confirm(self) -> None:
+        if self.busy:
+            return
         menu = self.query_one(OptionList)
         if menu.display:
             if menu.highlighted is not None:
@@ -455,12 +542,11 @@ class SyncDeckApp(App[bool]):
         if self.deck.confirming:
             self.exit(True)
         elif not self.deck.reviewing:
-            self.deck.open_review()
-            if self.deck.reviewing:
-                self.show_review()
-            self.update_workset()
+            self.materialize(self.deck.open_review)
 
     def action_confirm(self) -> None:
+        if self.busy:
+            return
         self.close_resolution()
         self.deck.confirm()
         if self.deck.confirming:
@@ -473,6 +559,8 @@ class SyncDeckApp(App[bool]):
         self.update_workset()
 
     def action_back(self) -> None:
+        if self.busy:
+            return
         if self.query_one(OptionList).display:
             self.close_resolution()
             self.update_workset()
@@ -490,6 +578,8 @@ class SyncDeckApp(App[bool]):
         self.query_one(WorksetTable).focus()
 
     def action_resolution(self) -> None:
+        if self.busy:
+            return
         if self.deck.reviewing or self.deck.confirming:
             return
         self.sync_focus()
@@ -506,32 +596,53 @@ class SyncDeckApp(App[bool]):
         self.update_workset()
 
     def choose_resolution(self, index: int) -> None:
+        if self.busy:
+            return
         row = self.deck.focused_row
-        result = set_resolution_intent(self.deck.session, row.row_id, row.allowed_intents[index])
-        self.deck.notice = result.reason if isinstance(result, CommandRejected) else ""
+        intent = row.allowed_intents[index]
         self.close_resolution()
-        self.update_workset()
+        def change():
+            result = set_resolution_intent(self.deck.session, row.row_id, intent)
+            self.deck.notice = result.reason if isinstance(result, CommandRejected) else ""
+        self.materialize(change)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if self.busy:
+            return
         if self.query_one(OptionList).display:
             self.choose_resolution(event.option_index)
 
     def action_retry(self) -> None:
+        if self.busy:
+            return
         if self.deck.confirming:
             return
         self.sync_focus()
         row = self.deck.focused_row
         if row is None or "retry-materialization" not in row.allowed_commands:
             return
-        result = retry_materialization(self.deck.session, row.row_id)
-        self.deck.notice = result.reason if isinstance(result, CommandRejected) else ""
-        self.update_workset()
-        if self.deck.reviewing:
-            self.show_review()
+        def retry():
+            result = retry_materialization(self.deck.session, row.row_id)
+            self.deck.notice = result.reason if isinstance(result, CommandRejected) else ""
+        self.materialize(retry)
 
     def action_abort(self) -> None:
-        self.exit(False)
+        self._aborting = True
+        self.deck.session.request_cancel()
+        if self._materialization is None:
+            self.exit(False)
 
 
 def run_command_deck(session: SyncSession, *, use_color: bool) -> bool:
-    return bool(SyncDeckApp(CommandDeck(session, use_color=use_color)).run())
+    app = SyncDeckApp(CommandDeck(session, use_color=use_color))
+    previous = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, lambda signum, frame: app.action_abort())
+    try:
+        return bool(app.run())
+    finally:
+        try:
+            if app._materialization is not None:
+                session.request_cancel()
+            app._lane.shutdown(wait=True)
+        finally:
+            signal.signal(signal.SIGINT, previous)
