@@ -233,8 +233,22 @@ class SyncDeckApp(App[bool]):
     #notice { height: auto; padding: 0 1; color: $warning; }
     """
     BINDINGS = [
-        Binding("up", "move_up", "Up", show=False, priority=True),
-        Binding("down", "move_down", "Down", show=False, priority=True),
+        *[
+            Binding(key, f"navigate('{table_action}', '{review_action}')",
+                    show=False, priority=True)
+            for key, table_action, review_action in (
+                ("up", "cursor_up", "scroll_up"),
+                ("down", "cursor_down", "scroll_down"),
+                ("left", "cursor_left", "scroll_left"),
+                ("right", "cursor_right", "scroll_right"),
+                ("pageup", "page_up", "page_up"),
+                ("pagedown", "page_down", "page_down"),
+                ("home", "scroll_home", "scroll_home"),
+                ("end", "scroll_end", "scroll_end"),
+                ("ctrl+home", "scroll_top", "scroll_home"),
+                ("ctrl+end", "scroll_bottom", "scroll_end"),
+            )
+        ],
         Binding("space", "approve", "Approval", priority=True),
         Binding("a,A", "approve_all", "Approve all", priority=True),
         Binding("u,U", "clear_all", "Clear all", priority=True),
@@ -300,7 +314,7 @@ class SyncDeckApp(App[bool]):
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         if not self.deck.reviewing and not self.deck.confirming:
-            self.deck.focus = event.coordinate.row
+            self.sync_focus()
             self.update_detail()
 
     def show_workset(self) -> None:
@@ -312,25 +326,18 @@ class SyncDeckApp(App[bool]):
         self.update_workset()
         self.query_one(WorksetTable).focus()
 
-    def action_move_up(self) -> None:
-        self.move_vertical(-1)
-
-    def action_move_down(self) -> None:
-        self.move_vertical(1)
-
-    def move_vertical(self, offset: int) -> None:
-        # Route navigation and Enter through the same queue so rapid keys review
-        # the newly focused row, rather than outrunning a widget key event.
+    async def action_navigate(self, table_action: str, review_action: str) -> None:
+        # Every native cursor action shares the Approval/Review queue. Otherwise
+        # batched terminal keys can approve the old row before navigation runs.
         if self.deck.confirming:
             return
         if self.deck.reviewing:
-            log = self.query_one(RichLog)
-            log.scroll_relative(y=offset, animate=False)
+            await self.query_one(RichLog).run_action(review_action)
         else:
             table = self.query_one(WorksetTable)
+            if table.row_count:
+                await table.run_action(table_action)
             self.sync_focus()
-            self.deck.move(offset)
-            table.move_cursor(row=self.deck.focus)
 
     def sync_focus(self) -> None:
         # A following key may arrive before CellHighlighted is delivered (paste/PTY).

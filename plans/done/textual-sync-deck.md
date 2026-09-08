@@ -53,9 +53,9 @@ Task request explicitly selects actual renderer/Pilot interactions and public Sy
   contains RED output, prior rendered screen, PTY ANSI capture, decoded workset,
   review and confirmation screens, passing result, and PTY probe sources.
 - No real user config/state writes; fixture repositories and state were under /tmp.
-- Full repository suite intentionally not run: blast radius is the Deck and its
-  existing command adapter; focused tests include session convergence and
-  ordinary terminal prompts.
+- Independent review ran the full repository suite before the input-ordering
+  correction: **1458 passed in 21.60s**. After the correction and added regression
+  matrix, the full repository suite passed again: **1478 passed in 33.77s**.
 
 ## Outcomes and limitations
 The alignment defect is fixed with real table cells, not manual padding.
@@ -63,3 +63,29 @@ One-sided file functionality and frozen session ownership remain unchanged.
 Both-policy drift is explicitly unsupported. Directory scopes still fail
 existing file-session opening before a Deck can be constructed; no directory
 convergence or engine migration-rejection path was added.
+
+## Review correction: serialize native cursor navigation
+- Independent review reproduced PageDown followed immediately by Space in an
+  80x12 PTY: cursor moved to row 7 but Approval authorized row 0. The earlier
+  Up/Down-only routing did not cover all native DataTable cursor bindings.
+- Added RED regressions at the terminal-event seam: post navigation and Approval
+  or Review without yielding between key events. PageDown+Space failed with
+  `main:app.unit_00` approved instead of `main:app.unit_07`; PageDown+Enter
+  reviewed the old row.
+- All DataTable cursor-changing keys now run their native widget actions through
+  the same priority application queue as Approval and Review: four arrows,
+  PageUp/PageDown, Home/End (column navigation), and Ctrl+Home/Ctrl+End (row
+  endpoints). RichLog retains corresponding native scrolling; confirmation
+  consumes navigation without changing frozen state. No duplicated page-size or
+  endpoint arithmetic. Highlight notifications read current cursor state instead
+  of overwriting it with potentially queued coordinates.
+- Regression matrix covers all ten navigation keys followed by either Space or
+  Enter in one event batch, asserting exact row authority and horizontal cursor
+  behavior. Existing review/resize/confirmation tests remain green.
+- Focused Deck/command/Pull UI run: **52 passed in 17.79s** before the last four
+  horizontal-navigation matrix cases. Final full run: **1478 passed in 33.77s**.
+- Re-ran the independent real-PTY probe with `b'\\x1b[6~ '` in one write:
+  `REVIEW_RESULT False FOCUS 7 APPROVED [(7, 'main:app.unit_07')]`.
+  Evidence and probe sources are in the existing artifact directory as
+  `review-pagedown-pty.txt`, `dotman-review-pty.py`, and
+  `dotman-review-pty-fixture.py`.

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+from textual import events
+
 from textual.widgets import DataTable, RichLog, Static
 
 from dotman.sync_deck import CommandDeck, SyncDeckApp
@@ -177,4 +180,52 @@ def test_long_workset_scrolls_without_losing_focused_row(tmp_path, monkeypatch):
                 assert table.cursor_row == 24
                 assert [row.row_id for row in session.view.rows if row.approved] == ["main:app.unit_24"]
                 assert "Policy" in table.render_line(0).text
+        run(interact())
+
+
+@pytest.mark.parametrize("navigation,start,expected", [
+    ("down", 0, 1),
+    ("up", 1, 0),
+    ("pagedown", 0, 7),
+    ("pageup", 14, 7),
+    ("ctrl+end", 0, 24),
+    ("ctrl+home", 24, 0),
+    ("home", 7, 7),
+    ("end", 7, 7),
+    ("left", 7, 7),
+    ("right", 7, 7),
+])
+@pytest.mark.parametrize("command", ["space", "enter"])
+def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, start, expected, command):
+    engine = make_engine(tmp_path, monkeypatch, [
+        (f"unit_{index:02}", "push-only", b"repo", b"live", "")
+        for index in range(25)
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 12)) as pilot:
+                await pilot.press(*(["down"] * start))
+                if navigation in ("home", "left"):
+                    await pilot.press("right")
+                # Unlike Pilot.press, post without yielding between terminal keys.
+                app.post_message(events.Key(navigation, None))
+                app.post_message(events.Key(command, " " if command == "space" else None))
+                await pilot.pause()
+                table = app.query_one(DataTable)
+                assert table.cursor_row == expected
+                if navigation in ("home", "end", "left", "right"):
+                    assert table.cursor_column == {"home": 0, "end": 3, "left": 0, "right": 1}[navigation]
+                assert app.deck.focused_row.row_id == f"main:app.unit_{expected:02}"
+                if command == "space":
+                    assert [row.row_id for row in session.view.rows if row.approved] == [
+                        f"main:app.unit_{expected:02}"
+                    ]
+                else:
+                    assert app.deck.reviewing
+                    assert f"Proposal Review — main:app.unit_{expected:02}" in "\n".join(
+                        line.text for line in app.query_one(RichLog).lines
+                    )
+                    assert not any(row.approved for row in session.view.rows)
         run(interact())
