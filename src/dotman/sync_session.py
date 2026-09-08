@@ -9,13 +9,19 @@ from pathlib import Path
 from uuid import uuid4
 
 from dotman.execution import ExecutionStep
+from dotman.sync_capture import capture_observation
 from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
-from dotman.sync_base_store import SyncBaseStoreError, FilePresent, Missing
-from dotman.sync_base_lifecycle import SyncBaseGitError
+from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError, FilePresent, Missing
+from dotman.sync_base_lifecycle import (
+    FrozenBaseUnit, ProposalCompletion, SyncBaseGit, SyncBaseGitError, SyncBaseLifecycle,
+)
 from dotman.operation_lock import OperationBusy, OperationLock, OperationLockError
-from dotman.sync_observation import Diagnostic, Observation, observe_scope, _resolve_inputs
-from dotman.sync_publication import PublicationUnit, execute_publication, prepare_publication
+from dotman.sync_observation import Diagnostic, Observation, observe_scope, _resolve_inputs, _base_unit
+from dotman.sync_publication import PublicationResult, PublicationUnit, execute_publication, prepare_publication
+from dotman.sync_repository_apply import (
+    RepositoryApplyUnit, execute_repository_apply, prepare_repository_apply,
+)
 
 
 CommandName = Literal["set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
@@ -33,12 +39,25 @@ class PublicationEffect:
 class Proposal:
     repository: FilePresent | Missing
     live: FilePresent | Missing
-    primary_source_change: None
+    primary_source_change: FilePresent | Missing | None
     publication_effects: tuple[PublicationEffect, ...]
-    intent: Literal["use-repository"] = "use-repository"
+    intent: Literal["use-repository", "use-live"] = "use-repository"
 
 
-def materialize(observation: Observation) -> Proposal:
+def materialize(
+    observation: Observation,
+    *,
+    capture: Callable[[Observation], FilePresent | Missing] | None = None,
+) -> Proposal:
+    if observation.effective_policy == "pull-only":
+        if capture is None or observation.live is None:
+            raise ValueError("Use live requires a frozen Capture provider")
+        repository = capture(observation)
+        return Proposal(
+            repository, observation.live,
+            repository if repository != observation.repository else None,
+            (), "use-live",
+        )
     repository = observation.repository
     live = observation.comparison_repository
     if repository is None or live is None:
@@ -71,8 +90,8 @@ def materialize(observation: Observation) -> Proposal:
 def supports_proposal(unit: Observation) -> bool:
     return (
         unit.state == "drifted" and not unit.diagnostics
-        and unit.configured_policy in ("push-only", "push-only-delete")
-        and unit.effective_policy in ("push-only", "push-only-delete")
+        and unit.configured_policy in ("push-only", "push-only-delete", "pull-only")
+        and unit.effective_policy in ("push-only", "push-only-delete", "pull-only")
     )
 
 
@@ -85,7 +104,7 @@ class SessionRow:
     allowed_commands: tuple[CommandName, ...]
     approved: bool = False
     proposal: Proposal | None = None
-    allowed_intents: tuple[Literal["use-repository"], ...] = ()
+    allowed_intents: tuple[Literal["use-repository", "use-live"], ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
@@ -174,7 +193,7 @@ class SyncUnitResult:
 class SyncStepOutcome:
     """Semantic execution evidence without private plans or captured payloads."""
 
-    stage: Literal["live-publication"]
+    stage: Literal["repository-apply", "live-publication"]
     kind: str
     action: str
     scope: str
@@ -293,7 +312,7 @@ class SyncSession:
                     else ("set-included",)
                     if unit.state == "drifted" and not unit.diagnostics
                     else (),
-                    allowed_intents=("use-repository",) if supports_proposal(unit) else (),
+                    allowed_intents=(("use-live",) if unit.effective_policy == "pull-only" else ("use-repository",)) if supports_proposal(unit) else (),
                 )
                 for unit in observations
                 if unit.state != "directly-in-sync" or unit.diagnostics
@@ -332,6 +351,7 @@ class SyncSession:
                     tuple(selected_inputs.values()),
                     file_symlink_mode=context.config.file_symlink_mode,
                 )
+                repository_metadata = prepare_repository_apply(tuple(selected_inputs.values()))
             except OperationBusy as exc:
                 return SessionOpenFailed(Diagnostic("operation-busy", str(exc)))
             except OperationLockError as exc:
@@ -349,7 +369,18 @@ class SyncSession:
             session = cls(observations, preview=preview, event_sink=event_sink)
             session._operation_lock = lock
             session._context = context
+            session._resolved_inputs = resolved_inputs[0]
+            session._frozen_bases = {
+                observation.identity: FrozenBaseUnit(
+                    _base_unit(context, observation.identity, *resolved_inputs[0][observation.identity]),
+                    observation.git.head, observation.git.committed,
+                    observation.git.primary_clean,
+                )
+                for observation in observations
+                if observation.configured_policy == "pull-only" and not observation.diagnostics
+            }
             session._publication_metadata = publication_metadata
+            session._repository_metadata = repository_metadata
             # Adapter exceptions are programming failures, not planning results.
             session._emit(SessionOpened(session.view))
             resources.pop_all()
@@ -413,7 +444,11 @@ class SyncSession:
             approved = command.approved if isinstance(command, SetApproval) else row.approved
             if proposal is None and (approved or isinstance(command, PrepareProposalReview)):
                 try:
-                    proposal = materialize(row.observation)
+                    proposal = (
+                        materialize(row.observation, capture=self._capture)
+                        if row.observation.effective_policy == "pull-only"
+                        else materialize(row.observation)
+                    )
                     diagnostics = ()
                 except (KeyboardInterrupt, InterruptedError):
                     diagnostics = (Diagnostic("interrupted", "Materialization interrupted"),)
@@ -478,6 +513,35 @@ class SyncSession:
         )
         return SyncResult(status, tuple(units), operation_diagnostics, steps)
 
+    def _capture(self, observation: Observation) -> FilePresent | Missing:
+        item, metadata = self._resolved_inputs[observation.identity]
+        return capture_observation(
+            observation, metadata=metadata, context=item.package_context.context,
+            command_runtime=self._context.projection.command_runtime,
+        )
+
+    def _acknowledge(self, row: SessionRow) -> None:
+        observation = row.observation
+        item, _metadata = self._resolved_inputs[observation.identity]
+        with SyncBaseStore.open(
+            self._context.tracked_state.state_root, item.repo.config.state_key,
+        ) as store:
+            lifecycle = SyncBaseLifecycle(
+                store, SyncBaseGit(item.repo.root, self._context.projection.command_runtime),
+                operation="sync", preview=False,
+            )
+            completion = lifecycle.complete(
+                self._frozen_bases[observation.identity],
+                ProposalCompletion(
+                    intent="use-live", approved=True,
+                    primary_effect="succeeded" if row.proposal.primary_source_change is not None else "not-required",
+                ),
+            )
+            if completion.failure is not None:
+                raise completion.failure
+            if not completion.converged:
+                raise AssertionError("Approved repository outcome did not reach Base completion")
+
     def _publish(self) -> tuple[
         dict[str, tuple[str, tuple[Diagnostic, ...]]],
         tuple[Diagnostic, ...],
@@ -489,10 +553,48 @@ class SyncSession:
         )
         if not selected:
             return {}, (), ()
-        # No-write convergence is a real approved completion, not direct agreement.
-        if all(not row.proposal.publication_effects for row in selected):
-            return {row.row_id: ("converged", ()) for row in selected}, (), ()
-        return self._publish_effects(selected)
+        units, diagnostics, steps = {}, (), ()
+        if any(row.proposal.intent == "use-live" for row in selected):
+            by_id = {row.row_id: row for row in selected}
+            acknowledgment_failures = {}
+
+            def complete(unit: RepositoryApplyUnit) -> None:
+                row = by_id[unit.row_id]
+                if row.proposal.intent == "use-live":
+                    try:
+                        self._acknowledge(row)
+                    except InterruptedError:
+                        raise
+                    except (SyncBaseStoreError, SyncBaseGitError, OSError) as exc:
+                        acknowledgment_failures[row.row_id] = Diagnostic("base-acknowledgment-failed", str(exc))
+                        raise
+
+            result = execute_repository_apply(
+                self._repository_metadata,
+                tuple(RepositoryApplyUnit(
+                    row.row_id, row.observation.identity, row.proposal.primary_source_change,
+                ) for row in selected),
+                command_runtime=self._context.projection.command_runtime,
+                complete=complete,
+            )
+            units, diagnostics, steps = self._execution_outcome(result, "repository-apply")
+            for row in selected:
+                if row.row_id in acknowledgment_failures:
+                    units[row.row_id] = ("execution-failed", (acknowledgment_failures[row.row_id],))
+                elif row.proposal.publication_effects:
+                    # Repository Apply success does not complete pending live work.
+                    units[row.row_id] = ("skipped", ())
+            if result.error is not None:
+                return units, diagnostics, steps
+        else:
+            # Ineligible no-write completion needs neither a Base nor a receipt.
+            units = {row.row_id: ("converged", ()) for row in selected if not row.proposal.publication_effects}
+        publication = tuple(row for row in selected if row.proposal.publication_effects)
+        if publication:
+            published, diagnostics, publication_steps = self._publish_effects(publication)
+            units.update(published)
+            steps += publication_steps
+        return units, diagnostics, steps
 
     def _publish_effects(self, selected: tuple[SessionRow, ...]) -> tuple[
         dict[str, tuple[str, tuple[Diagnostic, ...]]],
@@ -507,6 +609,17 @@ class SyncSession:
             snapshot_config=self._context.config.snapshots,
             command_runtime=self._context.projection.command_runtime,
         )
+        return self._execution_outcome(result, "live-publication")
+
+    @staticmethod
+    def _execution_outcome(
+        result: PublicationResult,
+        stage: Literal["repository-apply", "live-publication"],
+    ) -> tuple[
+        dict[str, tuple[str, tuple[Diagnostic, ...]]],
+        tuple[Diagnostic, ...],
+        tuple[SyncStepOutcome, ...],
+    ]:
         code = "interrupted" if result.interrupted else "execution-failed"
         diagnostics = () if result.error is None else (Diagnostic(code, result.error),)
         units = {
@@ -518,7 +631,7 @@ class SyncSession:
         }
         steps = tuple(
             SyncStepOutcome(
-                stage="live-publication",
+                stage=stage,
                 kind=item.step.kind,
                 action=item.step.action,
                 scope=item.step.scope_kind,

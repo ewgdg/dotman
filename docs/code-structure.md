@@ -168,8 +168,9 @@ Prefer the dedicated module unless there is a strong reason not to.
 Resolve selectors with `engine.resolve_sync_scope(...)`, then call
 `engine.open_sync_session(scope, preview=..., event_sink=...)`. Opening returns
 a `SyncSession` or typed `SessionOpenFailed`. File-target scope only is supported;
-push-only drift can materialize, receive Approval and publish. Directory children,
-Editors and Base-Eligible drift resolution remain outside this boundary.
+push-only and pull-only drift can materialize, receive Approval and converge.
+Directory children, Editors and both-policy drift resolution remain outside this
+boundary.
 
 Read `session.view` rather than private plans. `SetIncluded`, `SetApproval`,
 `PrepareProposalReview`, `Preview`, `Execute` and `Abort` carry the view's session
@@ -186,9 +187,17 @@ events for recording or presentation sinks. Callback programming failures
 escape; failed opening still releases owned resources. Context-manager exit
 aborts an unfinished session. Review and Approval materialize immutable Proposals
 from frozen inputs. Preview reports approved effects without mutation; Execute
-publishes those same effects without re-observation or projection. Results keep
+applies those same repository and live effects without re-observation or projection. Results keep
 direct agreement, approved convergence, pending/excluded drift and failures
 distinct. Inclusion never substitutes for Approval.
+
+`sync_capture.py` materializes Use live from frozen endpoints and comparison
+evidence through shared projection and patch mechanics. A Capture-backed comparison
+is reused rather than run again. `sync_repository_apply.py` applies approved
+Primary Source outcomes through pull hooks without accessing live state or
+snapshots. Each unit completes before its enclosing post-hook; the session uses
+the shared Base lifecycle with frozen committed Git facts to acknowledge eligible
+outcomes. A failed repository stage prevents all Live Publication.
 
 `sync_publication.py` freezes hook and target execution metadata at opening and
 publishes approved file effects through the existing file-access, snapshot and
