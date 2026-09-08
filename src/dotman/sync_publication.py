@@ -101,6 +101,15 @@ class _PublicationStopped(Exception):
         self.interrupted = interrupted
 
 
+def _failed_step(step: ExecutionStep, error: BaseException) -> ExecutionStepResult:
+    interrupted = isinstance(error, (InterruptedError, KeyboardInterrupt))
+    return ExecutionStepResult(
+        step, "interrupted" if interrupted else "failed",
+        exit_code=INTERRUPTED_EXIT_CODE if interrupted else None,
+        error=str(error) or ("Publication interrupted" if interrupted else None),
+    )
+
+
 def _effect_path(effect: Effect, target: TargetPlan) -> Path:
     if effect.path != target.live_path:
         raise ValueError("Publication effect does not match its frozen live endpoint")
@@ -227,12 +236,14 @@ def execute_publication(
                                 if not snapshot_started:
                                     try:
                                         snapshot = create_push_snapshot(selected, snapshot_config)
-                                    except (OSError, ValueError, RuntimeError) as exc:
-                                        steps.append(ExecutionStepResult(
-                                            replace(step, kind="snapshot", action="create"),
-                                            "failed", error=str(exc),
-                                        ))
-                                        raise _PublicationStopped(str(exc)) from exc
+                                    except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
+                                        failure = _failed_step(
+                                            replace(step, kind="snapshot", action="create"), exc,
+                                        )
+                                        steps.append(failure)
+                                        raise _PublicationStopped(
+                                            failure.error, interrupted=failure.status == "interrupted",
+                                        ) from exc
                                     snapshot_started = True
                                 if effect.kind == "write":
                                     file_access.write_bytes_atomic(path, effect.content)
@@ -240,12 +251,12 @@ def execute_publication(
                                     file_access.delete_path_and_prune_empty_parents(path, root=path.parent)
                                 else:
                                     file_access.chmod(path, effect.mode)
-                            except KeyboardInterrupt:
-                                steps.append(ExecutionStepResult(step, "interrupted", exit_code=INTERRUPTED_EXIT_CODE))
-                                raise
-                            except (OSError, ValueError, RuntimeError) as exc:
-                                steps.append(ExecutionStepResult(step, "failed", error=str(exc)))
-                                raise _PublicationStopped(str(exc)) from exc
+                            except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
+                                failure = _failed_step(step, exc)
+                                steps.append(failure)
+                                raise _PublicationStopped(
+                                    failure.error, interrupted=failure.status == "interrupted",
+                                ) from exc
                             steps.append(ExecutionStepResult(step, "ok"))
                         results[current_unit.row_id] = PublicationUnitResult(current_unit.row_id, "ok")
                         current_unit = None
@@ -253,7 +264,7 @@ def execute_publication(
                     run_hooks(package_hooks, "post_push", package)
                 run_hooks(repo_hooks, "post_push")
         except (_PublicationStopped, OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
-            interrupted = isinstance(exc, KeyboardInterrupt) or (
+            interrupted = isinstance(exc, (InterruptedError, KeyboardInterrupt)) or (
                 isinstance(exc, _PublicationStopped) and exc.interrupted
             )
             error = str(exc) or "Publication interrupted"
@@ -262,10 +273,10 @@ def execute_publication(
         if snapshot is not None:
             try:
                 snapshot = mark_snapshot_status(snapshot, "failed" if error else "applied")
-            except (OSError, ValueError, RuntimeError) as exc:
-                steps.append(ExecutionStepResult(
-                    ExecutionStep(kind="snapshot", action="finalize"), "failed", error=str(exc),
-                ))
-                error = error or str(exc)
+            except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
+                failure = _failed_step(ExecutionStep(kind="snapshot", action="finalize"), exc)
+                steps.append(failure)
+                interrupted = interrupted or failure.status == "interrupted"
+                error = error or failure.error
     return PublicationResult(tuple(results[unit.row_id] for unit in units), error, tuple(steps), snapshot, interrupted)
 

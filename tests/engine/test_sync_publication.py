@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from dotman import sync_publication as publication
 from dotman.models import HookPlan, SnapshotConfig
 from dotman.sync_session import PublicationEffect
@@ -209,3 +211,33 @@ def test_no_write_completion_survives_later_live_failure(tmp_path, monkeypatch):
     assert result.error
     assert [unit.status for unit in result.units] == ["ok", "skipped"]
     assert result.snapshot is None
+
+
+@pytest.mark.parametrize("phase", ["write", "snapshot-create", "snapshot-finalize"])
+@pytest.mark.parametrize("exception_type", [InterruptedError, KeyboardInterrupt])
+def test_interrupted_io_is_typed_and_preserves_completed_units(tmp_path, monkeypatch, phase, exception_type):
+    metadata, units = prepare(tmp_path, monkeypatch, [
+        ("unit", "push-only", b"repo", b"live", ""),
+    ])
+    def interrupt(*args, **kwargs):
+        raise exception_type("I/O interrupted")
+    if phase == "write":
+        monkeypatch.setattr(publication.file_access, "write_bytes_atomic", interrupt)
+    elif phase == "snapshot-create":
+        monkeypatch.setattr(publication, "create_push_snapshot", interrupt)
+    else:
+        monkeypatch.setattr(publication, "mark_snapshot_status", interrupt)
+    result = execute(tmp_path, metadata, units)
+    assert result.interrupted
+    assert result.error == "I/O interrupted"
+    assert result.steps[-1].status == "interrupted"
+    assert result.steps[-1].exit_code == 130
+    assert result.units[0].status == ("ok" if phase == "snapshot-finalize" else "failed")
+    assert (tmp_path / "live/unit").read_bytes() == (
+        b"frozen" if phase == "snapshot-finalize" else b"live"
+    )
+    if phase == "snapshot-create":
+        assert result.steps[-1].step.kind == "snapshot"
+        assert result.snapshot is None
+    elif phase == "write":
+        assert result.snapshot.status == "failed"
