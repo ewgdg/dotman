@@ -169,25 +169,9 @@ def execute_repository_apply(
                         )
                         try:
                             if unit.outcome is not None:
-                                path = target.repo_path
-                                # Atomic replacement protects the leaf, not a
-                                # retargeted parent link into unrelated storage.
-                                path.relative_to(package.repo_root)
-                                for parent in path.parents:
-                                    if parent.is_symlink():
-                                        raise ValueError(f"Repository source parent is a symlink: {parent}")
-                                    if parent == package.repo_root:
-                                        break
-                                try:
-                                    shape = path.lstat()
-                                except FileNotFoundError:
-                                    shape = None
-                                if shape is not None and not stat.S_ISREG(shape.st_mode):
-                                    raise ValueError(f"Repository apply expects a regular file: {path}")
-                                if isinstance(unit.outcome, FilePresent):
-                                    file_access.write_bytes_atomic(path, unit.outcome.content)
-                                else:
-                                    file_access.delete_path_and_prune_empty_parents(path, root=path.parent)
+                                apply_repository_source(
+                                    target.repo_path, unit.outcome, repo_root=package.repo_root,
+                                )
                                 steps.append(ExecutionStepResult(step, "ok"))
                             # Acknowledgment is part of unit completion, not hook
                             # success. Earlier completions survive post-hook failure.
@@ -211,3 +195,24 @@ def execute_repository_apply(
             if current_unit is not None:
                 results[current_unit.row_id] = PublicationUnitResult(current_unit.row_id, "failed", error)
     return PublicationResult(tuple(results[unit.row_id] for unit in units), error, tuple(steps), interrupted=interrupted)
+
+
+def apply_repository_source(path, outcome: FilePresent | Missing, *, repo_root) -> None:
+    """Apply frozen bytes with the same confinement checks for every Source Change."""
+    path.relative_to(repo_root)
+    # Atomic replacement protects the leaf, not a retargeted parent link.
+    for parent in path.parents:
+        if parent.is_symlink():
+            raise ValueError(f"Repository source parent is a symlink: {parent}")
+        if parent == repo_root:
+            break
+    try:
+        shape = path.lstat()
+    except FileNotFoundError:
+        shape = None
+    if shape is not None and not stat.S_ISREG(shape.st_mode):
+        raise ValueError(f"Repository apply expects a regular file: {path}")
+    if isinstance(outcome, FilePresent):
+        file_access.write_bytes_atomic(path, outcome.content)
+    else:
+        file_access.delete_path_and_prune_empty_parents(path, root=path.parent)

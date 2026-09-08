@@ -102,9 +102,14 @@ Explicit Proposal editing shares the same admission lane. TTY providers run whil
 Textual is suspended; pipe providers leave the deck visible. Each Editor attempt
 has a separate cancellation scope: cancelling an attempt drains its subprocess
 and discards only that transaction, without poisoning the enclosing SyncSession.
-Session abort still cancels active Editor work. The public row retains staged
-Additional metadata independently from the current Proposal; these unapproved
-candidates are review-only and never projection or execution inputs.
+Session abort still cancels active Editor work. Canonical Additional Source rows retain staged changes independently from
+Proposal generations, with reverse references and path-local standing Approval.
+Only approved candidate bytes enter dependent projection inputs; unapproved
+paths use frozen preimages. Approval changes eagerly rematerialize approved
+references and invalidate unapproved previews for lazy regeneration. Batch
+commands assign final selection states before materialization. Repository Apply
+consumes each approved Additional change once before exclusive Primary changes;
+its result is independent of Proposal completion.
 
 The Base foundation exposes explicit boundaries rather than running a session.
 `BaseUnit` carries successfully resolved selected configuration, never a

@@ -8,7 +8,8 @@ from typing import Callable, Literal
 from pathlib import Path
 from uuid import uuid4
 
-from dotman.command_runtime import CommandOperation, command_operation
+from dotman.command_runtime import CommandOperation, command_operation, command_runtime_session
+from dotman.elevation import elevation_broker_session
 from dotman.execution import ExecutionStep
 from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
@@ -25,7 +26,7 @@ from dotman.operation_lock import OperationBusy, OperationLock, OperationLockErr
 from dotman.sync_observation import Diagnostic, Observation, observe_scope, _resolve_inputs, _base_unit
 from dotman.sync_publication import HookActivation, PublicationResult, PublicationUnit, execute_publication, prepare_publication
 from dotman.sync_repository_apply import (
-    RepositoryApplyUnit, execute_repository_apply, prepare_repository_apply,
+    RepositoryApplyUnit, apply_repository_source, execute_repository_apply, prepare_repository_apply,
 )
 
 
@@ -35,7 +36,7 @@ from dotman.sync_editor import AdditionalEdit, EditorCommandFailed, edit_sources
 ResolutionIntent = Literal["use-repository", "use-live", "merge"]
 
 
-CommandName = Literal["edit-proposal", "set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
+CommandName = Literal["batch-set-approval", "prepare-source-review", "edit-proposal", "set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
 
 
 @dataclass(frozen=True)
@@ -163,13 +164,60 @@ class SessionRow:
 
 
 @dataclass(frozen=True)
+class AdditionalRow:
+    row_id: str
+    repo: str
+    path: Path
+    change: AdditionalEdit
+    references: tuple[str, ...]
+    approved: bool = False
+    kind: Literal["additional"] = "additional"
+    allowed_commands: tuple[CommandName, ...] = ("set-approval", "prepare-source-review")
+
+
+@dataclass(frozen=True)
+class BatchSetApproval:
+    session_id: str
+    revision: int
+    approved: bool
+
+
+@dataclass(frozen=True)
+class PrepareSourceReview:
+    session_id: str
+    revision: int
+    row_id: str
+
+
+@dataclass(frozen=True)
+class SourceReview:
+    row_id: str
+    change: AdditionalEdit
+    references: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BatchApprovalChanged:
+    approved: bool
+
+
+@dataclass(frozen=True)
+class AdditionalSourceResult:
+    row_id: str
+    repo: str
+    path: Path
+    status: Literal["pending", "would-apply", "applied", "execution-failed", "skipped", "interrupted"]
+    diagnostics: tuple[Diagnostic, ...] = ()
+
+
+@dataclass(frozen=True)
 class SessionView:
     session_id: str
     revision: int
     preview: bool
     terminal: bool
     observations: tuple[Observation, ...]
-    rows: tuple[SessionRow | AuxiliaryRow, ...]
+    rows: tuple[SessionRow | AuxiliaryRow | AdditionalRow, ...]
     allowed_commands: tuple[CommandName, ...]
 
 
@@ -243,7 +291,7 @@ class ProposalEdit:
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
-SessionCommand = EditProposal | SetResolutionIntent | RetryMaterialization | SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
+SessionCommand = BatchSetApproval | PrepareSourceReview | EditProposal | SetResolutionIntent | RetryMaterialization | SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
 
 
 @dataclass(frozen=True)
@@ -313,6 +361,7 @@ class SyncResult:
     units: tuple[SyncUnitResult, ...]
     diagnostics: tuple[Diagnostic, ...] = ()
     steps: tuple[SyncStepOutcome, ...] = ()
+    additional_changes: tuple[AdditionalSourceResult, ...] = ()
 
     @property
     def exit_code(self) -> int:
@@ -324,7 +373,7 @@ class SyncResult:
 @dataclass(frozen=True)
 class CommandAccepted:
     view: SessionView
-    result: InclusionChanged | ApprovalChanged | ProposalReview | ProposalEdit | SyncResult
+    result: InclusionChanged | ApprovalChanged | BatchApprovalChanged | SourceReview | ProposalReview | ProposalEdit | SyncResult
 
 
 @dataclass(frozen=True)
@@ -377,7 +426,9 @@ class SyncSession:
     ) -> None:
         self._command_operation = CommandOperation()
         self._editor_operation = CommandOperation()
-        self._additional_edits = {}
+        self._additional_candidates = {}
+        self._additional_approvals = {}
+        self._additional_results = ()
         self._edited_outcomes = {}
         self._proposal_generations = {}
         self._editor_preimages = {}
@@ -388,7 +439,7 @@ class SyncSession:
         self._renders = {
             (unit.identity, unit.repository): unit.comparison_repository
             for unit in observations
-            if unit.compare_repo == "render" and unit.comparison_repository is not None
+            if (unit.compare_repo == "render" or unit.effective_policy == "push-only") and unit.comparison_repository is not None
         }
         self._event_sink = event_sink
         self._operation_lock: OperationLock | None = None
@@ -419,7 +470,7 @@ class SyncSession:
                 for unit in observations
                 if unit.state != "directly-in-sync" or unit.diagnostics
             ) + auxiliary,
-            ("preview", "abort") if preview else ("preview", "execute", "abort"),
+            ("batch-set-approval", "preview", "abort") if preview else ("batch-set-approval", "preview", "execute", "abort"),
         )
 
     @classmethod
@@ -547,7 +598,7 @@ class SyncSession:
 
     def _dispatch(self, command: SessionCommand) -> CommandAccepted | CommandRejected:
         view = self.view
-        if type(command) not in (EditProposal, SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
+        if type(command) not in (BatchSetApproval, PrepareSourceReview, EditProposal, SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
             return CommandRejected(view, "invalid")
         if view.terminal:
             return CommandRejected(view, "terminal")
@@ -557,6 +608,55 @@ class SyncSession:
             return CommandRejected(view, "foreign-session")
         if command.revision != view.revision:
             return CommandRejected(view, "stale")
+        if isinstance(command, BatchSetApproval):
+            if type(command.approved) is not bool:
+                return CommandRejected(view, "invalid")
+            # Establish every final row state before any provider sees inputs.
+            changed_references = set()
+            for row in view.rows:
+                if isinstance(row, AdditionalRow):
+                    if row.approved != command.approved:
+                        changed_references.update(row.references)
+                    self._additional_approvals[row.change.path] = command.approved
+            for row in view.rows:
+                if isinstance(row, SessionRow) and row.row_id in changed_references:
+                    self._clear_input_cache(row)
+            rows = tuple(
+                replace(row, approved=command.approved, proposal=None)
+                if isinstance(row, SessionRow) and "set-approval" in row.allowed_commands
+                else replace(row, approved=command.approved)
+                if isinstance(row, AdditionalRow)
+                else replace(row, included=command.approved)
+                if isinstance(row, AuxiliaryRow) and "set-included" in row.allowed_commands
+                else row
+                for row in view.rows
+            )
+            self._view = replace(view, rows=rows)
+            self._invalidate_inputs({row.row_id for row in rows if isinstance(row, SessionRow)}, clear_cache=False)
+            self._view = replace(self.view, revision=view.revision + 1)
+            self._emit(SessionChanged(self.view))
+            return CommandAccepted(self.view, BatchApprovalChanged(command.approved))
+        if isinstance(command, (SetApproval, PrepareSourceReview)):
+            if type(command.row_id) is not str or (
+                isinstance(command, SetApproval) and type(command.approved) is not bool
+            ):
+                return CommandRejected(view, "invalid")
+            source = next((row for row in view.rows if row.row_id == command.row_id), None)
+            if source is None:
+                return CommandRejected(view, "unknown-row")
+            if isinstance(source, AdditionalRow):
+                if isinstance(command, PrepareSourceReview):
+                    return CommandAccepted(view, SourceReview(source.row_id, source.change, source.references))
+                changed = source.approved != command.approved
+                self._additional_approvals[source.change.path] = command.approved
+                self._refresh_additional_rows()
+                if changed:
+                    self._invalidate_inputs(set(source.references))
+                self._view = replace(self.view, revision=view.revision + 1)
+                self._emit(SessionChanged(self.view))
+                return CommandAccepted(self.view, ApprovalChanged(source.row_id, command.approved))
+            if isinstance(command, PrepareSourceReview):
+                return CommandRejected(view, "disallowed")
         if isinstance(command, EditProposal):
             if type(command.row_id) is not str:
                 return CommandRejected(view, "invalid")
@@ -646,9 +746,89 @@ class SyncSession:
             return CommandAccepted(view, self._result(preview=True))
         if isinstance(command, Execute) and view.preview:
             return CommandRejected(view, "preview")
+        if isinstance(command, Execute) and any(
+            isinstance(row, SessionRow) and row.approved and row.included and row.proposal is None
+            for row in view.rows
+        ):
+            return CommandRejected(view, "disallowed")
         result = self._finish(aborted=isinstance(command, Abort))
         return CommandAccepted(self.view, result)
 
+
+    def _row_additional(self, row: SessionRow) -> tuple[AdditionalEdit, ...]:
+        return tuple(
+            self._additional_candidates[path]
+            for path in self._editor_preimages.get(row.observation.identity, {})
+            if path in self._additional_candidates
+        )
+
+    def _references(self, paths: set[Path]) -> set[str]:
+        return {
+            row.row_id for row in self.view.rows
+            if isinstance(row, SessionRow)
+            and paths.intersection(self._editor_preimages.get(row.observation.identity, {}))
+        }
+
+    def _refresh_additional_rows(self) -> None:
+        proposals = tuple(
+            replace(row, additional_changes=self._row_additional(row))
+            if isinstance(row, SessionRow) else row
+            for row in self.view.rows if not isinstance(row, AdditionalRow)
+        )
+        sources = []
+        for path, change in self._additional_candidates.items():
+            references = tuple(row.row_id for row in proposals
+                               if isinstance(row, SessionRow) and change in self._row_additional(row))
+            owner = next(row for row in proposals if row.row_id in references)
+            item, _ = self._resolved_inputs[owner.observation.identity]
+            relative = path.relative_to(item.repo.root)
+            repo = owner.observation.identity.repo
+            sources.append(AdditionalRow(
+                f"{repo}:additional/{relative.as_posix()}", repo, relative, change,
+                references, self._additional_approvals.get(path, False),
+            ))
+        repo_order = list(dict.fromkeys(unit.identity.repo for unit in self.view.observations))
+        sources.sort(key=lambda row: (repo_order.index(row.repo), row.path.as_posix()))
+        self._view = replace(self.view, rows=proposals + tuple(sources))
+
+    def _input_bytes(self, observation: Observation) -> dict[Path, bytes]:
+        return {
+            path: self._additional_candidates[path].candidate
+            if path in self._additional_candidates and self._additional_approvals.get(path, False)
+            else before
+            for path, before in self._editor_preimages.get(observation.identity, {}).items()
+        }
+
+    def _clear_input_cache(self, row: SessionRow) -> None:
+        identity = row.observation.identity
+        self._captures.pop(identity, None)
+        self._renders = {key: value for key, value in self._renders.items() if key[0] != identity}
+
+    def _invalidate_inputs(self, references: set[str], *, clear_cache: bool = True) -> None:
+        rows = []
+        for row in self.view.rows:
+            if not isinstance(row, SessionRow) or row.row_id not in references:
+                rows.append(row)
+                continue
+            if clear_cache:
+                self._clear_input_cache(row)
+            row = replace(row, proposal=None, diagnostics=())
+            if row.approved:
+                try:
+                    self.check_cancelled()
+                    row = replace(row, proposal=self._materialize_row(row))
+                    self.check_cancelled()
+                except (KeyboardInterrupt, InterruptedError):
+                    row = replace(row, approved=False, proposal=None,
+                                  diagnostics=(Diagnostic("interrupted", "Materialization interrupted"),))
+                except (CaptureError, ReconciliationConflict, ReconciliationFailed, ValueError, OSError) as exc:
+                    code = ("capture-failed" if isinstance(exc, CaptureError) else
+                            "reconciliation-conflict" if isinstance(exc, ReconciliationConflict) else
+                            "reconciliation-failed" if isinstance(exc, ReconciliationFailed) else
+                            "materialization-failed")
+                    row = replace(row, approved=False, proposal=None, diagnostics=(Diagnostic(code, str(exc)),))
+            rows.append(row)
+        self._view = replace(self.view, rows=tuple(rows))
 
     def _next_generation(self, row_id: str) -> int:
         generation = self._proposal_generations.get(row_id, 0) + 1
@@ -657,11 +837,14 @@ class SyncSession:
 
     def _materialize_row(self, row: SessionRow) -> Proposal:
         if row.row_id not in self._edited_outcomes:
+            observation = row.observation
+            if observation.effective_policy == "push-only":
+                observation = replace(observation, comparison_repository=self._render(observation, observation.repository))
             proposal = materialize(
-                row.observation, intent=row.intent, capture=self._capture,
+                observation, intent=row.intent, capture=self._capture,
                 render=self._render, merge=self._merge,
             )
-            return replace(proposal, generation=self._next_generation(row.row_id))
+            return replace(proposal, generation=self._next_generation(row.row_id), additional_changes=self._row_additional(row))
         repository, generation = self._edited_outcomes[row.row_id]
         observation = row.observation
         if observation.effective_policy in ("push-only", "both"):
@@ -677,7 +860,7 @@ class SyncSession:
         return replace(
             proposal, primary_source_change=repository if repository != observation.repository else None,
             intent="editor", generation=generation, reconciliation="edited repository outcome",
-            additional_changes=self._additional_edits.get(row.row_id, ()),
+            additional_changes=self._row_additional(row),
         )
 
     def _edit_proposal(self, row: SessionRow) -> CommandAccepted:
@@ -685,8 +868,12 @@ class SyncSession:
         operation = self._editor_operation
         status, diagnostics = "saved", ()
         updated = row
+        prior_view = self.view
+        prior_captures, prior_renders = dict(self._captures), dict(self._renders)
+        prior_generations = dict(self._proposal_generations)
         prior_edited = self._edited_outcomes.get(row.row_id)
-        prior_additional = self._additional_edits.get(row.row_id, ())
+        prior_candidates = dict(self._additional_candidates)
+        prior_additional = self._row_additional(row)
         try:
             with command_operation(operation):
                 operation.check_cancelled()
@@ -712,8 +899,19 @@ class SyncSession:
                     # Commit saved sources before projection: a failed Render must
                     # remain retryable from the user's edits, not automatic intent.
                     self._edited_outcomes[row.row_id] = (output.repository, generation)
-                    self._additional_edits[row.row_id] = output.additional
-                    if previous is not None and output.repository == previous.repository:
+                    for path in self._editor_preimages[row.observation.identity]:
+                        self._additional_candidates.pop(path, None)
+                    self._additional_candidates.update({change.path: change for change in output.additional})
+                    changed_paths = {
+                        path for path in prior_candidates.keys() | self._additional_candidates.keys()
+                        if prior_candidates.get(path) != self._additional_candidates.get(path)
+                    }
+                    self._refresh_additional_rows()
+                    affected = self._references(changed_paths)
+                    self._invalidate_inputs(affected - {row.row_id})
+                    self._clear_input_cache(row)
+
+                    if previous is not None and output.repository == previous.repository and not changed_paths:
                         proposal = replace(
                             previous, intent="editor", generation=generation,
                             reconciliation="edited repository outcome",
@@ -731,7 +929,10 @@ class SyncSession:
                 self._edited_outcomes.pop(row.row_id, None)
             else:
                 self._edited_outcomes[row.row_id] = prior_edited
-            self._additional_edits[row.row_id] = prior_additional
+            self._additional_candidates = prior_candidates
+            self._view = prior_view
+            self._captures, self._renders = prior_captures, prior_renders
+            self._proposal_generations = prior_generations
         except EditorCommandFailed as exc:
             status = "command-failed"
             diagnostics = (Diagnostic("editor-command-failed", str(exc)),)
@@ -742,10 +943,11 @@ class SyncSession:
             self._editor_operation = CommandOperation()
         if status not in ("saved", "cancelled"):
             updated = replace(row, approved=False, proposal=None, diagnostics=diagnostics,
-                              additional_changes=self._additional_edits.get(row.row_id, ()))
+                              additional_changes=self._row_additional(row))
         self._view = replace(self.view, revision=self.view.revision + 1, rows=tuple(
             updated if candidate.row_id == row.row_id else candidate for candidate in self.view.rows
         ))
+        self._refresh_additional_rows()
         self._emit(SessionChanged(self.view))
         return CommandAccepted(self.view, ProposalEdit(row.row_id, status, diagnostics))
 
@@ -789,17 +991,31 @@ class SyncSession:
             )
             else "completed"
         )
-        return SyncResult(status, tuple(units), operation_diagnostics, steps)
+        additional = tuple(
+            AdditionalSourceResult(row.row_id, row.repo, row.path,
+                                   "would-apply" if preview and row.approved and not aborted else "pending")
+            for row in self.view.rows if isinstance(row, AdditionalRow)
+        ) if preview or aborted else self._additional_results
+        if any(change.status == "execution-failed" for change in additional):
+            status = "failed"
+        return SyncResult(status, tuple(units), operation_diagnostics, steps, additional)
 
     def _capture(self, observation: Observation) -> FilePresent | Missing:
         self.check_cancelled()
         item, metadata = self._resolved_inputs[observation.identity]
         if observation.identity not in self._captures:
             try:
-                self._captures[observation.identity] = capture_observation(
-                    observation, metadata=metadata, context=item.package_context.context,
-                    command_runtime=self._context.projection.command_runtime,
-                )
+                with ExitStack() as resources:
+                    preimages = self._input_bytes(observation)
+                    if preimages:
+                        metadata, _, _ = resources.enter_context(repository_workspace(
+                            metadata=metadata, repo_root=item.repo.root, preimages=preimages,
+                        ))
+                    self._captures[observation.identity] = capture_observation(
+                        observation, metadata=metadata, context=item.package_context.context,
+                        command_runtime=self._context.projection.command_runtime,
+                        reuse_comparison=preimages == self._editor_preimages.get(observation.identity, {}),
+                    )
             except (KeyboardInterrupt, InterruptedError, CaptureError):
                 raise
             except (ValueError, OSError) as exc:
@@ -812,7 +1028,7 @@ class SyncSession:
         if key not in self._renders:
             item, metadata = self._resolved_inputs[observation.identity]
             with ExitStack() as resources:
-                preimages = self._editor_preimages.get(observation.identity, {})
+                preimages = self._input_bytes(observation)
                 if preimages:
                     metadata, _, _ = resources.enter_context(repository_workspace(
                         metadata=metadata, repo_root=item.repo.root, preimages=preimages,
@@ -876,9 +1092,13 @@ class SyncSession:
             )
             for direction in ("pull", "push")
         }
+        additional_rows = tuple(row for row in self.view.rows if isinstance(row, AdditionalRow))
+        self._additional_results, additional_diagnostics, additional_steps = self._apply_additional(additional_rows)
+        if additional_diagnostics:
+            return {row.row_id: ("skipped", ()) for row in selected}, additional_diagnostics, additional_steps
         if not selected and not any(auxiliary.values()):
-            return {}, (), ()
-        units, diagnostics, steps = {}, (), ()
+            return {}, (), additional_steps
+        units, diagnostics, steps = {}, (), additional_steps
         if auxiliary["pull"] or any(row.observation.configured_policy in ("pull-only", "both") or row.proposal.primary_source_change is not None for row in selected):
             by_id = {row.row_id: row for row in selected}
             acknowledgment_failures = {}
@@ -902,7 +1122,8 @@ class SyncSession:
                 command_runtime=self._context.projection.command_runtime,
                 complete=complete, auxiliary=auxiliary["pull"], run_noop=self._run_noop,
             )
-            units, diagnostics, steps = self._execution_outcome(result, "repository-apply")
+            units, diagnostics, repository_steps = self._execution_outcome(result, "repository-apply")
+            steps += repository_steps
             for row in selected:
                 if row.row_id in acknowledgment_failures:
                     units[row.row_id] = ("execution-failed", (acknowledgment_failures[row.row_id],))
@@ -920,6 +1141,37 @@ class SyncSession:
             units.update(published)
             steps += publication_steps
         return units, diagnostics, steps
+
+    def _apply_additional(self, rows: tuple[AdditionalRow, ...]):
+        if not rows:
+            return (), (), ()
+        results, steps, diagnostics = [], [], ()
+        with elevation_broker_session(), command_runtime_session(self._context.projection.command_runtime):
+            for row in rows:
+                status, failures = "pending", ()
+                if row.approved:
+                    status = "skipped"
+                    if not diagnostics:
+                        try:
+                            self.check_cancelled()
+                            apply_repository_source(row.change.path, FilePresent(row.change.candidate),
+                                                    repo_root=row.change.path.parents[len(row.path.parts) - 1])
+                            status = "applied"
+                        except (KeyboardInterrupt, InterruptedError):
+                            status = "interrupted"
+                            failures = (Diagnostic("interrupted", "Additional Source apply interrupted"),)
+                        except (OSError, ValueError) as exc:
+                            status = "execution-failed"
+                            failures = (Diagnostic("additional-source-failed", str(exc)),)
+                        diagnostics += failures
+                    steps.append(SyncStepOutcome(
+                        "repository-apply", "additional-source", "update", "repo", row.row_id,
+                        row.repo, None, "ok" if status == "applied" else
+                        "failed" if status == "execution-failed" else status,
+                        error=failures[0].message if failures else None,
+                    ))
+                results.append(AdditionalSourceResult(row.row_id, row.repo, row.path, status, failures))
+        return tuple(results), diagnostics, tuple(steps)
 
     def _resolved_inputs_identity(self, scope: str):
         return next(identity for identity in self._resolved_inputs if identity.canonical == scope)

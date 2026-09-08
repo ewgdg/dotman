@@ -20,8 +20,8 @@ from textual.widgets import DataTable, OptionList, RichLog, Static
 
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import FilePresent, Missing
-from dotman.sync_deck_command import set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
-from dotman.sync_session import AuxiliaryRow, CommandRejected, SyncSession
+from dotman.sync_deck_command import additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
+from dotman.sync_session import AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
 
 
 def _frozen_difference(
@@ -112,10 +112,8 @@ class CommandDeck:
     def select_all(self, approved: bool) -> None:
         if self.reviewing or self.confirming:
             return
-        for row in self.session.view.rows:
-            self.session.check_cancelled()
-            if {"set-approval", "set-included"}.intersection(row.allowed_commands):
-                set_selected(self.session, row, approved)
+        result = set_all_selected(self.session, approved)
+        self.notice = result.reason if isinstance(result, CommandRejected) else ""
 
     def open_review(self) -> None:
         row = self.focused_row
@@ -143,7 +141,7 @@ class CommandDeck:
             self.notice = "\n".join(item.message for item in result.result.diagnostics)
 
     def confirmation_text(self) -> str:
-        selected = [row for row in self.session.view.rows if not isinstance(row, AuxiliaryRow) and row.approved]
+        selected = [row for row in self.session.view.rows if not isinstance(row, (AuxiliaryRow, AdditionalRow)) and row.approved]
         auxiliary_count = sum(row.included for row in self.session.view.rows if isinstance(row, AuxiliaryRow))
         effects = [effect for row in selected if row.proposal
                    for effect in row.proposal.publication_effects]
@@ -151,13 +149,27 @@ class CommandDeck:
         deletions = sum(effect.kind == "delete" for effect in effects)
         modes = sum(effect.kind == "chmod" for effect in effects)
         repository_changes = sum(row.proposal.primary_source_change is not None for row in selected if row.proposal)
+        additional_count = sum(row.approved for row in self.session.view.rows if isinstance(row, AdditionalRow))
+        repository_changes += additional_count
         verb = "Preview" if self.session.view.preview else "Execute"
-        return f":: {verb} {len(selected)} approved units / {auxiliary_count} selected auxiliary / {repository_changes} repository changes / {writes} live writes / {deletions} live deletions / {modes} mode changes?\n\n  Enter confirm  Esc return"
+        return f":: {verb} {len(selected)} approved units / {additional_count} approved additional sources / {auxiliary_count} selected auxiliary / {repository_changes} repository changes / {writes} live writes / {deletions} live deletions / {modes} mode changes?\n\n  Enter confirm  Esc return"
 
     def review_text(self) -> str:
         row = self.focused_row
         if row is None or isinstance(row, AuxiliaryRow):
             return ""
+        if isinstance(row, AdditionalRow):
+            lines = [f":: Additional Source Review — {additional_label(row, use_color=self.use_color)}",
+                     f"  Approval: {'approved' if row.approved else 'unapproved'}",
+                     "  References: " + ", ".join(row.references)]
+            lines.extend(_frozen_difference(
+                FilePresent(row.change.before), FilePresent(row.change.candidate),
+                before_label="frozen Additional Source",
+                after_label="candidate Additional Source",
+                description="Additional Source",
+            ))
+            lines += ["", "  ↑/↓ scroll  Space Approval  Esc return to workset"]
+            return "\n".join(lines)
         proposal = row.proposal
         intent = row.intent
         pull = intent in ("use-live", "merge")
@@ -232,16 +244,11 @@ class CommandDeck:
                 ))
             lines.append(f"  Frozen {side}: {'missing' if isinstance(before, Missing) else 'present'}")
             lines.append(f"  {side.capitalize()} outcome: {'missing' if isinstance(after, Missing) else 'present'}")
-        if row.additional_changes:
-            lines += ["", "  Additional Source Changes (staged, unapproved; not executable):"]
-            for change in row.additional_changes:
-                lines.append(f"    {change.path}")
-                lines.extend(_frozen_difference(
-                    FilePresent(change.before), FilePresent(change.candidate),
-                    before_label="frozen Additional Source",
-                    after_label="staged Additional Source",
-                    description="Additional Source",
-                ))
+        additional = [item for item in self.session.view.rows
+                      if isinstance(item, AdditionalRow) and row.row_id in item.references]
+        if additional:
+            lines += ["", "  Additional Source Changes (independent Approval and Review):"]
+            lines.extend(f"    {additional_label(item, use_color=self.use_color)}" for item in additional)
         lines += ["", "  ↑/↓ scroll  Space Approval  E edit  T retry  Esc return to workset"]
         return "\n".join(lines)
 
@@ -250,6 +257,8 @@ def row_resolution(row) -> str:
     """Capability absence is not a failed filesystem observation."""
     if isinstance(row, AuxiliaryRow):
         return "Probe Work" if row.kind == "probe" else "Hook Work"
+    if isinstance(row, AdditionalRow):
+        return "Additional Source Change"
     if row.observation.diagnostics or row.observation.state == "observation-failed":
         return "Observation failed"
     if row.diagnostics:
@@ -463,7 +472,16 @@ class SyncDeckApp(App[bool]):
         self.query_one(OptionList).display = False
         table = self.query_one(WorksetTable)
         table.add_columns("Selection", "Target", "Policy", "Resolution")
+        self.show_workset()
+
+    def rebuild_workset(self) -> None:
+        table = self.query_one(WorksetTable)
+        table.clear()
+        self.deck.focus = max(0, min(self.deck.focus, len(self.deck.session.view.rows) - 1))
         for row in self.deck.session.view.rows:
+            if isinstance(row, AdditionalRow):
+                table.add_row("", Text.from_ansi(additional_label(row, use_color=self.deck.use_color)), "", "", key=row.row_id)
+                continue
             if isinstance(row, AuxiliaryRow):
                 table.add_row("", Text.from_ansi(auxiliary_label(row.scope, row.kind, row.directions, use_color=self.deck.use_color)), "", "", key=row.row_id)
                 continue
@@ -474,10 +492,13 @@ class SyncDeckApp(App[bool]):
                 use_color=self.deck.use_color,
             )
             table.add_row("", Text.from_ansi(label), row.observation.effective_policy, "", key=row.row_id)
-        self.show_workset()
+        table.move_cursor(row=self.deck.focus)
 
     def update_workset(self) -> None:
         table = self.query_one(WorksetTable)
+        # Editor saves can add or remove canonical source rows.
+        if tuple(key.value for key in table.rows) != tuple(row.row_id for row in self.deck.session.view.rows):
+            self.rebuild_workset()
         for row in self.deck.session.view.rows:
             auxiliary = isinstance(row, AuxiliaryRow)
             selected = row.included if auxiliary else row.approved
@@ -495,6 +516,8 @@ class SyncDeckApp(App[bool]):
             help_text = "↑/↓ choose Resolution · Enter select · Esc dismiss"
         elif self.deck.confirming:
             help_text = "Enter confirm · Esc return · Ctrl+C abort"
+        elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
+            help_text = "Esc return · Space Approval · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
         elif self.deck.reviewing:
             help_text = "Esc return · Space Approval · E edit · T retry · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
         else:
@@ -505,6 +528,8 @@ class SyncDeckApp(App[bool]):
         row = self.deck.focused_row
         if row is None:
             detail = "No drifted work."
+        elif isinstance(row, AdditionalRow):
+            detail = additional_label(row, use_color=self.deck.use_color)
         elif isinstance(row, AuxiliaryRow):
             detail = auxiliary_label(row.scope, row.kind, row.directions)
             detail += "\n" + "\n".join(item.message for item in row_diagnostics(row))
@@ -590,7 +615,7 @@ class SyncDeckApp(App[bool]):
         log.display = True
         log.clear()
         log.write(Text.from_ansi(self.deck.review_text()), scroll_end=False)
-        self.query_one("#title", Static).update(":: Proposal Review")
+        self.query_one("#title", Static).update(":: Additional Source Review" if isinstance(self.deck.focused_row, AdditionalRow) else ":: Proposal Review")
         log.focus()
         self.call_after_refresh(log.scroll_to, *position, animate=False)
 

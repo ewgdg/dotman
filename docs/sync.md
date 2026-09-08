@@ -70,8 +70,8 @@ observing again. Inclusion is separate from Approval.
 
 The persistent Textual Command Deck shows drift, auxiliary work and diagnostics,
 not directly agreeing units. Its aligned table uses canonical target identities
-and a **Selection** column. Selection authorizes Proposals through Approval and
-directly includes auxiliary work. Unsupported resolution capability is labeled separately
+and a **Selection** column. Selection authorizes Proposals and canonical Additional Source Changes through
+independent Approval and directly includes auxiliary work. Unsupported resolution capability is labeled separately
 from Observation and Proposal failures; focused diagnostic details explain the
 current row. Directory scopes are outside the file session's current capability.
 Focused review shows
@@ -140,11 +140,32 @@ is forbidden by policy or Guards. Guards are not rerun; no-write editing does no
 activate these hooks. Byte-identical saves retain
 valid projection results rather than repeating provider work.
 
-Additional Source edits remain staged for review and later Editor attempts.
-This file-session increment does not yet offer independent Additional Approval
-or execution: their candidates are not written and are not inputs to Proposal
-previews. Render uses their frozen repository preimages. Review explicitly marks
-these retained edits as unapproved and not executable.
+### Additional Source Approval
+
+Each changed Additional Source has one canonical repository-relative row, shared
+by every referencing Proposal. Source Change Review shows the frozen-preimage
+diff and reverse references. Proposal Review lists those references but does not
+duplicate their Approval control. Primary Sources remain exclusive to their
+own Sync Units and cannot also be Additional Sources.
+
+Additional Approval independently authorizes the repository write, even with no
+approved referencing Proposal. New paths start unapproved. Unapproved candidate
+bytes remain available to review and later Editor attempts, but dependent
+Proposals use the frozen repository preimage instead. Approval and unapproval
+rematerialize approved references immediately; unapproved references discard
+stale previews and rematerialize only on demand. Successful rematerialization
+preserves Proposal Approval; failure clears only the affected Proposal.
+
+Returning a path to its frozen preimage removes its changed row, not its
+session-local Approval. Recreating the change restores that Approval. Batch
+selection establishes all final Proposal and Additional states before any
+dependent materialization; batch unselection discards invalid previews without
+eagerly regenerating them.
+
+Repository Apply writes approved Additional changes once, in stable normalized
+path order before Primary changes. Additional-only work activates no directional
+hooks. Additional results are reported independently and are not requirements
+of a referencing Proposal's Converged result or Base acknowledgment.
 
 Successful rematerialization preserves standing Approval. Failed materialization
 clears only the affected Approval and leaves a typed diagnostic with local retry.

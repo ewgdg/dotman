@@ -13,6 +13,7 @@ def capture_observation(
     metadata: TargetMetadata,
     context: dict,
     command_runtime: CommandRuntime,
+    reuse_comparison: bool = True,
 ) -> FilePresent | Missing:
     if isinstance(observation.live, Missing):
         return Missing()
@@ -20,7 +21,7 @@ def capture_observation(
         raise ValueError("Capture requires frozen endpoints")
     # A configured Capture comparison already produced this exact projection
     # during Observation; reviewing it must not run the provider a second time.
-    if observation.compare_live == "capture":
+    if observation.compare_live == "capture" and reuse_comparison:
         if observation.comparison_live is None:
             raise ValueError("Capture comparison evidence is missing")
         return observation.comparison_live

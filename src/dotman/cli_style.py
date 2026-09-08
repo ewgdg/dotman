@@ -444,6 +444,7 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "selected": ("1", "32"),
     "unselected": ("2",),
     "Probe Work": ("1", "36"),
+    "Additional Source Change": ("1", "36"),
     "Hook Work": ("1", "36"),
     "approved": ("1", "32"),
     "unapproved": ("2",),
@@ -462,6 +463,9 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "failed": ("1", "31"),
     "pending": ("33",),
     "would-converge": ("36",),
+    "would-apply": ("36",),
+    "applied": ("1", "32"),
+    "skipped": ("2",),
     "execution-failed": ("1", "31"),
     "interrupted": ("1", "31"),
 }

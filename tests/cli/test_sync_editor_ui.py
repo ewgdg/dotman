@@ -210,7 +210,7 @@ def test_edited_pull_review_does_not_claim_capture_is_pending(tmp_path, monkeypa
         assert "Frozen Pull Views:" in text
 
 
-def test_review_retains_additional_edits_without_claiming_authorization(tmp_path, monkeypatch):
+def test_additional_edits_have_independent_canonical_review_and_json(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from dotman.sync_deck import CommandDeck
@@ -237,12 +237,30 @@ def test_review_retains_additional_edits_without_claiming_authorization(tmp_path
         deck.open_review()
         text = deck.review_text()
         assert "Additional Source Changes" in text
-        assert "unapproved; not executable" in text
+        assert "-additional-preimage" not in text and "+additional-candidate" not in text
+        additional = next(row for row in session.view.rows if row.kind == "additional")
+        assert str(additional.path) in text
+        deck.focus = session.view.rows.index(additional)
+        deck.back()
+        deck.open_review()
+        text = deck.review_text()
+        assert "Additional Source Review" in text
         assert "-additional-preimage" in text and "+additional-candidate" in text
+        deck.select()
+        assert session.view.rows[deck.focus].approved
+        assert not session.view.rows[0].approved
         assert shared.read_bytes() == b"additional-preimage"
-        unit = sync_document(SimpleNamespace(dry_run=True, scopes=[]), session, None)["sync_units"][0]
-        assert unit["staged_additional_sources"] == [{
-            "path": str(shared), "bytes": len(b"additional-candidate"),
-            "approved": False, "executable": False,
-        }]
-        assert "additional-candidate" not in str(unit)
+        document = sync_document(SimpleNamespace(dry_run=True, scopes=[]), session, None)
+        assert "staged_additional_sources" not in document["sync_units"][0]
+        assert document["sync_units"][0]["additional_source_changes"] == [additional.row_id]
+        change = document["additional_source_changes"][0]
+        assert change["path"] == "packages/app/shared"
+        assert change["approved"] is True
+        assert change["references"] == [session.view.rows[0].row_id]
+        assert "additional-candidate" not in str(document)
+        assert "1 repository changes" in deck.confirmation_text()
+        deck.back()
+        deck.select_all(False)
+        assert not any(row.approved for row in session.view.rows)
+        deck.select_all(True)
+        assert all(row.approved for row in session.view.rows)

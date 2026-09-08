@@ -64,13 +64,18 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
 - Interactive Sync opens a persistent Command Deck with Approval initially off.
   Its Textual table aligns Selection, Target, Policy, and Resolution columns.
   `Space` toggles Selection, `A` selects eligible rows, and `U` clears Selection.
-  Selection means Proposal Approval or direct auxiliary inclusion.
+  Selection means independent Proposal or Additional Source Change Approval,
+  or direct auxiliary inclusion. Batch actions establish all final states before
+  rematerializing dependent Proposals.
   A single click in the Selection column toggles that row; other cells only focus it.
   The bottom help text lists keyboard shortcuts; it is not clickable. It adapts
   to workset, review, and confirmation, wrapping to two lines on narrow terminals.
   Arrow keys navigate; narrow terminals scroll horizontally and long worksets
   scroll vertically without losing column alignment.
-- `Enter` opens focused Proposal Review; `Esc` returns to the same workset.
+- `Enter` opens focused Proposal Review or canonical Source Change Review;
+  `Esc` returns to the same workset. Source Change Review shows the preimage diff,
+  referencing Proposals and independent Approval; Proposal Review lists source
+  references without a duplicate Additional Approval control.
   `X` opens compact preview/execution confirmation; cancelling returns without
   changing Approval. Review scroll position is retained per target; arrow keys,
   Page Up/Down, and the mouse wheel scroll frozen evidence.
@@ -119,12 +124,16 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   `summary.selected_auxiliary` counts directly selected auxiliary rows.
   Each unit's `resolution_intent` retains its selected automatic intent;
   `resolution` reports `editor` for an Edited Proposal and `generation` identifies
-  the materialized generation. `staged_additional_sources` exposes retained
-  Additional edit paths and byte counts as unapproved, non-executable metadata;
-  these candidates do not enter the final execution set.
+  the materialized generation. Top-level `additional_source_changes`
+  contains canonical `row_id`, `repo`, repository-relative `path`, `approved`,
+  reverse `references`, change `kind`, `bytes`, `result` and `diagnostics`.
+  Each unit's `additional_source_changes` lists its canonical source row IDs.
+  Source execution outcomes are separate from unit convergence. Candidate bytes
+  enter referencing previews and the final execution set only while approved.
+  `summary.approved_additional_sources` counts independently approved sources.
   Each unit's `primary_source_change` describes its repository write/deletion
   (or is null); `effects` contains only live Publication Effects. Summary
-  `repository_changes` counts selected Primary Source Changes. Base status and
+  `repository_changes` counts selected Primary and Additional Source Changes. Base status and
   provenance remain frozen opening evidence; `base.acknowledged` also reports
   successful real-operation acknowledgment of a Converged Base-Eligible unit.
   Execution outcomes identify their repository, package instance or target scope

@@ -9,7 +9,7 @@ from dotman.cli_style import render_sync_term, render_package_label, style_text,
 from dotman.sync_scope import _parse_scope_selector
 from dotman.sync_base_store import FilePresent, Missing
 from dotman.sync_session import (
-    AuxiliaryRow, CommandRejected, EditProposal, PrepareProposalReview, Preview, SessionOpenFailed,
+    AdditionalRow, BatchSetApproval, PrepareSourceReview, AuxiliaryRow, CommandRejected, EditProposal, PrepareProposalReview, Preview, SessionOpenFailed,
     SetApproval, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession,
 )
 from dotman.ui_context import ui_config_scope
@@ -26,7 +26,19 @@ def set_selected(session: SyncSession, row, selected: bool):
     return session.dispatch(command(view.session_id, view.revision, row.row_id, selected))
 
 
+def set_all_selected(session: SyncSession, selected: bool):
+    view = session.view
+    return session.dispatch(BatchSetApproval(view.session_id, view.revision, selected))
+
+
+def additional_label(row, *, use_color: bool = False) -> str:
+    repo = style_text(row.repo, *MENU_REPO_STYLE) if use_color else row.repo
+    return f"{repo}:{row.path}"
+
+
 def row_diagnostics(row):
+    if isinstance(row, AdditionalRow):
+        return ()
     return row.diagnostics if isinstance(row, AuxiliaryRow) else (*row.observation.diagnostics, *row.diagnostics)
 
 
@@ -47,7 +59,9 @@ def auxiliary_label(scope: str, kind: str, directions, *, use_color: bool = Fals
 
 def review(session: SyncSession, row_id: str):
     view = session.view
-    return session.dispatch(PrepareProposalReview(view.session_id, view.revision, row_id))
+    row = next(row for row in view.rows if row.row_id == row_id)
+    command = PrepareSourceReview if isinstance(row, AdditionalRow) else PrepareProposalReview
+    return session.dispatch(command(view.session_id, view.revision, row_id))
 
 
 def edit_proposal(session: SyncSession, row_id: str):
@@ -119,15 +133,14 @@ class SyncDeckCommandRunner:
                         })
                         return 130
                 elif args.unattended:
-                    for row in session.view.rows:
-                        if {"set-approval", "set-included"}.intersection(row.allowed_commands):
-                            set_selected(session, row, True)
-                            if any(d.code == "interrupted" for item in session.view.rows for d in item.diagnostics):
-                                break
+                    set_all_selected(session, True)
 
                 # Unattended failures must not permit a partially understood
                 # workset to mutate unrelated units.
-                blocked = any(row.kind == "diagnostic" or row.diagnostics for row in session.view.rows)
+                blocked = any(
+                    row.kind == "diagnostic" or row.diagnostics
+                    for row in session.view.rows if not isinstance(row, AdditionalRow)
+                )
                 if not interactive and blocked:
                     interrupted = any(
                         item.code == "interrupted"
@@ -139,7 +152,7 @@ class SyncDeckCommandRunner:
                     } if interrupted else None)
                     return 130 if interrupted else 1
                 if not interactive and any(
-                    row.included and row.kind == "drift"
+                    row.kind == "drift" and row.included
                     and "set-approval" not in row.allowed_commands
                     for row in session.view.rows
                 ):
@@ -182,6 +195,14 @@ class SyncDeckCommandRunner:
                 print(f"      {item['message']}")
             if unit["result"]:
                 print(f"      {render_sync_term(unit['result'], use_color=self._use_color)}")
+        for change in payload["additional_source_changes"]:
+            selection = "approved" if change["approved"] else "unapproved"
+            print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {change['repo']}:{change['path']}")
+            print(f"      {render_sync_term('Additional Source Change', use_color=self._use_color)}: {change['kind']}")
+            if change["result"]:
+                print(f"      {render_sync_term(change['result'], use_color=self._use_color)}")
+            for item in change["diagnostics"]:
+                print(f"      {item['message']}")
         for kind, key in (("probe", "probe_work"), ("hook", "hook_work")):
             for work in payload[key]:
                 selection = "selected" if work["selected"] else "unselected"
@@ -198,8 +219,10 @@ class SyncDeckCommandRunner:
 def sync_document(args, session, result, *, diagnostic=None) -> dict:
     """Project only public result metadata; frozen payload bytes never leave the session."""
     view = session.view if session is not None else None
-    rows = {row.row_id: row for row in view.rows if not isinstance(row, AuxiliaryRow)} if view else {}
+    rows = {row.row_id: row for row in view.rows if not isinstance(row, (AuxiliaryRow, AdditionalRow))} if view else {}
     auxiliary = [row for row in view.rows if isinstance(row, AuxiliaryRow)] if view else []
+    additional = [row for row in view.rows if isinstance(row, AdditionalRow)] if view else []
+    additional_outcomes = {item.row_id: item for item in result.additional_changes} if result else {}
     def auxiliary_work(kind):
         return [{"identity": row.scope, "selected": row.included,
                  "directions": list(row.directions),
@@ -235,11 +258,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "resolution_intent": intent,
             "resolution": proposal.intent if proposal else intent,
             "generation": proposal.generation if proposal else None,
-            "staged_additional_sources": [
-                {"path": str(change.path), "bytes": len(change.candidate),
-                 "approved": False, "executable": False}
-                for change in row.additional_changes
-            ] if row else [],
+            "additional_source_changes": [item.row_id for item in additional if identity in item.references],
             "allowed_intents": list(row.allowed_intents) if row else [],
             "fallback_reason": row.fallback_reason if row else None,
             "capture": ("missing" if isinstance(proposal.capture, Missing) else "present") if proposal and proposal.capture is not None else None,
@@ -271,7 +290,8 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "sync_units": len(units),
             "selected_auxiliary": sum(row.included for row in auxiliary),
             "approved_units": sum(unit["approved"] for unit in units),
-            "repository_changes": sum(unit["primary_source_change"] is not None for unit in units if unit["selected"]),
+            "repository_changes": sum(unit["primary_source_change"] is not None for unit in units if unit["selected"]) + sum(row.approved for row in additional),
+            "approved_additional_sources": sum(row.approved for row in additional),
             "live_writes": sum(effect["kind"] == "write" for unit in units if unit["selected"] for effect in unit["effects"]),
             "live_deletions": sum(effect["kind"] == "delete" for unit in units if unit["selected"] for effect in unit["effects"]),
             "diagnostics": ([diagnostic] if diagnostic else []) + [
@@ -280,7 +300,20 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             ] if result else ([diagnostic] if diagnostic else []),
         },
         "sync_units": units,
-        "additional_source_changes": [],
+        "additional_source_changes": [
+            {
+                "row_id": row.row_id, "repo": row.repo, "path": str(row.path),
+                "approved": row.approved, "references": list(row.references),
+                "kind": "write",
+                "bytes": len(row.change.candidate),
+                "result": additional_outcomes[row.row_id].status if row.row_id in additional_outcomes else None,
+                "diagnostics": [
+                    {"code": item.code, "message": item.message}
+                    for item in additional_outcomes[row.row_id].diagnostics
+                ] if row.row_id in additional_outcomes else [],
+            }
+            for row in additional
+        ],
         "probe_work": auxiliary_work("probe"),
         "directory_root_work": [],
         "hook_work": auxiliary_work("hook"),
