@@ -6,6 +6,7 @@ import json
 import os
 import pty
 import select
+import shutil
 import signal
 import subprocess
 import sys
@@ -109,3 +110,131 @@ def test_sigint_with_sync_base_emits_clean_json_and_stops_execution(tmp_path, mo
         if process.poll() is None:
             process.kill()
         process.wait(timeout=5)
+
+
+@pytest.mark.parametrize("stage", ["capture", "merge", "render"])
+@pytest.mark.parametrize("interruption", ["key", "signal"])
+@pytest.mark.parametrize("action", [b"\r", b"a"], ids=["review", "batch"])
+def test_materialization_remains_animated_and_interruptible(
+    tmp_path, monkeypatch, stage, interruption, action,
+):
+    """Gate a real provider, not the UI: progress and cancellation must stay live."""
+    ready = tmp_path / "provider-ready"
+    release = tmp_path / "release-provider"
+    later = tmp_path / "later-provider"
+    provider = tmp_path / "provider"
+    real_git = shutil.which("git")
+    assert real_git
+    provider.write_text(
+        f"#!{sys.executable}\n"
+        "import os, pathlib, subprocess, sys, time\n"
+        f"stage = {stage!r}\n"
+        "called = 'merge' if pathlib.Path(sys.argv[0]).name == 'git' else sys.argv[1]\n"
+        "if called == 'merge' and sys.argv[1:2] != ['merge-file']:\n"
+        f"    os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n"
+        "if called == stage:\n"
+        "    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"    pathlib.Path({str(ready)!r}).write_text(str(os.getpid()) + ' ' + str(child.pid))\n"
+        f"    while not pathlib.Path({str(release)!r}).exists(): time.sleep(0.01)\n"
+        f"    pathlib.Path({str(later)!r}).touch()\n"
+        "elif (stage == 'capture' and called in ('merge', 'render')) or (stage == 'merge' and called == 'render'):\n"
+        f"    pathlib.Path({str(later)!r}).touch()\n"
+        "if called == 'merge':\n"
+        f"    os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n"
+        "source = os.environ['DOTMAN_LIVE_PATH' if called == 'capture' else 'DOTMAN_SOURCE']\n"
+        "sys.stdout.buffer.write(pathlib.Path(source).read_bytes())\n"
+    )
+    provider.chmod(0o755)
+    established(
+        tmp_path, monkeypatch,
+        f'capture = "{provider} capture"\nrender = "{provider} render"\n'
+        'compare = { repo = "raw", live = "raw" }',
+    )
+    # Install the merge wrapper only after fixture repository initialization.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").symlink_to(provider)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ["PATH"])
+    if action == b"a":
+        package = tmp_path / "repo/packages/app/package.toml"
+        with package.open("a") as config:
+            config.write(
+                '\n[targets.zz_later]\nsource = "zz_later"\n'
+                f'path = "{tmp_path / "live/zz_later"}"\ntype = "file"\nsync_policy = "pull-only"\n'
+                f'capture = "touch {later}; cat $DOTMAN_LIVE_PATH"\n'
+                'compare = { repo = "raw", live = "raw" }\n'
+            )
+        (tmp_path / "repo/packages/app/zz_later").write_bytes(b"repo")
+        (tmp_path / "live/zz_later").write_bytes(b"live")
+    endpoints = [
+        path for root in (tmp_path / "repo/packages/app", tmp_path / "live")
+        for path in root.iterdir() if path.name != "package.toml"
+    ]
+    before = {path: path.read_bytes() for path in endpoints}
+    master, slave = pty.openpty()
+    terminal_before = termios.tcgetattr(slave)
+    process = subprocess.Popen(
+        [sys.executable, "-m", "dotman.cli", "--config", str(tmp_path / "config.toml"), "sync"],
+        stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+        env={**os.environ, "TERM": "xterm-256color"},
+    )
+    output = bytearray()
+
+    def read_output():
+        if select.select([master], [], [], 0.01)[0]:
+            output.extend(os.read(master, 65536))
+
+    def stopped(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        # A reparented child may await init's reap, but must no longer execute.
+        from pathlib import Path
+        stat = Path(f"/proc/{pid}/stat")
+        return stat.exists() and stat.read_text().split(") ", 1)[1].startswith("Z")
+
+    try:
+        wait_until(lambda: b"Merge" in output, process, read_output)
+        os.write(master, action)
+        wait_until(ready.exists, process, read_output)
+        progress_start = len(output)
+        # Distinct dots frames prove animation, not merely a static busy label.
+        def animated():
+            progress = output[progress_start:].decode(errors="replace")
+            return (
+                "Materializing Proposal" in output.decode(errors="replace")
+                and len(set(progress) & set("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")) >= 2
+            )
+        wait_until(animated, process, read_output)
+        assert not release.exists() and not later.exists()
+        if interruption == "key":
+            os.write(master, b"\x03\x03")
+        else:
+            process.send_signal(signal.SIGINT)
+        wait_until(lambda: process.poll() is not None, process, read_output)
+        while select.select([master], [], [], 0.05)[0]:
+            read_output()
+        assert process.returncode == 130, output[-3000:].decode(errors="replace")
+        assert b"Traceback" not in output
+        assert b"Task exception" not in output
+        assert b"never awaited" not in output
+        assert termios.tcgetattr(slave) == terminal_before
+        assert b"\x1b[?1049l" in output and b"\x1b[?25h" in output
+        assert {path: path.read_bytes() for path in endpoints} == before
+        assert not later.exists()
+        assert all(stopped(int(pid)) for pid in ready.read_text().split())
+        with OperationLock.acquire(tmp_path / "state/dotman"):
+            pass
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        if ready.exists():
+            for pid in ready.read_text().split():
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        os.close(master)
+        os.close(slave)
