@@ -134,3 +134,13 @@ def test_capture_patch_wraps_jinja_projection_errors_structurally(tmp_path: Path
 
     assert exc_info.value.path == repo_path
     assert "missing" in exc_info.value.detail
+
+def test_capture_patch_preserves_typed_interruption(tmp_path: Path) -> None:
+    path = tmp_path / "config"
+    path.write_bytes(b"same\n")
+    interruption = InterruptedError("cancelled")
+    def project(_content):
+        raise interruption
+    with pytest.raises(InterruptedError) as caught:
+        capture_patch(repo_path=path, review_repo_path=path, review_live_path=path, project_repo_bytes=project)
+    assert caught.value is interruption

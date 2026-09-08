@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -20,6 +21,7 @@ from dotman.terminal import preserve_terminal_state
 
 INTERRUPTED_EXIT_CODE = 130
 _INTERRUPT_GRACE_SECONDS = 0.5
+_CANCELLATION_POLL_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,10 @@ def raise_for_command_interruption(result: CommandResult) -> None:
 
 
 class CommandRuntime(Protocol):
+    def request_cancel(self) -> None: ...
+
+    def check_cancelled(self) -> None: ...
+
     def run(self, request: CommandRequest) -> CommandResult: ...
 
 
@@ -147,11 +153,25 @@ class SystemCommandElevation:
         raise ValueError(f"unsupported elevation mode '{mode}'")
 
 
+class _CancellationLatch:
+    _cancelled: threading.Event
+
+    def request_cancel(self) -> None:
+        """Latch cancellation; safe from another thread and repeated signals."""
+        self._cancelled.set()
+
+    def check_cancelled(self) -> None:
+        if self._cancelled.is_set():
+            raise InterruptedError("command operation cancelled")
+
+
 @dataclass
-class ProductionCommandRuntime:
+class ProductionCommandRuntime(_CancellationLatch):
     elevation: CommandElevation = field(default_factory=SystemCommandElevation)
+    _cancelled: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
 
     def run(self, request: CommandRequest) -> CommandResult:
+        self.check_cancelled()
         command, request_env = self.elevation.prepare(
             request.command,
             request.env,
@@ -204,6 +224,7 @@ class ProductionCommandRuntime:
             # tty-scoped lease remains usable. Ordinary pipe commands own a new
             # process group so interruption can stop the complete shell tree.
             owns_process_group = request.elevation == "none" and request.isolate_process_group
+            self.check_cancelled()
             process = subprocess.Popen(
                 _process_arguments(command),
                 **_process_command_options(command),
@@ -237,16 +258,27 @@ class ProductionCommandRuntime:
                 )
                 input_thread.start()
             try:
-                return_code = process.wait()
-            except KeyboardInterrupt:
-                _interrupt_pipe_process(process, owns_process_group=owns_process_group)
-                _wait_for_process_exit(process)
+                return_code = self._wait(process)
+                # A shell may exit while its descendants still hold the pipes.
+                # Continue observing cancellation until all owned I/O completes.
+                for thread in (input_thread, stdout_thread, stderr_thread):
+                    if thread is not None:
+                        while thread.is_alive():
+                            self.check_cancelled()
+                            thread.join(_CANCELLATION_POLL_SECONDS)
+                self.check_cancelled()
+            except (KeyboardInterrupt, InterruptedError):
+                self.request_cancel()
+                with _defer_repeated_interrupts():
+                    _stop_process(process, owns_process_group=owns_process_group)
+                    for thread in (input_thread, stdout_thread, stderr_thread):
+                        if thread is not None:
+                            thread.join(_INTERRUPT_GRACE_SECONDS)
                 raise
             finally:
-                if input_thread is not None:
-                    input_thread.join()
-                stdout_thread.join()
-                stderr_thread.join()
+                for thread in (input_thread, stdout_thread, stderr_thread):
+                    if thread is not None:
+                        thread.join(_INTERRUPT_GRACE_SECONDS)
         return CommandResult(
             exit_code=_normalize_return_code(return_code),
             stdout=b"".join(stdout_buffer),
@@ -277,11 +309,26 @@ class ProductionCommandRuntime:
             if main_thread:
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
-                return_code = process.wait()
+                return_code = self._wait(process)
+            except (KeyboardInterrupt, InterruptedError):
+                self.request_cancel()
+                with _defer_repeated_interrupts():
+                    _stop_process(process, owns_process_group=False)
+                raise
             finally:
                 if main_thread:
                     signal.signal(signal.SIGINT, previous_sigint_handler)
         return CommandResult(exit_code=_normalize_return_code(return_code))
+
+    def _wait(self, process: subprocess.Popen[bytes]) -> int:
+        while True:
+            self.check_cancelled()
+            try:
+                return_code = process.wait(timeout=_CANCELLATION_POLL_SECONDS)
+            except subprocess.TimeoutExpired:
+                continue
+            self.check_cancelled()
+            return return_code
 
 
 MemoryCommandOutcome: TypeAlias = (
@@ -289,8 +336,9 @@ MemoryCommandOutcome: TypeAlias = (
 )
 
 
-class MemoryCommandRuntime:
+class MemoryCommandRuntime(_CancellationLatch):
     def __init__(self, results: Iterable[MemoryCommandOutcome] = ()) -> None:
+        self._cancelled = threading.Event()
         self._results = deque(results)
         self.requests: list[CommandRequest] = []
 
@@ -298,6 +346,7 @@ class MemoryCommandRuntime:
         self._results.append(result)
 
     def run(self, request: CommandRequest) -> CommandResult:
+        self.check_cancelled()
         self.requests.append(request)
         if not self._results:
             raise AssertionError("no queued command result")
@@ -305,7 +354,8 @@ class MemoryCommandRuntime:
         if isinstance(result, BaseException):
             raise result
         if callable(result):
-            return result(request)
+            result = result(request)
+        self.check_cancelled()
         return result
 
 
@@ -348,34 +398,51 @@ def _write_streamed_chunk(chunk: bytes, sink: TextIO) -> None:
         sink.flush()
 
 
-def _interrupt_pipe_process(process: subprocess.Popen[bytes], *, owns_process_group: bool) -> None:
-    if not owns_process_group:
-        try:
-            process.terminate()
-        except OSError:
-            pass
-        return
+@contextmanager
+def _defer_repeated_interrupts() -> Iterator[None]:
+    # Once cancellation is accepted, repeated Ctrl-C must not abandon cleanup.
+    main_thread = threading.current_thread() is threading.main_thread()
+    previous_handler = signal.getsignal(signal.SIGINT)
+    if main_thread:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
-        os.killpg(process.pid, signal.SIGINT)
-    except (ProcessLookupError, PermissionError, OSError):
-        try:
-            process.terminate()
-        except OSError:
-            pass
+        yield
+    finally:
+        if main_thread:
+            signal.signal(signal.SIGINT, previous_handler)
 
 
-def _wait_for_process_exit(process: subprocess.Popen[bytes]) -> None:
+def _signal_process(process: subprocess.Popen[bytes], sig: int, *, owns_process_group: bool) -> None:
     try:
-        process.wait(timeout=_INTERRUPT_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
+        if owns_process_group:
+            os.killpg(process.pid, sig)
+        else:
+            process.send_signal(sig)
+    except ProcessLookupError:
+        pass
+
+
+def _stop_process(process: subprocess.Popen[bytes], *, owns_process_group: bool) -> None:
+    # Escalate even when the group leader has exited: descendants can ignore
+    # SIGINT and keep stdout/stdin open after the shell is gone.
+    deadline = time.monotonic() + _INTERRUPT_GRACE_SECONDS
+    _signal_process(process, signal.SIGINT, owns_process_group=owns_process_group)
+    while time.monotonic() < deadline:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                process.kill()
-            except OSError:
-                pass
-        process.wait()
+            process.wait(timeout=min(_CANCELLATION_POLL_SECONDS, max(0, deadline - time.monotonic())))
+            if not owns_process_group:
+                return
+            time.sleep(min(_CANCELLATION_POLL_SECONDS, max(0, deadline - time.monotonic())))
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            continue
+    _signal_process(process, signal.SIGKILL, owns_process_group=owns_process_group)
+    deadline = time.monotonic() + _INTERRUPT_GRACE_SECONDS
+    while True:
+        try:
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+            return
+        except KeyboardInterrupt:
+            continue
 
 
 def _normalize_return_code(return_code: int) -> int:

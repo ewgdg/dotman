@@ -68,7 +68,7 @@ def capture_patch(
 
     try:
         projected_bytes = project_repo_bytes(candidate_bytes)
-    except CaptureError:
+    except (CaptureError, InterruptedError):
         raise
     except JinjaRenderError as exc:
         raise CaptureError(path=exc.path, detail=exc.detail) from exc

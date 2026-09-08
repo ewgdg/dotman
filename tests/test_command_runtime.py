@@ -256,3 +256,99 @@ def test_command_result_text_requires_valid_utf8() -> None:
     assert result.stdout_text == "text"
     with pytest.raises(UnicodeDecodeError):
         _ = result.stderr_text
+
+@pytest.mark.parametrize("runtime_type", [ProductionCommandRuntime, MemoryCommandRuntime])
+def test_cancel_latch_prevents_launch(runtime_type) -> None:
+    runtime = runtime_type()
+    runtime.request_cancel()
+    runtime.request_cancel()
+    with pytest.raises(InterruptedError):
+        runtime.check_cancelled()
+    with pytest.raises(InterruptedError):
+        runtime.run(CommandRequest(command=ArgvCommand(("must-not-launch",))))
+
+
+def test_copied_context_cancels_ignored_sigint_and_reaps_group(tmp_path: Path) -> None:
+    from contextvars import copy_context
+    import os
+    import time
+    from dotman.command_runtime import command_runtime_session, current_command_runtime
+
+    ready = tmp_path / "ready"
+    runtime = ProductionCommandRuntime()
+    errors = []
+    code = (
+        "import os, signal, time; from pathlib import Path; "
+        "signal.signal(signal.SIGINT, signal.SIG_IGN); "
+        "pid = os.fork(); "
+        f"Path({str(ready)!r}).write_text(str(os.getpid())) if pid else None; "
+        "time.sleep(30)"
+    )
+    def run():
+        try:
+            current_command_runtime().run(CommandRequest(command=ArgvCommand((sys.executable, "-c", code))))
+        except BaseException as exc:
+            errors.append(exc)
+    with command_runtime_session(runtime):
+        thread = Thread(target=copy_context().run, args=(run,), daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 3
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        try:
+            assert ready.exists()
+        finally:
+            runtime.request_cancel()
+            runtime.request_cancel()
+            thread.join(3)
+    assert not thread.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], InterruptedError)
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(ready.read_text()), 0)
+
+
+def test_cancel_during_spawn_is_cleaned_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+    runtime = ProductionCommandRuntime()
+    original = subprocess.Popen
+    spawned = []
+    def spawn(*args, **kwargs):
+        process = original(*args, **kwargs)
+        spawned.append(process)
+        runtime.request_cancel()
+        return process
+    monkeypatch.setattr("dotman.command_runtime.subprocess.Popen", spawn)
+    with pytest.raises(InterruptedError):
+        runtime.run(CommandRequest(command=ArgvCommand((sys.executable, "-c", "import time; time.sleep(30)"))))
+    assert spawned[0].poll() is not None
+
+def test_cancellation_stops_descendants_after_group_leader_exits(tmp_path: Path) -> None:
+    import time
+    ready = tmp_path / "child-ready"
+    runtime = ProductionCommandRuntime()
+    errors = []
+    code = (
+        "import os, signal, time; from pathlib import Path; "
+        "pid = os.fork(); "
+        "os._exit(0) if pid else None; "
+        "signal.signal(signal.SIGINT, signal.SIG_IGN); "
+        f"Path({str(ready)!r}).touch(); "
+        "time.sleep(30)"
+    )
+    def run():
+        try:
+            runtime.run(CommandRequest(command=ArgvCommand((sys.executable, "-c", code))))
+        except BaseException as exc:
+            errors.append(exc)
+    thread = Thread(target=run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 3
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    try:
+        assert ready.exists()
+    finally:
+        runtime.request_cancel()
+        thread.join(3)
+    assert not thread.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], InterruptedError)
