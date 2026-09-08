@@ -437,3 +437,24 @@ def render_execution_status(status: str, *, use_color: bool) -> str:
     if not use_color:
         return status
     return style_text(status, *EXECUTION_STATUS_STYLE_BY_NAME.get(status, ("1",)))
+
+
+# Shared semantic colors for Sync's Selection, Resolution and completion terms.
+SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
+    "approved": ("1", "32"),
+    "unapproved": ("2",),
+    "Use repository": ("1", "36"),
+    "converged": ("1", "32"),
+    "directly-in-sync": ("2", "32"),
+    "diagnostic": ("1", "31"),
+    "blocked": ("1", "31"),
+    "failed": ("1", "31"),
+    "pending": ("33",),
+    "would-converge": ("36",),
+    "execution-failed": ("1", "31"),
+    "interrupted": ("1", "31"),
+}
+
+
+def render_sync_term(term: str, *, use_color: bool) -> str:
+    return style_text(term, *SYNC_TERM_STYLE_BY_NAME.get(term, ())) if use_color else term

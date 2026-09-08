@@ -187,6 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(full_path=None)
     parser.add_argument("--config", metavar="<config-path>", help="Path to dotman config.toml")
     parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
+    parser.add_argument("--unattended", action="store_true", help="Select policy defaults without interaction for sync")
     parser.add_argument(
         "--file-symlink-mode",
         choices=("prompt", "follow"),
@@ -313,6 +314,17 @@ def build_parser() -> argparse.ArgumentParser:
     # Bare `dotman edit <query>` sugar is wired through this hidden subcommand so
     # explicit edit subcommand help stays canonical.
     hide_subparser_from_help(edit_subparsers, "query")
+
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Review and approve push-only file convergence",
+        description="Inspect frozen file state and approve push-only Proposals",
+    )
+    sync_parser.add_argument(
+        "scopes", nargs="*", metavar="<repo:package.target>",
+        help="Exact tracked scopes (default: all tracked targets)",
+    )
+    add_dry_run_argument(sync_parser)
 
     push_parser = subparsers.add_parser(
         "push",
