@@ -8,7 +8,8 @@ from typing import Callable, Literal
 from pathlib import Path
 from uuid import uuid4
 
-from dotman.models import ResolvedSyncScope
+from dotman.execution import ExecutionStep
+from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
 from dotman.sync_base_store import SyncBaseStoreError, FilePresent, Missing
 from dotman.sync_base_lifecycle import SyncBaseGitError
@@ -177,12 +178,31 @@ class SyncStepOutcome:
     kind: str
     action: str
     scope: str
+    scope_identity: str | None
     repo: str
     package_id: str | None
     status: str
     skip_reason: str | None = None
     exit_code: int | None = None
     error: str | None = None
+
+
+def _step_scope_identity(step: ExecutionStep) -> str | None:
+    if not step.repo_name:
+        return None
+    if step.scope_kind == "repo":
+        return step.repo_name
+    package = step.package_plan
+    if step.package_id is None or package is None:
+        return None
+    if step.scope_kind == "target" and step.target_plan is not None:
+        return repo_qualified_target_text(
+            repo_name=step.repo_name,
+            package_id=step.package_id,
+            bound_profile=package.bound_profile,
+            target_name=step.target_plan.target_name,
+        )
+    return f"{step.repo_name}:{package_ref_text(package_id=step.package_id, bound_profile=package.bound_profile)}"
 
 
 @dataclass(frozen=True)
@@ -502,6 +522,7 @@ class SyncSession:
                 kind=item.step.kind,
                 action=item.step.action,
                 scope=item.step.scope_kind,
+                scope_identity=_step_scope_identity(item.step),
                 repo=item.step.repo_name,
                 package_id=item.step.package_id,
                 status=item.status,

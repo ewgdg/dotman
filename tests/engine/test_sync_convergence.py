@@ -285,7 +285,7 @@ def test_post_hook_failure_preserves_convergence_and_reports_actual_steps(tmp_pa
         assert result.diagnostics
         from dataclasses import fields
         assert {field.name for field in fields(result.steps[0])} == {
-            "stage", "kind", "action", "scope", "repo", "package_id",
+            "stage", "kind", "action", "scope", "scope_identity", "repo", "package_id",
             "status", "skip_reason", "exit_code", "error",
         }
         assert all(
@@ -315,3 +315,36 @@ def test_session_preserves_follow_symlink_publication_policy(tmp_path, monkeypat
         assert session.execute().result.status == "completed"
     assert link.is_symlink()
     assert referent.read_bytes() == b"repo"
+
+
+@pytest.mark.parametrize("multi_instance", [False, True])
+def test_failed_hook_outcomes_identify_exact_semantic_scope(tmp_path, monkeypatch, multi_instance):
+    from dotman.engine import DotmanEngine
+
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "push-only", b"repo", b"live",
+         '[targets.unit.hooks]\npost_push = "exit 7"'),
+    ])
+    manifest = tmp_path / "repo/packages/app/package.toml"
+    content = manifest.read_text()
+    if multi_instance:
+        content = content.replace('id = "app"', 'id = "app"\nbinding_mode = "multi_instance"')
+    content += '\n[hooks]\npre_push = "true"\n'
+    manifest.write_text(content)
+    (tmp_path / "repo/repo.toml").write_text('[hooks]\npre_push = "true"\n')
+    engine = DotmanEngine(engine.config)
+    package_identity = "main:app<default>" if multi_instance else "main:app"
+    target_identity = package_identity + ".unit"
+    with open_session(engine, preview=False) as session:
+        command(session, SetApproval, target_identity, True)
+        result = session.execute().result
+        assert result.status == "failed"
+        assert result.units[0].identity == target_identity
+        assert result.units[0].status == "converged"
+        repo_hook = next(step for step in result.steps if step.scope == "repo")
+        assert repo_hook.scope_identity == "main"
+        package_hook = next(step for step in result.steps if step.scope == "package")
+        assert package_hook.scope_identity == package_identity
+        failed = next(step for step in result.steps if step.status == "failed")
+        assert failed.scope == "target"
+        assert failed.scope_identity == target_identity
