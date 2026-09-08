@@ -770,3 +770,26 @@ def test_projection_diagnostics_do_not_expose_private_staging_paths(
         message = session.view.rows[0].observation.diagnostics[0].message
         assert "dotman-observation-" not in message
         assert str(tmp_path / "repo/packages/app/unit") in message
+
+
+def test_cancelled_session_does_not_poison_next_operation_on_same_engine(tmp_path, monkeypatch):
+    from dotman.sync_deck_command import approve
+
+    marker = tmp_path / "captures"
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "pull-only", b"repo", b"live",
+         f'capture = "touch {marker}; cat $DOTMAN_LIVE_PATH"\ncompare = {{ repo = "raw", live = "raw" }}'),
+    ])
+    with open_session(engine, preview=False) as session:
+        session.request_cancel()
+        approve(session, session.view.rows[0].row_id, True)
+        assert session.view.rows[0].diagnostics[0].code == "interrupted"
+        assert not marker.exists()
+        session.abort()
+        cancelled_session = session
+    with open_session(engine, preview=False) as session:
+        cancelled_session.request_cancel()
+        approve(session, session.view.rows[0].row_id, True)
+        assert session.view.rows[0].approved
+        assert marker.exists()
+        assert session.execute().result.exit_code == 0

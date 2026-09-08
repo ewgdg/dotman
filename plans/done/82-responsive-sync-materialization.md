@@ -61,5 +61,20 @@ races and ignored signals. Existing Sync/UI/unattended tests protect semantics.
 - Commits: 7129176, 3dad9c4, 7c15f32, 9bad494, 5ec6b3c, d8cbad7.
 
 ## Limits and retrospective Owned-group cleanup excludes detached descendants;
-completed provider effects cannot be rolled back. Runtime cancellation is sticky for
-its operation lifetime; embedders must use a fresh runtime after cancellation.
+completed provider effects cannot be rolled back. Cancellation is scoped to an
+operation rather than the runtime instance; shared/default runtimes remain reusable.
+
+## Operation cancellation scope correction
+- Red regression reproduced cancellation poisoning a later operation on the same
+  engine/runtime: the second `true` command raised `InterruptedError`.
+- Command Runtime now exposes `CommandOperation` identity and lexical
+  `command_operation()` activation. CLI establishes the outer operation; nested
+  runtime commands inherit it. Standalone commands establish a one-command scope.
+- Sync retains its opening operation and activates it at every dispatch; cancellation
+  targets that retained identity even outside active dispatch. Context tokens never
+  cross a session lifetime or asyncio-context boundary. No latch is cleared, so an
+  old copied context cannot start more work when a later operation begins.
+- Runtime/Capture/session/PTY/deck regression run: 128 passed in 55.07s. Additional
+  DEFAULT-runtime reuse and late-cancel checks: final runtime/session run **66 passed
+  in 5.62s**.
+- No deck actions or task/cleanup code changed for this correction.

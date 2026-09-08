@@ -8,6 +8,7 @@ from typing import Callable, Literal
 from pathlib import Path
 from uuid import uuid4
 
+from dotman.command_runtime import CommandOperation, command_operation
 from dotman.execution import ExecutionStep
 from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
@@ -351,7 +352,7 @@ class SyncSession:
         preview: bool,
         event_sink: SessionEventSink | None = None,
     ) -> None:
-        self._command_runtime = None
+        self._command_operation = CommandOperation()
         self._captures = {}
         # A comparison Render is already a valid projection of these frozen
         # repository inputs. Reusing it also avoids volatile provider reruns.
@@ -401,7 +402,7 @@ class SyncSession:
         preview: bool = False,
         event_sink: SessionEventSink | None = None,
     ) -> SyncSession | SessionOpenFailed:
-        with ExitStack() as resources:
+        with command_operation() as operation, ExitStack() as resources:
             lock = None
             try:
                 if not preview:
@@ -441,7 +442,7 @@ class SyncSession:
             session = cls(observations, preview=preview, event_sink=event_sink)
             session._operation_lock = lock
             session._context = context
-            session._command_runtime = context.projection.command_runtime
+            session._command_operation = operation
             session._resolved_inputs = resolved_inputs[0]
             session._frozen_bases = {
                 observation.identity: FrozenBaseUnit(
@@ -461,12 +462,10 @@ class SyncSession:
 
     def request_cancel(self) -> None:
         """Cancel owned commands without racing a session view mutation."""
-        if self._command_runtime is not None:
-            self._command_runtime.request_cancel()
+        self._command_operation.request_cancel()
 
     def check_cancelled(self) -> None:
-        if self._command_runtime is not None:
-            self._command_runtime.check_cancelled()
+        self._command_operation.check_cancelled()
 
     @property
     def view(self) -> SessionView:
@@ -477,6 +476,10 @@ class SyncSession:
             self._event_sink(event)
 
     def dispatch(self, command: SessionCommand) -> CommandAccepted | CommandRejected:
+        with command_operation(self._command_operation):
+            return self._dispatch(command)
+
+    def _dispatch(self, command: SessionCommand) -> CommandAccepted | CommandRejected:
         view = self.view
         if type(command) not in (SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
             return CommandRejected(view, "invalid")

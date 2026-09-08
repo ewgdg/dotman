@@ -83,12 +83,18 @@ Its awaitable dispatch copies ContextVars, rejects competing deck input while bu
 and drains the actual thread before session abort or operation-lock release.
 Observation-time SQLite stores are already closed; only frozen evidence and static
 metadata cross into materialization. Apply and Publication remain synchronous.
-`command_runtime.py` owns the sticky cancellation latch and child process handles;
-its `request_cancel()` is thread-safe and `check_cancelled()` raises typed
-`InterruptedError`. An interrupted runtime must not be reused for another operation:
-embedding callers supply a fresh runtime or `command_runtime_session` scope. The
-CLI default runtime lasts for its single process invocation. Cancellation never
-uses Textual thread-worker cancellation as evidence that provider cleanup finished.
+`command_runtime.py` owns operation-scoped cancellation and child process handles.
+`command_operation()` establishes the CLI operation; nested commands share its
+`CommandOperation`. A standalone runtime command establishes its own scope when
+none is active. Sync retains the operation identity from opening and reactivates it
+for each dispatch, including materialization and final execution/cleanup. Its
+thread-safe cancellation latch never resets: copied contexts and late callbacks
+still refer to the cancelled operation, while subsequent operations on the same
+engine or default/shared runtime get independent latches. ContextVar activation
+is lexical, so a session can dispatch from a copied context without resetting a
+token created in another context. `check_cancelled()` raises typed
+`InterruptedError`. Cancellation never uses Textual thread-worker cancellation as
+evidence that provider cleanup finished.
 
 The Base foundation exposes explicit boundaries rather than running a session.
 `BaseUnit` carries successfully resolved selected configuration, never a

@@ -153,11 +153,13 @@ class SystemCommandElevation:
         raise ValueError(f"unsupported elevation mode '{mode}'")
 
 
-class _CancellationLatch:
-    _cancelled: threading.Event
+@dataclass
+class CommandOperation:
+    """Cancellation identity shared by an operation and all copied execution contexts."""
+
+    _cancelled: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
 
     def request_cancel(self) -> None:
-        """Latch cancellation; safe from another thread and repeated signals."""
         self._cancelled.set()
 
     def check_cancelled(self) -> None:
@@ -165,11 +167,44 @@ class _CancellationLatch:
             raise InterruptedError("command operation cancelled")
 
 
+_ACTIVE_OPERATION: ContextVar[CommandOperation | None] = ContextVar(
+    "dotman_command_operation", default=None,
+)
+
+
+@contextmanager
+def command_operation(operation: CommandOperation | None = None) -> Iterator[CommandOperation]:
+    """Activate an operation; nested commands share its never-reset latch.
+
+    Context tokens belong only to this lexical activation, not the session's
+    lifetime. A session may dispatch from a copied context or another thread.
+    """
+    operation = operation or _ACTIVE_OPERATION.get() or CommandOperation()
+    token = _ACTIVE_OPERATION.set(operation)
+    try:
+        yield operation
+    finally:
+        _ACTIVE_OPERATION.reset(token)
+
+
+class _CancellationLatch:
+    def request_cancel(self) -> None:
+        """Cancel the active operation, not future uses of this runtime."""
+        operation = _ACTIVE_OPERATION.get()
+        if operation is not None:
+            operation.request_cancel()
+
+    def check_cancelled(self) -> None:
+        operation = _ACTIVE_OPERATION.get()
+        if operation is not None:
+            operation.check_cancelled()
+
+
 @dataclass
 class ProductionCommandRuntime(_CancellationLatch):
     elevation: CommandElevation = field(default_factory=SystemCommandElevation)
-    _cancelled: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
 
+    @command_operation()
     def run(self, request: CommandRequest) -> CommandResult:
         self.check_cancelled()
         command, request_env = self.elevation.prepare(
@@ -346,7 +381,6 @@ MemoryCommandOutcome: TypeAlias = (
 
 class MemoryCommandRuntime(_CancellationLatch):
     def __init__(self, results: Iterable[MemoryCommandOutcome] = ()) -> None:
-        self._cancelled = threading.Event()
         self._results = deque(results)
         self.requests: list[CommandRequest] = []
 

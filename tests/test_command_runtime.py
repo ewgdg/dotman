@@ -17,6 +17,7 @@ from dotman.command_runtime import (
     ShellCommand,
     SystemCommandElevation,
     raise_for_command_interruption,
+    command_operation,
 )
 
 
@@ -260,12 +261,13 @@ def test_command_result_text_requires_valid_utf8() -> None:
 @pytest.mark.parametrize("runtime_type", [ProductionCommandRuntime, MemoryCommandRuntime])
 def test_cancel_latch_prevents_launch(runtime_type) -> None:
     runtime = runtime_type()
-    runtime.request_cancel()
-    runtime.request_cancel()
-    with pytest.raises(InterruptedError):
-        runtime.check_cancelled()
-    with pytest.raises(InterruptedError):
-        runtime.run(CommandRequest(command=ArgvCommand(("must-not-launch",))))
+    with command_operation():
+        runtime.request_cancel()
+        runtime.request_cancel()
+        with pytest.raises(InterruptedError):
+            runtime.check_cancelled()
+        with pytest.raises(InterruptedError):
+            runtime.run(CommandRequest(command=ArgvCommand(("must-not-launch",))))
 
 
 def test_copied_context_cancels_ignored_sigint_and_reaps_group(tmp_path: Path) -> None:
@@ -289,7 +291,7 @@ def test_copied_context_cancels_ignored_sigint_and_reaps_group(tmp_path: Path) -
             current_command_runtime().run(CommandRequest(command=ArgvCommand((sys.executable, "-c", code))))
         except BaseException as exc:
             errors.append(exc)
-    with command_runtime_session(runtime):
+    with command_runtime_session(runtime), command_operation():
         thread = Thread(target=copy_context().run, args=(run,), daemon=True)
         thread.start()
         deadline = time.monotonic() + 3
@@ -340,16 +342,18 @@ def test_cancellation_stops_descendants_after_group_leader_exits(tmp_path: Path)
             runtime.run(CommandRequest(command=ArgvCommand((sys.executable, "-c", code))))
         except BaseException as exc:
             errors.append(exc)
-    thread = Thread(target=run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 3
-    while not ready.exists() and time.monotonic() < deadline:
-        time.sleep(.01)
-    try:
-        assert ready.exists()
-    finally:
-        runtime.request_cancel()
-        thread.join(3)
+    with command_operation():
+        from contextvars import copy_context
+        thread = Thread(target=copy_context().run, args=(run,), daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 3
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        try:
+            assert ready.exists()
+        finally:
+            runtime.request_cancel()
+            thread.join(3)
     assert not thread.is_alive()
     assert len(errors) == 1 and isinstance(errors[0], InterruptedError)
 
@@ -426,3 +430,34 @@ def test_interrupt_during_tty_signal_setup_reaps_process(monkeypatch) -> None:
             command=ArgvCommand((sys.executable, "-c", "import time; time.sleep(30)")), io="tty",
         ))
     assert spawned[0].poll() is not None
+
+
+@pytest.mark.parametrize("runtime_type", [ProductionCommandRuntime, MemoryCommandRuntime])
+def test_cancellation_belongs_to_operation_not_shared_runtime(runtime_type):
+    from contextvars import copy_context
+
+    runtime = runtime_type()
+    request = CommandRequest(command=ArgvCommand(("true",)))
+    with command_operation():
+        cancelled_context = copy_context()
+        runtime.request_cancel()
+        with command_operation():
+            with pytest.raises(InterruptedError):
+                runtime.run(request)
+    with command_operation():
+        # Stale copied work cannot be revived by a subsequent operation.
+        with pytest.raises(InterruptedError):
+            cancelled_context.run(runtime.run, request)
+        if isinstance(runtime, MemoryCommandRuntime):
+            runtime.queue(CommandResult(exit_code=0))
+        assert runtime.run(request).exit_code == 0
+
+
+def test_default_runtime_can_run_a_later_operation_after_cancellation():
+    from dotman.command_runtime import DEFAULT_COMMAND_RUNTIME
+
+    with command_operation():
+        DEFAULT_COMMAND_RUNTIME.request_cancel()
+        with pytest.raises(InterruptedError):
+            DEFAULT_COMMAND_RUNTIME.run(CommandRequest(command=ArgvCommand(("must-not-launch",))))
+    assert DEFAULT_COMMAND_RUNTIME.run(CommandRequest(command=ArgvCommand(("true",)))).exit_code == 0

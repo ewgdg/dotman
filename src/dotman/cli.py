@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from dotman import cli_emit, cli_interaction
 from dotman.cli_parser import build_parser, normalize_edit_query_argv
+from dotman.command_runtime import command_operation
 from dotman.engine import DotmanEngine
 from dotman.inspection_commands import InspectionCommandRunner
 from dotman.interaction import Interaction, TerminalInteraction
@@ -69,7 +70,8 @@ def main(
         selected_runner = runner_by_command.get(args.command)
         if selected_runner is None:
             raise ValueError(f"unsupported command '{args.command}'")
-        return selected_runner.run(args)
+        with command_operation():
+            return selected_runner.run(args)
     except KeyboardInterrupt:
         cli_interaction.emit_interrupt_notice()
         return INTERRUPTED_EXIT_CODE
