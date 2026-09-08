@@ -35,7 +35,14 @@ def mock_sudo_for_tests() -> Iterator[None]:
     production = ProductionCommandRuntime()
 
     class TestCommandRuntime:
+        def request_cancel(self) -> None:
+            production.request_cancel()
+
+        def check_cancelled(self) -> None:
+            production.check_cancelled()
+
         def run(self, request: CommandRequest) -> CommandResult:
+            self.check_cancelled()
             command = request.command
             if not isinstance(command, ArgvCommand) or not command.arguments or command.arguments[0] != "sudo":
                 return production.run(request)

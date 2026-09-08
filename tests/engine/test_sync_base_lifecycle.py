@@ -630,6 +630,12 @@ def test_one_batched_path_scoped_status_observation_for_file_and_child(repositor
     requests = []
 
     class RecordingRuntime:
+        def request_cancel(self):
+            runtime.request_cancel()
+
+        def check_cancelled(self):
+            runtime.check_cancelled()
+
         def run(self, request):
             requests.append(request)
             return runtime.run(request)
@@ -872,6 +878,12 @@ def test_read_only_inspection_never_fetches_missing_promisor_commit(
     trace = tmp_path / "inspection-trace.json"
 
     class TracedRuntime:
+        def request_cancel(self):
+            runtime.request_cancel()
+
+        def check_cancelled(self):
+            runtime.check_cancelled()
+
         def run(self, request):
             return runtime.run(
                 replace(
