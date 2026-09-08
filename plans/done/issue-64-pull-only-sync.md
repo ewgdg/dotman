@@ -34,3 +34,8 @@ Reuse Base lifecycle completion and committed frozen facts, not a new acknowledg
 Delivered frozen pull-only Use live review/Approval, repository-only Apply, per-unit Base acknowledgment, fail-fast ordered partial results, styled Deck/CLI effects and current contributor/user documentation. Core commit: 3a5addd; bounded UI and repository-stage commits: 771a71a, f90a868, b4b2ebd, 60f619e, 56fbc8c.
 
 No scope expansion into both-policy convergence, directories, Editors or Additional Sources. Configured Capture comparison necessarily runs at Observation; lazy materialization reuses that evidence, while other comparison configurations delay Capture until review/Approval. Command providers retain the established trusted side-effect-free contract and dependency access; frozen managed endpoints are supplied through private copies.
+
+## Independent review follow-up
+- P2 review evidence: separated frozen repository/live Pull Views from the repository-effect preview. Approved no-write outcomes retain the visible observed drift instead of presenting only an empty repository diff. Both previews reuse frozen state and a shared diff renderer, without recapture.
+- Added RED-first observable Deck regressions for raw and configured projected comparisons: external endpoint edits do not appear in review, no-write repository effects remain explicit, Approval does not alter frozen evidence, and Capture runs once.
+- Validation: 53 passed across pull UI, Deck command, Sync command runner and pull convergence suites (2.15s); `git diff --check` clean. Independent review reported the pre-fix full suite at 1415 passed (15.88s); this bounded rendering fix was validated with its focused blast radius.

@@ -18,6 +18,39 @@ from dotman.sync_deck_command import approve, review, effect_summary, primary_ch
 from dotman.sync_session import CommandRejected, SyncSession
 
 
+def _frozen_difference(
+    before: FilePresent | Missing | None,
+    after: FilePresent | Missing | None,
+    *,
+    before_label: str,
+    after_label: str,
+    description: str,
+) -> list[str]:
+    if before is None or after is None:
+        return ["    Comparison evidence unavailable"]
+    before_bytes = before.content if isinstance(before, FilePresent) else b""
+    after_bytes = after.content if isinstance(after, FilePresent) else b""
+    if before_bytes == after_bytes:
+        return ["    No content difference"]
+    try:
+        diff = unified_diff(
+            before_bytes.decode("utf-8").splitlines(keepends=True),
+            after_bytes.decode("utf-8").splitlines(keepends=True),
+            fromfile="/dev/null" if isinstance(before, Missing) else before_label,
+            tofile="/dev/null" if isinstance(after, Missing) else after_label,
+            lineterm="\n",
+        )
+        lines = []
+        for line in diff:
+            lines.append(line.rstrip("\n"))
+            # Retain newline-only drift in both evidence and effect previews.
+            if not line.endswith("\n"):
+                lines.append("\\ No newline at end of file")
+        return lines
+    except UnicodeDecodeError:
+        return [f"  Binary {description}: {len(before_bytes)} → {len(after_bytes)} bytes"]
+
+
 class CommandDeck:
     def __init__(self, session: SyncSession, *, use_color: bool) -> None:
         self.session = session
@@ -153,6 +186,20 @@ class CommandDeck:
         if primary:
             lines.append(f"    {primary['path']} (authorized by Proposal Approval)")
         lines.extend(f"  {item.message}" for item in (*row.observation.diagnostics, *row.diagnostics))
+        if pull:
+            observation = row.observation
+            lines += ["", "  Frozen Pull Views:",
+                      f"    Repository comparison: {observation.compare_repo}",
+                      f"    Live comparison: {observation.compare_live}"]
+            for label, state in (("Repository", observation.comparison_repository),
+                                 ("Live", observation.comparison_live)):
+                kind = "unavailable" if state is None else "missing" if isinstance(state, Missing) else "present"
+                lines.append(f"    {label} Pull View: {kind}")
+            lines.extend(_frozen_difference(
+                observation.comparison_repository, observation.comparison_live,
+                before_label="frozen repository Pull View",
+                after_label="frozen live Pull View", description="Pull Views",
+            ))
         if proposal is not None:
             lines += ["", "  Frozen Publication Effects:"]
             for effect in proposal.publication_effects:
@@ -170,24 +217,11 @@ class CommandDeck:
             after = proposal.repository if pull else proposal.live
             if pull:
                 lines.append("  Live remains unchanged")
-            before_bytes = before.content if isinstance(before, FilePresent) else b""
-            after_bytes = after.content if isinstance(after, FilePresent) else b""
-            if before_bytes != after_bytes:
-                try:
-                    diff = unified_diff(
-                        before_bytes.decode("utf-8").splitlines(keepends=True),
-                        after_bytes.decode("utf-8").splitlines(keepends=True),
-                        fromfile="/dev/null" if isinstance(before, Missing) else f"frozen {side}",
-                        tofile="/dev/null" if isinstance(after, Missing) else f"approved {side} outcome",
-                        lineterm="\n",
-                    )
-                    for line in diff:
-                        lines.append(line.rstrip("\n"))
-                        # splitlines without endings hides newline-only changes.
-                        if not line.endswith("\n"):
-                            lines.append("\\ No newline at end of file")
-                except UnicodeDecodeError:
-                    lines.append(f"  Binary {side} outcome: {len(before_bytes)} → {len(after_bytes)} bytes")
+            lines.append(f"  {side.capitalize()} effect preview:")
+            lines.extend(_frozen_difference(
+                before, after, before_label=f"frozen {side}",
+                after_label=f"approved {side} outcome", description=f"{side} outcome",
+            ))
             lines.append(f"  Frozen {side}: {'missing' if isinstance(before, Missing) else 'present'}")
             lines.append(f"  {side.capitalize()} outcome: {'missing' if isinstance(after, Missing) else 'present'}")
         lines += ["", "  ↑/↓ scroll  Space Selection  Esc return to workset"]

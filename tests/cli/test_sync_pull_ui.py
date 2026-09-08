@@ -95,3 +95,37 @@ def test_mixed_cli_reports_repository_and_live_effects(tmp_path, monkeypatch, ca
         stages = [step["stage"] for step in document["stages"]]
         assert "repository-apply" in stages and "live-publication" in stages
         assert stages.index("repository-apply") < stages.index("live-publication")
+
+
+@pytest.mark.parametrize('projected', [False, True])
+def test_no_write_review_separates_frozen_pull_views_from_repository_effect(tmp_path, monkeypatch, projected):
+    marker = tmp_path / 'capture-count'
+    comparison = ('{ repo = "printf compared-repo", live = "printf compared-live" }'
+                  if projected else '{ repo = "raw", live = "raw" }')
+    engine = make_engine(tmp_path, monkeypatch, [
+        ('unit', 'pull-only', b'repo', b'live-drift',
+         f'capture = "echo capture >> {marker}; printf repo"\ncompare = {comparison}'),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        deck = CommandDeck(session, use_color=False)
+        assert not marker.exists()
+        (tmp_path / 'repo/packages/app/unit').write_bytes(b'external-repo')
+        (tmp_path / 'live/unit').write_bytes(b'external-live')
+        deck.open_review()
+        assert not session.view.rows[0].approved
+        assert session.view.rows[0].proposal.primary_source_change is None
+        text = deck.review_text()
+        evidence, outcome = text.split('  Repository effect preview:', 1)
+        assert 'Frozen Pull Views:' in evidence
+        assert '--- frozen repository Pull View' in evidence
+        assert '+++ frozen live Pull View' in evidence
+        assert ('-compared-repo' if projected else '-repo') in evidence
+        assert ('+compared-live' if projected else '+live-drift') in evidence
+        assert 'No content difference' in outcome
+        assert 'Primary Source Change: none' in text
+        assert 'Live remains unchanged' in text
+        assert 'external-' not in text
+        deck.select(True)
+        assert session.view.rows[0].approved
+        assert deck.review_text().replace('approved', 'unapproved') == text
+        assert marker.read_text().splitlines() == ['capture']

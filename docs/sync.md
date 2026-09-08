@@ -41,8 +41,10 @@ observing again. Inclusion is separate from Approval.
 
 The persistent Command Deck shows drift and blocked diagnostics, not directly
 agreeing units. **Selection** controls Proposal Approval. Focused review shows
-the frozen evidence, repository changes and publication changes; returning
-preserves the workset.
+the frozen repository/live Pull Views separately from repository-effect and
+publication previews. A no-write Proposal still shows the observed drift even
+when Capture returns the unchanged repository representation. Returning preserves
+the workset.
 Confirmation authorizes the selected, already-materialized outcomes.
 
 For pull-only files, review or Approval lazily Captures frozen live evidence into
