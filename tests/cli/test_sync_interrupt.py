@@ -54,7 +54,12 @@ def test_ctrl_c_with_sync_base_exits_cleanly(tmp_path, monkeypatch, keys, title)
     try:
         wait_until(lambda: b"Merge" in output, process, read_output)
         if keys:
-            os.write(master, keys)
+            if keys == b" x":
+                os.write(master, b" ")
+                wait_until(lambda: b"[x]" in output, process, read_output)
+                os.write(master, b"x")
+            else:
+                os.write(master, keys)
             wait_until(lambda: title in output, process, read_output)
         # Textual's raw terminal receives the real Ctrl-C byte as a key event.
         os.write(master, b"\x03")
@@ -118,11 +123,29 @@ def test_sigint_with_sync_base_emits_clean_json_and_stops_execution(tmp_path, mo
 def test_materialization_remains_animated_and_interruptible(
     tmp_path, monkeypatch, stage, interruption, action,
 ):
+    _assert_materialization_interrupt(tmp_path, monkeypatch, stage, interruption, action)
+
+
+@pytest.mark.parametrize("interruption", ["key", "signal"])
+@pytest.mark.parametrize("release_order", ["before", "after"])
+def test_materialization_completion_races_cancellation(
+    tmp_path, monkeypatch, interruption, release_order,
+):
+    _assert_materialization_interrupt(
+        tmp_path, monkeypatch, "render", interruption, b"a", release_order,
+    )
+
+
+def _assert_materialization_interrupt(
+    tmp_path, monkeypatch, stage, interruption, action, release_order=None,
+):
     """Gate a real provider, not the UI: progress and cancellation must stay live."""
     ready = tmp_path / "provider-ready"
     release = tmp_path / "release-provider"
     later = tmp_path / "later-provider"
     provider = tmp_path / "provider"
+    completed = tmp_path / "completed-provider"
+    temporary_source = tmp_path / "temporary-source"
     real_git = shutil.which("git")
     assert real_git
     provider.write_text(
@@ -134,9 +157,13 @@ def test_materialization_remains_animated_and_interruptible(
         f"    os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n"
         "if called == stage:\n"
         "    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "    if called == 'render':\n"
+        f"        pathlib.Path({str(temporary_source)!r}).write_text(os.environ['DOTMAN_SOURCE'])\n"
         f"    pathlib.Path({str(ready)!r}).write_text(str(os.getpid()) + ' ' + str(child.pid))\n"
         f"    while not pathlib.Path({str(release)!r}).exists(): time.sleep(0.01)\n"
-        f"    pathlib.Path({str(later)!r}).touch()\n"
+        "    child.terminate()\n"
+        "    child.wait(timeout=2)\n"
+        f"    pathlib.Path({str(completed)!r}).touch()\n"
         "elif (stage == 'capture' and called in ('merge', 'render')) or (stage == 'merge' and called == 'render'):\n"
         f"    pathlib.Path({str(later)!r}).touch()\n"
         "if called == 'merge':\n"
@@ -208,10 +235,19 @@ def test_materialization_remains_animated_and_interruptible(
             )
         wait_until(animated, process, read_output)
         assert not release.exists() and not later.exists()
+        if stage == "render":
+            from pathlib import Path
+            assert Path(temporary_source.read_text()).is_file()
+        # Release adjacent to cancellation, with no readiness wait between them:
+        # either the provider completion or cancellation may win this boundary.
+        if release_order == "before":
+            release.touch()
         if interruption == "key":
             os.write(master, b"\x03\x03")
         else:
             process.send_signal(signal.SIGINT)
+        if release_order == "after":
+            release.touch()
         wait_until(lambda: process.poll() is not None, process, read_output)
         while select.select([master], [], [], 0.05)[0]:
             read_output()
@@ -223,6 +259,11 @@ def test_materialization_remains_animated_and_interruptible(
         assert b"\x1b[?1049l" in output and b"\x1b[?25h" in output
         assert {path: path.read_bytes() for path in endpoints} == before
         assert not later.exists()
+        if release_order is None:
+            assert not completed.exists()
+        if temporary_source.exists():
+            from pathlib import Path
+            assert not Path(temporary_source.read_text()).parent.exists()
         assert all(stopped(int(pid)) for pid in ready.read_text().split())
         with OperationLock.acquire(tmp_path / "state/dotman"):
             pass
