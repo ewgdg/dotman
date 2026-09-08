@@ -60,7 +60,8 @@ races and ignored signals. Existing Sync/UI/unattended tests protect semantics.
   Publication semantics were moved into the lane.
 - Commits: 7129176, 3dad9c4, 7c15f32, 9bad494, 5ec6b3c, d8cbad7.
 
-## Limits and retrospective Owned-group cleanup excludes detached descendants;
+## Limits and retrospective
+Owned-group cleanup excludes detached descendants;
 completed provider effects cannot be rolled back. Cancellation is scoped to an
 operation rather than the runtime instance; shared/default runtimes remain reusable.
 
@@ -78,3 +79,10 @@ operation rather than the runtime instance; shared/default runtimes remain reusa
   DEFAULT-runtime reuse and late-cancel checks: final runtime/session run **66 passed
   in 5.62s**.
 - No deck actions or task/cleanup code changed for this correction.
+
+## Independent handoff validation
+- Reviewed the serialized deck lane, busy input gate, interruption forwarding,
+  drain-before-abort behavior, and corrected operation-scoped cancellation.
+- Final integrated `uv run pytest -q`: **1557 passed in 74.68s** after the
+  cancellation-scope correction. `git diff --check` passed.
+- Conflicting both-policy capability statements in the CLI reference were corrected.
