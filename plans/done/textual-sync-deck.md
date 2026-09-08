@@ -145,3 +145,9 @@ convergence or engine migration-rejection path was added.
   Evidence: `review-help-batch-pty.txt`, `review-help-spaced-pty.txt` and copied
   footer repro sources in the existing artifact directory. Workset/review/
   confirmation captures now show the plain keyboard instructions.
+
+## Final verification
+- Independent review verified all three real-terminal input-ordering repros:
+  PageDown then Approval, target click then Approval, and help-area click then
+  Clear all. No remaining findings; only table Approval cells authorize by mouse.
+- Final full-suite validation: **1484 passed in 32.34s**.
