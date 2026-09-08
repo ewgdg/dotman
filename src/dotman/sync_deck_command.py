@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import sys
 
-from dotman.cli_style import render_sync_term
+from dotman.cli_style import render_sync_term, render_package_label, style_text, MENU_REPO_STYLE
+from dotman.sync_scope import _parse_scope_selector
 from dotman.sync_base_store import FilePresent, Missing
 from dotman.sync_session import (
-    CommandRejected, PrepareProposalReview, Preview, SessionOpenFailed,
-    SetApproval, SetResolutionIntent, RetryMaterialization, SyncSession,
+    AuxiliaryRow, CommandRejected, PrepareProposalReview, Preview, SessionOpenFailed,
+    SetApproval, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession,
 )
 from dotman.ui_context import ui_config_scope
 
@@ -17,6 +18,31 @@ from dotman.ui_context import ui_config_scope
 def approve(session: SyncSession, row_id: str, approved: bool):
     view = session.view
     return session.dispatch(SetApproval(view.session_id, view.revision, row_id, approved))
+
+
+def set_selected(session: SyncSession, row, selected: bool):
+    view = session.view
+    command = SetIncluded if isinstance(row, AuxiliaryRow) else SetApproval
+    return session.dispatch(command(view.session_id, view.revision, row.row_id, selected))
+
+
+def row_diagnostics(row):
+    return row.diagnostics if isinstance(row, AuxiliaryRow) else (*row.observation.diagnostics, *row.diagnostics)
+
+
+def auxiliary_label(scope: str, kind: str, directions, *, use_color: bool = False) -> str:
+    if use_color:
+        if ":" in scope:
+            identity = _parse_scope_selector(scope)
+            scope = render_package_label(
+                repo_name=identity.repo, package_id=identity.package_id,
+                bound_profile=identity.bound_profile, target_name=identity.target_name,
+                use_color=True,
+            )
+        else:
+            scope = style_text(scope, *MENU_REPO_STYLE)
+    annotations = " ".join(f"({direction}-hooks)" for direction in directions) if kind == "hook" else ""
+    return f"{scope} {annotations}".rstrip()
 
 
 def review(session: SyncSession, row_id: str):
@@ -67,7 +93,7 @@ class SyncDeckCommandRunner:
             return 130
         with ui_config_scope(engine.config.ui):
             opened = engine.open_sync_session(
-                scope, preview=args.dry_run,
+                scope, preview=args.dry_run, run_noop=getattr(args, 'run_noop', False),
             )
             if isinstance(opened, SessionOpenFailed):
                 self._emit(args, None, None, diagnostic={
@@ -89,8 +115,8 @@ class SyncDeckCommandRunner:
                         return 130
                 elif args.unattended:
                     for row in session.view.rows:
-                        if "set-approval" in row.allowed_commands:
-                            approve(session, row.row_id, True)
+                        if {"set-approval", "set-included"}.intersection(row.allowed_commands):
+                            set_selected(session, row, True)
                             if any(d.code == "interrupted" for item in session.view.rows for d in item.diagnostics):
                                 break
 
@@ -101,7 +127,7 @@ class SyncDeckCommandRunner:
                     interrupted = any(
                         item.code == "interrupted"
                         for row in session.view.rows
-                        for item in (*row.observation.diagnostics, *row.diagnostics)
+                        for item in row_diagnostics(row)
                     )
                     self._emit(args, session, None, diagnostic={
                         "code": "interrupted", "message": "Sync materialization interrupted",
@@ -151,6 +177,15 @@ class SyncDeckCommandRunner:
                 print(f"      {item['message']}")
             if unit["result"]:
                 print(f"      {render_sync_term(unit['result'], use_color=self._use_color)}")
+        for kind, key in (("probe", "probe_work"), ("hook", "hook_work")):
+            for work in payload[key]:
+                selection = "selected" if work["selected"] else "unselected"
+                label = auxiliary_label(work["identity"], kind, work["directions"], use_color=self._use_color)
+                term = "Probe Work" if kind == "probe" else "Hook Work"
+                print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {label}")
+                print(f"      {render_sync_term(term, use_color=self._use_color)}")
+                for item in work["diagnostics"]:
+                    print(f"      {item['message']}")
         for item in payload["summary"]["diagnostics"]:
             print(item["message"], file=sys.stderr)
 
@@ -158,7 +193,13 @@ class SyncDeckCommandRunner:
 def sync_document(args, session, result, *, diagnostic=None) -> dict:
     """Project only public result metadata; frozen payload bytes never leave the session."""
     view = session.view if session is not None else None
-    rows = {row.row_id: row for row in view.rows} if view else {}
+    rows = {row.row_id: row for row in view.rows if not isinstance(row, AuxiliaryRow)} if view else {}
+    auxiliary = [row for row in view.rows if isinstance(row, AuxiliaryRow)] if view else []
+    def auxiliary_work(kind):
+        return [{"identity": row.scope, "selected": row.included,
+                 "directions": list(row.directions),
+                 "diagnostics": [{"code": item.code, "message": item.message} for item in row.diagnostics]}
+                for row in auxiliary if row.kind == kind]
     outcomes = {unit.identity: unit for unit in result.units} if result else {}
     units = []
     for observation in view.observations if view else ():
@@ -213,9 +254,10 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
         "operation": "sync",
         "mode": "dry-run" if args.dry_run else "execute",
         "status": result.status if result else "aborted" if diagnostic and diagnostic["code"] == "interrupted" else "failed",
-        "scope": [unit["identity"] for unit in units] if view else list(args.scopes),
+        "scope": list(dict.fromkeys([unit["identity"] for unit in units] + [row.scope for row in auxiliary])) if view else list(args.scopes),
         "summary": {
             "sync_units": len(units),
+            "selected_auxiliary": sum(row.included for row in auxiliary),
             "approved_units": sum(unit["approved"] for unit in units),
             "repository_changes": sum(unit["primary_source_change"] is not None for unit in units if unit["selected"]),
             "live_writes": sum(effect["kind"] == "write" for unit in units if unit["selected"] for effect in unit["effects"]),
@@ -227,9 +269,9 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
         },
         "sync_units": units,
         "additional_source_changes": [],
-        "probe_work": [],
+        "probe_work": auxiliary_work("probe"),
         "directory_root_work": [],
-        "hook_work": [],
+        "hook_work": auxiliary_work("hook"),
         # Report actual steps, not success inferred from materialized Proposals.
         "stages": [
             {

@@ -12,6 +12,7 @@ from dotman.command_runtime import CommandOperation, command_operation
 from dotman.execution import ExecutionStep
 from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
+from dotman.sync_auxiliary import AuxiliaryRow, plan_auxiliary, retain_directional_hooks
 from dotman.sync_reconciliation import reconcile, ReconciliationConflict, ReconciliationFailed
 from dotman.projection import project_frozen_file
 from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
@@ -22,7 +23,7 @@ from dotman.sync_base_lifecycle import (
 )
 from dotman.operation_lock import OperationBusy, OperationLock, OperationLockError
 from dotman.sync_observation import Diagnostic, Observation, observe_scope, _resolve_inputs, _base_unit
-from dotman.sync_publication import PublicationResult, PublicationUnit, execute_publication, prepare_publication
+from dotman.sync_publication import HookActivation, PublicationResult, PublicationUnit, execute_publication, prepare_publication
 from dotman.sync_repository_apply import (
     RepositoryApplyUnit, execute_repository_apply, prepare_repository_apply,
 )
@@ -161,7 +162,7 @@ class SessionView:
     preview: bool
     terminal: bool
     observations: tuple[Observation, ...]
-    rows: tuple[SessionRow, ...]
+    rows: tuple[SessionRow | AuxiliaryRow, ...]
     allowed_commands: tuple[CommandName, ...]
 
 
@@ -350,6 +351,7 @@ class SyncSession:
         observations: tuple[Observation, ...],
         *,
         preview: bool,
+        auxiliary: tuple[AuxiliaryRow, ...] = (),
         event_sink: SessionEventSink | None = None,
     ) -> None:
         self._command_operation = CommandOperation()
@@ -389,7 +391,7 @@ class SyncSession:
                 )
                 for unit in observations
                 if unit.state != "directly-in-sync" or unit.diagnostics
-            ),
+            ) + auxiliary,
             ("preview", "abort") if preview else ("preview", "execute", "abort"),
         )
 
@@ -400,6 +402,7 @@ class SyncSession:
         scope: ResolvedSyncScope,
         *,
         preview: bool = False,
+        run_noop: bool = False,
         event_sink: SessionEventSink | None = None,
     ) -> SyncSession | SessionOpenFailed:
         with command_operation() as operation, ExitStack() as resources:
@@ -410,21 +413,33 @@ class SyncSession:
                         OperationLock.acquire(context.tracked_state.state_root)
                     )
                 resolved_inputs = _resolve_inputs(context, scope)
-                observations = observe_scope(context, scope, preview=preview, resolved_inputs=resolved_inputs)
-
-                # Retain only selected static metadata; preparation must never
-                # project source content a second time.
-                selected_inputs = {}
-                for item, metadata in resolved_inputs[0].values():
-                    key = id(item)
-                    if key not in selected_inputs:
-                        selected_inputs[key] = replace(item, target_metadata=[])
-                    selected_inputs[key].target_metadata.append(metadata)
-                publication_metadata = prepare_publication(
-                    tuple(selected_inputs.values()),
-                    file_symlink_mode=context.config.file_symlink_mode,
+                observed = observe_scope(
+                    context, scope, preview=preview, run_noop=run_noop, resolved_inputs=resolved_inputs,
                 )
-                repository_metadata = prepare_repository_apply(tuple(selected_inputs.values()))
+                observations = observed.observations
+
+                # Keep no-write completion metadata even when a direction is
+                # removed; only Guard-admitted hooks may activate at execution.
+                selected_inputs = {}
+                for candidates in resolved_inputs[1].values():
+                    for item in candidates:
+                        key = item.selection.identity
+                        if key not in selected_inputs:
+                            selected_inputs[key] = replace(item, target_metadata=[])
+                        targets = selected_inputs[key].target_metadata
+                        names = {target.target_name for target in targets}
+                        targets.extend(target for target in item.target_metadata if target.target_name not in names)
+                publication_metadata = retain_directional_hooks(prepare_publication(
+                    tuple(selected_inputs.values()), file_symlink_mode=context.config.file_symlink_mode,
+                ), observed.hook_scopes["push"])
+                repository_metadata = retain_directional_hooks(
+                    prepare_repository_apply(tuple(selected_inputs.values())), observed.hook_scopes["pull"],
+                )
+                auxiliary = plan_auxiliary(
+                    resolved_inputs[0], observed.directional,
+                    {"pull": repository_metadata, "push": publication_metadata},
+                    command_runtime=context.projection.command_runtime, run_noop=run_noop,
+                )
             except OperationBusy as exc:
                 return SessionOpenFailed(Diagnostic("operation-busy", str(exc)))
             except OperationLockError as exc:
@@ -439,7 +454,8 @@ class SyncSession:
                 )
             except OSError as exc:
                 return SessionOpenFailed(Diagnostic("observation-failed", str(exc)))
-            session = cls(observations, preview=preview, event_sink=event_sink)
+            session = cls(observations, preview=preview, auxiliary=auxiliary, event_sink=event_sink)
+            session._run_noop = run_noop
             session._operation_lock = lock
             session._context = context
             session._command_operation = operation
@@ -687,12 +703,20 @@ class SyncSession:
     ]:
         selected = tuple(
             row for row in self.view.rows
-            if row.included and row.approved and row.proposal is not None
+            if isinstance(row, SessionRow) and row.included and row.approved and row.proposal is not None
         )
-        if not selected:
+        auxiliary = {
+            direction: tuple(
+                HookActivation(row.scope, self._resolved_inputs_identity(row.scope) if row.kind == "probe" else None)
+                for row in self.view.rows
+                if isinstance(row, AuxiliaryRow) and row.included and direction in row.directions
+            )
+            for direction in ("pull", "push")
+        }
+        if not selected and not any(auxiliary.values()):
             return {}, (), ()
         units, diagnostics, steps = {}, (), ()
-        if any(row.observation.configured_policy in ("pull-only", "both") or row.proposal.primary_source_change is not None for row in selected):
+        if auxiliary["pull"] or any(row.observation.configured_policy in ("pull-only", "both") or row.proposal.primary_source_change is not None for row in selected):
             by_id = {row.row_id: row for row in selected}
             acknowledgment_failures = {}
 
@@ -713,7 +737,7 @@ class SyncSession:
                     row.row_id, row.observation.identity, row.proposal.primary_source_change,
                 ) for row in selected),
                 command_runtime=self._context.projection.command_runtime,
-                complete=complete,
+                complete=complete, auxiliary=auxiliary["pull"], run_noop=self._run_noop,
             )
             units, diagnostics, steps = self._execution_outcome(result, "repository-apply")
             for row in selected:
@@ -728,13 +752,16 @@ class SyncSession:
             # Ineligible no-write completion needs neither a Base nor a receipt.
             units = {row.row_id: ("converged", ()) for row in selected if not row.proposal.publication_effects}
         publication = tuple(row for row in selected if row.proposal.publication_effects)
-        if publication:
-            published, diagnostics, publication_steps = self._publish_effects(publication)
+        if publication or auxiliary["push"]:
+            published, diagnostics, publication_steps = self._publish_effects(publication, auxiliary["push"])
             units.update(published)
             steps += publication_steps
         return units, diagnostics, steps
 
-    def _publish_effects(self, selected: tuple[SessionRow, ...]) -> tuple[
+    def _resolved_inputs_identity(self, scope: str):
+        return next(identity for identity in self._resolved_inputs if identity.canonical == scope)
+
+    def _publish_effects(self, selected: tuple[SessionRow, ...], auxiliary: tuple[HookActivation, ...] = ()) -> tuple[
         dict[str, tuple[str, tuple[Diagnostic, ...]]],
         tuple[Diagnostic, ...],
         tuple[SyncStepOutcome, ...],
@@ -760,6 +787,7 @@ class SyncSession:
             ) for row in selected),
             complete=complete,
             snapshot_config=self._context.config.snapshots,
+            auxiliary=auxiliary, run_noop=self._run_noop,
             command_runtime=self._context.projection.command_runtime,
         )
         units, diagnostics, steps = self._execution_outcome(result, "live-publication")

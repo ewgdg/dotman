@@ -11,7 +11,7 @@ from dotman import file_access
 from dotman.command_runtime import INTERRUPTED_EXIT_CODE, CommandRuntime, command_runtime_session, current_command_runtime
 from dotman.elevation import elevation_broker_session
 from dotman.execution import ExecutionStep, ExecutionStepResult, _execute_step
-from dotman.models import HookPlan, PackagePlan, ResolvedSyncTarget, SnapshotConfig, TargetPlan
+from dotman.models import HookPlan, PackagePlan, ResolvedSyncTarget, SnapshotConfig, TargetPlan, package_ref_text
 from dotman.planning import PackagePlanningInput, plan_hooks, plan_repo_hooks
 from dotman.snapshot import SnapshotRecord, create_push_snapshot, mark_snapshot_status
 
@@ -68,8 +68,10 @@ def prepare_publication(
             TargetPlan(
                 package_id=target.package_id, target_name=target.target_name,
                 repo_path=target.repo_path, live_path=target.live_path,
-                action="noop", target_kind="file", projection_kind="raw",
-                command_cwd=target.command_cwd, command_env=dict(target.command_env),
+                action="noop", target_kind="probe" if target.probe_command is not None else "file", projection_kind="raw",
+                command_cwd=target.command_cwd,
+                # One static target may supply metadata to both Sync stages.
+                command_env={**target.command_env, "DOTMAN_OPERATION": "push"},
                 file_symlink_mode=file_symlink_mode,
             )
             for target in item.target_metadata
@@ -93,6 +95,55 @@ def prepare_publication(
                 for hook in hooks
             )
     return PublicationMetadata(tuple(packages), tuple(repos.items()))
+
+
+@dataclass(frozen=True)
+class HookActivation:
+    """Retained hook scope; a Probe activates normal hooks without a payload."""
+
+    scope: str
+    target: ResolvedSyncTarget | None = None
+
+
+def _package_scope(package: PackagePlan) -> str:
+    return f"{package.repo_name}:{package_ref_text(package_id=package.package_id, bound_profile=package.bound_profile)}"
+
+
+def _target_identity(package: PackagePlan, target: TargetPlan) -> ResolvedSyncTarget:
+    return ResolvedSyncTarget(
+        repo=package.repo_name, package_id=target.package_id,
+        bound_profile=package.bound_profile, target_name=target.target_name,
+    )
+
+
+def _hook_scopes(
+    metadata: PublicationMetadata,
+    auxiliary: Sequence[HookActivation],
+    active_targets: Sequence[ResolvedSyncTarget],
+) -> tuple[set[str], set[str]]:
+    ancestors = {name: {name} for name, _ in metadata.repo_hooks}
+    identities = set()
+    for package in metadata.packages:
+        scope = _package_scope(package)
+        ancestors[scope] = {scope, package.repo_name}
+        for target in package.target_plans:
+            identity = _target_identity(package, target)
+            identities.add(identity)
+            ancestors[identity.canonical] = {identity.canonical, scope, package.repo_name}
+    normal = set()
+    noop = set()
+    for identity in active_targets:
+        normal.update(ancestors.get(identity.canonical, ()))
+    for activation in auxiliary:
+        if activation.scope not in ancestors:
+            raise ValueError("Hook activation has no captured metadata")
+        if activation.target is not None:
+            if activation.target not in identities or activation.target.canonical != activation.scope:
+                raise ValueError("Probe activation does not match its captured target")
+            normal.update(ancestors[activation.scope])
+        else:
+            noop.update(ancestors[activation.scope])
+    return normal, noop
 
 
 class _PublicationStopped(Exception):
@@ -141,13 +192,17 @@ def execute_publication(
     command_runtime: CommandRuntime | None = None,
     stream_output: bool = False,
     assume_yes: bool = False,
+    auxiliary: Sequence[HookActivation] = (),
+    run_noop: bool = False,
 ) -> PublicationResult:
     """Apply exact effects, retaining completion even when enclosing hooks fail."""
     units = tuple(units)
     by_identity = {unit.identity: unit for unit in units}
     if len(by_identity) != len(units) or len({unit.row_id for unit in units}) != len(units):
         raise ValueError("Duplicate publication unit")
+    normal_scopes, noop_scopes = _hook_scopes(metadata, auxiliary, [unit.identity for unit in units if unit.effects])
     selected = []
+    snapshot_packages = []
     snapshot_endpoints = []
     matched = set()
     for package in metadata.packages:
@@ -158,11 +213,13 @@ def execute_publication(
                 bound_profile=package.bound_profile, target_name=target.target_name,
             )
             unit = by_identity.get(identity)
-            if unit is None:
+            if unit is None or not unit.effects:
+                if identity.canonical in normal_scopes | noop_scopes:
+                    targets.append(target)
+                if unit is not None:
+                    matched.add(identity)
                 continue
             matched.add(identity)
-            if not unit.effects:
-                continue
             for effect in unit.effects:
                 if effect.kind not in {"write", "delete", "chmod"}:
                     raise ValueError(f"Unknown publication effect: {effect.kind}")
@@ -172,8 +229,12 @@ def execute_publication(
                     raise ValueError("Frozen chmod requires mode")
             snapshot_endpoints.append((unit.effects[0], target))
             targets.append(replace(target, action="delete" if unit.effects[0].kind == "delete" else "update"))
-        if targets:
+        if targets or _package_scope(package) in normal_scopes | noop_scopes:
             selected.append(replace(package, target_plans=targets))
+        # Auxiliary targets only carry hook context, never snapshot endpoints.
+        mutation_targets = [target for target in targets if target.action != "noop"]
+        if mutation_targets:
+            snapshot_packages.append(replace(package, target_plans=mutation_targets))
     if matched != set(by_identity):
         raise ValueError("Publication unit has no captured metadata")
 
@@ -189,8 +250,12 @@ def execute_publication(
     snapshot_started = False
 
     def run_hooks(hooks, name, package=None, target=None):
+        scope = (_target_identity(package, target).canonical if target is not None else
+                 _package_scope(package) if package is not None else hooks[0].repo_name if hooks else None)
         for hook in hooks:
-            if hook.hook_name != name:
+            if hook.hook_name != name or not (
+                scope in normal_scopes or (scope in noop_scopes and (hook.run_noop or run_noop))
+            ):
                 continue
             step = ExecutionStep(
                 repo_name=hook.repo_name or "", package_id=hook.package_id,
@@ -210,7 +275,7 @@ def execute_publication(
         try:
             for repo_name, repo_hooks in metadata.repo_hooks:
                 repo_packages = [package for package in selected if package.repo_name == repo_name]
-                if not repo_packages:
+                if repo_name not in normal_scopes | noop_scopes:
                     continue
                 run_hooks(repo_hooks, "pre_push")
                 for package in repo_packages:
@@ -224,7 +289,11 @@ def execute_publication(
                         )
                         target_hooks = [hook for hook in hooks if hook.scope_kind == "target" and hook.target_name == target.target_name]
                         run_hooks(target_hooks, "pre_push", package, target)
-                        current_unit = by_identity[identity]
+                        current_unit = by_identity.get(identity)
+                        if current_unit is None or not current_unit.effects:
+                            current_unit = None
+                            run_hooks(target_hooks, "post_push", package, target)
+                            continue
                         for effect in current_unit.effects:
                             step = ExecutionStep(
                                 repo_name=repo_name, package_id=package.package_id,
@@ -244,7 +313,7 @@ def execute_publication(
                                             # after pre-hooks so a later FIFO cannot block it.
                                             for initial_effect, snapshot_target in snapshot_endpoints:
                                                 _effect_path(initial_effect, snapshot_target)
-                                        snapshot = create_push_snapshot(selected, snapshot_config)
+                                        snapshot = create_push_snapshot(snapshot_packages, snapshot_config)
                                     except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
                                         failure = _failed_step(
                                             replace(step, kind="snapshot", action="create"), exc,

@@ -100,6 +100,8 @@ def target_claims_path(target: TargetSpec) -> bool:
 def validate_probe_target_config(*, package: PackageSpec, target: TargetSpec) -> None:
     if target.probe is None:
         return
+    if resolve_sync_policy(package=package, target=target) == "push-only-delete":
+        raise ValueError(f"Probe {package.id}.{target.name} cannot use push-only-delete; use push-only")
     forbidden_probe_fields = {
         "source": target.source,
         "path": target.path,

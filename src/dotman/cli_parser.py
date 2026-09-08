@@ -317,14 +317,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync_parser = subparsers.add_parser(
         "sync",
-        help="Review and approve push-only file convergence",
-        description="Inspect frozen file state and approve push-only Proposals",
+        help="Review file convergence and select auxiliary work",
+        description="Inspect frozen file state, approve Proposals, and select Probe or hook work",
     )
     sync_parser.add_argument(
         "scopes", nargs="*", metavar="<repo:package.target>",
         help="Exact tracked scopes (default: all tracked targets)",
     )
     add_dry_run_argument(sync_parser)
+    add_run_noop_argument(sync_parser)
 
     push_parser = subparsers.add_parser(
         "push",

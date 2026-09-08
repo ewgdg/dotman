@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from dotman.command_runtime import (
@@ -16,6 +16,8 @@ from dotman.models import (
     PackageSpec,
     TargetPathRule,
     resolved_package_identity_key,
+    package_ref_text,
+    repo_qualified_target_text,
     target_path_rule_matches,
 )
 from dotman.projection import TargetMetadata, build_package_hook_env, build_repo_hook_env
@@ -412,3 +414,50 @@ def evaluate_hierarchical_guards(
         operation=operation,
     )
     return target_inputs, (*repo_skips, *package_skips, *target_skips)
+
+
+
+@dataclass(frozen=True)
+class DirectionalEligibility:
+    inputs: list["PackagePlanningInput"]
+    hook_scopes: frozenset[str]
+
+
+def evaluate_directional_guards(
+    directional: dict[str, list["PackagePlanningInput"]],
+    *,
+    command_runtime: CommandRuntime,
+    run_noop: bool,
+) -> dict[str, DirectionalEligibility]:
+    """Narrow both families scope-first, never granting an absent capability."""
+    survivors = dict(directional)
+    scopes = {direction: set() for direction in directional}
+    for evaluate in (_evaluate_repo_guards, _evaluate_package_guards, _evaluate_target_guards):
+        for direction, inputs in survivors.items():
+            kwargs = {} if evaluate is _evaluate_target_guards else {"run_noop": run_noop}
+            survivors[direction], _skips = evaluate(
+                inputs, command_runtime=command_runtime, operation=direction, **kwargs,
+            )
+            # Lower-scope removals must not suppress independently retained
+            # noop hooks at an already admitted ancestor scope.
+            for item in survivors[direction]:
+                identity = item.selection.identity
+                if evaluate is _evaluate_repo_guards:
+                    scopes[direction].add(identity.repo)
+                elif evaluate is _evaluate_package_guards:
+                    package = package_ref_text(
+                        package_id=identity.package_id, bound_profile=identity.bound_profile,
+                    )
+                    scopes[direction].add(f"{identity.repo}:{package}")
+                else:
+                    scopes[direction].update(
+                        repo_qualified_target_text(
+                            repo_name=identity.repo, package_id=target.package_id,
+                            bound_profile=identity.bound_profile, target_name=target.target_name,
+                        )
+                        for target in item.target_metadata
+                    )
+    return {
+        direction: DirectionalEligibility(inputs, frozenset(scopes[direction]))
+        for direction, inputs in survivors.items()
+    }

@@ -270,6 +270,12 @@ def resolve_sync_scope(
         for planning_input in planning_inputs:
             for metadata in planning_input.target_metadata:
                 if not planning.target_claims_path(metadata.target):
+                    winning_target_keys.add((
+                        planning_input.selection.identity.repo,
+                        metadata.package_id,
+                        planning_input.selection.identity.bound_profile,
+                        metadata.target_name,
+                    ))
                     continue
                 metadata_key = (
                     planning_input.selection.identity.repo,

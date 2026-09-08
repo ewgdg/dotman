@@ -186,6 +186,11 @@ preset = "jinja-patch"
   - any other non-zero status: hard planning failure.
 - Probe targets do not claim repo/live paths, do not participate in target ownership conflicts, do not create snapshots, and never execute file push/pull steps.
 - Use `sync_policy = "push-only"` for install/update probes that should run only before push-style setup.
+- Probes reject effective `push-only-delete`, including inherited package policy:
+  there is no live endpoint to delete.
+- Sync exposes active Probes as directly selectable auxiliary work only when a
+  capability survives Guards. They activate only surviving directional hook
+  families and never have file Proposals, Base acknowledgment or Converged results.
 - Targets may define `preset` as a built-in default bundle for common target workflows.
 - Explicit target keys override preset defaults.
 - Built-in target presets currently include `jinja-editor` for the common Jinja render + editor workflow, `jinja-patch` for the current built-in Jinja patch-capture workflow, and `jinja-patch-editor` for the same patch-first flow with built-in editor fallback.

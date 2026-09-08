@@ -14,7 +14,8 @@ from dotman.models import PackagePlan, ResolvedSyncTarget, TargetPlan
 from dotman.planning import PackagePlanningInput, plan_hooks, plan_repo_hooks
 from dotman.sync_base_store import FilePresent, Missing
 from dotman.sync_publication import (
-    PublicationMetadata, PublicationResult, PublicationUnitResult,
+    HookActivation, PublicationMetadata, PublicationResult, PublicationUnitResult,
+    _hook_scopes, _package_scope, _target_identity,
     _PublicationStopped, _failed_step,
 )
 
@@ -38,8 +39,10 @@ def prepare_repository_apply(
             TargetPlan(
                 package_id=target.package_id, target_name=target.target_name,
                 repo_path=target.repo_path, live_path=target.live_path,
-                action="noop", target_kind="file", projection_kind="raw",
-                command_cwd=target.command_cwd, command_env=dict(target.command_env),
+                action="noop", target_kind="probe" if target.probe_command is not None else "file", projection_kind="raw",
+                command_cwd=target.command_cwd,
+                # One static target may supply metadata to both Sync stages.
+                command_env={**target.command_env, "DOTMAN_OPERATION": "pull"},
             )
             for target in item.target_metadata
         ]
@@ -73,6 +76,8 @@ def execute_repository_apply(
     complete: Callable[[RepositoryApplyUnit], None],
     stream_output: bool = False,
     assume_yes: bool = False,
+    auxiliary: Sequence[HookActivation] = (),
+    run_noop: bool = False,
 ) -> PublicationResult:
     """Complete at the ordered unit boundary; callback failure stops execution.
 
@@ -86,6 +91,7 @@ def execute_repository_apply(
     if any(unit.outcome is not None and not isinstance(unit.outcome, (FilePresent, Missing)) for unit in units):
         raise ValueError("Invalid frozen repository outcome")
 
+    normal_scopes, noop_scopes = _hook_scopes(metadata, auxiliary, [unit.identity for unit in units if unit.outcome is not None])
     selected = []
     matched = set()
     for package in metadata.packages:
@@ -98,7 +104,9 @@ def execute_repository_apply(
             if identity in by_identity:
                 matched.add(identity)
                 targets.append((target, by_identity[identity]))
-        if targets:
+            elif identity.canonical in normal_scopes | noop_scopes:
+                targets.append((target, None))
+        if targets or _package_scope(package) in normal_scopes | noop_scopes:
             selected.append((package, targets))
     if matched != set(by_identity):
         raise ValueError("Repository apply unit has no captured metadata")
@@ -112,8 +120,12 @@ def execute_repository_apply(
     interrupted = False
 
     def run_hooks(hooks, name, package=None, target=None):
+        scope = (_target_identity(package, target).canonical if target is not None else
+                 _package_scope(package) if package is not None else hooks[0].repo_name if hooks else None)
         for hook in hooks:
-            if hook.hook_name != name:
+            if hook.hook_name != name or not (
+                scope in normal_scopes or (scope in noop_scopes and (hook.run_noop or run_noop))
+            ):
                 continue
             step = ExecutionStep(
                 repo_name=hook.repo_name or "", package_id=hook.package_id,
@@ -133,19 +145,21 @@ def execute_repository_apply(
         try:
             for repo_name, repo_hooks in metadata.repo_hooks:
                 packages = [(package, targets) for package, targets in selected if package.repo_name == repo_name]
-                repo_active = any(unit.outcome is not None for _, targets in packages for _, unit in targets)
+                repo_active = repo_name in normal_scopes | noop_scopes
                 if repo_active:
                     run_hooks(repo_hooks, "pre_pull")
                 for package, targets in packages:
                     hooks = [hook for values in package.hooks.values() for hook in values]
                     package_hooks = [hook for hook in hooks if hook.scope_kind == "package"]
-                    package_active = any(unit.outcome is not None for _, unit in targets)
+                    package_active = _package_scope(package) in normal_scopes | noop_scopes
                     if package_active:
                         run_hooks(package_hooks, "pre_pull", package)
                     for target, unit in targets:
                         target_hooks = [hook for hook in hooks if hook.scope_kind == "target" and hook.target_name == target.target_name]
-                        if unit.outcome is not None:
-                            run_hooks(target_hooks, "pre_pull", package, target)
+                        run_hooks(target_hooks, "pre_pull", package, target)
+                        if unit is None:
+                            run_hooks(target_hooks, "post_pull", package, target)
+                            continue
                         current_unit = unit
                         step = ExecutionStep(
                             repo_name=repo_name, package_id=package.package_id,
@@ -184,8 +198,7 @@ def execute_repository_apply(
                             raise
                         results[unit.row_id] = PublicationUnitResult(unit.row_id, "ok")
                         current_unit = None
-                        if unit.outcome is not None:
-                            run_hooks(target_hooks, "post_pull", package, target)
+                        run_hooks(target_hooks, "post_pull", package, target)
                     if package_active:
                         run_hooks(package_hooks, "post_pull", package)
                 if repo_active:

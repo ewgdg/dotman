@@ -13,7 +13,7 @@ from dotman import planning, projection
 from dotman.file_access import read_bytes
 from dotman.manifest import resolve_sync_policy
 from dotman.models import ResolvedSyncScope, ResolvedSyncTarget
-from dotman.planning_guards import evaluate_hierarchical_guards
+from dotman.planning_guards import evaluate_directional_guards
 from dotman.sync_base_lifecycle import (
     BaseInputs,
     BaseProfileContext,
@@ -139,14 +139,11 @@ def _resolve_inputs(
                 entry for entry in item.target_metadata if _identity(entry) in selected
             ]
             for entry in metadata:
-                if (
-                    entry.probe_command is not None
-                    or entry.target.target_type == "directory"
-                ):
+                if entry.target.target_type == "directory":
                     raise ValueError("file SyncSession requires file targets")
                 inputs.setdefault(_identity(entry), (item, entry))
-            if metadata:
-                narrowed.append(replace(item, target_metadata=metadata))
+            # Empty selected scopes may retain independently noop-eligible hooks.
+            narrowed.append(replace(item, target_metadata=metadata))
         directional[direction] = narrowed
     if inputs.keys() != selected:
         raise ValueError("resolved Sync scope no longer matches selected configuration")
@@ -269,14 +266,26 @@ def _observe_file(
         )
 
 
+@dataclass(frozen=True)
+class ObservedScope:
+    observations: tuple[Observation, ...]
+    directional: dict[str, list[planning.PackagePlanningInput]]
+    hook_scopes: dict[str, frozenset[str]]
+
+
 def observe_scope(
     context: planning.PlanningContext,
     scope: ResolvedSyncScope,
     *,
     preview: bool,
+    run_noop: bool = False,
     resolved_inputs: tuple[_ResolvedInputs, dict[str, list[planning.PackagePlanningInput]]] | None = None,
-) -> tuple[Observation, ...]:
+) -> ObservedScope:
     inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(context, scope)
+    inputs = {
+        identity: value for identity, value in inputs.items()
+        if value[1].probe_command is None
+    }
     units = {
         identity: _base_unit(context, identity, item, metadata)
         for identity, (item, metadata) in inputs.items()
@@ -322,19 +331,14 @@ def observe_scope(
                     units[identity]
                 ).deleted
 
-        admitted = {}
-        for direction, candidates in directional.items():
-            survivors, _skips = evaluate_hierarchical_guards(
-                candidates,
-                command_runtime=context.projection.command_runtime,
-                operation=direction,
-                run_noop=False,
-            )
-            admitted[direction] = {
-                _identity(metadata)
-                for item in survivors
-                for metadata in item.target_metadata
-            }
+        eligibility = evaluate_directional_guards(
+            directional, command_runtime=context.projection.command_runtime, run_noop=run_noop,
+        )
+        directional = {direction: value.inputs for direction, value in eligibility.items()}
+        admitted = {
+            direction: {_identity(metadata) for item in survivors for metadata in item.target_metadata}
+            for direction, survivors in directional.items()
+        }
 
         frozen, git_failures = {}, {}
         for repo_name, git in gits.items():
@@ -419,4 +423,6 @@ def observe_scope(
                         ),
                     )
             observations.append(observation)
-        return tuple(observations)
+        return ObservedScope(tuple(observations), directional, {
+            direction: value.hook_scopes for direction, value in eligibility.items()
+        })

@@ -30,7 +30,7 @@ This document captures the current command and selector direction for `dotman`.
 - `--json` switches command output to machine-readable JSON. It is a global option and must appear before the subcommand.
 - `--yes` skips yes/no confirmation prompts, but it does not auto-resolve ambiguous selector/profile menus.
 - Dotman also exports `DOTMAN_ASSUME_YES=1` to hooks during execution when `--yes` is active, otherwise `DOTMAN_ASSUME_YES=0`.
-- `--run-noop` is only meaningful for `push` and `pull`.
+- `--run-noop` is meaningful for `push`, `pull`, and `sync`; Sync retains both surviving directional hook families.
 - `--run-noop` now feeds normal planning and selection instead of reviving hooks late in execution.
 - For the active operation, `--run-noop` temporarily treats pre/post hooks as noop-eligible, even if they do not declare `run_noop = true` in the manifest.
 - `--run-noop` still does not fabricate target writes or snapshots.
@@ -54,17 +54,18 @@ unattended, and non-terminal resolution fails rather than guessing.
 
 ## Sync
 
-`dotman [--config PATH] [--json] [--unattended] sync [-d | --dry-run] [<tracked-scope> ...]`
-opens a one-shot file-target session. The current convergence path supports
+`dotman [--config PATH] [--json] [--unattended] sync [-d | --dry-run] [--run-noop] [<tracked-scope> ...]`
+opens a one-shot session for file targets, Probe Work and retained hook-only work. The current convergence path supports
 push-only and deletion-only files with **Use repository**, pull-only files with
 **Use live**, and both-policy files with **Use repository**, **Use live**, or
 Base-backed **Merge**. Both-policy drift defaults to **Merge** with a usable Base;
 otherwise **Use live** is the visible fallback and Merge is unavailable.
 
 - Interactive Sync opens a persistent Command Deck with Approval initially off.
-  Its Textual table aligns Approval, Target, Policy, and Resolution columns.
-  `Space` toggles Approval, `A` approves eligible rows, and `U` clears Approval.
-  A single click in the Approval column toggles that row; other cells only focus it.
+  Its Textual table aligns Selection, Target, Policy, and Resolution columns.
+  `Space` toggles Selection, `A` selects eligible rows, and `U` clears Selection.
+  Selection means Proposal Approval or direct auxiliary inclusion.
+  A single click in the Selection column toggles that row; other cells only focus it.
   The bottom help text lists keyboard shortcuts; it is not clickable. It adapts
   to workset, review, and confirmation, wrapping to two lines on narrow terminals.
   Arrow keys navigate; narrow terminals scroll horizontally and long worksets
@@ -82,8 +83,8 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
 - **Unsupported** means the session offers no resolution capability, not that
   observing the filesystem failed. **Observation failed** and **Proposal failed**
   retain their diagnostic details below the table. Current Sync supports file
-  targets; directory scopes cannot open a file Sync session.
-- `--unattended` explicitly selects supported Proposals and confirms execution.
+  targets and auxiliary work; directory scopes cannot open a file Sync session.
+- `--unattended` explicitly selects supported Proposals and auxiliary work and confirms execution.
   Missing terminals and `--json` do not grant consent. Required interactive
   decisions without a terminal fail rather than selecting work implicitly.
   A workset containing unsupported drift is rejected before mutation, rather
@@ -91,6 +92,11 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
 - `--dry-run` reports frozen approved outcomes without hooks, managed writes,
   snapshots, Base acknowledgment or cleanup. Use `--unattended` to select the
   supported set for a noninteractive preview.
+- Active Probe Work has no Proposal, Approval, Base or Converged result. Its
+  selection activates only Guard-surviving hook families. Hook-only rows show
+  canonical scope with `(pull-hooks)` or `(push-hooks)`, never a file identity
+  invented for hooks. `--run-noop` retains otherwise inactive pre/post hooks
+  without restoring a Guard-removed capability.
 - Pull-only review lazily Captures frozen live evidence, shows the repository
   outcome and leaves live unchanged. Confirmation counts repository changes
   separately from live effects. Even a no-write drift resolution requires Approval
@@ -98,6 +104,9 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
 - JSON emits one final document containing operation, mode, status, scope,
   summary, Sync Units, auxiliary/source work categories and stages. It reports
   evidence and effect metadata, never file content bytes or private workspaces.
+  `probe_work` and `hook_work` contain canonical `identity`, `selected`,
+  `directions` and `diagnostics`, without file/Proposal/Base fields.
+  `summary.selected_auxiliary` counts directly selected auxiliary rows.
   Each unit's `primary_source_change` describes its repository write/deletion
   (or is null); `effects` contains only live Publication Effects. Summary
   `repository_changes` counts selected Primary Source Changes. Base status and

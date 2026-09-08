@@ -271,14 +271,14 @@ class DotmanEngine:
         )
 
     def open_sync_session(
-        self, scope: ResolvedSyncScope, *, preview: bool = False,
+        self, scope: ResolvedSyncScope, *, preview: bool = False, run_noop: bool = False,
         event_sink: SessionEventSink | None = None,
     ) -> SyncSession | SessionOpenFailed:
-        """Observe a resolved file scope through the one-shot Sync boundary."""
+        """Observe files and auxiliary work through the one-shot Sync boundary."""
         from dotman.sync_session import SyncSession
 
         return SyncSession.open(
-            self._planning_context, scope, preview=preview, event_sink=event_sink,
+            self._planning_context, scope, preview=preview, run_noop=run_noop, event_sink=event_sink,
         )
 
     def resolve_sync_scope(self, selectors: Sequence[str] | None = None) -> ResolvedSyncScope:

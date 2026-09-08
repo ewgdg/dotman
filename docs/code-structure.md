@@ -72,8 +72,9 @@ Current responsibility split:
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `projection.py` — target projection and file/directory action planning through `ProjectionContext`
 - `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
-- `sync_session.py` — one-shot file session, immutable views, semantic commands, typed dispatch/results and lifecycle events
+- `sync_session.py` — one-shot file and auxiliary session, immutable views, semantic commands, typed dispatch/results and lifecycle events
 - `sync_observation.py` — file endpoint evidence, policy comparisons, frozen Guards/Git/Base facts and opening-time Base lifecycle
+- `sync_auxiliary.py` — immutable Probe/hook rows, one-shot Probe activity and Guard-admitted directional hook retention
 - `operation_lock.py` — manager-wide non-blocking real-operation ownership shared by sessions and Push/Pull command workflows
 - `sync_base_lifecycle.py` — configured-policy Base eligibility, frozen Git facts, input fingerprints, applicability inspection, and per-unit acknowledgment/deletion decisions
 - `sync_base_store.py` — secure fixed-epoch, per-repository SQLite storage for exact Sync Base records and content-addressed payloads
@@ -186,17 +187,18 @@ Prefer the dedicated module unless there is a strong reason not to.
 ## File SyncSession clients
 
 Resolve selectors with `engine.resolve_sync_scope(...)`, then call
-`engine.open_sync_session(scope, preview=..., event_sink=...)`. Opening returns
-a `SyncSession` or typed `SessionOpenFailed`. File-target scope only is supported;
-push-only and pull-only drift can materialize, receive Approval and converge.
-Directory children, Editors and both-policy drift resolution remain outside this
-boundary.
+`engine.open_sync_session(scope, preview=..., run_noop=..., event_sink=...)`. Opening returns
+a `SyncSession` or typed `SessionOpenFailed`. Files and auxiliary scopes are
+supported. File drift materializes policy-allowed Proposals; Probe/hook work is
+directly included without an Observation or Proposal. Directory children and
+Editors remain outside this boundary.
 
 Read `session.view` rather than private plans. `SetIncluded`, `SetApproval`,
 `PrepareProposalReview`, `Preview`, `Execute` and `Abort` carry the view's session
 ID and revision. Dispatch returns
 `CommandAccepted(view, result)` or mutation-free `CommandRejected(view, reason)`.
-Row-local allowed commands distinguish drift from non-approvable diagnostics.
+Row-local allowed commands distinguish drift, non-approvable diagnostics and
+auxiliary rows, which expose only `SetIncluded`.
 Convenience `execute()` and `abort()` act on the current view; adapters holding
 cached views should dispatch explicit revision-bearing commands.
 Accepted commands yield new immutable snapshots; old views remain valid evidence.
@@ -209,7 +211,8 @@ aborts an unfinished session. Review and Approval materialize immutable Proposal
 from frozen inputs. Preview reports approved effects without mutation; Execute
 applies those same repository and live effects without re-observation or projection. Results keep
 direct agreement, approved convergence, pending/excluded drift and failures
-distinct. Inclusion never substitutes for Approval.
+distinct. File inclusion never substitutes for Proposal Approval; auxiliary
+inclusion authorizes only retained directional hooks.
 
 `sync_capture.py` materializes Use live from frozen endpoints and comparison
 evidence through shared projection and patch mechanics. A Capture-backed comparison

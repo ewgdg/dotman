@@ -5,9 +5,14 @@ is an independent Sync Unit; a directory root has no aggregate Base.
 
 ## Frozen file Observation
 
-A SyncSession observes its resolved file-target scope once. For each direction,
-repository, package and target Guards narrow capability before endpoint reads
-and comparison. It retains the resolved scope order, effective projections, typed
+A SyncSession observes its resolved file targets and auxiliary work once.
+Guards run in repository → package → target order across both directional
+families before endpoint reads and comparison. Shared directory planning runs
+active named Path Rule Guards afterward, by priority then name, once per rule.
+Exit 0 retains capability, 100 removes that direction within the Guard's scope,
+and other non-zero exits abort planning. Review and execution never rerun Guards.
+Configured Sync Policy remains the upper bound; narrowing never changes Base
+eligibility (configured `pull-only` or `both`). It retains the resolved scope order, effective projections, typed
 endpoint bytes, live mode/link evidence, Git facts and applicable Base evidence.
 
 | Effective policy | Direct comparison |
@@ -29,6 +34,27 @@ acknowledgment flag records successful opening-time maintenance.
 External changes never refresh an open session. Start another session to see
 new filesystem, configuration or Git state.
 
+## Auxiliary work
+
+An active Probe becomes **Probe Work** only when at least one configured
+capability survives Guards. Its command runs once: exit 0 keeps the row, 100
+omits inactive work, and any other non-zero exit aborts planning. A Probe cannot
+use `push-only-delete`; it has no live endpoint to delete.
+
+Probe Work starts unselected and has no file Observation, payload, comparison,
+Resolution Intent, Editor, Proposal, Approval, Base or Converged result. Selection
+activates normal hooks only in its surviving families: pull hooks during
+Repository Apply, then push hooks during Live Publication.
+
+Independently noop-eligible hooks remain selectable **Hook Work**, identified
+only by canonical repository, package-instance or target scope plus
+`(pull-hooks)` or `(push-hooks)`. Manifest command/hook `run_noop` is retained;
+`sync --run-noop` makes both surviving families noop-eligible. A child Guard does
+not remove an ancestor's independently retained noop hooks. Selection coalesces
+nested hooks with Probe and file work so each hook runs once. Auxiliary-only
+execution writes no payload and creates no snapshot or Base acknowledgment.
+Preview freezes Guard and Probe results but executes no hooks.
+
 ## Resolution Intents and the Command Deck
 
 Drifted push-only files offer **Use repository**; pull-only files offer only
@@ -42,9 +68,10 @@ policy-derived live outcome, exclusive Primary Source Change, and exact
 Publication Effects. Execution consumes that outcome rather than rendering or
 observing again. Inclusion is separate from Approval.
 
-The persistent Textual Command Deck shows drift and diagnostics, not directly
-agreeing units. Its aligned table uses canonical target identities and an
-**Approval** column. Unsupported resolution capability is labeled separately
+The persistent Textual Command Deck shows drift, auxiliary work and diagnostics,
+not directly agreeing units. Its aligned table uses canonical target identities
+and a **Selection** column. Selection authorizes Proposals through Approval and
+directly includes auxiliary work. Unsupported resolution capability is labeled separately
 from Observation and Proposal failures; focused diagnostic details explain the
 current row. Directory scopes are outside the file session's current capability.
 Focused review shows

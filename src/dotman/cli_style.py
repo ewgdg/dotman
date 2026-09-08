@@ -441,6 +441,10 @@ def render_execution_status(status: str, *, use_color: bool) -> str:
 
 # Shared semantic colors for Sync's Approval, Resolution and completion terms.
 SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
+    "selected": ("1", "32"),
+    "unselected": ("2",),
+    "Probe Work": ("1", "36"),
+    "Hook Work": ("1", "36"),
     "approved": ("1", "32"),
     "unapproved": ("2",),
     "Use repository": ("1", "36"),
