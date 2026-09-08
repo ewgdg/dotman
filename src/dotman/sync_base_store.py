@@ -211,7 +211,7 @@ def _identity(status: os.stat_result) -> tuple[int, int]:
     return status.st_dev, status.st_ino
 
 
-def _validate_type_and_owner(
+def _validate_inode(
     path: Path, status: os.stat_result, *, directory: bool
 ) -> None:
     if stat.S_ISLNK(status.st_mode):
@@ -228,19 +228,35 @@ def _validate_type_and_owner(
         raise SyncBaseStoreSecurityError(
             f"Sync Base store path has wrong owner: {path}"
         )
+    if not directory and status.st_nlink != 1:
+        raise SyncBaseStoreSecurityError(
+            f"Sync Base store file must not have hard links: {path}"
+        )
 
 
 def _validate_status(path: Path, status: os.stat_result, *, directory: bool) -> None:
-    _validate_type_and_owner(path, status, directory=directory)
+    _validate_inode(path, status, directory=directory)
     expected_mode = _PRIVATE_DIRECTORY_MODE if directory else _PRIVATE_FILE_MODE
     if stat.S_IMODE(status.st_mode) != expected_mode:
         raise SyncBaseStoreSecurityError(
             f"Sync Base store path mode must be {expected_mode:#05o}: {path}"
         )
-    if not directory and status.st_nlink != 1:
-        raise SyncBaseStoreSecurityError(
-            f"Sync Base store file must not have hard links: {path}"
-        )
+
+
+def _secure_permissions(path: Path, descriptor: int, *, directory: bool) -> None:
+    status = os.fstat(descriptor)
+    _validate_inode(path, status, directory=directory)
+    expected_mode = _PRIVATE_DIRECTORY_MODE if directory else _PRIVATE_FILE_MODE
+    if stat.S_IMODE(status.st_mode) != expected_mode:
+        # Repair only the verified inode, never its replaceable pathname.
+        try:
+            os.fchmod(descriptor, expected_mode)
+        except OSError as exc:
+            kind = "directory" if directory else "file"
+            raise SyncBaseStoreSecurityError(
+                f"cannot secure Sync Base {kind} permissions: {path}: {exc}"
+            ) from exc
+    _validate_status(path, os.fstat(descriptor), directory=directory)
 
 
 class _PrivateLayout:
@@ -270,7 +286,7 @@ class _PrivateLayout:
                 before = os.stat(
                     path.name, dir_fd=parent_descriptor, follow_symlinks=False
                 )
-                _validate_type_and_owner(path, before, directory=True)
+                _validate_inode(path, before, directory=True)
                 descriptor = os.open(
                     path.name,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -282,17 +298,7 @@ class _PrivateLayout:
                     raise SyncBaseStoreSecurityError(
                         f"Sync Base directory changed while opening: {path}"
                     )
-                _validate_type_and_owner(path, opened, directory=True)
-                if stat.S_IMODE(opened.st_mode) != _PRIVATE_DIRECTORY_MODE:
-                    # Only chmod the verified inode: its pathname can be replaced
-                    # even immediately after mkdir or the no-follow open.
-                    try:
-                        os.fchmod(descriptor, _PRIVATE_DIRECTORY_MODE)
-                    except OSError as exc:
-                        raise SyncBaseStoreSecurityError(
-                            f"cannot secure Sync Base directory permissions: {path}: {exc}"
-                        ) from exc
-                _validate_status(path, os.fstat(descriptor), directory=True)
+                _secure_permissions(path, descriptor, directory=True)
                 self.check_directories()
                 parent_descriptor = descriptor
         except BaseException:
@@ -315,6 +321,11 @@ class _PrivateLayout:
                 )
 
     def open_file(self, name: str, *, create: bool = False) -> int:
+        descriptor = self._open_file_descriptor(name, create=create)
+        self._files[name] = descriptor
+        return descriptor
+
+    def _open_file_descriptor(self, name: str, *, create: bool = False) -> int:
         self.check_directories()
         path = self.directory / name
         before = (
@@ -323,7 +334,7 @@ class _PrivateLayout:
             else os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
         )
         if before is not None:
-            _validate_status(path, before, directory=False)
+            _validate_inode(path, before, directory=False)
         flags = os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
         flags |= (os.O_RDWR | os.O_CREAT | os.O_EXCL) if create else os.O_RDONLY
         descriptor = os.open(name, flags, _PRIVATE_FILE_MODE, dir_fd=self.descriptor)
@@ -333,9 +344,7 @@ class _PrivateLayout:
                 raise SyncBaseStoreSecurityError(
                     f"Sync Base file changed while opening: {path}"
                 )
-            if create:
-                os.fchmod(descriptor, _PRIVATE_FILE_MODE)
-            _validate_status(path, os.fstat(descriptor), directory=False)
+            _secure_permissions(path, descriptor, directory=False)
             current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
             _validate_status(path, current, directory=False)
             if _identity(current) != _identity(opened):
@@ -346,7 +355,6 @@ class _PrivateLayout:
         except BaseException:
             os.close(descriptor)
             raise
-        self._files[name] = descriptor
         return descriptor
 
     def file_names(self) -> set[str]:
@@ -377,14 +385,27 @@ class _PrivateLayout:
                     f"unexpected Sync Base store file: {path}"
                 )
             current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
-            _validate_status(path, current, directory=False)
+            _validate_inode(path, current, directory=False)
             if name in self._files:
-                opened = os.fstat(self._files[name])
-                _validate_status(path, opened, directory=False)
+                descriptor = self._files[name]
+                opened = os.fstat(descriptor)
+                _validate_inode(path, opened, directory=False)
                 if _identity(current) != _identity(opened):
                     raise SyncBaseStoreSecurityError(
                         f"Sync Base file was substituted: {path}"
                     )
+                _secure_permissions(path, descriptor, directory=False)
+                current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
+                _validate_status(path, current, directory=False)
+                if _identity(current) != _identity(opened):
+                    raise SyncBaseStoreSecurityError(
+                        f"Sync Base file was substituted: {path}"
+                    )
+            elif stat.S_IMODE(current.st_mode) != _PRIVATE_FILE_MODE:
+                # Sidecars are transient: verify and secure them without pinning
+                # them as persistent files that must survive SQLite's commit.
+                descriptor = self._open_file_descriptor(name)
+                os.close(descriptor)
         if not self._files.keys() <= names:
             raise SyncBaseStoreSecurityError("an opened Sync Base file disappeared")
         sidecars = names - {DATABASE_FILE_NAME, _LOCK_FILE_NAME}

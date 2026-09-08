@@ -171,25 +171,44 @@ def test_rejects_symlink_nonregular_and_insecure_storage_without_mutation(
     assert database_path.is_dir()
 
 
-def test_rejects_insecure_database_and_sidecar_modes_without_repair(
-    tmp_path: Path,
+@pytest.mark.parametrize("read_only", [False, True])
+@pytest.mark.parametrize("mode", [0o700, 0o755])
+def test_store_repairs_recursively_changed_permissions(
+    tmp_path: Path, read_only: bool, mode: int
+) -> None:
+    record = SyncBaseRecord(b"key", FilePresent(b"value"), envelope=ENVELOPE)
+    with _open_store(tmp_path) as store:
+        store.replace(record)
+    root = tmp_path / "state" / "dotman"
+    unrelated = _database_path(tmp_path).with_name("tracked-packages.toml")
+    unrelated.write_text("unrelated")
+    for path in [root, *root.rglob("*")]:
+        path.chmod(mode)
+    with SyncBaseStore.open(root, "main", read_only=read_only) as store:
+        assert store.read(record.identity) == record
+        if not read_only:
+            store.replace(SyncBaseRecord(b"next", Missing(), envelope=ENVELOPE))
+            assert store.read(b"next").payload == Missing()
+    for path in [root, *root.rglob("*")]:
+        expected = mode if path == unrelated else (0o700 if path.is_dir() else 0o600)
+        assert stat.S_IMODE(path.stat().st_mode) == expected
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_store_secures_sidecar_modes_without_consuming_recovery_evidence(
+    tmp_path: Path, suffix: str
 ) -> None:
     with _open_store(tmp_path):
         pass
-    database_path = _database_path(tmp_path)
-    os.chmod(database_path, 0o644)
-    with pytest.raises(SyncBaseStoreSecurityError, match="mode"):
-        _open_store(tmp_path)
-    assert stat.S_IMODE(database_path.stat().st_mode) == 0o644
-
-    os.chmod(database_path, 0o600)
-    sidecar = Path(str(database_path) + "-wal")
+    sidecar = Path(str(_database_path(tmp_path)) + suffix)
     sidecar.write_bytes(b"evidence")
-    os.chmod(sidecar, 0o644)
-    with pytest.raises(SyncBaseStoreSecurityError, match="mode"):
+    sidecar.chmod(0o700)
+    inode = sidecar.stat().st_ino
+    with pytest.raises(SyncBaseStoreCorruptionError, match="sidecar"):
         _open_store(tmp_path)
     assert sidecar.read_bytes() == b"evidence"
-    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o644
+    assert sidecar.stat().st_ino == inode
+    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
 
 def test_unsupported_epoch_fails_closed_and_preserves_database(tmp_path: Path) -> None:
@@ -483,7 +502,7 @@ os._exit(0)
         "sync-bases.sqlite3-journal",
     ],
 )
-@pytest.mark.parametrize("unsafe", ["symlink", "fifo", "mode"])
+@pytest.mark.parametrize("unsafe", ["symlink", "fifo", "hardlink"])
 def test_rejects_unsafe_files_before_open_without_repair(
     tmp_path: Path,
     name: str,
@@ -502,13 +521,14 @@ def test_rejects_unsafe_files_before_open_without_repair(
         os.mkfifo(path, mode=0o600)
     else:
         path.write_bytes(b"evidence")
-        path.chmod(0o644)
+        path.chmod(0o700)
+        os.link(path, tmp_path / "hardlink")
     status = path.lstat()
     with pytest.raises(SyncBaseStoreSecurityError):
         _open_store(tmp_path)
     assert path.lstat() == status
     assert target.read_bytes() == b"do not touch"
-    if unsafe == "mode":
+    if unsafe == "hardlink":
         assert path.read_bytes() == b"evidence"
 
 
@@ -535,6 +555,8 @@ def test_wrong_owner_is_rejected_at_stat_boundary(
     if relative.endswith("-journal"):
         target.write_bytes(b"evidence")
         target.chmod(0o600)
+    if target.is_file():
+        target.chmod(0o700)
     target_inode = target.stat().st_ino
     before = _evidence(_database_path(tmp_path).parent)
     original_stat = os.stat
@@ -567,6 +589,7 @@ def test_file_open_is_bound_to_prevalidated_inode(
     with _open_store(tmp_path):
         pass
     path = _database_path(tmp_path).with_name(name)
+    path.chmod(0o700)
     original_bytes = path.read_bytes()
     saved = path.with_name("saved-" + name)
     original_open = os.open
@@ -580,7 +603,7 @@ def test_file_open_is_bound_to_prevalidated_inode(
             substituted = True
             path.rename(saved)
             path.write_bytes(original_bytes)
-            path.chmod(0o600)
+            path.chmod(0o700)
         return original_open(file, flags, *args, **kwargs)
 
     monkeypatch.setattr(os, "open", swap_before_open)
@@ -588,6 +611,8 @@ def test_file_open_is_bound_to_prevalidated_inode(
         _open_store(tmp_path)
     assert substituted
     assert path.read_bytes() == saved.read_bytes() == original_bytes
+    assert stat.S_IMODE(path.stat().st_mode) == 0o700
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o700
 
 
 @pytest.mark.parametrize("relative", ["repos", "repos/main"])
@@ -857,6 +882,7 @@ def test_descriptor_owner_is_checked_even_when_path_stat_is_trusted(
     with _open_store(tmp_path):
         pass
     path = _database_path(tmp_path).with_name(name)
+    path.chmod(0o700)
     inode = path.stat().st_ino
     original_fstat = os.fstat
 
@@ -1264,3 +1290,98 @@ def test_open_store_rejects_disappeared_pinned_file(tmp_path: Path, name: str) -
         _database_path(tmp_path).with_name(name).unlink()
         with pytest.raises(SyncBaseStoreSecurityError, match="disappeared"):
             store.read(b"key")
+
+
+@pytest.mark.parametrize(
+    "name", ["sync-bases.sqlite3", "sync-bases.sqlite3.lock", "sync-bases.sqlite3-journal"]
+)
+@pytest.mark.parametrize("failure", ["denied", "ineffective"])
+def test_store_file_permission_repair_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, failure: str
+) -> None:
+    with _open_store(tmp_path):
+        pass
+    path = _database_path(tmp_path).with_name(name)
+    if name.endswith("-journal"):
+        path.write_bytes(b"evidence")
+    path.chmod(0o700)
+    before = path.read_bytes()
+    descriptors = []
+
+    def fail_chmod(descriptor: int, mode: int) -> None:
+        descriptors.append(descriptor)
+        if failure == "denied":
+            raise PermissionError("injected chmod denial")
+
+    monkeypatch.setattr(os, "fchmod", fail_chmod)
+    with pytest.raises(SyncBaseStoreSecurityError, match="permissions|mode"):
+        _open_store(tmp_path)
+    assert len(descriptors) == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])
+    assert path.read_bytes() == before
+    assert stat.S_IMODE(path.stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize(
+    "name", ["sync-bases.sqlite3", "sync-bases.sqlite3.lock", "sync-bases.sqlite3-journal"]
+)
+def test_store_file_replaced_during_chmod_is_rejected_without_repairing_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    with _open_store(tmp_path):
+        pass
+    path = _database_path(tmp_path).with_name(name)
+    if name.endswith("-journal"):
+        path.write_bytes(b"evidence")
+    path.chmod(0o700)
+    original_bytes = path.read_bytes()
+    saved = path.with_name("saved-" + name)
+    original_fchmod = os.fchmod
+
+    def substitute(descriptor: int, mode: int) -> None:
+        path.rename(saved)
+        path.write_bytes(b"replacement")
+        path.chmod(0o644)
+        original_fchmod(descriptor, mode)
+
+    monkeypatch.setattr(os, "fchmod", substitute)
+    with pytest.raises(SyncBaseStoreSecurityError):
+        _open_store(tmp_path)
+    assert saved.read_bytes() == original_bytes
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+    assert path.read_bytes() == b"replacement"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+
+def test_open_store_repairs_changed_file_modes_during_transactions(tmp_path: Path) -> None:
+    with _open_store(tmp_path) as store:
+        database = _database_path(tmp_path)
+        lock = database.with_name(database.name + ".lock")
+        database.chmod(0o700)
+        lock.chmod(0o700)
+        record = SyncBaseRecord(b"key", FilePresent(b"value"), envelope=ENVELOPE)
+        store.replace(record)
+        assert store.read(record.identity) == record
+        assert stat.S_IMODE(database.stat().st_mode) == 0o600
+        assert stat.S_IMODE(lock.stat().st_mode) == 0o600
+
+
+def test_transaction_secures_active_journal_without_treating_it_as_persistent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _open_store(tmp_path) as store:
+        original_collect = store._garbage_collect_payload
+        journal = Path(str(_database_path(tmp_path)) + "-journal")
+
+        def change_journal_mode(
+            connection: sqlite3.Connection, payload_id: int | None
+        ) -> None:
+            original_collect(connection, payload_id)
+            journal.chmod(0o700)
+
+        monkeypatch.setattr(store, "_garbage_collect_payload", change_journal_mode)
+        record = SyncBaseRecord(b"key", FilePresent(b"value"), envelope=ENVELOPE)
+        store.replace(record)
+        assert not journal.exists()
+        assert store.read(record.identity) == record

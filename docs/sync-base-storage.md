@@ -73,11 +73,14 @@ SQLite sidecars must be current-user-owned regular files with exact mode `0600`.
 Symlinks, hard-linked files, unexpected store filenames, nonregular files,
 and wrong owners are rejected. When opening a store (including read-only
 access), Dotman automatically sets these three owned directories to `0700`
-through verified directory descriptors, then revalidates their modes and
-bindings. No root access is requested. The XDG parent directory and existing
-file permissions are not changed; incorrect file modes are still rejected.
-If a directory cannot be opened safely or its permissions cannot be secured,
-the operation fails with a filesystem security error.
+and its database, store lock, and recognized SQLite sidecars to `0600`.
+Repairs use verified descriptors and revalidate modes and bindings afterwards;
+file descriptors must identify current-user-owned regular single-link files
+before any chmod. No root access is requested. The XDG parent directory and
+unrelated files are not changed. If a path cannot be opened safely or its
+permissions cannot be secured, the operation fails with a filesystem security
+error. Securing sidecar permissions does not authorize recovery: unexpected
+sidecars remain rejected with their contents and inode bindings preserved.
 
 Managed directories, the database, and the lock are pinned by file descriptors.
 Opens use no-follow flags and compare `fstat` device/inode identities against
