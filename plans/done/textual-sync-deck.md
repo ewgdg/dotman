@@ -89,3 +89,34 @@ convergence or engine migration-rejection path was added.
   Evidence and probe sources are in the existing artifact directory as
   `review-pagedown-pty.txt`, `dotman-review-pty.py`, and
   `dotman-review-pty-fixture.py`.
+
+## Review correction: one boundary for mouse and keyboard row actions
+- RED at the terminal-event seam reproduced mouse release followed immediately
+  by Space approving row 0 while the completed target click focused row 1.
+  Mouse+Enter reviewed row 0; an Approval-cell click followed by Space approved
+  both rows instead of toggling the clicked row back off.
+- Row input now resolves at `SyncDeckApp.on_event`, where unforwarded terminal
+  events arrive in order. Completed workset clicks resolve rendered cell metadata,
+  move the native cursor and apply their Approval intent at that same boundary
+  as priority key actions. The widget queue no longer replays row clicks later,
+  so it cannot overwrite newer keyboard navigation.
+- Native event forwarding still owns focus, capture, selection cleanup and
+  scrolling. Native DataTable cursor/scroll actions are retained. Header and
+  scrollbar interactions are not interpreted as Approval clicks.
+- Added five no-yield mouse/keyboard batch regressions: target-click+Space,
+  target-click+Enter, Approval-click+Space, target-click+Up+Space, and
+  Approval-click+Enter. Scrolled-row Approval hit testing also remains covered.
+- Textual Pilot.click explicitly bypasses App.on_event in Textual 8.2.8, so mouse
+  tests now post native MouseDown/MouseUp events to the app and use Pilot to
+  settle/inspect rendering. This exercises the actual terminal input seam, not
+  a widget-only shortcut or test compatibility path.
+- Focused Deck/adapter/Pull UI suite: **61 passed in 22.88s**; diff check clean.
+  Full suite not rerun for this correction, per review instruction; the earlier
+  1478-test full-suite run above predates these five new cases.
+- Real 80x12 PTY results:
+  - one write containing target click then Space: `FOCUS 1 APPROVED [(1, 'main:app.unit_01')]`;
+  - target click alone: `FOCUS 1 APPROVED []`;
+  - prior PageDown+Space sequence: `FOCUS 7 APPROVED [(7, 'main:app.unit_07')]`.
+  Captures and probe sources are alongside previous evidence as
+  `review-mouse-keyboard-pty.txt`, `review-mouse-only-pty.txt`,
+  `dotman-review-mouse-pty.py`, and `dotman-review-mouse-only-pty.py`.

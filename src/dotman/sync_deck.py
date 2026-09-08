@@ -8,6 +8,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.errors import NoWidget
 from textual.widgets import DataTable, Footer, RichLog, Static
 
 from dotman.cli_style import render_sync_term, render_package_label
@@ -204,18 +205,13 @@ def row_resolution(row) -> str:
 
 
 class WorksetTable(DataTable):
-    """Single click focuses a row; only its Approval cell toggles it."""
+    """Render native cells; the app input boundary owns row actions."""
 
     def on_click(self, event: events.Click) -> None:
-        # DataTable's default selection requires clicking the same cell twice.
-        # Rendered cell metadata keeps single-click hit testing correct after scrolling.
-        row = event.style.meta.get("row", -1)
-        column = event.style.meta.get("column", -1)
-        if row >= 0 and column >= 0 and not event.style.meta.get("out_of_bounds"):
-            app = self.app
-            app.deck.click(row, selection=column == 0)
-            self.move_cursor(row=row, column=column)
-            app.update_workset()
+        if event.style.meta.get("row", -1) >= 0:
+            # Row clicks already ran in input order at the App boundary. Letting
+            # DataTable replay them here could undo newer keyboard navigation.
+            event.prevent_default()
             event.stop()
 
 
@@ -263,6 +259,33 @@ class SyncDeckApp(App[bool]):
         self.theme = "ansi-dark"
         self.deck = deck
         self.review_positions: dict[str, tuple[float, float]] = {}
+        self._workset_mouse_down = False
+
+    async def on_event(self, event: events.Event) -> None:
+        # App receives terminal input in order, before forwarding mouse events to
+        # widget queues. Resolve row clicks here alongside priority key actions;
+        # neither input modality may overtake the other when bytes arrive together.
+        if isinstance(event, (events.MouseDown, events.MouseUp)) and not event.is_forwarded:
+            try:
+                widget, _ = self.get_widget_at(event.screen_x, event.screen_y)
+            except NoWidget:
+                widget = None
+            workset = isinstance(widget, WorksetTable) and not (
+                self.deck.reviewing or self.deck.confirming
+            )
+            if isinstance(event, events.MouseDown):
+                self._workset_mouse_down = workset
+            else:
+                if workset and self._workset_mouse_down:
+                    metadata = self.screen.get_style_at(event.screen_x, event.screen_y).meta
+                    row, column = metadata.get("row", -1), metadata.get("column", -1)
+                    if row >= 0 and column >= 0 and not metadata.get("out_of_bounds"):
+                        widget.move_cursor(row=row, column=column)
+                        self.deck.click(row, selection=column == 0)
+                        self.update_workset()
+                self._workset_mouse_down = False
+        # Preserve native focus, mouse capture, selection cleanup and scrolling.
+        await super().on_event(event)
 
     def compose(self) -> ComposeResult:
         yield Static(":: Sync Command Deck", id="title", markup=False)

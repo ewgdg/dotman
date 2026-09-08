@@ -11,6 +11,18 @@ from dotman.sync_deck import CommandDeck, SyncDeckApp
 from tests.engine.test_sync_session import make_engine
 
 
+def post_cell_click(app, offset):
+    # Pilot.click bypasses App.on_event. Inject the terminal event seam so mouse
+    # and keyboard ordering exercises the same boundary as a real terminal.
+    table = app.query_one(DataTable)
+    x, y = table.region.x + offset[0], table.region.y + offset[1]
+    for event_type in (events.MouseDown, events.MouseUp):
+        app.post_message(event_type(
+            app.screen, x, y, 0, 0, 1, False, False, False,
+            screen_x=x, screen_y=y,
+        ))
+
+
 def run(coroutine):
     return asyncio.run(asyncio.wait_for(coroutine, timeout=5))
 
@@ -82,10 +94,12 @@ def test_mouse_click_focuses_identity_and_toggles_only_approval(tmp_path, monkey
 
         async def interact():
             async with app.run_test() as pilot:
-                await pilot.click("#workset", offset=(15, 2))
+                post_cell_click(app, (15, 2))
+                await pilot.pause()
                 assert app.deck.focused_row.row_id == "main:app.two"
                 assert not any(row.approved for row in session.view.rows)
-                await pilot.click("#workset", offset=(2, 2))
+                post_cell_click(app, (2, 2))
+                await pilot.pause()
                 assert [row.approved for row in session.view.rows] == [False, True]
                 await pilot.press("a")
                 assert all(row.approved for row in session.view.rows)
@@ -180,6 +194,14 @@ def test_long_workset_scrolls_without_losing_focused_row(tmp_path, monkeypatch):
                 assert table.cursor_row == 24
                 assert [row.row_id for row in session.view.rows if row.approved] == ["main:app.unit_24"]
                 assert "Policy" in table.render_line(0).text
+                visible_row = next(
+                    y for y in range(table.size.height)
+                    if "main:app.unit_24" in table.render_line(y).text
+                )
+                post_cell_click(app, (2, visible_row))
+                await pilot.pause()
+                assert not any(row.approved for row in session.view.rows)
+                assert table.cursor_row == 24
         run(interact())
 
 
@@ -228,4 +250,36 @@ def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, s
                         line.text for line in app.query_one(RichLog).lines
                     )
                     assert not any(row.approved for row in session.view.rows)
+        run(interact())
+
+
+
+@pytest.mark.parametrize("column,keys,focused,approvals", [
+    (15, ("space",), 1, [False, True]),
+    (15, ("enter",), 1, [False, False]),
+    (2, ("space",), 1, [False, False]),
+    (15, ("up", "space"), 0, [True, False]),
+    (2, ("enter",), 1, [False, True]),
+])
+def test_batched_mouse_and_keyboard_share_target(tmp_path, monkeypatch, column, keys, focused, approvals):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo", b"live", ""),
+        ("two", "push-only", b"repo", b"live", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 12)) as pilot:
+                post_cell_click(app, (column, 2))
+                for key in keys:
+                    app.post_message(events.Key(key, " " if key == "space" else None))
+                await pilot.pause()
+                assert app.query_one(DataTable).cursor_row == focused
+                assert app.deck.focused_row.row_id == session.view.rows[focused].row_id
+                assert [row.approved for row in session.view.rows] == approvals
+                if keys[-1] == "enter":
+                    assert "Proposal Review — main:app.two" in "\n".join(
+                        line.text for line in app.query_one(RichLog).lines
+                    )
         run(interact())
