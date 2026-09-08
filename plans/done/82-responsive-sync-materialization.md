@@ -50,6 +50,16 @@ races and ignored signals. Existing Sync/UI/unattended tests protect semantics.
   readiness: ignoring competing input while busy is deliberate, not queued replay.
 
 ## Outcomes
-Final combined validation pending. Owned-group cleanup excludes detached descendants;
+- Final focused run: 142 passed in 30.46s (deck, command, session, Both convergence,
+  runtime and Capture).
+- Real PTY interruption file: 20 passed, including four completion-boundary cases
+  and Render temporary-resource cleanup.
+- Full suite: `uv run pytest -q` — **1553 passed in 73.57s**.
+- Implementation complete. Command Deck remains visible and animated, all competing
+  inputs are gated, both interruption paths drain before abort, and no Apply or
+  Publication semantics were moved into the lane.
+- Commits: 7129176, 3dad9c4, 7c15f32, 9bad494, 5ec6b3c, d8cbad7.
+
+## Limits and retrospective Owned-group cleanup excludes detached descendants;
 completed provider effects cannot be rolled back. Runtime cancellation is sticky for
 its operation lifetime; embedders must use a fresh runtime after cancellation.
