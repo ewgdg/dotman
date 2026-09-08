@@ -147,6 +147,7 @@ def execute_publication(
     if len(by_identity) != len(units) or len({unit.row_id for unit in units}) != len(units):
         raise ValueError("Duplicate publication unit")
     selected = []
+    snapshot_endpoints = []
     matched = set()
     for package in metadata.packages:
         targets = []
@@ -168,6 +169,7 @@ def execute_publication(
                     raise ValueError("Frozen write requires content")
                 if effect.kind == "chmod" and effect.mode is None:
                     raise ValueError("Frozen chmod requires mode")
+            snapshot_endpoints.append((unit.effects[0], target))
             targets.append(replace(target, action="delete" if unit.effects[0].kind == "delete" else "update"))
         if targets:
             selected.append(replace(package, target_plans=targets))
@@ -235,6 +237,12 @@ def execute_publication(
                                 # immediately before the first actual live effect.
                                 if not snapshot_started:
                                     try:
+                                        if snapshot_config.enabled:
+                                            # Snapshot reads the whole selected set, not just
+                                            # the next writer. Recheck each initial endpoint
+                                            # after pre-hooks so a later FIFO cannot block it.
+                                            for initial_effect, snapshot_target in snapshot_endpoints:
+                                                _effect_path(initial_effect, snapshot_target)
                                         snapshot = create_push_snapshot(selected, snapshot_config)
                                     except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
                                         failure = _failed_step(

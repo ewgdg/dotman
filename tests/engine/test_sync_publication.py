@@ -1,4 +1,7 @@
 from dataclasses import replace
+from pathlib import Path
+import os
+import stat
 
 import pytest
 
@@ -241,3 +244,41 @@ def test_interrupted_io_is_typed_and_preserves_completed_units(tmp_path, monkeyp
         assert result.snapshot is None
     elif phase == "write":
         assert result.snapshot.status == "failed"
+
+
+@pytest.mark.parametrize("changed_by_pre_hook", [False, True])
+def test_snapshot_rejects_later_fifo_before_reading_or_mutating(
+    tmp_path, monkeypatch, changed_by_pre_hook,
+):
+    later = tmp_path / "live/second"
+    extra = (
+        f'[targets.first.hooks]\npre_push = "mv {later} {later}.old; mkfifo {later}"'
+        if changed_by_pre_hook else ""
+    )
+    metadata, units = prepare(tmp_path, monkeypatch, [
+        ("first", "push-only", b"repo", b"live", extra),
+        ("second", "push-only", b"repo", b"live", ""),
+    ])
+    if not changed_by_pre_hook:
+        later.rename(later.with_suffix(".old"))
+        os.mkfifo(later)
+
+    read_bytes = Path.read_bytes
+    def guarded_read(path):
+        # Fail immediately if the safety gate regresses; never block on a FIFO
+        # while the test process (or a real session) holds the operation lock.
+        assert not stat.S_ISFIFO(path.stat().st_mode), "Snapshot attempted to read FIFO"
+        return read_bytes(path)
+    monkeypatch.setattr(Path, "read_bytes", guarded_read)
+
+    result = execute(tmp_path, metadata, units)
+    assert result.error and "regular file" in result.error
+    assert str(later) in result.error
+    assert not result.interrupted
+    assert result.snapshot is None
+    assert not (tmp_path / "snapshots").exists()
+    assert (tmp_path / "live/first").read_bytes() == b"live"
+    assert stat.S_ISFIFO(later.stat().st_mode)
+    assert [(step.step.kind, step.status) for step in result.steps if step.step.kind != "hook"] == [
+        ("snapshot", "failed"),
+    ]
