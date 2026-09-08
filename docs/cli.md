@@ -56,8 +56,10 @@ unattended, and non-terminal resolution fails rather than guessing.
 
 `dotman [--config PATH] [--json] [--unattended] sync [-d | --dry-run] [<tracked-scope> ...]`
 opens a one-shot file-target session. The current convergence path supports
-push-only files with **Use repository** and pull-only files with **Use live**;
-both-policy drift cannot yet be approved.
+push-only and deletion-only files with **Use repository**, pull-only files with
+**Use live**, and both-policy files with **Use repository**, **Use live**, or
+Base-backed **Merge**. Both-policy drift defaults to **Merge** with a usable Base;
+otherwise **Use live** is the visible fallback and Merge is unavailable.
 
 - Interactive Sync opens a persistent Command Deck with Approval initially off.
   Its Textual table aligns Approval, Target, Policy, and Resolution columns.
@@ -77,11 +79,10 @@ both-policy drift cannot yet be approved.
   materialization and the remaining batch, waits for owned process cleanup, and
   exits 130. Completed effects are not rolled back; detached descendants are not
   covered by owned-process cleanup.
-- **Unsupported** means the session offers no resolution capability (including
-  both-policy drift), not that observing the filesystem failed. **Observation
-  failed** and **Proposal failed** retain their diagnostic details below the table.
-  Current Sync supports one-sided file targets; directory scopes cannot open a
-  file Sync session. This UI does not add directory or both-policy convergence.
+- **Unsupported** means the session offers no resolution capability, not that
+  observing the filesystem failed. **Observation failed** and **Proposal failed**
+  retain their diagnostic details below the table. Current Sync supports file
+  targets; directory scopes cannot open a file Sync session.
 - `--unattended` explicitly selects supported Proposals and confirms execution.
   Missing terminals and `--json` do not grant consent. Required interactive
   decisions without a terminal fail rather than selecting work implicitly.
