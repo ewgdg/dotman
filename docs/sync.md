@@ -153,7 +153,11 @@ approved referencing Proposal. New paths start unapproved. Unapproved candidate
 bytes remain available to review and later Editor attempts, but dependent
 Proposals use the frozen repository preimage instead. Approval and unapproval
 rematerialize approved references immediately; unapproved references discard
-stale previews and rematerialize only on demand. Successful rematerialization
+stale previews and rematerialize only on demand. Editing an unapproved candidate
+alone does not invalidate unchanged authorized inputs or repeat their providers.
+Batch unselection retains unresolved materialization diagnostics; only successful
+rematerialization clears them. It does not turn failed work into healthy work.
+Successful rematerialization
 preserves Proposal Approval; failure clears only the affected Proposal.
 
 Returning a path to its frozen preimage removes its changed row, not its

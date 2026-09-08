@@ -237,3 +237,59 @@ def test_additional_approval_executes_when_editor_has_no_valid_proposal(tmp_path
     assert shared.read_bytes() == b'candidate'
     assert (tmp_path / 'repo/packages/app/a').read_bytes() == b'repo'
     assert (tmp_path / 'live/a').read_bytes() == b'live'
+
+
+def test_unapproved_candidate_edit_preserves_approved_capture_and_refreshes_references(tmp_path, monkeypatch):
+    marker = tmp_path / 'capture-ran'
+    capture = f'test ! -e {marker} || exit 7; touch {marker}; cat "$DOTMAN_PACKAGE_ROOT/shared"'
+    config = (f'capture = {json.dumps(capture)}\n'
+              'compare = { repo = "raw", live = "raw" }\n'
+              'editor = { run = "printf candidate > \\"$DOTMAN_EDITOR_ADDITIONAL_SOURCE_PATHS\\"", io = "pipe", additional_sources = ["shared"] }')
+    engine = make_engine(tmp_path, monkeypatch, [
+        ('a', 'pull-only', b'repo', b'live', config),
+        ('b', 'pull-only', b'repo', b'live', config),
+    ])
+    (tmp_path / 'repo/packages/app/shared').write_bytes(b'original')
+    session = open_session(engine)
+    command(session, SetApproval, session.view.rows[1], approved=True)
+    before = session.view.rows[1].proposal
+    command(session, EditProposal, session.view.rows[0])
+    b, source = session.view.rows[1:]
+    assert b.approved and not b.diagnostics
+    assert b.proposal.repository == before.repository == FilePresent(b'original')
+    assert b.proposal.generation == before.generation
+    assert b.additional_changes == b.proposal.additional_changes == (source.change,)
+    assert not source.approved
+
+
+def test_identical_editor_save_retains_render_for_later_intent_materialization(tmp_path, monkeypatch):
+    from dotman.sync_session import SetResolutionIntent
+    marker = tmp_path / 'render-ran'
+    render = f'test ! -e {marker} || exit 7; touch {marker}; cat "$DOTMAN_SOURCE"'
+    engine = make_engine(tmp_path, monkeypatch, [
+        ('a', 'push-only', b'repo', b'live',
+         f'render = {json.dumps(render)}\neditor = {{ run = "true", io = "pipe" }}'),
+    ])
+    session = open_session(engine)
+    command(session, SetApproval, session.view.rows[0], approved=True)
+    command(session, EditProposal, session.view.rows[0])
+    assert session.view.rows[0].approved
+    result = command(session, SetResolutionIntent, session.view.rows[0], intent='use-repository')
+    assert result.view.rows[0].approved
+    assert not result.view.rows[0].diagnostics
+    assert result.view.rows[0].proposal.live == FilePresent(b'repo')
+
+
+def test_batch_unapproval_preserves_unresolved_capture_diagnostic(tmp_path, monkeypatch):
+    from dotman.sync_session import Preview
+    engine = make_engine(tmp_path, monkeypatch, [
+        ('a', 'pull-only', b'repo', b'live',
+         'capture = "exit 7"\ncompare = { repo = "raw", live = "raw" }'),
+    ])
+    session = open_session(engine)
+    failed = command(session, PrepareProposalReview, session.view.rows[0])
+    assert failed.result.diagnostics[0].code == 'capture-failed'
+    result = command(session, BatchSetApproval, approved=False)
+    assert result.view.rows[0].diagnostics == failed.result.diagnostics
+    assert result.view.rows[0].proposal is None
+    assert command(session, Preview).result.status == 'failed'

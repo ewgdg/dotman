@@ -67,3 +67,29 @@ this implementation checkpoint. Additional failure is reported independently;
 the operation-wide fail-fast rule still skips all later effects rather than
 rerendering or treating a source result as a Proposal completion prerequisite.
 No known scoped implementation gaps.
+
+## Review follow-up
+
+Parent review identified two regression-prone boundaries: changing staged but
+unauthorized Additional bytes must not invalidate unchanged authorized inputs;
+batch unapproval must not conceal unresolved materialization diagnostics.
+Reopened for test-first fixes and targeted revalidation. Preserve projection
+caches on byte-identical saves and refresh source review metadata independently
+from Proposal materialization validity.
+
+### Review resolution
+
+Added three failing-first public regressions: a succeeds-once Capture on an
+approved dependent survives an unapproved source edit; a succeeds-once Render
+survives a byte-identical Editor save and later intent materialization; batch
+unapproval preserves a failed Capture diagnostic and failed Preview status.
+Invalidation now tracks authorized candidate changes, refreshes metadata without
+discarding valid Proposals, retains unchanged provider caches, and clears typed
+diagnostics only after successful rematerialization.
+
+Coordinator validation:
+```sh
+uv run pytest -q tests/engine/test_sync_additional.py tests/engine/test_sync_editor.py tests/engine/test_sync_session.py tests/engine/test_sync_pull_convergence.py tests/engine/test_sync_both_convergence.py tests/cli/test_sync_additional_ui.py tests/cli/test_sync_editor_ui.py tests/cli/test_sync_interrupt.py
+```
+150 passed in 36.84s. Diff whitespace check passed. Both review findings resolved;
+no additional scope added.

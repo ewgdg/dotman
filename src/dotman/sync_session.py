@@ -770,11 +770,18 @@ class SyncSession:
         }
 
     def _refresh_additional_rows(self) -> None:
-        proposals = tuple(
-            replace(row, additional_changes=self._row_additional(row))
-            if isinstance(row, SessionRow) else row
-            for row in self.view.rows if not isinstance(row, AdditionalRow)
-        )
+        proposals = []
+        for row in self.view.rows:
+            if isinstance(row, AdditionalRow):
+                continue
+            if isinstance(row, SessionRow):
+                changes = self._row_additional(row)
+                row = replace(
+                    row, additional_changes=changes,
+                    proposal=replace(row.proposal, additional_changes=changes) if row.proposal else None,
+                )
+            proposals.append(row)
+        proposals = tuple(proposals)
         sources = []
         for path, change in self._additional_candidates.items():
             references = tuple(row.row_id for row in proposals
@@ -812,11 +819,12 @@ class SyncSession:
                 continue
             if clear_cache:
                 self._clear_input_cache(row)
-            row = replace(row, proposal=None, diagnostics=())
+            # Unapproval is not a successful retry: retain unresolved diagnostics.
+            row = replace(row, proposal=None)
             if row.approved:
                 try:
                     self.check_cancelled()
-                    row = replace(row, proposal=self._materialize_row(row))
+                    row = replace(row, proposal=self._materialize_row(row), diagnostics=())
                     self.check_cancelled()
                 except (KeyboardInterrupt, InterruptedError):
                     row = replace(row, approved=False, proposal=None,
@@ -902,16 +910,20 @@ class SyncSession:
                     for path in self._editor_preimages[row.observation.identity]:
                         self._additional_candidates.pop(path, None)
                     self._additional_candidates.update({change.path: change for change in output.additional})
-                    changed_paths = {
+                    # Staged unapproved bytes are review metadata, not provider inputs.
+                    changed_input_paths = {
                         path for path in prior_candidates.keys() | self._additional_candidates.keys()
-                        if prior_candidates.get(path) != self._additional_candidates.get(path)
+                        if self._additional_approvals.get(path, False)
+                        and prior_candidates.get(path) != self._additional_candidates.get(path)
                     }
                     self._refresh_additional_rows()
-                    affected = self._references(changed_paths)
+                    affected = self._references(changed_input_paths)
                     self._invalidate_inputs(affected - {row.row_id})
-                    self._clear_input_cache(row)
-
-                    if previous is not None and output.repository == previous.repository and not changed_paths:
+                    if row.row_id in affected:
+                        self._clear_input_cache(row)
+                    # Primary bytes already key Render reuse; unchanged Additional
+                    # inputs must not evict successful Render or Capture results.
+                    if previous is not None and output.repository == previous.repository and row.row_id not in affected:
                         proposal = replace(
                             previous, intent="editor", generation=generation,
                             reconciliation="edited repository outcome",
