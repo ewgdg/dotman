@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Sequence
 
 from dotman import file_access
@@ -177,6 +177,7 @@ def execute_repository_apply(
                                 steps.append(ExecutionStepResult(step, "ok"))
                             # Acknowledgment is part of unit completion, not hook
                             # success. Earlier completions survive post-hook failure.
+                            step = replace(step, kind="unit-completion", action="complete")
                             complete(unit)
                         except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
                             steps.append(_failed_step(step, exc))

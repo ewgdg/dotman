@@ -126,3 +126,18 @@ def test_repository_symlink_rejected_without_touching_referent(tmp_path, monkeyp
     result = apply.execute_repository_apply(metadata, units, complete=lambda unit: None)
     assert result.units[0].status == "failed"
     assert referent.read_bytes() == b"repo"
+
+
+@pytest.mark.parametrize("outcome", [FilePresent(b"frozen"), None])
+def test_completion_failure_reports_separate_boundary(tmp_path, monkeypatch, outcome):
+    metadata, units = prepare(tmp_path, monkeypatch, ["first"])
+    def fail(unit):
+        raise RuntimeError("ack failed")
+    result = apply.execute_repository_apply(
+        metadata, [replace(units[0], outcome=outcome)], complete=fail)
+    assert result.units[0].status == "failed"
+    expected = [] if outcome is None else [("target", "update", "ok")]
+    assert [(step.step.kind, step.step.action, step.status) for step in result.steps] == [
+        *expected, ("unit-completion", "complete", "failed")]
+    assert (tmp_path / "repo/packages/app/first").read_bytes() == (
+        b"repo" if outcome is None else b"frozen")
