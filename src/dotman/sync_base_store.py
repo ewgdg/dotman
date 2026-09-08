@@ -349,11 +349,25 @@ class _PrivateLayout:
         self._files[name] = descriptor
         return descriptor
 
+    def file_names(self) -> set[str]:
+        # Reusing a scanned directory's open file description can miss newly
+        # created entries on Btrfs. Open a fresh stream relative to the pinned
+        # directory; dup would share the old enumeration state.
+        descriptor = os.open(
+            ".",
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=self.descriptor,
+        )
+        try:
+            return set(os.listdir(descriptor))
+        finally:
+            os.close(descriptor)
+
     def check(self, *, allow_journal: bool = False) -> set[str]:
         self.check_directories()
         names = {
             name
-            for name in os.listdir(self.descriptor)
+            for name in self.file_names()
             if name.startswith(DATABASE_FILE_NAME)
         }
         for name in names:
@@ -481,7 +495,7 @@ class SyncBaseStore:
             try:
                 # Acquire an existing lock before examining sidecars: a live
                 # writer's journal is contention, not evidence to recover.
-                names = set(os.listdir(layout.descriptor))
+                names = layout.file_names()
                 lock_descriptor = (
                     layout.open_file(_LOCK_FILE_NAME)
                     if _LOCK_FILE_NAME in names

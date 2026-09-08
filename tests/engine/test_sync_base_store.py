@@ -1225,3 +1225,42 @@ def test_operation_lock_allows_store_to_secure_existing_manager_root(
     root.chmod(0o755)
     with OperationLock.acquire(root), SyncBaseStore.open(root, "main"):
         assert stat.S_IMODE(root.stat().st_mode) == 0o700
+
+
+def test_store_observes_created_files_with_cached_directory_streams(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_open = os.open
+    original_listdir = os.listdir
+    snapshots: dict[int, list[str]] = {}
+
+    def open_directory(*args: object, **kwargs: object) -> int:
+        descriptor = original_open(*args, **kwargs)
+        snapshots.pop(descriptor, None)
+        return descriptor
+
+    def listdir(path: object) -> list[str]:
+        if not isinstance(path, int):
+            return original_listdir(path)
+        # Some filesystems retain directory enumeration state on an open file
+        # description. A scan after creation can miss new entries until reopened.
+        if path not in snapshots:
+            snapshots[path] = original_listdir(path)
+        return list(snapshots[path])
+
+    monkeypatch.setattr(os, "open", open_directory)
+    monkeypatch.setattr(os, "listdir", listdir)
+    record = SyncBaseRecord(b"key", FilePresent(b"value"), envelope=ENVELOPE)
+    with _open_store(tmp_path) as store:
+        store.replace(record)
+        assert store.read(record.identity) == record
+    with _open_store(tmp_path) as store:
+        assert store.read(record.identity) == record
+
+
+@pytest.mark.parametrize("name", ["sync-bases.sqlite3", "sync-bases.sqlite3.lock"])
+def test_open_store_rejects_disappeared_pinned_file(tmp_path: Path, name: str) -> None:
+    with _open_store(tmp_path) as store:
+        _database_path(tmp_path).with_name(name).unlink()
+        with pytest.raises(SyncBaseStoreSecurityError, match="disappeared"):
+            store.read(b"key")

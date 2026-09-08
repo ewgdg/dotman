@@ -83,6 +83,8 @@ Managed directories, the database, and the lock are pinned by file descriptors.
 Opens use no-follow flags and compare `fstat` device/inode identities against
 the validated directory entries. Directory-relative I/O and repeated binding
 checks detect observed directory/file substitution before SQLite mutation.
+Each directory scan opens a fresh stream relative to its pinned directory to
+avoid stale enumeration state after creating store files.
 
 Before any writable SQLite open, Dotman reads through the validated database
 descriptor and validates a memory-only copy. Checks include:
