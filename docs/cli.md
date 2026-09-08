@@ -67,12 +67,16 @@ push-only files with **Use repository**; other drift cannot be approved.
 - `--unattended` explicitly selects supported Proposals and confirms execution.
   Missing terminals and `--json` do not grant consent. Required interactive
   decisions without a terminal fail rather than selecting work implicitly.
+  A workset containing unsupported drift is rejected before publication, rather
+  than publishing only its supported subset.
 - `--dry-run` reports frozen approved outcomes without hooks, managed writes,
   snapshots, Base acknowledgment or cleanup. Use `--unattended` to select the
   supported set for a noninteractive preview.
 - JSON emits one final document containing operation, mode, status, scope,
   summary, Sync Units, auxiliary/source work categories and stages. It reports
   evidence and effect metadata, never file content bytes or private workspaces.
+  Execution outcomes identify their repository, package instance or target scope
+  canonically, including failed hooks whose units already converged.
 - Exit codes are `0` for healthy completion, `1` for blocked or failed work or
   an unavailable required decision, `2` for invalid syntax, and `130` for abort.
 

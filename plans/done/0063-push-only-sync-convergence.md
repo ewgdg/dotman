@@ -37,19 +37,18 @@ Core tests cover opt-in Approval, immutable exact outcomes, preview isolation, r
 Keep push/pull orchestration unchanged; add a dedicated Sync CLI adapter rather than extending their plan workflow. Use existing prompt-toolkit dependency for the initial persistent Deck.
 
 ## Outcomes
-Push-only file convergence and the initial Command Deck are complete. Approval,
-review, preview and publication consume frozen outcomes; publication preserves
-per-unit completion independently of enclosing hook failures. Documentation is
-current. Final integrated validation: `uv run pytest -q` reports **1377 passed in
-12.68s**; `git diff --check` is clean.
+Push-only convergence and the initial Command Deck are complete. Final follow-up
+fixes reject unsupported unattended worksets before publication and preserve exact
+canonical execution scope identities. Independent review reproduced both original
+failures against the fixes and confirmed resolution with no remaining findings.
+Final full-suite validation: **1384 passed in 12.83s**; `git diff --check` is clean.
 
 ## Implementation checkpoints
 - Commits `1a5c463`, `b1949e6`, `361eaed` implement frozen publication and core
   session commands; `523ca96` implements CLI/Deck. Reported targeted validation:
   72 engine tests and 70 CLI tests pass.
-- First review fixes preserve materialization diagnostics on unapproval, reject
-  mixed unsupported unattended worksets before mutation, and preserve interruption
-  outcomes. Enclosing post-hook failures preserve already-converged units.
+- First review fixes preserve materialization diagnostics on unapproval and
+  interruption outcomes. Enclosing post-hook failures preserve converged units.
 - Final review fixes in `e9dd722` and `6422537` validate every endpoint before
   snapshot capture (including later selected FIFOs), catch InterruptedError before
   OSError, and expose immutable semantic results instead of execution plans.
@@ -57,3 +56,8 @@ current. Final integrated validation: `uv run pytest -q` reports **1377 passed i
   and 70 CLI tests pass.
 - Existing Push/Pull flags remain unchanged; Sync alone uses explicit
   `--unattended`. Remaining #56 capabilities stay outside this slice.
+- Follow-up commits `55b67e9` and `c2e7675` add canonical semantic scope identity
+  and preflight rejection of unsupported unattended drift. Regression tests cover
+  both/pull-only mixed worksets in real and preview modes and failed instance-target
+  hooks with preserved unit convergence. Independent review ran 47 relevant tests
+  and separate mixed-policy probes; both findings are verified resolved.

@@ -192,9 +192,11 @@ distinct. Inclusion never substitutes for Approval.
 
 `sync_publication.py` freezes hook and target execution metadata at opening and
 publishes approved file effects through the existing file-access, snapshot and
-hook mechanics. Public results retain immutable semantic step outcomes and operation-level
-diagnostics separately from unit completion, so an enclosing post-hook failure
-does not erase convergence.
+hook mechanics. Public results retain immutable semantic step outcomes and
+operation-level diagnostics separately from unit completion, so an enclosing
+post-hook failure does not erase convergence. Each scoped outcome carries a
+canonical `scope_identity`, preserving package instances and target names
+without exposing execution plans.
 
 The operation lock is a POSIX advisory `flock(LOCK_EX | LOCK_NB)` on the
 owner-only `$XDG_STATE_HOME/dotman/operation.lock` file. Never unlink this file on
