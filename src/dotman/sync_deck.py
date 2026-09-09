@@ -20,7 +20,7 @@ from textual.widgets import DataTable, OptionList, RichLog, Static
 
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import FilePresent, Missing
-from dotman.sync_deck_command import additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
+from dotman.sync_deck_command import auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
 from dotman.sync_session import AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
 
 
@@ -179,6 +179,7 @@ class CommandDeck:
                  f"  Approval: {'approved' if row.approved else 'unapproved'}",
                  f"  Observation: {row.observation.state}",
                  f"  Policy: {row.observation.effective_policy}",
+                 f"  Configured policy: {row.observation.configured_policy}",
                  f"  Repository path: {row.observation.repository_path}",
                  f"  Live path: {row.observation.live_path}",
                  f"  Resolution: {render_sync_term(row_resolution(row), use_color=self.use_color) if intent else 'blocked'}",
@@ -186,6 +187,21 @@ class CommandDeck:
                  f"  Primary Source Change: {primary['kind'] if primary else 'none'}",
                  f"  Capture: {('missing' if isinstance(proposal.capture, Missing) else 'present') if proposal and proposal.capture is not None else 'pending' if capture_required else 'not required'}",
                  f"  Reconciliation: {proposal.reconciliation if proposal else 'pending'}"]
+        base = row.observation.base
+        if base.reason:
+            lines.append(f"  Base reason: {base.reason}")
+        if base.record:
+            lines += [
+                f"  Base provenance: {base.record.envelope.provenance}",
+                f"  Base commit: {base.record.envelope.commit_oid}",
+                f"  Base payload: {'missing' if isinstance(base.record.payload, Missing) else 'present'}",
+                "  Base vs frozen repository:",
+            ]
+            lines.extend(_frozen_difference(
+                base.record.payload, row.observation.repository,
+                before_label="Sync Base", after_label="frozen repository",
+                description="Base",
+            ))
         if row.fallback_reason:
             lines.append(f"  {render_sync_term('Fallback', use_color=self.use_color)}: {row.fallback_reason}")
         if proposal and proposal.capture is not None:
@@ -198,7 +214,8 @@ class CommandDeck:
         if primary:
             lines.append(f"    {primary['path']} (authorized by Proposal Approval)")
         lines.extend(f"  {item.message}" for item in (*row.observation.diagnostics, *row.diagnostics))
-        if pull:
+        # Pull Views are frozen Observation evidence, independent of the chosen intent.
+        if row.observation.effective_policy in ("both", "pull-only"):
             observation = row.observation
             lines += ["", "  Frozen Pull Views:",
                       f"    Repository comparison: {observation.compare_repo}",
@@ -256,7 +273,7 @@ class CommandDeck:
 def row_resolution(row) -> str:
     """Capability absence is not a failed filesystem observation."""
     if isinstance(row, AuxiliaryRow):
-        return "Probe Work" if row.kind == "probe" else "Hook Work"
+        return auxiliary_resolution(row.kind)
     if isinstance(row, AdditionalRow):
         return "Additional Source Change"
     if row.observation.diagnostics or row.observation.state == "observation-failed":
@@ -673,7 +690,7 @@ class SyncDeckApp(App[bool]):
             return
         self.sync_focus()
         row = self.deck.focused_row
-        if row is None or "set-resolution-intent" not in row.allowed_commands:
+        if row is None or "set-resolution-intent" not in row.allowed_commands or len(row.allowed_intents) < 2:
             return
         menu = self.query_one(OptionList)
         menu.clear_options()

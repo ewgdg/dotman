@@ -42,6 +42,10 @@ def row_diagnostics(row):
     return row.diagnostics if isinstance(row, AuxiliaryRow) else (*row.observation.diagnostics, *row.diagnostics)
 
 
+def auxiliary_resolution(kind: str) -> str:
+    return {"probe": "Probe Work", "hook": "Hook Work", "directory-root": "Directory Root Work"}[kind]
+
+
 def auxiliary_label(scope: str, kind: str, directions, *, use_color: bool = False) -> str:
     if use_color:
         if ":" in scope:
@@ -203,11 +207,11 @@ class SyncDeckCommandRunner:
                 print(f"      {render_sync_term(change['result'], use_color=self._use_color)}")
             for item in change["diagnostics"]:
                 print(f"      {item['message']}")
-        for kind, key in (("probe", "probe_work"), ("hook", "hook_work")):
+        for kind, key in (("probe", "probe_work"), ("directory-root", "directory_root_work"), ("hook", "hook_work")):
             for work in payload[key]:
                 selection = "selected" if work["selected"] else "unselected"
                 label = auxiliary_label(work["identity"], kind, work["directions"], use_color=self._use_color)
-                term = "Probe Work" if kind == "probe" else "Hook Work"
+                term = auxiliary_resolution(kind)
                 print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {label}")
                 print(f"      {render_sync_term(term, use_color=self._use_color)}")
                 for item in work["diagnostics"]:
@@ -315,7 +319,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             for row in additional
         ],
         "probe_work": auxiliary_work("probe"),
-        "directory_root_work": [],
+        "directory_root_work": auxiliary_work("directory-root"),
         "hook_work": auxiliary_work("hook"),
         # Report actual steps, not success inferred from materialized Proposals.
         "stages": [

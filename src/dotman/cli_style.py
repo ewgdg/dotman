@@ -444,6 +444,7 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "selected": ("1", "32"),
     "unselected": ("2",),
     "Probe Work": ("1", "36"),
+    "Directory Root Work": ("1", "36"),
     "Additional Source Change": ("1", "36"),
     "Hook Work": ("1", "36"),
     "approved": ("1", "32"),
