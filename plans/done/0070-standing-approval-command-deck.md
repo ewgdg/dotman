@@ -49,8 +49,9 @@ commands/views, adapter output and user interactions rather than private plans.
   and static single-choice Resolution; regression tests passed.
 - Combined engine/CLI validation: 162 passed in 35.42s. Renamed the engine
   contract module to avoid pytest basename collision with the CLI module.
-- Final inspection identified a static command-availability check at confirmation;
-  adding an explicit approved-materialization gate before handoff.
+- Added an explicit real-confirmation gate for approved participating Proposals:
+  missing materialization or unresolved diagnostics cannot be confirmed.
+- Final combined validation: 163 passed in 34.99s; `git diff --check` clean.
 
 ## Decisions and discoveries
 
@@ -59,4 +60,20 @@ support must not pretend file-session planners can discover directory roots.
 
 ## Outcomes
 
-Implementation and validation in progress.
+Completed. Commits: cbeec37 (Session contracts, semantic Auxiliary kind and docs),
+90bad71 (review/auxiliary UI), 2d92770 (test collection), c95ed42 (confirmation gate).
+
+Final command:
+
+```sh
+uv run pytest -q tests/engine/test_sync_selection_contract.py tests/engine/test_sync_additional.py tests/engine/test_sync_auxiliary.py tests/engine/test_sync_session.py tests/cli/test_sync_deck_contract.py tests/cli/test_sync_deck_textual.py tests/cli/test_sync_deck_command.py tests/cli/test_sync_additional_ui.py tests/cli/test_sync_auxiliary_ui.py tests/cli/test_sync_pull_ui.py tests/cli/test_sync_editor_ui.py
+```
+
+163 passed in 34.99s. No unrelated full suite run. Root mode drift production
+and structural execution remain intentionally owned by #74; current file
+sessions do not manufacture root work. Independent parent review follows.
+
+Existing deep Session behavior largely satisfied #70. The demonstrated gaps
+were presentation of frozen evidence, single-choice Resolution interaction,
+semantic root rendering/serialization, and an explicit confirmation validity
+check. No extra materialization or new orchestration layer was introduced.
