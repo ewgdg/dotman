@@ -16,7 +16,7 @@ from dotman.sync_publication import PublicationMetadata
 @dataclass(frozen=True)
 class AuxiliaryRow:
     row_id: str
-    kind: Literal["probe", "hook"]
+    kind: Literal["probe", "hook", "directory-root"]
     included: bool
     scope: str
     directions: tuple[str, ...]

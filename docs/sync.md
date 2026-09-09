@@ -73,7 +73,10 @@ not directly agreeing units. Its aligned table uses canonical target identities
 and a **Selection** column. Selection authorizes Proposals and canonical Additional Source Changes through
 independent Approval and directly includes auxiliary work. Unsupported resolution capability is labeled separately
 from Observation and Proposal failures; focused diagnostic details explain the
-current row. Directory scopes are outside the file session's current capability.
+current row. Directory scopes are outside the file session's current capability. The deck and
+output adapter also recognize semantic **Directory Root Work** as direct Auxiliary
+inclusion, without Proposal or Approval; discovering and executing root mode drift
+belongs to directory topology support, not file-session planning.
 Focused review shows
 the frozen repository/live Pull Views separately from repository-effect and
 publication previews. A no-write Proposal still shows the observed drift even
@@ -85,7 +88,12 @@ Changing Resolution Intent preserves Approval, discards the prior Proposal, and
 rematerializes approved work. **T** explicitly retries failed materialization.
 Review exposes the frozen Capture result and Reconciliation evidence separately
 from both repository and live effect previews.
-Confirmation authorizes the selected, already-materialized outcomes.
+Execution confirmation is available only when every approved participating Proposal
+has a valid materialization. It summarizes approved units, independently approved
+Additional writes, auxiliary inclusion and live effects. Cancelling confirmation
+preserves Approval, inclusion, focus and review state. Confirming closes the deck
+and executes exactly those already-materialized outcomes; it does not trigger
+Capture, Render, re-observation or another planning pass.
 
 During Capture, Merge, or Render, the deck remains visible with an animated
 **Materializing Proposal** indicator. Review, Approval, batch actions, Resolution

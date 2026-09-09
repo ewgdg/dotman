@@ -75,9 +75,14 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
 - `Enter` opens focused Proposal Review or canonical Source Change Review;
   `Esc` returns to the same workset. Source Change Review shows the preimage diff,
   referencing Proposals and independent Approval; Proposal Review lists source
-  references without a duplicate Additional Approval control.
+  references without a duplicate Additional Approval control. Proposal Review
+  separates configured/effective policy, repository/live paths, frozen Pull Views,
+  Base availability/provenance, Capture and Reconciliation, Primary Source Change
+  authorization and exact Publication Effects.
   `X` opens compact preview/execution confirmation; cancelling returns without
-  changing Approval. Review scroll position is retained per target; arrow keys,
+  changing Approval, inclusion or focus. Real execution is offered only for valid,
+  completed approved Proposals; confirming executes the already-reviewed set without
+  further materialization. Review scroll position is retained per target; arrow keys,
   Page Up/Down, and the mouse wheel scroll frozen evidence.
   `Esc` from the idle workset or `Ctrl-C` aborts. During Capture, Merge, and Render,
   the visible deck animates a busy indicator; other keyboard/mouse actions are
@@ -119,7 +124,7 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
 - JSON emits one final document containing operation, mode, status, scope,
   summary, Sync Units, auxiliary/source work categories and stages. It reports
   evidence and effect metadata, never file content bytes or private workspaces.
-  `probe_work` and `hook_work` contain canonical `identity`, `selected`,
+  `probe_work`, `directory_root_work` and `hook_work` contain canonical `identity`, `selected`,
   `directions` and `diagnostics`, without file/Proposal/Base fields.
   `summary.selected_auxiliary` counts directly selected auxiliary rows.
   Each unit's `resolution_intent` retains its selected automatic intent;
