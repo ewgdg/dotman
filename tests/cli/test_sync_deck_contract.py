@@ -94,3 +94,35 @@ def test_single_resolution_is_static_and_blocked_rows_remain_visible(tmp_path, m
                 await pilot.pause()
 
         asyncio.run(asyncio.wait_for(interact(), timeout=5))
+
+
+def test_real_confirmation_requires_valid_completed_approved_proposals(tmp_path, monkeypatch):
+    from dotman.sync_observation import Diagnostic
+
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        deck = CommandDeck(session, use_color=False)
+        deck.select()
+        ready = session.view.rows[0]
+        assert ready.proposal is not None
+        for invalid in (
+            replace(ready, proposal=None),
+            replace(ready, diagnostics=(Diagnostic("failed", "Materialization failed"),)),
+            replace(ready, observation=replace(ready.observation, diagnostics=(
+                Diagnostic("failed", "Observation failed"),))),
+        ):
+            for preview in (False, True):
+                view = replace(session.view, preview=preview, rows=(invalid,),
+                               allowed_commands=("execute", "preview", "abort"))
+                reviewed = SimpleNamespace(view=view)
+                confirmation = CommandDeck(reviewed, use_color=False)
+                confirmation.confirm()
+                assert confirmation.confirming is preview
+                assert reviewed.view == view
+                if not preview:
+                    assert "ready" in confirmation.notice
+            # Unapproved work never blocks a separately reviewed executable set.
+            view = replace(view, preview=False, rows=(replace(invalid, approved=False),))
+            confirmation = CommandDeck(SimpleNamespace(view=view), use_color=False)
+            confirmation.confirm()
+            assert confirmation.confirming

@@ -88,8 +88,16 @@ class CommandDeck:
     def confirm(self) -> None:
         if self.reviewing or self.confirming:
             return
-        command = "preview" if self.session.view.preview else "execute"
-        if command not in self.session.view.allowed_commands:
+        view = self.session.view
+        command = "preview" if view.preview else "execute"
+        # Command availability is not proof that the reviewed Approval set is ready.
+        invalid_approved = any(
+            row.included and row.approved
+            and (row.proposal is None or row_diagnostics(row))
+            for row in view.rows
+            if not isinstance(row, (AuxiliaryRow, AdditionalRow))
+        )
+        if command not in view.allowed_commands or (not view.preview and invalid_approved):
             self.notice = "Selected Proposals must be ready before confirmation."
             return
         self.confirming = True
