@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import stat
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Callable, Sequence
 
 from dotman import file_access
 from dotman.command_runtime import CommandRuntime, command_runtime_session, current_command_runtime
 from dotman.elevation import elevation_broker_session
-from dotman.execution import ExecutionStep, ExecutionStepResult, _execute_step
+from dotman.execution import ExecutionStepResult, _execute_step
 from dotman.models import PackagePlan, ResolvedSyncTarget, TargetPlan
 from dotman.planning import PackagePlanningInput, plan_hooks, plan_repo_hooks
 from dotman.sync_base_store import FilePresent, Missing
 from dotman.sync_publication import (
     HookActivation, PublicationMetadata, PublicationResult, PublicationUnitResult,
-    _hook_scopes, _package_scope, _target_identity,
+    ordered_stage_steps, stage_target_order, unattempted_steps, _target_identity,
     _PublicationStopped, _failed_step,
 )
 
@@ -25,6 +25,7 @@ class RepositoryApplyUnit:
     row_id: str
     identity: ResolvedSyncTarget
     outcome: FilePresent | Missing | None
+    requires_publication: bool = False
 
 
 def prepare_repository_apply(
@@ -78,123 +79,68 @@ def execute_repository_apply(
     assume_yes: bool = False,
     auxiliary: Sequence[HookActivation] = (),
     run_noop: bool = False,
+    check_cancelled: Callable[[], None] | None = None,
+    blocked: bool = False,
 ) -> PublicationResult:
-    """Complete at the ordered unit boundary; callback failure stops execution.
-
-    The caller decides whether a successfully applied unit can acknowledge now
-    or must wait for its frozen live effects. No live endpoint is accessed here.
-    """
+    """Apply repository effects and complete ready units at their ordered positions."""
     units = tuple(units)
     by_identity = {unit.identity: unit for unit in units}
     if len(by_identity) != len(units) or len({unit.row_id for unit in units}) != len(units):
         raise ValueError("Duplicate repository apply unit")
     if any(unit.outcome is not None and not isinstance(unit.outcome, (FilePresent, Missing)) for unit in units):
         raise ValueError("Invalid frozen repository outcome")
-
-    normal_scopes, noop_scopes = _hook_scopes(metadata, auxiliary, [unit.identity for unit in units if unit.outcome is not None])
-    selected = []
-    matched = set()
-    for package in metadata.packages:
-        targets = []
-        for target in package.target_plans:
-            identity = ResolvedSyncTarget(
-                repo=package.repo_name, package_id=target.package_id,
-                bound_profile=package.bound_profile, target_name=target.target_name,
-            )
-            if identity in by_identity:
-                matched.add(identity)
-                targets.append((target, by_identity[identity]))
-            elif identity.canonical in normal_scopes | noop_scopes:
-                targets.append((target, None))
-        if targets or _package_scope(package) in normal_scopes | noop_scopes:
-            selected.append((package, targets))
-    if matched != set(by_identity):
-        raise ValueError("Repository apply unit has no captured metadata")
-    if {package.repo_name for package, _ in selected} - dict(metadata.repo_hooks).keys():
-        raise ValueError("Repository apply package has no captured repository scope")
-
+    planned = ordered_stage_steps(
+        metadata, {
+            unit.identity: (
+                (("target", "delete" if isinstance(unit.outcome, Missing) else "update"),)
+                if unit.outcome is not None else ()
+            ) + (() if unit.requires_publication else (("unit-completion", "complete"),))
+            for unit in units
+        },
+        direction="pull", active_targets=[unit.identity for unit in units if unit.outcome is not None],
+        auxiliary=auxiliary, run_noop=run_noop,
+    )
+    units = tuple(by_identity[identity] for identity in stage_target_order(metadata) if identity in by_identity)
     results = {unit.row_id: PublicationUnitResult(unit.row_id, "skipped") for unit in units}
-    steps = []
-    current_unit = None
-    error = None
-    interrupted = False
-
-    def run_hooks(hooks, name, package=None, target=None):
-        scope = (_target_identity(package, target).canonical if target is not None else
-                 _package_scope(package) if package is not None else hooks[0].repo_name if hooks else None)
-        for hook in hooks:
-            if hook.hook_name != name or not (
-                scope in normal_scopes or (scope in noop_scopes and (hook.run_noop or run_noop))
-            ):
-                continue
-            step = ExecutionStep(
-                repo_name=hook.repo_name or "", package_id=hook.package_id,
-                package_plan=package, target_plan=target, kind="hook",
-                action=name, scope_kind=hook.scope_kind, hook_plan=hook,
-                privileged=hook.elevation == "root",
-            )
-            result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
-            steps.append(result)
-            if result.status != "ok":
-                raise _PublicationStopped(
-                    result.error or result.stderr or f"{name} exited {result.exit_code}",
-                    interrupted=result.status == "interrupted",
-                )
-
+    if blocked:
+        return PublicationResult(tuple(results.values()), steps=unattempted_steps(planned))
+    steps, error, interrupted = [], None, False
     with elevation_broker_session(), command_runtime_session(command_runtime or current_command_runtime()):
-        try:
-            for repo_name, repo_hooks in metadata.repo_hooks:
-                packages = [(package, targets) for package, targets in selected if package.repo_name == repo_name]
-                repo_active = repo_name in normal_scopes | noop_scopes
-                if repo_active:
-                    run_hooks(repo_hooks, "pre_pull")
-                for package, targets in packages:
-                    hooks = [hook for values in package.hooks.values() for hook in values]
-                    package_hooks = [hook for hook in hooks if hook.scope_kind == "package"]
-                    package_active = _package_scope(package) in normal_scopes | noop_scopes
-                    if package_active:
-                        run_hooks(package_hooks, "pre_pull", package)
-                    for target, unit in targets:
-                        target_hooks = [hook for hook in hooks if hook.scope_kind == "target" and hook.target_name == target.target_name]
-                        run_hooks(target_hooks, "pre_pull", package, target)
-                        if unit is None:
-                            run_hooks(target_hooks, "post_pull", package, target)
-                            continue
-                        current_unit = unit
-                        step = ExecutionStep(
-                            repo_name=repo_name, package_id=package.package_id,
-                            package_plan=package, target_plan=target, kind="target",
-                            action="delete" if isinstance(unit.outcome, Missing) else "update",
-                            scope_kind="target",
-                        )
-                        try:
-                            if unit.outcome is not None:
-                                apply_repository_source(
-                                    target.repo_path, unit.outcome, repo_root=package.repo_root,
-                                )
-                                steps.append(ExecutionStepResult(step, "ok"))
-                            # Acknowledgment is part of unit completion, not hook
-                            # success. Earlier completions survive post-hook failure.
-                            step = replace(step, kind="unit-completion", action="complete")
-                            complete(unit)
-                        except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
-                            steps.append(_failed_step(step, exc))
-                            raise
+        for index, step in enumerate(planned):
+            unit = None if step.kind == "hook" else by_identity[_target_identity(step.package_plan, step.target_plan)]
+            try:
+                if check_cancelled is not None:
+                    check_cancelled()
+                if step.kind == "hook":
+                    result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
+                elif step.kind == "unit-completion":
+                    complete(unit)
+                    results[unit.row_id] = PublicationUnitResult(unit.row_id, "ok")
+                    continue
+                else:
+                    apply_repository_source(
+                        step.target_plan.repo_path, unit.outcome, repo_root=step.package_plan.repo_root,
+                    )
+                    if unit.requires_publication:
                         results[unit.row_id] = PublicationUnitResult(unit.row_id, "ok")
-                        current_unit = None
-                        run_hooks(target_hooks, "post_pull", package, target)
-                    if package_active:
-                        run_hooks(package_hooks, "post_pull", package)
-                if repo_active:
-                    run_hooks(repo_hooks, "post_pull")
-        except (_PublicationStopped, OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
-            interrupted = isinstance(exc, (InterruptedError, KeyboardInterrupt)) or (
-                isinstance(exc, _PublicationStopped) and exc.interrupted
-            )
-            error = str(exc) or "Repository apply interrupted"
-            if current_unit is not None:
-                results[current_unit.row_id] = PublicationUnitResult(current_unit.row_id, "failed", error)
-    return PublicationResult(tuple(results[unit.row_id] for unit in units), error, tuple(steps), interrupted=interrupted)
+                    result = ExecutionStepResult(step, "ok")
+                steps.append(result)
+                if result.status != "ok":
+                    raise _PublicationStopped(
+                        result.error or result.stderr or f"{step.action} exited {result.exit_code}",
+                        interrupted=result.status == "interrupted",
+                    )
+            except (_PublicationStopped, OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
+                if not isinstance(exc, _PublicationStopped):
+                    steps.append(_failed_step(step, exc))
+                interrupted = isinstance(exc, (InterruptedError, KeyboardInterrupt)) or (
+                    isinstance(exc, _PublicationStopped) and exc.interrupted)
+                error = str(exc) or "Repository apply interrupted"
+                if unit is not None:
+                    results[unit.row_id] = PublicationUnitResult(unit.row_id, "failed", error)
+                steps.extend(unattempted_steps(planned[index + 1:]))
+                break
+    return PublicationResult(tuple(results.values()), error, tuple(steps), interrupted=interrupted)
 
 
 def apply_repository_source(path, outcome: FilePresent | Missing, *, repo_root) -> None:

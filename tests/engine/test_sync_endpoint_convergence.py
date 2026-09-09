@@ -6,7 +6,7 @@ import os
 import pytest
 
 from dotman.sync_base_store import FilePresent, Missing, SyncBaseStore, SyncBaseStoreError
-from dotman.sync_session import PrepareProposalReview, SetApproval, SyncSession
+from dotman.sync_session import PrepareProposalReview, SetApproval
 from tests.engine.test_sync_convergence import command
 from tests.engine.test_sync_session import make_engine, open_session
 
@@ -147,16 +147,20 @@ def test_ineligible_drift_no_write_needs_approval_but_no_receipt(
 ):
     live = b"repo" if policy == "push-only" else None
     engine = make_engine(tmp_path, monkeypatch, [("unit", policy, b"repo", live, "")])
-    with open_session(engine) as observed:
+    with open_session(engine, preview=False) as observed:
         observation = observed.view.observations[0]
-    # Exercise the public session's frozen drift contract independently of how
-    # a future Editor produces an effect-free outcome for an ineligible unit.
-    drift = replace(observation, state="drifted")
+    # Isolate the frozen classification while keeping real execution metadata.
+    from dotman import sync_session
+    observe = sync_session.observe_scope
+    def drifted(*args, **kwargs):
+        result = observe(*args, **kwargs)
+        return replace(result, observations=(replace(result.observations[0], state="drifted"),))
+    monkeypatch.setattr(sync_session, "observe_scope", drifted)
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    with SyncSession((drift,), preview=False) as unapproved:
+    with open_session(engine, preview=False) as unapproved:
         assert unapproved.execute().result.units[0].status == "pending"
-    with SyncSession((drift,), preview=False) as approved:
-        command(approved, SetApproval, drift.identity.canonical, True)
+    with open_session(engine, preview=False) as approved:
+        command(approved, SetApproval, observation.identity.canonical, True)
         proposal = approved.view.rows[0].proposal
         assert proposal.primary_source_change is None
         assert proposal.publication_effects == ()

@@ -468,6 +468,8 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "applied": ("1", "32"),
     "skipped": ("2",),
     "execution-failed": ("1", "31"),
+    "not-converged": ("1", "33"),
+    "unattempted": ("2",),
     "interrupted": ("1", "31"),
 }
 

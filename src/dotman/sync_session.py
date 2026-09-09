@@ -316,7 +316,7 @@ class InclusionChanged:
 @dataclass(frozen=True)
 class SyncUnitResult:
     identity: str
-    status: Literal["directly-in-sync", "pending", "excluded", "observation-failed", "converged", "would-converge", "execution-failed", "interrupted", "skipped"]
+    status: Literal["directly-in-sync", "pending", "excluded", "observation-failed", "converged", "would-converge", "execution-failed", "interrupted", "skipped", "not-converged"]
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
@@ -1106,57 +1106,61 @@ class SyncSession:
         }
         additional_rows = tuple(row for row in self.view.rows if isinstance(row, AdditionalRow))
         self._additional_results, additional_diagnostics, additional_steps = self._apply_additional(additional_rows)
-        if additional_diagnostics:
-            return {row.row_id: ("skipped", ()) for row in selected}, additional_diagnostics, additional_steps
         if not selected and not any(auxiliary.values()):
-            return {}, (), additional_steps
-        units, diagnostics, steps = {}, (), additional_steps
-        if auxiliary["pull"] or any(row.observation.configured_policy in ("pull-only", "both") or row.proposal.primary_source_change is not None for row in selected):
-            by_id = {row.row_id: row for row in selected}
-            acknowledgment_failures = {}
+            return {}, additional_diagnostics, additional_steps
+        by_id = {row.row_id: row for row in selected}
+        acknowledgment_failures = {}
 
-            def complete(unit: RepositoryApplyUnit) -> None:
-                row = by_id[unit.row_id]
-                if row.observation.configured_policy in ("pull-only", "both") and not row.proposal.publication_effects:
-                    try:
-                        self._acknowledge(row)
-                    except InterruptedError:
-                        raise
-                    except (SyncBaseStoreError, SyncBaseGitError, OSError) as exc:
-                        acknowledgment_failures[row.row_id] = Diagnostic("base-acknowledgment-failed", str(exc))
-                        raise
+        def complete(unit: RepositoryApplyUnit) -> None:
+            row = by_id[unit.row_id]
+            if row.observation.configured_policy in ("pull-only", "both"):
+                try:
+                    self._acknowledge(row)
+                except InterruptedError:
+                    raise
+                except (SyncBaseStoreError, SyncBaseGitError, OSError) as exc:
+                    acknowledgment_failures[row.row_id] = Diagnostic("base-acknowledgment-failed", str(exc))
+                    raise
 
-            result = execute_repository_apply(
-                self._repository_metadata,
-                tuple(RepositoryApplyUnit(
-                    row.row_id, row.observation.identity, row.proposal.primary_source_change,
-                ) for row in selected),
-                command_runtime=self._context.projection.command_runtime,
-                complete=complete, auxiliary=auxiliary["pull"], run_noop=self._run_noop,
-            )
-            units, diagnostics, repository_steps = self._execution_outcome(result, "repository-apply")
-            steps += repository_steps
-            for row in selected:
-                if row.row_id in acknowledgment_failures:
-                    units[row.row_id] = ("execution-failed", (acknowledgment_failures[row.row_id],))
-                elif row.proposal.publication_effects and units[row.row_id][0] == "converged":
-                    # Repository Apply success does not complete pending live work.
-                    units[row.row_id] = ("skipped", ())
-            if result.error is not None:
-                return units, diagnostics, steps
-        else:
-            # Ineligible no-write completion needs neither a Base nor a receipt.
-            units = {row.row_id: ("converged", ()) for row in selected if not row.proposal.publication_effects}
+        # Even an ineligible no-write Proposal has an ordered completion boundary.
+        result = execute_repository_apply(
+            self._repository_metadata,
+            tuple(RepositoryApplyUnit(
+                row.row_id, row.observation.identity, row.proposal.primary_source_change,
+                requires_publication=bool(row.proposal.publication_effects),
+            ) for row in selected),
+            command_runtime=self._context.projection.command_runtime,
+            complete=complete, auxiliary=auxiliary["pull"], run_noop=self._run_noop,
+            check_cancelled=self.check_cancelled, blocked=bool(additional_diagnostics),
+        )
+        units, diagnostics, repository_steps = self._execution_outcome(result, "repository-apply")
+        steps = additional_steps + repository_steps
+        diagnostics = additional_diagnostics + diagnostics
+        for row in selected:
+            if row.row_id in acknowledgment_failures:
+                units[row.row_id] = ("execution-failed", (acknowledgment_failures[row.row_id],))
+            elif row.proposal.publication_effects and units[row.row_id][0] == "converged":
+                units[row.row_id] = ("not-converged", ())
         publication = tuple(row for row in selected if row.proposal.publication_effects)
         if publication or auxiliary["push"]:
-            published, diagnostics, publication_steps = self._publish_effects(publication, auxiliary["push"])
-            units.update(published)
+            blocked = bool(diagnostics)
+            published, publication_diagnostics, publication_steps = self._publish_effects(
+                publication, auxiliary["push"], blocked=blocked,
+            )
+            for identity, outcome in published.items():
+                # A later stage cannot erase repository failure or successful
+                # repository work that has not reached its publication boundary.
+                if not blocked and not (outcome[0] == "skipped" and units[identity][0] == "not-converged"):
+                    units[identity] = outcome
+            diagnostics += publication_diagnostics
             steps += publication_steps
         return units, diagnostics, steps
 
     def _apply_additional(self, rows: tuple[AdditionalRow, ...]):
         if not rows:
             return (), (), ()
+        repo_order = {name: index for index, (name, _) in enumerate(self._repository_metadata.repo_hooks)}
+        rows = tuple(sorted(rows, key=lambda row: (repo_order[row.repo], row.path.as_posix())))
         results, steps, diagnostics = [], [], ()
         with elevation_broker_session(), command_runtime_session(self._context.projection.command_runtime):
             for row in rows:
@@ -1172,14 +1176,15 @@ class SyncSession:
                         except (KeyboardInterrupt, InterruptedError):
                             status = "interrupted"
                             failures = (Diagnostic("interrupted", "Additional Source apply interrupted"),)
-                        except (OSError, ValueError) as exc:
+                        except (OSError, ValueError, RuntimeError) as exc:
                             status = "execution-failed"
                             failures = (Diagnostic("additional-source-failed", str(exc)),)
                         diagnostics += failures
                     steps.append(SyncStepOutcome(
                         "repository-apply", "additional-source", "update", "repo", row.row_id,
                         row.repo, None, "ok" if status == "applied" else
-                        "failed" if status == "execution-failed" else status,
+                        "failed" if status == "execution-failed" else "unattempted" if status == "skipped" else status,
+                        skip_reason="earlier-failure" if status == "skipped" else None,
                         error=failures[0].message if failures else None,
                     ))
                 results.append(AdditionalSourceResult(row.row_id, row.repo, row.path, status, failures))
@@ -1188,7 +1193,7 @@ class SyncSession:
     def _resolved_inputs_identity(self, scope: str):
         return next(identity for identity in self._resolved_inputs if identity.canonical == scope)
 
-    def _publish_effects(self, selected: tuple[SessionRow, ...], auxiliary: tuple[HookActivation, ...] = ()) -> tuple[
+    def _publish_effects(self, selected: tuple[SessionRow, ...], auxiliary: tuple[HookActivation, ...] = (), *, blocked: bool = False) -> tuple[
         dict[str, tuple[str, tuple[Diagnostic, ...]]],
         tuple[Diagnostic, ...],
         tuple[SyncStepOutcome, ...],
@@ -1215,6 +1220,7 @@ class SyncSession:
             complete=complete,
             snapshot_config=self._context.config.snapshots,
             auxiliary=auxiliary, run_noop=self._run_noop,
+            check_cancelled=self.check_cancelled, blocked=blocked,
             command_runtime=self._context.projection.command_runtime,
         )
         units, diagnostics, steps = self._execution_outcome(result, "live-publication")

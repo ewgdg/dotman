@@ -4,7 +4,7 @@ import pytest
 
 from dotman.sync_base_store import FilePresent
 from dotman.sync_session import (
-    CommandRejected, PrepareProposalReview, Preview, SetApproval, SetIncluded, SyncSession,
+    CommandRejected, PrepareProposalReview, Preview, SetApproval, SetIncluded,
 )
 from tests.engine.test_sync_session import make_engine, open_session
 
@@ -92,7 +92,13 @@ def test_direct_agreement_distinct_from_approved_drift_no_write(tmp_path, monkey
         observation = direct.view.observations[0]
     # The classification is frozen independently of materialization. This
     # exercises the no-effect completion boundary without inventing new intents.
-    with SyncSession((replace(observation, state="drifted"),), preview=False) as session:
+    from dotman import sync_session
+    observe = sync_session.observe_scope
+    def drifted(*args, **kwargs):
+        result = observe(*args, **kwargs)
+        return replace(result, observations=(replace(result.observations[0], state="drifted"),))
+    monkeypatch.setattr(sync_session, "observe_scope", drifted)
+    with open_session(engine, preview=False) as session:
         command(session, SetApproval, observation.identity.canonical, True)
         assert session.view.rows[0].proposal.publication_effects == ()
         assert session.execute().result.units[0].status == "converged"

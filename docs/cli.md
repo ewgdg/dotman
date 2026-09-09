@@ -124,6 +124,10 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
 - JSON emits one final document containing operation, mode, status, scope,
   summary, Sync Units, auxiliary/source work categories and stages. It reports
   evidence and effect metadata, never file content bytes or private workspaces.
+  Stage outcomes preserve the failed step and the ordered unattempted tail
+  (`status: unattempted`, `skip_reason: earlier-failure`). Units with successful
+  repository changes but unattempted live work report `not-converged`, rather
+  than `skipped`; previously completed units remain `converged`.
   `probe_work`, `directory_root_work` and `hook_work` contain canonical `identity`, `selected`,
   `directions` and `diagnostics`, without file/Proposal/Base fields.
   `summary.selected_auxiliary` counts directly selected auxiliary rows.

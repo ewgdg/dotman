@@ -183,6 +183,72 @@ def _effect_path(effect: Effect, target: TargetPlan) -> Path:
     return path
 
 
+def stage_target_order(metadata: PublicationMetadata) -> tuple[ResolvedSyncTarget, ...]:
+    return tuple(
+        _target_identity(package, target)
+        for repo, _ in metadata.repo_hooks
+        for package in metadata.packages if package.repo_name == repo
+        for target in package.target_plans
+    )
+
+
+def ordered_stage_steps(
+    metadata: PublicationMetadata,
+    target_work: dict[ResolvedSyncTarget, tuple[tuple[str, str], ...]],
+    *, direction: str, active_targets: Sequence[ResolvedSyncTarget],
+    auxiliary: Sequence[HookActivation] = (), run_noop: bool = False,
+) -> tuple[ExecutionStep, ...]:
+    """Freeze the nested stage order once; the same sequence drives IO and results."""
+    normal, noop = _hook_scopes(metadata, auxiliary, active_targets)
+    steps = []
+    matched = set()
+
+    def hooks(values, name, scope, package=None, target=None):
+        for hook in values:
+            if hook.hook_name == name and (
+                scope in normal or scope in noop and (hook.run_noop or run_noop)
+            ):
+                steps.append(ExecutionStep(
+                    repo_name=hook.repo_name or "", package_id=hook.package_id,
+                    package_plan=package, target_plan=target, kind="hook",
+                    action=name, scope_kind=hook.scope_kind, hook_plan=hook,
+                    privileged=hook.elevation == "root",
+                ))
+
+    for repo, repo_hooks in metadata.repo_hooks:
+        hooks(repo_hooks, f"pre_{direction}", repo)
+        for package in metadata.packages:
+            if package.repo_name != repo:
+                continue
+            values = [hook for group in package.hooks.values() for hook in group]
+            package_hooks = [hook for hook in values if hook.scope_kind == "package"]
+            hooks(package_hooks, f"pre_{direction}", _package_scope(package), package)
+            for target in package.target_plans:
+                identity = _target_identity(package, target)
+                target_hooks = [hook for hook in values if hook.scope_kind == "target"
+                                and hook.target_name == target.target_name]
+                hooks(target_hooks, f"pre_{direction}", identity.canonical, package, target)
+                if identity in target_work:
+                    matched.add(identity)
+                    for kind, action in target_work[identity]:
+                        steps.append(ExecutionStep(
+                            repo_name=repo, package_id=package.package_id,
+                            package_plan=package, target_plan=target, kind=kind,
+                            action=action, scope_kind="target",
+                        ))
+                hooks(target_hooks, f"post_{direction}", identity.canonical, package, target)
+            hooks(package_hooks, f"post_{direction}", _package_scope(package), package)
+        hooks(repo_hooks, f"post_{direction}", repo)
+    if matched != set(target_work):
+        raise ValueError("Frozen unit has no captured metadata")
+    return tuple(steps)
+
+
+def unattempted_steps(steps: Sequence[ExecutionStep]) -> tuple[ExecutionStepResult, ...]:
+    return tuple(ExecutionStepResult(step, "unattempted", skip_reason="earlier-failure")
+                 for step in steps)
+
+
 def execute_publication(
     metadata: PublicationMetadata,
     units: Sequence[PublicationUnit],
@@ -194,164 +260,104 @@ def execute_publication(
     assume_yes: bool = False,
     auxiliary: Sequence[HookActivation] = (),
     run_noop: bool = False,
+    check_cancelled: Callable[[], None] | None = None,
+    blocked: bool = False,
 ) -> PublicationResult:
-    """Apply exact effects, retaining completion even when enclosing hooks fail."""
+    """Consume frozen effects, recording every attempted and unattempted boundary."""
     units = tuple(units)
     by_identity = {unit.identity: unit for unit in units}
     if len(by_identity) != len(units) or len({unit.row_id for unit in units}) != len(units):
         raise ValueError("Duplicate publication unit")
-    normal_scopes, noop_scopes = _hook_scopes(metadata, auxiliary, [unit.identity for unit in units if unit.effects])
-    selected = []
-    snapshot_packages = []
-    snapshot_endpoints = []
-    matched = set()
+    for unit in units:
+        for effect in unit.effects:
+            if effect.kind not in {"write", "delete", "chmod"}:
+                raise ValueError(f"Unknown publication effect: {effect.kind}")
+            if effect.kind == "write" and effect.content is None:
+                raise ValueError("Frozen write requires content")
+            if effect.kind == "chmod" and effect.mode is None:
+                raise ValueError("Frozen chmod requires mode")
+    planned = ordered_stage_steps(
+        metadata, {
+            unit.identity: tuple(("chmod" if effect.kind == "chmod" else "target", effect.kind)
+                                 for effect in unit.effects) + ((("unit-completion", "complete"),) if unit.effects else ())
+            for unit in units
+        },
+        direction="push", active_targets=[unit.identity for unit in units if unit.effects],
+        auxiliary=auxiliary, run_noop=run_noop,
+    )
+    units = tuple(by_identity[identity] for identity in stage_target_order(metadata) if identity in by_identity)
+    results = {unit.row_id: PublicationUnitResult(
+        unit.row_id, "ok" if not unit.effects else "skipped") for unit in units}
+    if blocked:
+        return PublicationResult(tuple(results.values()), steps=unattempted_steps(planned))
+    snapshot_packages, snapshot_endpoints = [], []
     for package in metadata.packages:
         targets = []
         for target in package.target_plans:
-            identity = ResolvedSyncTarget(
-                repo=package.repo_name, package_id=target.package_id,
-                bound_profile=package.bound_profile, target_name=target.target_name,
-            )
-            unit = by_identity.get(identity)
-            if unit is None or not unit.effects:
-                if identity.canonical in normal_scopes | noop_scopes:
-                    targets.append(target)
-                if unit is not None:
-                    matched.add(identity)
-                continue
-            matched.add(identity)
-            for effect in unit.effects:
-                if effect.kind not in {"write", "delete", "chmod"}:
-                    raise ValueError(f"Unknown publication effect: {effect.kind}")
-                if effect.kind == "write" and effect.content is None:
-                    raise ValueError("Frozen write requires content")
-                if effect.kind == "chmod" and effect.mode is None:
-                    raise ValueError("Frozen chmod requires mode")
-            snapshot_endpoints.append((unit.effects[0], target))
-            targets.append(replace(target, action="delete" if unit.effects[0].kind == "delete" else "update"))
-        if targets or _package_scope(package) in normal_scopes | noop_scopes:
-            selected.append(replace(package, target_plans=targets))
-        # Auxiliary targets only carry hook context, never snapshot endpoints.
-        mutation_targets = [target for target in targets if target.action != "noop"]
-        if mutation_targets:
-            snapshot_packages.append(replace(package, target_plans=mutation_targets))
-    if matched != set(by_identity):
-        raise ValueError("Publication unit has no captured metadata")
-
-    results = {
-        unit.row_id: PublicationUnitResult(unit.row_id, "ok" if not unit.effects else "skipped")
-        for unit in units
-    }
-    steps = []
-    snapshot = None
-    error = None
-    current_unit = None
-    interrupted = False
+            unit = by_identity.get(_target_identity(package, target))
+            if unit is not None and unit.effects:
+                snapshot_endpoints.append((unit.effects[0], target))
+                targets.append(replace(target, action="delete" if unit.effects[0].kind == "delete" else "update"))
+        if targets:
+            snapshot_packages.append(replace(package, target_plans=targets))
+    steps, snapshot, error, interrupted = [], None, None, False
     snapshot_started = False
-
-    def run_hooks(hooks, name, package=None, target=None):
-        scope = (_target_identity(package, target).canonical if target is not None else
-                 _package_scope(package) if package is not None else hooks[0].repo_name if hooks else None)
-        for hook in hooks:
-            if hook.hook_name != name or not (
-                scope in normal_scopes or (scope in noop_scopes and (hook.run_noop or run_noop))
-            ):
-                continue
-            step = ExecutionStep(
-                repo_name=hook.repo_name or "", package_id=hook.package_id,
-                package_plan=package, target_plan=target, kind="hook",
-                action=name, scope_kind=hook.scope_kind, hook_plan=hook,
-                privileged=hook.elevation == "root",
-            )
-            result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
-            steps.append(result)
-            if result.status != "ok":
-                raise _PublicationStopped(
-                    result.error or result.stderr or f"{name} exited {result.exit_code}",
-                    interrupted=result.status == "interrupted",
-                )
-
+    effect_positions = {unit.row_id: 0 for unit in units}
     with elevation_broker_session(), command_runtime_session(command_runtime or current_command_runtime()):
-        try:
-            for repo_name, repo_hooks in metadata.repo_hooks:
-                repo_packages = [package for package in selected if package.repo_name == repo_name]
-                if repo_name not in normal_scopes | noop_scopes:
+        for index, step in enumerate(planned):
+            unit = None if step.kind == "hook" else by_identity[_target_identity(step.package_plan, step.target_plan)]
+            try:
+                if check_cancelled is not None:
+                    check_cancelled()
+                if step.kind == "hook":
+                    result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
+                elif step.kind == "unit-completion":
+                    if complete is not None:
+                        complete(unit)
+                    results[unit.row_id] = PublicationUnitResult(unit.row_id, "ok")
+                    # Successful completion is already represented by the unit result.
                     continue
-                run_hooks(repo_hooks, "pre_push")
-                for package in repo_packages:
-                    hooks = [hook for values in package.hooks.values() for hook in values]
-                    package_hooks = [hook for hook in hooks if hook.scope_kind == "package"]
-                    run_hooks(package_hooks, "pre_push", package)
-                    for target in package.target_plans:
-                        identity = ResolvedSyncTarget(
-                            repo=repo_name, package_id=target.package_id,
-                            bound_profile=package.bound_profile, target_name=target.target_name,
-                        )
-                        target_hooks = [hook for hook in hooks if hook.scope_kind == "target" and hook.target_name == target.target_name]
-                        run_hooks(target_hooks, "pre_push", package, target)
-                        current_unit = by_identity.get(identity)
-                        if current_unit is None or not current_unit.effects:
-                            current_unit = None
-                            run_hooks(target_hooks, "post_push", package, target)
-                            continue
-                        for effect in current_unit.effects:
-                            step = ExecutionStep(
-                                repo_name=repo_name, package_id=package.package_id,
-                                package_plan=package, target_plan=target,
-                                kind="chmod" if effect.kind == "chmod" else "target",
-                                action=effect.kind, scope_kind="target",
-                            )
-                            try:
-                                path = _effect_path(effect, target)
-                                # Snapshot starts only after pre-hooks and safety,
-                                # immediately before the first actual live effect.
-                                if not snapshot_started:
-                                    try:
-                                        if snapshot_config.enabled:
-                                            # Snapshot reads the whole selected set, not just
-                                            # the next writer. Recheck each initial endpoint
-                                            # after pre-hooks so a later FIFO cannot block it.
-                                            for initial_effect, snapshot_target in snapshot_endpoints:
-                                                _effect_path(initial_effect, snapshot_target)
-                                        snapshot = create_push_snapshot(snapshot_packages, snapshot_config)
-                                    except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
-                                        failure = _failed_step(
-                                            replace(step, kind="snapshot", action="create"), exc,
-                                        )
-                                        steps.append(failure)
-                                        raise _PublicationStopped(
-                                            failure.error, interrupted=failure.status == "interrupted",
-                                        ) from exc
-                                    snapshot_started = True
-                                if effect.kind == "write":
-                                    file_access.write_bytes_atomic(path, effect.content)
-                                elif effect.kind == "delete":
-                                    file_access.delete_path_and_prune_empty_parents(path, root=path.parent)
-                                else:
-                                    file_access.chmod(path, effect.mode)
-                            except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
-                                failure = _failed_step(step, exc)
-                                steps.append(failure)
-                                raise _PublicationStopped(
-                                    failure.error, interrupted=failure.status == "interrupted",
-                                ) from exc
-                            steps.append(ExecutionStepResult(step, "ok"))
-                        # Complete at this unit's own effect boundary, before hooks
-                        # or a later unit can fail and conceal successful ancestry.
-                        if complete is not None:
-                            complete(current_unit)
-                        results[current_unit.row_id] = PublicationUnitResult(current_unit.row_id, "ok")
-                        current_unit = None
-                        run_hooks(target_hooks, "post_push", package, target)
-                    run_hooks(package_hooks, "post_push", package)
-                run_hooks(repo_hooks, "post_push")
-        except (_PublicationStopped, OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
-            interrupted = isinstance(exc, (InterruptedError, KeyboardInterrupt)) or (
-                isinstance(exc, _PublicationStopped) and exc.interrupted
-            )
-            error = str(exc) or "Publication interrupted"
-            if current_unit is not None:
-                results[current_unit.row_id] = PublicationUnitResult(current_unit.row_id, "failed", error)
+                else:
+                    effect = unit.effects[effect_positions[unit.row_id]]
+                    effect_positions[unit.row_id] += 1
+                    path = _effect_path(effect, step.target_plan)
+                    if not snapshot_started:
+                        try:
+                            if snapshot_config.enabled:
+                                # Snapshot reads the whole frozen set; reject unsafe
+                                # later endpoints before snapshot code can read them.
+                                for initial_effect, target in snapshot_endpoints:
+                                    _effect_path(initial_effect, target)
+                            snapshot = create_push_snapshot(snapshot_packages, snapshot_config)
+                        except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
+                            failure = _failed_step(replace(step, kind="snapshot", action="create"), exc)
+                            steps.append(failure)
+                            steps.extend(unattempted_steps((step,)))
+                            raise _PublicationStopped(failure.error, interrupted=failure.status == "interrupted") from exc
+                        snapshot_started = True
+                    if effect.kind == "write":
+                        file_access.write_bytes_atomic(path, effect.content)
+                    elif effect.kind == "delete":
+                        file_access.delete_path_and_prune_empty_parents(path, root=path.parent)
+                    else:
+                        file_access.chmod(path, effect.mode)
+                    result = ExecutionStepResult(step, "ok")
+                steps.append(result)
+                if result.status != "ok":
+                    raise _PublicationStopped(
+                        result.error or result.stderr or f"{step.action} exited {result.exit_code}",
+                        interrupted=result.status == "interrupted",
+                    )
+            except (_PublicationStopped, OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
+                if not isinstance(exc, _PublicationStopped):
+                    steps.append(_failed_step(step, exc))
+                interrupted = isinstance(exc, (InterruptedError, KeyboardInterrupt)) or (
+                    isinstance(exc, _PublicationStopped) and exc.interrupted)
+                error = str(exc) or "Publication interrupted"
+                if unit is not None:
+                    results[unit.row_id] = PublicationUnitResult(unit.row_id, "failed", error)
+                steps.extend(unattempted_steps(planned[index + 1:]))
+                break
         if snapshot is not None:
             try:
                 snapshot = mark_snapshot_status(snapshot, "failed" if error else "applied")
@@ -360,5 +366,4 @@ def execute_publication(
                 steps.append(failure)
                 interrupted = interrupted or failure.status == "interrupted"
                 error = error or failure.error
-    return PublicationResult(tuple(results[unit.row_id] for unit in units), error, tuple(steps), snapshot, interrupted)
-
+    return PublicationResult(tuple(results.values()), error, tuple(steps), snapshot, interrupted)

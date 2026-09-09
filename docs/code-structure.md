@@ -232,13 +232,21 @@ inclusion authorizes only retained directional hooks.
 evidence through shared projection and patch mechanics. A Capture-backed comparison
 is reused rather than run again. `sync_repository_apply.py` applies approved
 Primary Source outcomes through pull hooks without accessing live state or
-snapshots. Each unit completes before its enclosing post-hook; the session uses
+snapshots. Units without required live effects complete at their ordered position
+before the enclosing post-hook; the session uses
 the shared Base lifecycle with frozen committed Git facts to acknowledge eligible
 outcomes. A failed repository stage prevents all Live Publication.
 
 `sync_publication.py` freezes hook and target execution metadata at opening and
 publishes approved file effects through the existing file-access, snapshot and
-hook mechanics. Public results retain immutable semantic step outcomes and
+hook mechanics. Both stages use its shared ordered stage-step construction:
+repository order, package plan order, target plan order and nested directional
+hooks. That frozen sequence drives execution and explicit unattempted-tail
+reporting; it is not reconstructed from filesystem outcomes. Cancellation checks
+precede hooks, effects and completion. Publication acknowledgment failures have
+their own failed completion step, distinct from successful content or chmod.
+The session preserves repository partial success as not-converged when later
+publication is skipped. Public results retain immutable semantic step outcomes and
 operation-level diagnostics separately from unit completion, so an enclosing
 post-hook failure does not erase convergence. Each scoped outcome carries a
 canonical `scope_identity`, preserving package instances and target names

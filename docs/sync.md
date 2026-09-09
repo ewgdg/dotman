@@ -186,6 +186,45 @@ distinct; none silently chooses another Resolution Intent. **T** retries failed
 materialization; **E** can retry an Editor attempt. During an Editor attempt, **Ctrl-C** cancels that attempt rather than aborting
 the session. Terminal Editors temporarily own the terminal and return to the same focused workset or review when finished.
 
+### Frozen execution and partial failure
+
+Execution traverses repositories in configured order, dependency-first package
+plans, then stable target-plan order. The complete operation runs Repository
+Apply before any Live Publication. Approved Additional Source Changes are written
+once in repository order and normalized-path order, before Primary Source work;
+Additional-only work owns no package/target hook scope.
+
+Primary changes use nested pull hooks, including deliberate Editor changes under
+one-sided policy. Publication uses nested push hooks and consumes the exact
+approved effects without reading sources again, Capture, Render, Observation or
+replanning. Selected Probe and retained noop-hook work activate only their
+surviving directional families.
+
+Every approved no-write Proposal has its normal Repository Apply completion
+position, even when Base-ineligible. Repository-only units complete there;
+units requiring live effects wait for their own publication. Eligible completion
+commits the unit's Base before target post-hooks. Post-hook success is not a
+condition of convergence.
+
+The first failed write, safety check, hook, acknowledgment or interruption stops
+later work. Cancellation is checked at each effect, hook and completion boundary.
+Atomic replacement protects each file, not the whole operation: earlier writes,
+Converged units and committed Bases remain in place. A write followed by failed
+chmod retains the bytes but does not acknowledge or converge that unit.
+
+Results retain the exact failed step and ordered successful and unattempted
+steps, including required completion boundaries that were never reached. A unit
+with no attempted work is `skipped`; one whose repository work succeeded but
+whose live work was not attempted is `not-converged`. A failed unit is
+`execution-failed` (or `interrupted`), while earlier completed units remain
+`converged`. Additional Source results remain independent.
+
+One normal live-only snapshot is created after successful Repository Apply,
+after push pre-hooks and safety checks, immediately before the first live
+mutation. It covers only the frozen publication set and survives partial live
+failure. Preview, repository-only, no-write and hook-only operations create no
+snapshot. Restore never restores repository sources.
+
 ### Both-policy reconciliation
 
 Merge lazily reconciles the usable Base payload, frozen repository representation,

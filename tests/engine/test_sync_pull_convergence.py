@@ -136,7 +136,8 @@ def test_repository_apply_failure_prevents_live_publication_and_base(tmp_path, m
         result = session.execute().result
         assert result.status == 'failed'
         assert {unit.status for unit in result.units} == {'skipped'}
-        assert not any(step.stage == 'live-publication' for step in result.steps)
+        assert all(step.status == 'unattempted' for step in result.steps
+                   if step.stage == 'live-publication')
     assert (tmp_path / 'live/push').read_bytes() == b'live'
     assert (tmp_path / 'repo/packages/app/pull').read_bytes() == b'repo'
     with open_session(engine) as later:

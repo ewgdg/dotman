@@ -163,7 +163,8 @@ pre_push = "exit 9"
         result = session.execute().result
         assert result.status == 'failed'
         assert result.units == ()
-        assert [(step.stage, step.exit_code) for step in result.steps] == [('repository-apply', 7)]
+        assert [(step.stage, step.exit_code, step.status) for step in result.steps] == [
+            ('repository-apply', 7, 'failed'), ('live-publication', None, 'unattempted')]
 
 
 @pytest.mark.parametrize('policy,direction', [('push-only', 'push'), ('push-only-delete', 'push'), ('pull-only', 'pull')])

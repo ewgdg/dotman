@@ -70,7 +70,7 @@ def test_post_hook_failure_preserves_completed_unit_and_stops_next(tmp_path, mon
     result = execute(tmp_path, metadata, units)
     assert result.error
     assert [unit.status for unit in result.units] == ["ok", "skipped"]
-    assert [step.status for step in result.steps] == ["ok", "failed"]
+    assert [step.status for step in result.steps if step.status != "unattempted"] == ["ok", "failed"]
     assert (tmp_path / "live/first").read_bytes() == b"frozen"
     assert (tmp_path / "live/second").read_bytes() == b"live"
     assert result.snapshot.status == "failed"
@@ -89,7 +89,7 @@ def test_failed_chmod_retains_content_but_not_completion(tmp_path, monkeypatch):
     assert result.units[0].status == "failed"
     assert "mode denied" in result.error
     assert (tmp_path / "live/unit").read_bytes() == b"frozen"
-    assert [step.status for step in result.steps] == ["ok", "failed"]
+    assert [step.status for step in result.steps if step.status != "unattempted"] == ["ok", "failed"]
 
 
 def test_nested_scope_order_and_snapshot_after_pre_hooks(tmp_path, monkeypatch):
@@ -200,7 +200,8 @@ def test_snapshot_failure_reports_exact_step_before_mutation(tmp_path, monkeypat
     result = execute(tmp_path, metadata, units)
     assert result.error == "snapshot unavailable"
     assert result.units[0].status == "failed"
-    assert [(step.step.kind, step.status) for step in result.steps] == [("snapshot", "failed")]
+    assert [(step.step.kind, step.status) for step in result.steps] == [
+        ("snapshot", "failed"), ("target", "unattempted"), ("unit-completion", "unattempted")]
     assert (tmp_path / "live/unit").read_bytes() == b"live"
 
 
@@ -233,14 +234,14 @@ def test_interrupted_io_is_typed_and_preserves_completed_units(tmp_path, monkeyp
     result = execute(tmp_path, metadata, units)
     assert result.interrupted
     assert result.error == "I/O interrupted"
-    assert result.steps[-1].status == "interrupted"
-    assert result.steps[-1].exit_code == 130
+    failure = next(step for step in result.steps if step.status == "interrupted")
+    assert failure.exit_code == 130
     assert result.units[0].status == ("ok" if phase == "snapshot-finalize" else "failed")
     assert (tmp_path / "live/unit").read_bytes() == (
         b"frozen" if phase == "snapshot-finalize" else b"live"
     )
     if phase == "snapshot-create":
-        assert result.steps[-1].step.kind == "snapshot"
+        assert failure.step.kind == "snapshot"
         assert result.snapshot is None
     elif phase == "write":
         assert result.snapshot.status == "failed"
@@ -279,6 +280,6 @@ def test_snapshot_rejects_later_fifo_before_reading_or_mutating(
     assert not (tmp_path / "snapshots").exists()
     assert (tmp_path / "live/first").read_bytes() == b"live"
     assert stat.S_ISFIFO(later.stat().st_mode)
-    assert [(step.step.kind, step.status) for step in result.steps if step.step.kind != "hook"] == [
+    assert [(step.step.kind, step.status) for step in result.steps if step.step.kind != "hook" and step.status != "unattempted"] == [
         ("snapshot", "failed"),
     ]

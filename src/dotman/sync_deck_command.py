@@ -321,7 +321,8 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
         "probe_work": auxiliary_work("probe"),
         "directory_root_work": auxiliary_work("directory-root"),
         "hook_work": auxiliary_work("hook"),
-        # Report actual steps, not success inferred from materialized Proposals.
+        # Preserve attempted and unattempted execution evidence, never infer success
+        # from a materialized Proposal.
         "stages": [
             {
                 "stage": item.stage,
