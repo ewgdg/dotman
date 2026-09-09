@@ -43,6 +43,14 @@ commands/views, adapter output and user interactions rather than private plans.
   production boundary from its acceptance criteria.
 - Existing batch implementation establishes Additional and Proposal states
   before materialization and preserves failure diagnostics on unapproval.
+- Added public Session tests for both Proposal orders, mixed workset selection,
+  excluded Directly InSync rows, rejected auxiliary Approval and frozen execution.
+- Completed semantic root presentation, policy/Pull View/Base review evidence,
+  and static single-choice Resolution; regression tests passed.
+- Combined engine/CLI validation: 162 passed in 35.42s. Renamed the engine
+  contract module to avoid pytest basename collision with the CLI module.
+- Final inspection identified a static command-availability check at confirmation;
+  adding an explicit approved-materialization gate before handoff.
 
 ## Decisions and discoveries
 
