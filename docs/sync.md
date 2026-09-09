@@ -3,17 +3,19 @@
 A file target is one **Sync Unit**. Each regular-file child of a directory target
 is an independent Sync Unit; a directory root has no aggregate Base.
 
-## Frozen file Observation
+## Frozen Observation
 
-A SyncSession observes its resolved file targets and auxiliary work once.
-Guards run in repository → package → target order across both directional
-families before endpoint reads and comparison. Shared directory planning runs
-active named Path Rule Guards afterward, by priority then name, once per rule.
+A SyncSession observes its resolved file targets, directory children and auxiliary
+work once. Guards run in repository → package → target order across both
+directional families before endpoint reads and comparison. After directory
+census and child policy resolution, active named Path Rule Guards run by priority
+then name, once per rule and directional family.
 Exit 0 retains capability, 100 removes that direction within the Guard's scope,
 and other non-zero exits abort planning. Review and execution never rerun Guards.
 Configured Sync Policy remains the upper bound; narrowing never changes Base
 eligibility (configured `pull-only` or `both`). It retains the resolved scope order, effective projections, typed
-endpoint bytes, live mode/link evidence, Git facts and applicable Base evidence.
+endpoint bytes and live mode/link evidence. File targets also retain Git facts
+and applicable Base evidence.
 
 | Effective policy | Direct comparison |
 | --- | --- |
@@ -33,6 +35,55 @@ acknowledgment flag records successful opening-time maintenance.
 
 External changes never refresh an open session. Start another session to see
 new filesystem, configuration or Git state.
+
+## Directory census and child capability
+
+A directory target is a discovery scope, never an aggregate Sync Unit. One
+census inspects both trees, combines skip-marker subtrees found on either side,
+and applies repository-source Git ignore controls and repository/package/target
+exclusions symmetrically. Live `.gitignore` content does not define policy.
+Control files, directory nodes and empty directories are not payloads. Ignored
+paths receive no Observation or Base maintenance. Git ignore matching preserves
+[excluded-parent semantics](https://git-scm.com/docs/gitignore): a nested negation
+cannot re-include content beneath an excluded directory.
+
+The surviving regular-file union has canonical identities
+`repo:package.target/<relative/child>` (including package-instance forms).
+Target and child scopes form a de-duplicated union; exact child selection does
+not observe unrelated siblings. The census remains control-aware for partial
+selection, and an ancestor discovery failure remains visible for affected
+selected children rather than implying absence.
+
+Each child resolves its own named Path Rules, configured policy, Render, Capture,
+comparison, Editor and exact mode policy, even with a Missing endpoint. Exact
+child scopes activate only their resolved configured directions at ancestor and
+target Guards; unrelated child rules cannot add a direction. Full-target discovery
+retains all potentially configured child directions. Path Rule Guards only narrow
+the child's configured capabilities. Executable state matters in child comparison;
+other repository permission bits do not. Exact child chmod also participates when
+push capability survives (`push-only` or `both`), but is inactive under `pull-only`.
+Under `both`, exact chmod does not replace executable-state comparison. Target
+chmod belongs to the root.
+
+Repository symlinks and unsupported nodes yield typed path-specific Observation
+failures unless excluded. Repository directory links are never descended or used
+as ancestors for child endpoint reads. Live directory links fail locally in
+`fail` mode; `follow` mode retains lexical child identities and detects loops.
+Rejected traversal or unknown controls/discovery at an ancestor block every
+affected descendant before either payload endpoint is read, including children
+already found on the opposite side and exact child selections. Failures do not
+discard unrelated child evidence.
+
+Child Observation and independent inclusion/exclusion are supported. Child
+convergence is not: drift rows expose `directory-convergence-unavailable` as a
+separate capability diagnostic and offer no Proposal, Approval, Editor or
+Publication Effects. Inclusion never routes a child through file-target
+execution. Unsupported participating drift prevents unattended mutation; an
+interactive operation may execute unrelated supported approved work and reports
+remaining included children as pending. Child Base inspection, acknowledgment,
+maintenance and structural/root effects are not performed by Sync yet. Direct
+child agreement remains a successful Observation, not a convergence capability
+failure, and does not acknowledge a Base.
 
 ## Auxiliary work
 
@@ -73,10 +124,10 @@ not directly agreeing units. Its aligned table uses canonical target identities
 and a **Selection** column. Selection authorizes Proposals and canonical Additional Source Changes through
 independent Approval and directly includes auxiliary work. Unsupported resolution capability is labeled separately
 from Observation and Proposal failures; focused diagnostic details explain the
-current row. Directory scopes are outside the file session's current capability. The deck and
+current row. Directory child rows support inclusion, not Approval. The deck and
 output adapter also recognize semantic **Directory Root Work** as direct Auxiliary
 inclusion, without Proposal or Approval; discovering and executing root mode drift
-belongs to directory topology support, not file-session planning.
+belongs to directory topology support.
 Focused review shows
 the frozen repository/live Pull Views separately from repository-effect and
 publication previews. A no-write Proposal still shows the observed drift even

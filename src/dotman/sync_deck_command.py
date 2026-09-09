@@ -20,9 +20,15 @@ def approve(session: SyncSession, row_id: str, approved: bool):
     return session.dispatch(SetApproval(view.session_id, view.revision, row_id, approved))
 
 
+def selection_uses_inclusion(row) -> bool:
+    return isinstance(row, AuxiliaryRow) or (
+        not isinstance(row, AdditionalRow) and row.observation.identity.child_path is not None
+    )
+
+
 def set_selected(session: SyncSession, row, selected: bool):
     view = session.view
-    command = SetIncluded if isinstance(row, AuxiliaryRow) else SetApproval
+    command = SetIncluded if selection_uses_inclusion(row) else SetApproval
     return session.dispatch(command(view.session_id, view.revision, row.row_id, selected))
 
 
@@ -39,7 +45,7 @@ def additional_label(row, *, use_color: bool = False) -> str:
 def row_diagnostics(row):
     if isinstance(row, AdditionalRow):
         return ()
-    return row.diagnostics if isinstance(row, AuxiliaryRow) else (*row.observation.diagnostics, *row.diagnostics)
+    return row.diagnostics if isinstance(row, AuxiliaryRow) else (*row.observation.diagnostics, *row.diagnostics, *row.capability_diagnostics)
 
 
 def auxiliary_resolution(kind: str) -> str:
@@ -185,7 +191,7 @@ class SyncDeckCommandRunner:
             return
         print(":: Sync preview" if args.dry_run else ":: Sync")
         for unit in payload["sync_units"]:
-            selection = "approved" if unit["approved"] else "unapproved"
+            selection = ("selected" if unit["selected"] else "unselected") if unit["capability_diagnostics"] else ("approved" if unit["approved"] else "unapproved")
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {unit['identity']}")
             if unit["resolution"]:
                 print(f"      {render_sync_term(resolution_label(unit['resolution']), use_color=self._use_color)}")
@@ -195,7 +201,7 @@ class SyncDeckCommandRunner:
                 print(f"      repository {unit['primary_source_change']['kind']}")
             for effect in unit["effects"]:
                 print(f"      {effect['kind']}")
-            for item in unit["diagnostics"]:
+            for item in (*unit["diagnostics"], *unit["capability_diagnostics"]):
                 print(f"      {item['message']}")
             if unit["result"]:
                 print(f"      {render_sync_term(unit['result'], use_color=self._use_color)}")
@@ -259,6 +265,8 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "identity": identity,
             "policy": observation.effective_policy,
             "observation": observation.state,
+            "capability_diagnostics": [{"code": item.code, "message": item.message}
+                                       for item in row.capability_diagnostics] if row else [],
             "resolution_intent": intent,
             "resolution": proposal.intent if proposal else intent,
             "generation": proposal.generation if proposal else None,
@@ -267,7 +275,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "fallback_reason": row.fallback_reason if row else None,
             "capture": ("missing" if isinstance(proposal.capture, Missing) else "present") if proposal and proposal.capture is not None else None,
             "reconciliation": proposal.reconciliation if proposal else None,
-            "selected": bool(row and row.approved),
+            "selected": bool(row and (row.included if selection_uses_inclusion(row) else row.approved)),
             "approved": bool(row and row.approved),
             "materialization": materialization,
             "primary_source_change": primary_change_summary(proposal, observation.repository_path),

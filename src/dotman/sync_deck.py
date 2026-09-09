@@ -20,7 +20,7 @@ from textual.widgets import DataTable, OptionList, RichLog, Static
 
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import FilePresent, Missing
-from dotman.sync_deck_command import auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
+from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
 from dotman.sync_session import AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
 
 
@@ -113,7 +113,7 @@ class CommandDeck:
         row = self.focused_row
         if row is None or self.confirming:
             return
-        selected = row.included if isinstance(row, AuxiliaryRow) else row.approved
+        selected = row.included if selection_uses_inclusion(row) else row.approved
         result = set_selected(self.session, row, not selected if approved is None else approved)
         self.notice = result.reason if isinstance(result, CommandRejected) else ""
 
@@ -516,6 +516,8 @@ class SyncDeckApp(App[bool]):
                 target_name=identity.target_name, bound_profile=identity.bound_profile,
                 use_color=self.deck.use_color,
             )
+            if identity.child_path is not None:
+                label += "/" + identity.child_path
             table.add_row("", Text.from_ansi(label), row.observation.effective_policy, "", key=row.row_id)
         table.move_cursor(row=self.deck.focus)
 
@@ -525,7 +527,7 @@ class SyncDeckApp(App[bool]):
         if tuple(key.value for key in table.rows) != tuple(row.row_id for row in self.deck.session.view.rows):
             self.rebuild_workset()
         for row in self.deck.session.view.rows:
-            auxiliary = isinstance(row, AuxiliaryRow)
+            auxiliary = selection_uses_inclusion(row)
             selected = row.included if auxiliary else row.approved
             marker = "[x]" if selected else "[ ]" if {"set-included", "set-approval"}.intersection(row.allowed_commands) else "[-]"
             term = ("selected" if selected else "unselected") if auxiliary else ("approved" if selected else "unapproved")

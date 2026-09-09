@@ -102,8 +102,11 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   focused deck. No Editor runs automatically or under `--unattended`.
 - **Unsupported** means the session offers no resolution capability, not that
   observing the filesystem failed. **Observation failed** and **Proposal failed**
-  retain their diagnostic details below the table. Current Sync supports file
-  targets and auxiliary work; directory scopes cannot open a file Sync session.
+  retain their diagnostic details below the table. Directory scopes discover
+  independent canonical child rows. Their **Selection** toggles inclusion, not
+  Approval; child convergence is unavailable and never runs as file-target work.
+  Child capability diagnostics are separate from successful Observation.
+  Controls and exclusions apply symmetrically even for an exact child scope.
 - `--unattended` explicitly selects supported Proposals and auxiliary work and confirms execution.
   Missing terminals and `--json` do not grant consent. Required interactive
   decisions without a terminal fail rather than selecting work implicitly.
@@ -128,6 +131,9 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   (`status: unattempted`, `skip_reason: earlier-failure`). Units with successful
   repository changes but unattempted live work report `not-converged`, rather
   than `skipped`; previously completed units remain `converged`.
+  Each Sync Unit also exposes `capability_diagnostics`, separate from Observation
+  and materialization failures. For directory children, `selected` means inclusion
+  while `approved` remains false.
   `probe_work`, `directory_root_work` and `hook_work` contain canonical `identity`, `selected`,
   `directions` and `diagnostics`, without file/Proposal/Base fields.
   `summary.selected_auxiliary` counts directly selected auxiliary rows.

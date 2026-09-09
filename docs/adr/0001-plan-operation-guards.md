@@ -5,7 +5,12 @@ Dotman evaluates `guard_push` and `guard_pull` as non-interactive eligibility ru
 Repo, package, target, and directory path-rule guards now follow this planning contract.
 
 During Sync, both directional families advance in repository → package → target
-order. Each exit-100 outcome removes only that family's capability; configured
+order, followed by active named Path Rule Guards over policy-resolved
+directory children. A Path Rule Guard runs once per directional family, including
+when a matching child has a Missing endpoint. Exact child selection activates
+only the configured directions resolved for selected child identities at the
+ancestor and target scopes; full-target discovery retains potential child
+capabilities from its Path Rules. Each exit-100 outcome removes only that family's capability; configured
 Sync Policy and Base eligibility remain unchanged. One-sided file work without
 a surviving route remains a non-approvable diagnostic. Independently retained
 ancestor noop hooks survive lower-scope exclusions. Probe activity is evaluated

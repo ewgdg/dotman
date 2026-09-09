@@ -123,8 +123,11 @@ def materialize(
 
 
 def supports_proposal(unit: Observation) -> bool:
+    # Child effects require executable-state and structural publication support;
+    # file-target materialization cannot safely represent them.
     return (
         unit.state == "drifted" and not unit.diagnostics
+        and unit.identity.child_path is None
         and unit.configured_policy in ("push-only", "push-only-delete", "pull-only", "both")
         and unit.effective_policy in ("push-only", "push-only-delete", "pull-only", "both")
     )
@@ -161,6 +164,7 @@ class SessionRow:
     intent: ResolutionIntent | None = None
     fallback_reason: str | None = None
     diagnostics: tuple[Diagnostic, ...] = ()
+    capability_diagnostics: tuple[Diagnostic, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -462,10 +466,14 @@ class SyncSession:
                     else ("set-included",)
                     if unit.state == "drifted" and not unit.diagnostics
                     else (),
+                    capability_diagnostics=(Diagnostic(
+                        "directory-convergence-unavailable",
+                        "Directory child Observation is available; child convergence is not supported.",
+                    ),) if unit.identity.child_path is not None and unit.state == "drifted" and not unit.diagnostics else (),
                     allowed_intents=allowed_intents(unit),
                     intent=default_intent(unit),
                     fallback_reason=(unit.base.reason or "absent")
-                    if unit.effective_policy == "both" and unit.base.status != "usable" else None,
+                    if supports_proposal(unit) and unit.effective_policy == "both" and unit.base.status != "usable" else None,
                 )
                 for unit in observations
                 if unit.state != "directly-in-sync" or unit.diagnostics
@@ -535,6 +543,7 @@ class SyncSession:
                 )
             except OSError as exc:
                 return SessionOpenFailed(Diagnostic("observation-failed", str(exc)))
+            resolved_inputs = (observed.inputs, resolved_inputs[1])
             session = cls(observations, preview=preview, auxiliary=auxiliary, event_sink=event_sink)
             session._run_noop = run_noop
             session._operation_lock = lock
@@ -564,7 +573,7 @@ class SyncSession:
                     observation.git.primary_clean,
                 )
                 for observation in observations
-                if observation.configured_policy in ("pull-only", "both") and not observation.diagnostics
+                if observation.identity.child_path is None and observation.configured_policy in ("pull-only", "both") and not observation.diagnostics
             }
             session._publication_metadata = publication_metadata
             session._repository_metadata = repository_metadata
@@ -627,7 +636,7 @@ class SyncSession:
                 else replace(row, approved=command.approved)
                 if isinstance(row, AdditionalRow)
                 else replace(row, included=command.approved)
-                if isinstance(row, AuxiliaryRow) and "set-included" in row.allowed_commands
+                if (isinstance(row, AuxiliaryRow) or isinstance(row, SessionRow) and row.observation.identity.child_path is not None) and "set-included" in row.allowed_commands
                 else row
                 for row in view.rows
             )

@@ -1,4 +1,4 @@
-"""Frozen file Observation; no review state, Approval or execution plans."""
+"""Frozen independent Sync Unit Observation; no review state, Approval or execution plans."""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ from typing import Literal
 
 from dotman import planning, projection
 from dotman.file_access import read_bytes
-from dotman.manifest import resolve_sync_policy
-from dotman.models import ResolvedSyncScope, ResolvedSyncTarget
-from dotman.planning_guards import evaluate_directional_guards
+from dotman.manifest import resolve_sync_policy, sync_policy_allows_operation
+from dotman.models import ResolvedSyncScope, ResolvedSyncTarget, target_path_rule_matches
+from dotman.planning_guards import evaluate_directional_guards, evaluate_directory_path_rule_guards
+from dotman.sync_directory import census_directory, child_metadata
 from dotman.sync_base_lifecycle import (
     BaseInputs,
     BaseProfileContext,
@@ -75,6 +76,7 @@ class Observation:
     chmod: str | None = None
     live_is_symlink: bool = False
     live_mode: int | None = None
+    repository_executable: bool | None = None
     diagnostics: tuple[Diagnostic, ...] = ()
     repository_path: Path | None = None
     live_path: Path | None = None
@@ -122,9 +124,7 @@ def _resolve_inputs(
     context: planning.PlanningContext,
     scope: ResolvedSyncScope,
 ) -> tuple[_ResolvedInputs, dict[str, list[planning.PackagePlanningInput]]]:
-    if any(target.child_path is not None for target in scope.targets):
-        raise ValueError("file SyncSession requires file-target scopes")
-    selected = set(scope.targets)
+    selected = {replace(target, child_path=None) for target in scope.targets}
     inputs = {}
     directional = {}
     for direction in ("push", "pull"):
@@ -139,8 +139,8 @@ def _resolve_inputs(
                 entry for entry in item.target_metadata if _identity(entry) in selected
             ]
             for entry in metadata:
-                if entry.target.target_type == "directory":
-                    raise ValueError("file SyncSession requires file targets")
+                if entry.target.target_type is None and (entry.repo_path.is_dir() or entry.live_path.is_dir()):
+                    entry = replace(entry, target=replace(entry.target, target_type="directory"))
                 inputs.setdefault(_identity(entry), (item, entry))
             # Empty selected scopes may retain independently noop-eligible hooks.
             narrowed.append(replace(item, target_metadata=metadata))
@@ -148,7 +148,30 @@ def _resolve_inputs(
     if inputs.keys() != selected:
         raise ValueError("resolved Sync scope no longer matches selected configuration")
     # Directional metadata collection must not move pull-only files to the end.
-    ordered = {identity: inputs[identity] for identity in scope.targets}
+    ordered = {replace(identity, child_path=None): inputs[replace(identity, child_path=None)] for identity in scope.targets}
+    # Full targets need every potentially configured child direction. Exact
+    # child scopes already know their policies, so unrelated rules must not
+    # activate ancestor or target Guards for an unselected direction.
+    for identity, (item, metadata) in ordered.items():
+        if metadata.target.target_type != "directory":
+            continue
+        selected_paths = {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
+        if None in selected_paths:
+            policies = {resolve_sync_policy(package=metadata.package, target=metadata.target)}
+            policies.update(rule.sync_policy for rule in metadata.path_rules if rule.sync_policy is not None)
+        else:
+            policies = {
+                resolve_sync_policy(package=metadata.package, target=child_metadata(metadata, path).target)
+                for path in selected_paths
+            }
+        for direction, candidates in directional.items():
+            index = next(index for index, candidate in enumerate(candidates) if candidate.selection == item.selection)
+            candidate = candidates[index]
+            allowed = any(sync_policy_allows_operation(policy, operation=direction) for policy in policies)
+            targets = [entry for entry in candidate.target_metadata if allowed or _identity(entry) != identity]
+            if allowed and not any(_identity(entry) == identity for entry in targets):
+                targets.append(replace(metadata, command_env={**metadata.command_env, "DOTMAN_OPERATION": direction}))
+            candidates[index] = replace(candidate, target_metadata=targets)
     return ordered, directional
 
 
@@ -165,6 +188,8 @@ def _base_unit(
         BaseInputs(
             render=metadata.render_command or "raw",
             capture=metadata.capture_command or "raw",
+            path_rules=tuple(rule.name for rule in metadata.path_rules
+                             if identity.child_path is not None and target_path_rule_matches(identity.child_path, rule.pattern)),
             profile_context=BaseProfileContext(item.package_context.context),
             file_symlink_mode=context.config.file_symlink_mode,
             dir_symlink_mode=context.config.dir_symlink_mode,
@@ -206,8 +231,9 @@ def _observe_file(
             ),
         )
     try:
-        repository, _link, _mode = _read_endpoint(metadata.repo_path, repository=True)
-        observation = replace(observation, repository=repository)
+        repository, _link, repository_mode = _read_endpoint(metadata.repo_path, repository=True)
+        observation = replace(observation, repository=repository,
+                              repository_executable=projection.file_is_executable(repository_mode) if repository_mode is not None and identity.child_path is not None else None)
         live, live_is_symlink, live_mode = _read_endpoint(
             metadata.live_path,
             repository=False,
@@ -246,12 +272,19 @@ def _observe_file(
                     repo_side=False,
                 )
             )
+        exact_mode_active = effective == "push-only" or (identity.child_path is not None and effective == "both")
         mode_agrees = (
-            effective != "push-only"
+            not exact_mode_active
             or isinstance(compared_repo, Missing)
             or metadata.chmod is None
             or live_mode == int(metadata.chmod, 8)
         )
+        if (identity.child_path is not None and effective != "push-only-delete"
+                and repository_mode is not None and live_mode is not None
+                and not (effective == "push-only" and metadata.chmod is not None)):
+            mode_agrees = mode_agrees and (
+                projection.file_is_executable(repository_mode) == projection.file_is_executable(live_mode)
+            )
         return replace(
             observation,
             state="directly-in-sync"
@@ -266,11 +299,20 @@ def _observe_file(
         )
 
 
+def _effective_policy(configured: str, push: bool, pull: bool) -> str:
+    if push and pull:
+        return "both"
+    if push:
+        return "push-only-delete" if configured == "push-only-delete" else "push-only"
+    return "pull-only" if pull else "no-route"
+
+
 @dataclass(frozen=True)
 class ObservedScope:
     observations: tuple[Observation, ...]
     directional: dict[str, list[planning.PackagePlanningInput]]
     hook_scopes: dict[str, frozenset[str]]
+    inputs: _ResolvedInputs
 
 
 def observe_scope(
@@ -282,10 +324,11 @@ def observe_scope(
     resolved_inputs: tuple[_ResolvedInputs, dict[str, list[planning.PackagePlanningInput]]] | None = None,
 ) -> ObservedScope:
     inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(context, scope)
-    inputs = {
-        identity: value for identity, value in inputs.items()
-        if value[1].probe_command is None
-    }
+    probe_inputs = {identity: value for identity, value in inputs.items() if value[1].probe_command is not None}
+    inputs = {identity: value for identity, value in inputs.items() if identity not in probe_inputs}
+    directory_inputs = {identity: value for identity, value in inputs.items() if value[1].target.target_type == "directory"}
+    ordered_inputs = inputs
+    inputs = {identity: value for identity, value in inputs.items() if identity not in directory_inputs}
     units = {
         identity: _base_unit(context, identity, item, metadata)
         for identity, (item, metadata) in inputs.items()
@@ -353,22 +396,51 @@ def observe_scope(
                 git_failures[repo_name] = Diagnostic("git-failed", str(exc))
 
         observations = []
+        expanded_inputs = {**inputs, **probe_inputs}
+        for identity, (item, metadata) in directory_inputs.items():
+            selected_paths = {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
+            census = census_directory(
+                metadata, follow_live_directories=context.config.dir_symlink_mode == "follow",
+                selected_paths=tuple(sorted(path for path in selected_paths if path is not None)),
+            )
+            children = {
+                relative: (replace(identity, child_path=relative or None), child_metadata(metadata, relative), failures)
+                for relative, failures in census.entries
+                if None in selected_paths or relative in selected_paths
+            }
+            child_admitted = {}
+            for direction in ("push", "pull"):
+                candidates = {
+                    relative for relative, (_child, child, _failures) in children.items()
+                    if identity in admitted[direction] and sync_policy_allows_operation(
+                        resolve_sync_policy(package=child.package, target=child.target), operation=direction)
+                }
+                child_admitted[direction], _skips = evaluate_directory_path_rule_guards(
+                    command_runtime=context.projection.command_runtime, path_rules=metadata.path_rules,
+                    candidate_paths=candidates, operation=direction, context=item.package_context.context,
+                    target_env={**metadata.command_env, "DOTMAN_OPERATION": direction},
+                    repo_name=identity.repo, package_id=identity.package_id,
+                    bound_profile=identity.bound_profile, target_name=identity.target_name,
+                )
+            for relative, (child_identity, child, failures) in children.items():
+                expanded_inputs[child_identity] = (item, child)
+                unit = _base_unit(context, child_identity, item, child)
+                effective = _effective_policy(unit.configured_policy, relative in child_admitted["push"], relative in child_admitted["pull"])
+                base = BaseEvidence("unavailable" if unit.eligible else "not-applicable", "absent" if unit.eligible else "ineligible")
+                if failures:
+                    observation = Observation(
+                        child_identity, "observation-failed", unit.configured_policy, effective,
+                        unit.inputs, child.compare_repo, child.compare_live, GitEvidence(), base,
+                        chmod=child.chmod, repository_path=child.repo_path, live_path=child.live_path,
+                        diagnostics=tuple(Diagnostic(failure.code, failure.message) for failure in failures),
+                    )
+                else:
+                    observation = _observe_file(context, child_identity, item, child, unit, effective, GitEvidence(), base)
+                observations.append(observation)
         for identity, (item, metadata) in inputs.items():
             unit = units[identity]
             push, pull = identity in admitted["push"], identity in admitted["pull"]
-            effective = (
-                "both"
-                if push and pull
-                else (
-                    "push-only-delete"
-                    if unit.configured_policy == "push-only-delete"
-                    else "push-only"
-                )
-                if push
-                else "pull-only"
-                if pull
-                else "no-route"
-            )
+            effective = _effective_policy(unit.configured_policy, push, pull)
             lifecycle = lifecycles.get(identity.repo)
             fact = frozen.get(identity)
             git_evidence = (
@@ -423,6 +495,8 @@ def observe_scope(
                         ),
                     )
             observations.append(observation)
+        order = {identity: index for index, identity in enumerate(ordered_inputs)}
+        observations.sort(key=lambda unit: (order[replace(unit.identity, child_path=None)], unit.identity.child_path or ""))
         return ObservedScope(tuple(observations), directional, {
             direction: value.hook_scopes for direction, value in eligibility.items()
-        })
+        }, expanded_inputs)

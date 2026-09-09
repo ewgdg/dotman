@@ -70,6 +70,7 @@ Current responsibility split:
 - `planning.py` — high-level plan orchestration through `PlanningContext`, including the top-level operation-plan wrapper used for repo-scoped hooks
 - `planning_guards.py` — repo/package-instance/target/path-rule planning eligibility and guard diagnostics
 - `collisions.py` — tracked-target winner resolution and conflict checks
+- `sync_directory.py` — symmetric control-aware census and identity-derived child metadata; no aggregate payload or publication
 - `projection.py` — target projection and file/directory action planning through `ProjectionContext`
 - `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
 - `sync_session.py` — one-shot file and auxiliary session, immutable views, semantic commands, typed dispatch/results and lifecycle events
@@ -136,6 +137,16 @@ boundary; `direct_agreement` is the fresh-Observation boundary; `complete`
 consumes explicit Approval and final unit-owned effect results at the earliest
 ordered completion boundary. Acknowledgment failures are typed results with
 `converged = false`; the store transaction preserves the old record.
+
+The Sync Observation adapter expands selected directory scopes into canonical
+children after target Guards. It reuses `IgnoreMatcher`, Path Rule composition,
+and directional Path Rule Guard evaluation; it does not reuse aggregate
+one-sided directory plans. The census retains local diagnostics and combined
+controls before narrowing to selected identities. Any ancestor discovery failure
+propagates to existing and explicitly selected descendants before payload reads.
+Root metadata remains only a
+hook/discovery scope. Expanded child inputs cannot enter the file-only Proposal
+and Base execution adapters; child rows expose a distinct capability diagnostic.
 
 Session/operation adapters own the manager lock, exclusions, actual Observation,
 final effect execution, and invoking these boundaries in order. Base inspection
