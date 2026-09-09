@@ -96,7 +96,7 @@ def test_unsupported_endpoint_does_not_block_approved_interactive_peer(
             bad = session.view.rows[0]
             assert bad.kind == "diagnostic"
             assert bad.observation.state == "observation-failed"
-            assert bad.observation.diagnostics[0].code == "observation-failed"
+            assert bad.observation.diagnostics[0].code == "unsupported-entry"
             assert bad.allowed_commands == ()
             command(session, SetApproval, "main:app.good", True)
             result = session.execute().result

@@ -447,6 +447,8 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "Directory Root Work": ("1", "36"),
     "Additional Source Change": ("1", "36"),
     "Hook Work": ("1", "36"),
+    "Link replacement authorized": ("1", "32"),
+    "Link replacement requires authorization": ("33",),
     "approved": ("1", "32"),
     "unapproved": ("2",),
     "Use repository": ("1", "36"),

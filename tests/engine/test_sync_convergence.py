@@ -136,7 +136,7 @@ def test_prompt_link_replacement_is_typed_unapproved_materialization_failure(tmp
     with open_session(engine) as session:
         result = command(session, SetApproval, "main:app.unit", True)
         assert not result.view.rows[0].approved
-        assert result.view.rows[0].diagnostics[0].code == "materialization-failed"
+        assert result.view.rows[0].diagnostics[0].code == "symlink-authorization-required"
         assert command(session, Preview).result.status == "failed"
     assert link.is_symlink()
     assert referent.read_bytes() == b"live"
@@ -251,7 +251,7 @@ def test_unapproval_preserves_materialization_failure(tmp_path, monkeypatch):
     with open_session(engine) as session:
         failed = command(session, SetApproval, "main:app.unit", True)
         diagnostics = failed.view.rows[0].diagnostics
-        assert diagnostics[0].code == "materialization-failed"
+        assert diagnostics[0].code == "symlink-authorization-required"
         unapproved = command(session, SetApproval, "main:app.unit", False)
         assert unapproved.view.rows[0].diagnostics == diagnostics
         assert command(session, Preview).result.status == "failed"

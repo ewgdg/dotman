@@ -35,11 +35,12 @@ from dotman.sync_repository_apply import (
 
 from dotman.sync_editor import AdditionalEdit, EditorCommandFailed, edit_sources, freeze_additional_sources, repository_workspace
 
+from dotman.sync_path_policy import SyncPathError
 
 ResolutionIntent = Literal["use-repository", "use-live", "merge"]
 
 
-CommandName = Literal["batch-set-approval", "prepare-source-review", "edit-proposal", "set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
+CommandName = Literal["authorize-symlink-replacement", "batch-set-approval", "prepare-source-review", "edit-proposal", "set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,7 @@ def materialize(
     intent: ResolutionIntent | None = None,
     render: Callable[[Observation, SyncBasePayload], SyncBasePayload] | None = None,
     merge: Callable[[Observation, SyncBasePayload], SyncBasePayload] | None = None,
+    symlink_authorized: bool = False,
 ) -> Proposal:
     intent = intent or ("use-live" if observation.effective_policy == "pull-only" else "use-repository")
     repository = observation.repository
@@ -133,7 +135,11 @@ def materialize(
         and observation.inputs.file_symlink_mode == "prompt"
         and any(effect.kind != "delete" for effect in effects)
     ):
-        raise ValueError("Live symlink replacement requires explicit authorization")
+        if not symlink_authorized:
+            raise SyncPathError("symlink-authorization-required", "Live symlink replacement requires explicit authorization")
+        # A mode-only publication must replace the link too, using frozen bytes.
+        if not any(effect.kind == "write" for effect in effects):
+            effects.insert(0, PublicationEffect("write", path, content=live.content))
     return Proposal(repository, live, primary, tuple(effects), intent, captured,
                     "three-way merged repository outcome" if intent == "merge" else
                     "captured repository outcome" if intent == "use-live" else "frozen repository outcome")
@@ -171,6 +177,7 @@ class SessionRow:
     observation: Observation
     allowed_commands: tuple[CommandName, ...]
     approved: bool = False
+    symlink_authorized: bool = False
     editor_io: Literal["tty", "pipe"] = "tty"
     additional_changes: tuple[AdditionalEdit, ...] = ()
     proposal: Proposal | None = None
@@ -260,6 +267,13 @@ class Abort:
 
 
 @dataclass(frozen=True)
+class AuthorizeSymlinkReplacement:
+    session_id: str
+    revision: int
+    row_id: str
+
+
+@dataclass(frozen=True)
 class SetApproval:
     session_id: str
     revision: int
@@ -309,7 +323,7 @@ class ProposalEdit:
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
-SessionCommand = BatchSetApproval | PrepareSourceReview | EditProposal | SetResolutionIntent | RetryMaterialization | SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
+SessionCommand = AuthorizeSymlinkReplacement | BatchSetApproval | PrepareSourceReview | EditProposal | SetResolutionIntent | RetryMaterialization | SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
 
 
 @dataclass(frozen=True)
@@ -478,7 +492,7 @@ class SyncSession:
                     else "diagnostic",
                     unit.state == "drifted" and not unit.diagnostics,
                     unit,
-                    ("set-included", "set-approval", "prepare-proposal-review", "set-resolution-intent", "retry-materialization", "edit-proposal")
+                    (("authorize-symlink-replacement",) if unit.live_is_symlink and unit.inputs.file_symlink_mode == "prompt" and unit.effective_policy in ("push-only", "both") else ()) + ("set-included", "set-approval", "prepare-proposal-review", "set-resolution-intent", "retry-materialization", "edit-proposal")
                     if supports_proposal(unit)
                     else ("set-included",)
                     if unit.state == "drifted" and not unit.diagnostics
@@ -531,6 +545,7 @@ class SyncSession:
                     selected_inputs[item.selection.identity].target_metadata.append(target)
                 publication_metadata = retain_directional_hooks(prepare_publication(
                     tuple(selected_inputs.values()), file_symlink_mode=context.config.file_symlink_mode,
+                    dir_symlink_mode=context.config.dir_symlink_mode,
                 ), observed.hook_scopes["push"])
                 # Guards gate automatic flow, not deliberate Editor repository
                 # writes. Freeze all destination-stage hooks; execution activates
@@ -540,6 +555,7 @@ class SyncSession:
                     resolved_inputs[0], observed.directional,
                     {"pull": retain_directional_hooks(repository_metadata, observed.hook_scopes["pull"]),
                      "push": publication_metadata},
+                    dir_symlink_mode=context.config.dir_symlink_mode,
                     command_runtime=context.projection.command_runtime, run_noop=run_noop,
                 )
                 obsolete_bases = cls._freeze_obsolete_bases(context, observed) if not preview else ()
@@ -641,7 +657,7 @@ class SyncSession:
 
     def _dispatch(self, command: SessionCommand) -> CommandAccepted | CommandRejected:
         view = self.view
-        if type(command) not in (BatchSetApproval, PrepareSourceReview, EditProposal, SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
+        if type(command) not in (AuthorizeSymlinkReplacement, BatchSetApproval, PrepareSourceReview, EditProposal, SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
             return CommandRejected(view, "invalid")
         if view.terminal:
             return CommandRejected(view, "terminal")
@@ -732,7 +748,7 @@ class SyncSession:
             )
             self._emit(SessionChanged(self.view))
             return result
-        if isinstance(command, (SetApproval, PrepareProposalReview, SetResolutionIntent, RetryMaterialization)):
+        if isinstance(command, (AuthorizeSymlinkReplacement, SetApproval, PrepareProposalReview, SetResolutionIntent, RetryMaterialization)):
             if type(command.row_id) is not str or (
                 isinstance(command, SetApproval) and type(command.approved) is not bool
             ):
@@ -741,11 +757,14 @@ class SyncSession:
             if row is None:
                 return CommandRejected(view, "unknown-row")
             name = {
+                AuthorizeSymlinkReplacement: "authorize-symlink-replacement",
                 SetApproval: "set-approval", PrepareProposalReview: "prepare-proposal-review",
                 SetResolutionIntent: "set-resolution-intent", RetryMaterialization: "retry-materialization",
             }[type(command)]
             if name not in row.allowed_commands:
                 return CommandRejected(view, "disallowed")
+            if isinstance(command, AuthorizeSymlinkReplacement):
+                row = replace(row, symlink_authorized=True, proposal=None, diagnostics=())
             if isinstance(command, SetResolutionIntent):
                 if command.intent not in ("use-repository", "use-live", "merge"):
                     return CommandRejected(view, "invalid")
@@ -775,7 +794,7 @@ class SyncSession:
                         else "reconciliation-failed", str(exc)),)
                     approved = False
                 except (ValueError, OSError) as exc:
-                    diagnostics = (Diagnostic("materialization-failed", str(exc)),)
+                    diagnostics = (Diagnostic(exc.code if isinstance(exc, SyncPathError) else "materialization-failed", str(exc)),)
                     approved = False
             updated = replace(row, approved=approved, proposal=proposal, diagnostics=diagnostics)
             self._view = replace(view, revision=view.revision + 1, rows=tuple(
@@ -899,7 +918,7 @@ class SyncSession:
                     code = ("capture-failed" if isinstance(exc, CaptureError) else
                             "reconciliation-conflict" if isinstance(exc, ReconciliationConflict) else
                             "reconciliation-failed" if isinstance(exc, ReconciliationFailed) else
-                            "materialization-failed")
+                            exc.code if isinstance(exc, SyncPathError) else "materialization-failed")
                     row = replace(row, approved=False, proposal=None, diagnostics=(Diagnostic(code, str(exc)),))
             rows.append(row)
         self._view = replace(self.view, rows=tuple(rows))
@@ -916,7 +935,7 @@ class SyncSession:
                 observation = replace(observation, comparison_repository=self._render(observation, observation.repository))
             proposal = materialize(
                 observation, intent=row.intent, capture=self._capture,
-                render=self._render, merge=self._merge,
+                render=self._render, merge=self._merge, symlink_authorized=row.symlink_authorized,
             )
             return replace(proposal, generation=self._next_generation(row.row_id), additional_changes=self._row_additional(row))
         repository, generation = self._edited_outcomes[row.row_id]
@@ -929,7 +948,7 @@ class SyncSession:
             live = observation.live
         proposal = materialize(
             replace(observation, repository=repository, comparison_repository=live),
-            intent="use-repository", render=lambda *_: live,
+            intent="use-repository", render=lambda *_: live, symlink_authorized=row.symlink_authorized,
         )
         return replace(
             proposal, primary_source_change=repository if repository != observation.repository else None,
@@ -1320,7 +1339,8 @@ class SyncSession:
         result = execute_publication(
             self._publication_metadata,
             tuple(PublicationUnit(
-                row.row_id, row.observation.identity, row.proposal.publication_effects
+                row.row_id, row.observation.identity, row.proposal.publication_effects,
+                symlink_authorized=row.symlink_authorized,
             ) for row in selected) + self._selected_root_work(),
             complete=complete,
             snapshot_config=self._context.config.snapshots,
@@ -1348,7 +1368,7 @@ class SyncSession:
         units = {
             unit.row_id: (
                 "converged" if unit.status == "ok" else "skipped" if unit.status == "skipped" else code,
-                () if unit.error is None else (Diagnostic(code, unit.error),),
+                () if unit.error is None else (Diagnostic(unit.diagnostic_code or code, unit.error),),
             )
             for unit in result.units
         }

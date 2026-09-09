@@ -276,6 +276,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "reconciliation": proposal.reconciliation if proposal else None,
             "selected": bool(row and (row.included if selection_uses_inclusion(row) else row.approved)),
             "approved": bool(row and row.approved),
+            "symlink_replacement_authorized": bool(row and row.symlink_authorized),
             "materialization": materialization,
             "primary_source_change": primary_change_summary(proposal, observation.repository_path),
             "effects": [effect_summary(effect) for effect in proposal.publication_effects] if proposal else [],

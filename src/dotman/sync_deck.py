@@ -21,7 +21,7 @@ from textual.widgets import DataTable, OptionList, RichLog, Static
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
-from dotman.sync_session import AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
+from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
 
 
 def _frozen_difference(
@@ -213,6 +213,9 @@ class CommandDeck:
                  f"  Primary Source Change: {primary['kind'] if primary else 'none'}",
                  f"  Capture: {('missing' if isinstance(proposal.capture, Missing) else 'present') if proposal and proposal.capture is not None else 'pending' if capture_required else 'not required'}",
                  f"  Reconciliation: {proposal.reconciliation if proposal else 'pending'}"]
+        if "authorize-symlink-replacement" in row.allowed_commands:
+            term = "Link replacement authorized" if row.symlink_authorized else "Link replacement requires authorization"
+            lines.append(f"  {render_sync_term(term, use_color=self.use_color)} (L)")
         base = row.observation.base
         if base.reason:
             lines.append(f"  Base reason: {base.reason}")
@@ -357,6 +360,7 @@ class SyncDeckApp(App[bool]):
         ],
         Binding("r,R", "resolution", "Resolution", priority=True),
         Binding("t,T", "retry", "Retry", priority=True),
+        Binding("l,L", "authorize_link", "Authorize link replacement", priority=True),
         Binding("e,E", "editor", "Editor", priority=True),
         Binding("space", "approve", "Select", priority=True),
         Binding("a,A", "approve_all", "Select all", priority=True),
@@ -567,6 +571,9 @@ class SyncDeckApp(App[bool]):
             help_text = "Esc return · Space Approval · E edit · T retry · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
         else:
             help_text = "Esc abort · X confirm · Space mark · Enter view · R intent · E edit · T retry"
+        row = self.deck.focused_row
+        if row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming:
+            help_text += " · L authorize link replacement"
         self.query_one("#help", Static).update(help_text)
 
     def update_detail(self) -> None:
@@ -752,6 +759,19 @@ class SyncDeckApp(App[bool]):
         if row is None or "edit-proposal" not in row.allowed_commands:
             return
         self.materialize(self.deck.edit, editor_io=row.editor_io)
+
+    def action_authorize_link(self) -> None:
+        if self.busy or self.deck.confirming or self.query_one(OptionList).display:
+            return
+        self.sync_focus()
+        row = self.deck.focused_row
+        if row is None or "authorize-symlink-replacement" not in row.allowed_commands:
+            return
+        def authorize():
+            view = self.deck.session.view
+            self.deck.session.dispatch(AuthorizeSymlinkReplacement(view.session_id, view.revision, row.row_id))
+            self.deck.notice = "Link replacement authorized; select the Proposal to approve."
+        self.materialize(authorize)
 
     def action_retry(self) -> None:
         if self.busy:

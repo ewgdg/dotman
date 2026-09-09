@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Literal, Protocol, Sequence
 
+from dotman.sync_path_policy import SyncPathError
 from dotman import file_access
 from dotman.command_runtime import INTERRUPTED_EXIT_CODE, CommandRuntime, command_runtime_session, current_command_runtime
 from dotman.elevation import elevation_broker_session
@@ -34,6 +35,7 @@ class PublicationUnit:
     identity: ResolvedSyncTarget
     effects: tuple[Effect, ...]
     auxiliary: bool = False
+    symlink_authorized: bool = False
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,7 @@ class PublicationUnitResult:
     row_id: str
     status: Literal["ok", "failed", "skipped"]
     error: str | None = None
+    diagnostic_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,7 +63,7 @@ class PublicationResult:
 
 
 def prepare_publication(
-    inputs: Sequence[PackagePlanningInput], *, file_symlink_mode: str = "prompt",
+    inputs: Sequence[PackagePlanningInput], *, file_symlink_mode: str = "prompt", dir_symlink_mode: str = "fail",
 ) -> PublicationMetadata:
     """Freeze only execution metadata and hooks at session open, never payloads."""
     packages = []
@@ -75,7 +78,7 @@ def prepare_publication(
                 command_cwd=target.command_cwd,
                 # One static target may supply metadata to both Sync stages.
                 command_env={**target.command_env, "DOTMAN_OPERATION": "push"},
-                file_symlink_mode=file_symlink_mode,
+                file_symlink_mode=file_symlink_mode, dir_symlink_mode=dir_symlink_mode,
             )
             for target in item.target_metadata
         ]
@@ -151,9 +154,10 @@ def _hook_scopes(
 
 
 class _PublicationStopped(Exception):
-    def __init__(self, message: str, *, interrupted: bool = False):
+    def __init__(self, message: str, *, interrupted: bool = False, diagnostic_code: str | None = None):
         super().__init__(message)
         self.interrupted = interrupted
+        self.diagnostic_code = diagnostic_code
 
 
 def _failed_step(step: ExecutionStep, error: BaseException) -> ExecutionStepResult:
@@ -165,29 +169,55 @@ def _failed_step(step: ExecutionStep, error: BaseException) -> ExecutionStepResu
     )
 
 
-def _effect_path(effect: Effect, target: TargetPlan) -> Path:
+def _effect_path(effect: Effect, target: TargetPlan, *, symlink_authorized: bool = False) -> Path:
     if effect.path != target.live_path:
         raise ValueError("Publication effect does not match its frozen live endpoint")
     path = effect.path
+    directory_scope = target.target_kind == "directory" and target.child_path is None
+    follow_link = target.dir_symlink_mode == "follow" if directory_scope else target.file_symlink_mode == "follow"
+    followed_leaf = path.is_symlink() and follow_link
+    if target.target_kind == "directory":
+        root = directory_root(path, target.child_path) if target.child_path else path
+        # Check only declared directory scopes: followed referents intentionally
+        # need not remain beneath the lexical root.
+        ancestors = (root,)
+        if target.child_path:
+            ancestors += tuple(root / parent for parent in reversed(Path(target.child_path).parents)
+                               if parent != Path("."))
+        for parent in ancestors:
+            if parent.is_symlink() and target.dir_symlink_mode != "follow":
+                raise SyncPathError("directory-symlink", f"Live directory symlink requires follow mode: {parent}")
     if path.is_symlink():
-        if target.file_symlink_mode == "follow":
+        if follow_link:
             # A followed link may retarget after Observation; policy follows its
             # current referent without adopting any newly observed content.
-            path = path.resolve(strict=False)
-        elif effect.kind != "delete":
-            raise ValueError(f"Live symlink replacement is not authorized: {path}")
+            try:
+                path = path.resolve(strict=False)
+            except (OSError, RuntimeError) as exc:
+                raise SyncPathError("symlink-chain", f"Cannot follow live link: {effect.path}: {exc}") from exc
+        elif effect.kind != "delete" and symlink_authorized:
+            try:
+                referent = path.stat()
+            except (OSError, RuntimeError) as exc:
+                raise SyncPathError("symlink-referent", f"Live link requires a regular-file referent: {path}") from exc
+            if not stat.S_ISREG(referent.st_mode):
+                raise SyncPathError("symlink-referent", f"Live link requires a regular-file referent: {path}")
+        elif effect.kind != "delete" and not symlink_authorized:
+            raise SyncPathError("symlink-authorization-required", f"Live symlink replacement is not authorized: {path}")
     try:
         shape = path.lstat()
     except (FileNotFoundError, NotADirectoryError):
         if effect.kind == "chmod":
             raise ValueError(f"Cannot chmod missing live endpoint: {path}") from None
         return path
-    if target.target_kind == "directory" and target.child_path is None and stat.S_ISDIR(shape.st_mode) and effect.kind == "chmod":
+    if directory_scope:
+        if stat.S_ISDIR(shape.st_mode) and effect.kind == "chmod":
+            return path
+        raise SyncPathError("unsupported-entry", f"Publication expects a directory root: {path}")
+    if target.child_path is not None and not followed_leaf and stat.S_ISDIR(shape.st_mode) and effect.kind == "write":
         return path
-    if target.child_path is not None and stat.S_ISDIR(shape.st_mode) and effect.kind == "write":
-        return path
-    if not stat.S_ISREG(shape.st_mode) and not (effect.kind == "delete" and stat.S_ISLNK(shape.st_mode)):
-        raise ValueError(f"Publication expects a regular file: {path}")
+    if not stat.S_ISREG(shape.st_mode) and not (stat.S_ISLNK(shape.st_mode) and (effect.kind == "delete" or symlink_authorized and effect.kind == "write")):
+        raise SyncPathError("unsupported-entry", f"Publication expects a regular file: {path}")
     return path
 
 
@@ -360,7 +390,7 @@ def execute_publication(
             for target in _unit_targets(metadata, package, scope_target):
                 unit = by_identity.get(_target_identity(package, target))
                 if unit is not None and unit.effects:
-                    snapshot_endpoints.append((unit.effects[0], target))
+                    snapshot_endpoints.append((unit.effects[0], target, unit.symlink_authorized))
                     targets.append(replace(target, action="delete" if unit.effects[0].kind == "delete" else "update"))
         if targets:
             snapshot_packages.append(replace(package, target_plans=targets))
@@ -384,23 +414,26 @@ def execute_publication(
                 else:
                     effect = unit.effects[effect_positions[unit.row_id]]
                     effect_positions[unit.row_id] += 1
-                    path = _effect_path(effect, step.target_plan)
                     if not snapshot_started:
                         try:
                             if snapshot_config.enabled:
                                 # Snapshot reads the whole frozen set; reject unsafe
                                 # later endpoints before snapshot code can read them.
-                                for initial_effect, target in snapshot_endpoints:
-                                    _effect_path(initial_effect, target)
+                                for initial_effect, target, authorized in snapshot_endpoints:
+                                    _effect_path(initial_effect, target, symlink_authorized=authorized)
                             snapshot = create_push_snapshot(snapshot_packages, snapshot_config)
                         except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
                             failure = _failed_step(replace(step, kind="snapshot", action="create"), exc)
                             steps.append(failure)
                             steps.extend(unattempted_steps((step,)))
-                            raise _PublicationStopped(failure.error, interrupted=failure.status == "interrupted") from exc
+                            raise _PublicationStopped(failure.error, interrupted=failure.status == "interrupted",
+                                                      diagnostic_code=exc.code if isinstance(exc, SyncPathError) else None) from exc
                         snapshot_started = True
+                    # Snapshot IO is a separate access; do not retain a referent
+                    # resolved before it when applying this frozen effect.
+                    path = _effect_path(effect, step.target_plan, symlink_authorized=unit.symlink_authorized)
                     if effect.kind == "write":
-                        root = directory_root(path, step.target_plan.child_path)
+                        root = directory_root(effect.path, step.target_plan.child_path)
                         if step.target_plan.child_path is not None and not root.exists():
                             root.mkdir(parents=True)
                             if step.target_plan.chmod is not None:
@@ -409,7 +442,10 @@ def execute_publication(
                             file_access.remove_empty_directory_tree(path)
                         file_access.write_bytes_atomic(path, effect.content)
                     elif effect.kind == "delete":
-                        file_access.delete_path_and_prune_empty_parents(path, root=directory_root(path, step.target_plan.child_path))
+                        # Following a leaf grants endpoint mutation, not ownership
+                        # of its external parent directories.
+                        prune_root = path.parent if path != effect.path else directory_root(effect.path, step.target_plan.child_path)
+                        file_access.delete_path_and_prune_empty_parents(path, root=prune_root)
                     else:
                         file_access.chmod(path, effect.mode)
                     if unit.auxiliary:
@@ -428,7 +464,7 @@ def execute_publication(
                     isinstance(exc, _PublicationStopped) and exc.interrupted)
                 error = str(exc) or "Publication interrupted"
                 if unit is not None:
-                    results[unit.row_id] = PublicationUnitResult(unit.row_id, "failed", error)
+                    results[unit.row_id] = PublicationUnitResult(unit.row_id, "failed", error, exc.code if isinstance(exc, SyncPathError) else exc.diagnostic_code if isinstance(exc, _PublicationStopped) else None)
                 steps.extend(unattempted_steps(planned[index + 1:]))
                 break
         if snapshot is not None:

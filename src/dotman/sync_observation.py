@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+from dotman.sync_path_policy import SyncPathError
 from dotman import planning, projection
 from dotman.file_access import read_bytes
 from dotman.manifest import resolve_sync_policy, sync_policy_allows_operation
@@ -96,8 +97,16 @@ def _identity(metadata: projection.TargetMetadata) -> ResolvedSyncTarget:
 
 
 def _read_endpoint(
-    path: Path, *, repository: bool, follow_missing: bool = False, directory_child: bool = False
+    path: Path, *, repository: bool, follow_missing: bool = False, directory_child: bool = False, repository_root: Path | None = None
 ) -> tuple[FileState, bool, int | None]:
+    if repository and repository_root is not None:
+        if not path.is_relative_to(repository_root):
+            raise SyncPathError("repository-confinement", "repository endpoint is outside its repository")
+        for parent in (path, *path.parents):
+            if parent.is_symlink():
+                raise SyncPathError("repository-symlink", f"repository endpoint must not traverse a symlink: {parent}")
+            if parent == repository_root:
+                break
     try:
         shape = path.lstat()
     except (FileNotFoundError, NotADirectoryError):
@@ -105,19 +114,19 @@ def _read_endpoint(
     is_symlink = stat.S_ISLNK(shape.st_mode)
     if is_symlink:
         if repository:
-            raise ValueError("repository endpoint must not be a symlink")
+            raise SyncPathError("repository-symlink", "repository endpoint must not be a symlink")
         try:
             shape = path.stat()
         except FileNotFoundError as exc:
             if follow_missing:
                 return Missing(), True, None
-            raise ValueError(
-                "prompt-mode live symlink requires a regular-file referent"
+            raise SyncPathError(
+                "symlink-referent", "prompt-mode live symlink requires a regular-file referent"
             ) from exc
     if directory_child and stat.S_ISDIR(shape.st_mode) and not is_symlink:
         return Missing(), False, None
     if not stat.S_ISREG(shape.st_mode):
-        raise ValueError("endpoint must be a regular file")
+        raise SyncPathError("unsupported-entry", "endpoint must be a regular file")
     return FilePresent(read_bytes(path)), is_symlink, stat.S_IMODE(shape.st_mode)
 
 
@@ -237,7 +246,7 @@ def _observe_file(
             ),
         )
     try:
-        repository, _link, repository_mode = _read_endpoint(metadata.repo_path, repository=True, directory_child=identity.child_path is not None)
+        repository, _link, repository_mode = _read_endpoint(metadata.repo_path, repository=True, directory_child=identity.child_path is not None, repository_root=item.repo.root)
         if identity.child_path is not None and isinstance(repository, FilePresent):
             repository = DirectoryChildPresent(repository.content, projection.file_is_executable(repository_mode))
         observation = replace(observation, repository=repository)
@@ -303,7 +312,7 @@ def _observe_file(
         )
     except (OSError, ValueError) as exc:
         return replace(
-            observation, diagnostics=(Diagnostic("observation-failed", str(exc)),)
+            observation, diagnostics=(Diagnostic(exc.code if isinstance(exc, SyncPathError) else "observation-failed", str(exc)),)
         )
 
 

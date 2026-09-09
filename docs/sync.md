@@ -341,9 +341,31 @@ operation. Included unsupported drift makes the result `incomplete`; diagnostics
 and execution failures remain failures. Unattended Sync rejects a blocked or
 unsupported workset before mutation.
 
-Live publication requiring prompt-mode symlink replacement remains a typed
-blocker; Approval does not implicitly authorize replacing it. Pull-only work
-does not replace live symlinks.
+### Symlink interpretation
+
+Prompt file-symlink mode observes a regular referent. A write or mode-only
+publication replaces the declared leaf link with the frozen regular-file
+outcome, but requires the explicit `AuthorizeSymlinkReplacement` semantic
+command first (**L** in the deck). Authorization and Proposal Approval are
+separate; unattended execution rejects required authorization. Deletion unlinks
+the declared link without replacing or deleting its referent. Pull-only work
+never replaces a live link.
+
+Follow file-symlink mode preserves the leaf link. A missing referent is typed
+`Missing`; creation writes its then-current referent, and deletion removes
+that referent while retaining the link. External referent parents are not pruned.
+
+Directory-symlink fail mode rejects unexcluded links at or below the declared
+directory root, including links introduced after Observation. Follow mode
+traverses them under lexical child identities. Repository links are unsupported
+and never payload inputs; unsafe shapes yield typed diagnostics.
+
+Execution dereferences the current chain for each effect and checks shape,
+declared endpoint confinement and selected policy without re-observing payloads,
+rerendering, or comparing content. Retargeting alone does not invalidate frozen
+work. Enabled snapshots still read live preimages before mutation. Link chains
+and resolved referent paths are not identity or Input Fingerprint inputs;
+interpretation modes are.
 
 A real session owns the manager's non-blocking operation lock from opening until
 execute or abort. Real Push and Pull command workflows take the same lock before

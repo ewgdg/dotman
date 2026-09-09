@@ -97,6 +97,9 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   Successful editing preserves Approval; cancellation preserves the previous
   Proposal. Failed materialization clears only that unit's Approval.
   **T** retries materialization; Editor attempts can be retried with **E**.
+  **L** explicitly authorizes prompt-mode live-link replacement for the focused
+  Proposal; it does not select or approve it. Review shows authorization in the
+  shared warning/success colors. Unattended Sync cannot supply this decision.
   During editing, **Ctrl-C** cancels only the Editor attempt.
   Terminal Editors take terminal ownership temporarily and return to the same
   focused deck. No Editor runs automatically or under `--unattended`.
