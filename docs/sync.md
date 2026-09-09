@@ -95,8 +95,30 @@ Child Git facts are batched with file targets. Direct eligible agreement can
 acknowledge immediately in a real session; drifted eligible children acknowledge
 independently after their own required effects. Ineligible children complete
 without a Base. Both stages keep one enclosing target hook scope and report each
-child's exact identity. Directory topology closure and root-mode auxiliary work
-are separate from child reconciliation.
+child's exact identity. Structural parent directories are created only for selected child writes and
+pruned after child deletion, stopping at the target root. Empty targets are never
+created merely because they are selected. Existing root mode drift is separate,
+selectable **Directory Root Work**: it runs within push hooks before every child
+Publication Effect and never produces a Proposal, Converged result, or Base.
+A child creating a missing live root applies the configured target mode as its
+own prerequisite.
+
+A file/directory transition requires explicit Approval of every managed ancestor
+or descendant deletion that blocks a writer, including siblings omitted by an
+exact-child selector. Dotman never auto-selects blockers or clears the writer.
+Confirmation is unavailable until this structural closure holds; unattended
+execution rejects it before mutation. An ignored, control, or otherwise unmanaged
+blocker produces a typed structural conflict instead. Ready child work uses
+normalized relative-path ordering, with prerequisite deletions before dependent
+writers. A completed deletion remains Converged, with its Base committed, if a
+later writer fails.
+
+Obsolete child Bases are considered only from a later complete unrestricted
+target census. Reclamation occurs after successful real execution, not while
+previewing or aborting review, and does not reclaim newly acknowledged deletions
+in that session. Partial selection, ignores, marker restrictions, Guard narrowing,
+Path Rule Guards, interactive exclusions, or failed discovery retain records.
+A restricted census is deliberately not used as absence proof.
 
 ## Auxiliary work
 
@@ -139,8 +161,8 @@ independent Approval and directly includes auxiliary work. Unsupported resolutio
 from Observation and Proposal failures; focused diagnostic details explain the
 current row. Directory child rows use the same opt-in Approval as file targets. The deck and
 output adapter also recognize semantic **Directory Root Work** as direct Auxiliary
-inclusion, without Proposal or Approval; discovering and executing root mode drift
-belongs to directory topology support.
+inclusion, without Proposal or Approval. Root work uses the same selection styling
+and canonical target identity as other auxiliary work.
 Focused review shows
 the frozen repository/live Pull Views separately from repository-effect and
 publication previews. A no-write Proposal still shows the observed drift even

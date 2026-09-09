@@ -699,3 +699,12 @@ dotman transform yaml live.yaml output.yaml --mode merge \
 ```
 
 Both operands accept `-` for stdin (at most one). Output `-` or `--stdout` writes stdout. File output inherits base-file permissions.
+
+
+### Sync directory topology
+
+**Directory Root Work** uses the Command Deck's ordinary Selection control and
+canonical target identity. It selects mode drift on an existing root, not an
+aggregate directory Proposal. Structural approval diagnostics identify missing
+deletion approvals; confirmation remains unavailable until every managed blocker
+is approved. Unmanaged structural blockers are reported as conflicts.

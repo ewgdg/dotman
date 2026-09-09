@@ -112,6 +112,9 @@ class CommandDeck:
             for row in view.rows
             if not isinstance(row, (AuxiliaryRow, AdditionalRow))
         )
+        if view.topology_diagnostics:
+            self.notice = view.topology_diagnostics[0].message
+            return
         if command not in view.allowed_commands or (not view.preview and invalid_approved):
             self.notice = "Selected Proposals must be ready before confirmation."
             return

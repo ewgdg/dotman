@@ -15,6 +15,7 @@ from dotman.execution import ExecutionStep, directory_synced_file_mode
 from dotman.atomic_files import default_created_file_mode
 from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
+from dotman.sync_observation import _identity
 from dotman.sync_auxiliary import AuxiliaryRow, plan_auxiliary, retain_directional_hooks
 from dotman.sync_reconciliation import reconcile, ReconciliationConflict, ReconciliationFailed
 from dotman.projection import project_frozen_file
@@ -235,6 +236,7 @@ class SessionView:
     observations: tuple[Observation, ...]
     rows: tuple[SessionRow | AuxiliaryRow | AdditionalRow, ...]
     allowed_commands: tuple[CommandName, ...]
+    topology_diagnostics: tuple[Diagnostic, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -404,6 +406,7 @@ class CommandRejected:
         "preview",
         "terminal",
     ]
+    diagnostics: tuple[Diagnostic, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -450,6 +453,8 @@ class SyncSession:
         self._editor_preimages = {}
         self._editor_input_errors = {}
         self._captures = {}
+        self._obsolete_bases = ()
+        self._root_inputs = {}
         # A comparison Render is already a valid projection of these frozen
         # repository inputs. Reusing it also avoids volatile provider reruns.
         self._renders = {
@@ -537,6 +542,7 @@ class SyncSession:
                      "push": publication_metadata},
                     command_runtime=context.projection.command_runtime, run_noop=run_noop,
                 )
+                obsolete_bases = cls._freeze_obsolete_bases(context, observed) if not preview else ()
             except OperationBusy as exc:
                 return SessionOpenFailed(Diagnostic("operation-busy", str(exc)))
             except OperationLockError as exc:
@@ -553,6 +559,8 @@ class SyncSession:
                 return SessionOpenFailed(Diagnostic("observation-failed", str(exc)))
             resolved_inputs = (observed.inputs, resolved_inputs[1])
             session = cls(observations, preview=preview, auxiliary=auxiliary, event_sink=event_sink)
+            session._obsolete_bases = obsolete_bases
+            session._root_inputs = {_identity(target): (item, target) for item in selected_inputs.values() for target in item.target_metadata}
             session._run_noop = run_noop
             session._operation_lock = lock
             session._context = context
@@ -590,6 +598,21 @@ class SyncSession:
             resources.pop_all()
             return session
 
+    @staticmethod
+    def _freeze_obsolete_bases(context, observed) -> tuple:
+        candidates = []
+        for identity, item, census, complete in observed.directory_censuses:
+            if not complete:
+                continue
+            prefix = (identity.canonical + "/").encode()
+            present = {prefix + path.encode() for path, _ in census.entries}
+            with SyncBaseStore.open(context.tracked_state.state_root, item.repo.config.state_key) as store:
+                candidates.extend(
+                    (identity, item.repo.config.state_key, key)
+                    for key in store.identities() if key.startswith(prefix) and key not in present
+                )
+        return tuple(candidates)
+
     def request_editor_cancel(self) -> None:
         self._editor_operation.request_cancel()
 
@@ -603,6 +626,9 @@ class SyncSession:
 
     @property
     def view(self) -> SessionView:
+        diagnostics = self._structural_conflicts()
+        if diagnostics != self._view.topology_diagnostics:
+            self._view = replace(self._view, topology_diagnostics=diagnostics)
         return self._view
 
     def _emit(self, event: SessionEvent) -> None:
@@ -768,9 +794,32 @@ class SyncSession:
             for row in view.rows
         ):
             return CommandRejected(view, "disallowed")
+        if isinstance(command, Execute) and self._structural_conflicts():
+            return CommandRejected(view, "disallowed", self._structural_conflicts())
         result = self._finish(aborted=isinstance(command, Abort))
         return CommandAccepted(self.view, result)
 
+
+    def _structural_conflicts(self) -> tuple[Diagnostic, ...]:
+        rows = {row.observation.identity: row for row in self._view.rows if isinstance(row, SessionRow)}
+        failures = []
+        for identity, row in rows.items():
+            if not (row.included and row.approved and row.proposal is not None):
+                continue
+            for repository, blockers in ((True, row.observation.repository_blockers), (False, row.observation.live_blockers)):
+                writer = (isinstance(row.proposal.primary_source_change, DirectoryChildPresent) if repository
+                          else any(effect.kind == "write" for effect in row.proposal.publication_effects))
+                if not writer:
+                    continue
+                for path in blockers:
+                    blocker = rows.get(replace(identity, child_path=path))
+                    deletion = blocker is not None and blocker.included and blocker.approved and blocker.proposal is not None and (
+                        isinstance(blocker.proposal.primary_source_change, Missing) if repository
+                        else any(effect.kind == "delete" for effect in blocker.proposal.publication_effects))
+                    if not deletion:
+                        failures.append(Diagnostic("structural-approval-required" if path in row.observation.managed_children else "structural-conflict",
+                                                   f"{identity.canonical}: requires deletion of {path}"))
+        return tuple(failures)
 
     def _row_additional(self, row: SessionRow) -> tuple[AdditionalEdit, ...]:
         return tuple(
@@ -1118,7 +1167,7 @@ class SyncSession:
         )
         auxiliary = {
             direction: tuple(
-                HookActivation(row.scope, self._resolved_inputs_identity(row.scope) if row.kind == "probe" else None)
+                HookActivation(row.scope, self._resolved_inputs_identity(row.scope) if row.kind in ("probe", "directory-root") else None)
                 for row in self.view.rows
                 if isinstance(row, AuxiliaryRow) and row.included and direction in row.directions
             )
@@ -1127,6 +1176,8 @@ class SyncSession:
         additional_rows = tuple(row for row in self.view.rows if isinstance(row, AdditionalRow))
         self._additional_results, additional_diagnostics, additional_steps = self._apply_additional(additional_rows)
         if not selected and not any(auxiliary.values()):
+            if not additional_diagnostics:
+                additional_diagnostics = self._reclaim_obsolete_bases()
             return {}, additional_diagnostics, additional_steps
         by_id = {row.row_id: row for row in selected}
         acknowledgment_failures = {}
@@ -1174,7 +1225,27 @@ class SyncSession:
                     units[identity] = outcome
             diagnostics += publication_diagnostics
             steps += publication_steps
+        if not diagnostics:
+            diagnostics = self._reclaim_obsolete_bases()
         return units, diagnostics, steps
+
+    def _reclaim_obsolete_bases(self) -> tuple[Diagnostic, ...]:
+        try:
+            for identity, state_key, key in self._obsolete_bases:
+                target_rows = [
+                    row for row in self.view.rows if isinstance(row, SessionRow)
+                    and replace(row.observation.identity, child_path=None) == identity
+                ]
+                if any(not row.included or row.observation.diagnostics or row.diagnostics for row in target_rows):
+                    continue
+                self.check_cancelled()
+                with SyncBaseStore.open(self._context.tracked_state.state_root, state_key) as store:
+                    store.delete(key)
+        except (KeyboardInterrupt, InterruptedError):
+            return (Diagnostic("interrupted", "Directory Base maintenance interrupted"),)
+        except (SyncBaseStoreError, OSError) as exc:
+            return (Diagnostic("base-maintenance-failed", str(exc)),)
+        return ()
 
     def _apply_additional(self, rows: tuple[AdditionalRow, ...]):
         if not rows:
@@ -1211,7 +1282,21 @@ class SyncSession:
         return tuple(results), diagnostics, tuple(steps)
 
     def _resolved_inputs_identity(self, scope: str):
-        return next(identity for identity in self._resolved_inputs if identity.canonical == scope)
+        return next(identity for identity in (*self._resolved_inputs, *self._root_inputs) if identity.canonical == scope)
+
+    def _selected_root_work(self) -> tuple[PublicationUnit, ...]:
+        work = []
+        for row in self.view.rows:
+            if not (isinstance(row, AuxiliaryRow) and row.kind == "directory-root" and row.included):
+                continue
+            identity = self._resolved_inputs_identity(row.scope)
+            _, metadata = self._root_inputs[identity]
+            work.append(PublicationUnit(
+                row.row_id, identity,
+                (PublicationEffect("chmod", metadata.live_path, mode=int(metadata.chmod, 8)),),
+                auxiliary=True,
+            ))
+        return tuple(work)
 
     def _publish_effects(self, selected: tuple[SessionRow, ...], auxiliary: tuple[HookActivation, ...] = (), *, blocked: bool = False) -> tuple[
         dict[str, tuple[str, tuple[Diagnostic, ...]]],
@@ -1236,7 +1321,7 @@ class SyncSession:
             self._publication_metadata,
             tuple(PublicationUnit(
                 row.row_id, row.observation.identity, row.proposal.publication_effects
-            ) for row in selected),
+            ) for row in selected) + self._selected_root_work(),
             complete=complete,
             snapshot_config=self._context.config.snapshots,
             auxiliary=auxiliary, run_noop=self._run_noop,
@@ -1244,6 +1329,7 @@ class SyncSession:
             command_runtime=self._context.projection.command_runtime,
         )
         units, diagnostics, steps = self._execution_outcome(result, "live-publication")
+        units = {row_id: outcome for row_id, outcome in units.items() if row_id in by_id}
         for row_id, failure in acknowledgment_failures.items():
             units[row_id] = ("execution-failed", (failure,))
         return units, diagnostics, steps

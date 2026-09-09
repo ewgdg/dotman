@@ -22,6 +22,16 @@ class CensusFailure:
 class DirectoryCensus:
     # None denotes a payload candidate; failures retain their lexical path.
     entries: tuple[tuple[str, tuple[CensusFailure, ...]], ...]
+    repository_leaves: tuple[str, ...] = ()
+    live_leaves: tuple[str, ...] = ()
+    unrestricted: bool = False
+
+    def blockers(self, relative: str, *, repository: bool) -> tuple[str, ...]:
+        leaves = self.repository_leaves if repository else self.live_leaves
+        return tuple(path for path in leaves if path != relative and (
+            relative.startswith(path + "/") or path.startswith(relative + "/")
+        ))
+
 
 
 def census_directory(
@@ -37,6 +47,7 @@ def census_directory(
     markers: set[str] = set()
     directories: set[str] = set()
     git_patterns: list[str] = []
+    leaves = {True: set(), False: set()}
     exclusions = IgnoreMatcher.from_patterns(metadata.ignore_patterns)
 
     def failure(relative: str, code: str, message: str) -> None:
@@ -51,11 +62,15 @@ def census_directory(
         active: set[tuple[int, int]] = set()
 
         def visit(path: Path, relative: str, *, root_node: bool = False) -> None:
+            # An excluded subtree is opaque, and therefore an unmanaged blocker.
             if relative and excluded(relative, exclusions):
+                leaves[repository].add(relative)
                 return
             try:
                 shape = path.lstat()
                 link = stat.S_ISLNK(shape.st_mode)
+                if not stat.S_ISDIR(shape.st_mode):
+                    leaves[repository].add(relative)
                 if link:
                     if repository:
                         # Classify link shape for directory-only exclusions, but
@@ -71,8 +86,13 @@ def census_directory(
                         return
                 directory = stat.S_ISDIR(shape.st_mode)
                 if relative and excluded(relative, exclusions, directory=directory):
+                    leaves[repository].add(relative)
                     return
                 if directory:
+                    # Followed directory links remain traversal scopes, not
+                    # payload blockers; their interpretation belongs to link policy.
+                    if link and not repository and follow_live_directories:
+                        leaves[repository].discard(relative)
                     directories.add(relative)
                     if link and not follow_live_directories:
                         failure(relative, 'directory-symlink', 'live directory symlink requires follow mode')
@@ -88,10 +108,12 @@ def census_directory(
                         children = sorted(path.iterdir(), key=lambda entry: (entry.name != ".gitignore", entry.name))
                         if any(child.name in metadata.skip_markers for child in children):
                             markers.add(relative)
+                            leaves[repository].add(relative)
                             return
                         for child in children:
                             child_relative = f'{relative}/{child.name}' if relative else child.name
                             if child.name == '.gitignore':
+                                leaves[repository].add(child_relative)
                                 if repository and metadata.gitignore_control_ops:
                                     # Controls must be regular files, never links or FIFOs.
                                     if stat.S_ISREG(child.lstat().st_mode):
@@ -135,7 +157,9 @@ def census_directory(
         and not excluded(relative, exclusions)
         # A directory exclusion must also hide diagnostics on a directory link.
         and not (relative in directories and (git.matches_directory(relative) or exclusions.matches_directory(relative)))
-    ))
+    ), tuple(sorted(leaves[True])), tuple(sorted(leaves[False])),
+       not metadata.ignore_patterns and not markers and not git_patterns
+       and not any(failures for failures in entries.values()))
 
 
 def child_metadata(metadata: projection.TargetMetadata, relative: str) -> projection.TargetMetadata:

@@ -155,3 +155,13 @@ References: [SQLite integrity checks](https://www.sqlite.org/pragma.html#pragma_
 [file URI modes](https://www.sqlite.org/uri.html),
 [Python deserialization availability](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.deserialize), and
 [deserialization](https://www.sqlite.org/c3ref/deserialize.html).
+
+
+## Obsolete directory-child identities
+
+A child deletion commits its acknowledgment independently. Only a later
+successful real Sync with complete unrestricted target census proof may reclaim
+the absent identity. Candidate keys are frozen before review, so the operation
+cannot reclaim a deletion it just acknowledged. Partial selectors, exclusions,
+ignores, markers, Guard restrictions and discovery failures cannot provide that
+proof; preview and aborted sessions do no reclamation.

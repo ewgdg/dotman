@@ -81,6 +81,9 @@ class Observation:
     diagnostics: tuple[Diagnostic, ...] = ()
     repository_path: Path | None = None
     live_path: Path | None = None
+    repository_blockers: tuple[str, ...] = ()
+    live_blockers: tuple[str, ...] = ()
+    managed_children: tuple[str, ...] = ()
 
 
 def _identity(metadata: projection.TargetMetadata) -> ResolvedSyncTarget:
@@ -93,11 +96,11 @@ def _identity(metadata: projection.TargetMetadata) -> ResolvedSyncTarget:
 
 
 def _read_endpoint(
-    path: Path, *, repository: bool, follow_missing: bool = False
+    path: Path, *, repository: bool, follow_missing: bool = False, directory_child: bool = False
 ) -> tuple[FileState, bool, int | None]:
     try:
         shape = path.lstat()
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         return Missing(), False, None
     is_symlink = stat.S_ISLNK(shape.st_mode)
     if is_symlink:
@@ -111,6 +114,8 @@ def _read_endpoint(
             raise ValueError(
                 "prompt-mode live symlink requires a regular-file referent"
             ) from exc
+    if directory_child and stat.S_ISDIR(shape.st_mode) and not is_symlink:
+        return Missing(), False, None
     if not stat.S_ISREG(shape.st_mode):
         raise ValueError("endpoint must be a regular file")
     return FilePresent(read_bytes(path)), is_symlink, stat.S_IMODE(shape.st_mode)
@@ -232,13 +237,13 @@ def _observe_file(
             ),
         )
     try:
-        repository, _link, repository_mode = _read_endpoint(metadata.repo_path, repository=True)
+        repository, _link, repository_mode = _read_endpoint(metadata.repo_path, repository=True, directory_child=identity.child_path is not None)
         if identity.child_path is not None and isinstance(repository, FilePresent):
             repository = DirectoryChildPresent(repository.content, projection.file_is_executable(repository_mode))
         observation = replace(observation, repository=repository)
         live, live_is_symlink, live_mode = _read_endpoint(
             metadata.live_path,
-            repository=False,
+            repository=False, directory_child=identity.child_path is not None,
             follow_missing=context.config.file_symlink_mode == "follow",
         )
         if identity.child_path is not None and isinstance(live, FilePresent):
@@ -316,6 +321,7 @@ class ObservedScope:
     directional: dict[str, list[planning.PackagePlanningInput]]
     hook_scopes: dict[str, frozenset[str]]
     inputs: _ResolvedInputs
+    directory_censuses: tuple = ()
 
 
 def observe_scope(
@@ -332,6 +338,7 @@ def observe_scope(
     directory_inputs = {identity: value for identity, value in inputs.items() if value[1].target.target_type == "directory"}
     ordered_inputs = inputs
     inputs = {identity: value for identity, value in inputs.items() if identity not in directory_inputs}
+    configured_directional = directional
     eligibility = evaluate_directional_guards(
         directional, command_runtime=context.projection.command_runtime, run_noop=run_noop,
     )
@@ -341,7 +348,8 @@ def observe_scope(
         for direction, survivors in directional.items()
     }
 
-    child_policies, child_failures = {}, {}
+    child_policies, child_failures, child_topology = {}, {}, {}
+    directory_censuses = []
     expanded_inputs = {**inputs, **probe_inputs}
     for identity, (item, metadata) in directory_inputs.items():
         selected_paths = {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
@@ -349,6 +357,14 @@ def observe_scope(
             metadata, follow_live_directories=context.config.dir_symlink_mode == "follow",
             selected_paths=tuple(sorted(path for path in selected_paths if path is not None)),
         )
+        # Any Guard narrowing invalidates a complete participation proof.
+        configured_directions = {direction for direction in ("push", "pull")
+                                 if any(_identity(target) == identity for candidate in configured_directional[direction]
+                                        for target in candidate.target_metadata)}
+        complete = (None in selected_paths and census.unrestricted
+                    and all(identity in admitted[direction] for direction in configured_directions)
+                    and not any((rule.hooks or {}).get("guard_push") or (rule.hooks or {}).get("guard_pull") for rule in metadata.path_rules))
+        directory_censuses.append((identity, item, census, complete))
         children = {
             relative: (replace(identity, child_path=relative or None), child_metadata(metadata, relative), failures)
             for relative, failures in census.entries
@@ -369,6 +385,7 @@ def observe_scope(
                 bound_profile=identity.bound_profile, target_name=identity.target_name,
             )
         for relative, (child_identity, child, failures) in children.items():
+            child_topology[child_identity] = (census.blockers(relative, repository=True), census.blockers(relative, repository=False), tuple(path for path, failures in census.entries if not failures))
             expanded_inputs[child_identity] = (item, child)
             unit = _base_unit(context, child_identity, item, child)
             child_policies[child_identity] = _effective_policy(unit.configured_policy, relative in child_admitted["push"], relative in child_admitted["pull"])
@@ -498,9 +515,12 @@ def observe_scope(
                             ),
                         ),
                     )
+            if identity in child_topology:
+                repository_blockers, live_blockers, managed_children = child_topology[identity]
+                observation = replace(observation, repository_blockers=repository_blockers, live_blockers=live_blockers, managed_children=managed_children)
             observations.append(observation)
         order = {identity: index for index, identity in enumerate(ordered_inputs)}
         observations.sort(key=lambda unit: (order[replace(unit.identity, child_path=None)], unit.identity.child_path or ""))
         return ObservedScope(tuple(observations), directional, {
             direction: value.hook_scopes for direction, value in eligibility.items()
-        }, expanded_inputs)
+        }, expanded_inputs, tuple(directory_censuses))

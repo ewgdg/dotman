@@ -852,6 +852,17 @@ class SyncBaseStore:
                         connection.execute("ROLLBACK")
                     raise
 
+    def identities(self) -> tuple[bytes, ...]:
+        """Enumerate committed keys for callers holding complete census proof."""
+        self._require_open()
+        if self._read_connection is None:
+            with self.read_transaction():
+                return self.identities()
+        with _store_errors():
+            return tuple(row[0] for row in self._read_connection.execute(
+                "SELECT identity FROM base_records ORDER BY identity"
+            ))
+
     def read(self, identity: bytes) -> SyncBaseRecord | None:
         canonical_identity = _require_bytes(
             identity, field_name="canonical identity", allow_empty=False

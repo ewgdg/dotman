@@ -102,3 +102,14 @@ $XDG_DATA_HOME/dotman/snapshots/
 - `list snapshots` shows available snapshot history in a concise overview form.
 - `info snapshot <snapshot>` shows detailed metadata and recorded paths for one snapshot. `latest` resolves to the newest available snapshot.
 - `restore [<snapshot>]` restores the latest restorable snapshot by default and accepts `latest` explicitly as a snapshot reference alias.
+
+
+## Structural directory effects
+
+Sync snapshots include selected root-mode effects and structural directory
+preimages for child file/directory transitions. Directory entries store their
+mode, not a recursive content bundle: only selected child files are captured.
+Restore orders child deletions before ancestor file restoration, creates required
+directories before restoring child payloads, and restores directory modes last.
+It removes only empty structural directories and fails rather than recursively
+deleting unmanaged contents introduced after the snapshot.

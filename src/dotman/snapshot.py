@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Sequence
 
+from dotman.file_access import remove_empty_directory_tree
 from dotman.atomic_files import write_text_atomic
 from dotman.config import default_snapshot_root
 from dotman.toml_utils import load_toml_file
@@ -94,6 +95,8 @@ class RestoreAction:
     desired_mode: int | None
     after_link_target: str | None = None
     restore_path: Path | None = None
+    path_kind: str = "file"
+    prune_root: Path | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload = {
@@ -161,23 +164,24 @@ def create_push_snapshot(plans: Sequence[PackagePlan], snapshot_config: Snapshot
         for index, entry in enumerate(pending_entries, start=1):
             live_path = entry["live_path"]
             live_path_is_symlink = live_path.is_symlink()
-            if live_path.exists() and live_path.is_dir() and not live_path_is_symlink:
-                raise ValueError(f"snapshot capture expects file path, got directory: {live_path}")
 
             file_symlink_mode = entry.get("file_symlink_mode", "prompt")
             restore_path = live_path.resolve(strict=False) if live_path_is_symlink and file_symlink_mode == "follow" else None
             managed_path = restore_path or live_path
             current_is_symlink = managed_path.is_symlink()
-            if managed_path.exists() and managed_path.is_dir() and not current_is_symlink:
+            directory = managed_path.is_dir() and not current_is_symlink
+            if directory and not entry.get("structural", False):
                 raise ValueError(f"snapshot capture expects file path, got directory: {managed_path}")
 
             preserve_symlink_identity = live_path_is_symlink and file_symlink_mode != "follow"
             existed_before = managed_path.exists() or (live_path_is_symlink and preserve_symlink_identity)
             content_path = None
             mode = None
-            path_kind = "symlink" if live_path_is_symlink else "file"
+            path_kind = "directory" if directory else "symlink" if live_path_is_symlink else "file"
             symlink_target = os.readlink(live_path) if live_path_is_symlink else None
-            if existed_before and not preserve_symlink_identity:
+            if directory:
+                mode = stat.S_IMODE(managed_path.stat().st_mode)
+            elif existed_before and not preserve_symlink_identity:
                 content_path = Path("entries") / f"{index:04d}.bin"
                 write_bytes_atomic(snapshot_root / content_path, managed_path.read_bytes())
                 mode = stat.S_IMODE(managed_path.stat().st_mode)
@@ -306,7 +310,7 @@ def load_snapshot(snapshot_root: Path) -> SnapshotRecord:
             raise ValueError(f"invalid snapshot content path in manifest: {manifest_path}")
         if mode is not None and not isinstance(mode, int):
             raise ValueError(f"invalid snapshot mode in manifest: {manifest_path}")
-        if not isinstance(path_kind, str) or path_kind not in {"file", "symlink"}:
+        if not isinstance(path_kind, str) or path_kind not in {"file", "symlink", "directory"}:
             raise ValueError(f"invalid snapshot path kind in manifest: {manifest_path}")
         if symlink_target is not None and not isinstance(symlink_target, str):
             raise ValueError(f"invalid snapshot symlink target in manifest: {manifest_path}")
@@ -363,9 +367,17 @@ def build_restore_actions(snapshot: SnapshotRecord) -> list[RestoreAction]:
         restore_path = entry.restore_path or entry.live_path
         current_exists = restore_path.exists()
         current_is_symlink = restore_path.is_symlink()
-        if current_exists and restore_path.is_dir() and not current_is_symlink:
-            raise ValueError(f"restore expects file path, got directory: {restore_path}")
+        current_directory = current_exists and restore_path.is_dir() and not current_is_symlink
         snapshot_path = _snapshot_restore_display_path(snapshot, entry.live_path)
+
+        if entry.path_kind == "directory":
+            actions.append(RestoreAction(
+                live_path=entry.live_path, snapshot_path=snapshot_path,
+                action=("noop" if current_directory and stat.S_IMODE(restore_path.stat().st_mode) == entry.mode
+                        else "update" if current_exists else "create"), before_bytes=b"", after_bytes=b"",
+                desired_mode=entry.mode, restore_path=restore_path, path_kind="directory",
+            ))
+            continue
 
         if entry.preserve_symlink_identity and entry.path_kind == "symlink":
             current_present = current_exists or current_is_symlink
@@ -388,7 +400,7 @@ def build_restore_actions(snapshot: SnapshotRecord) -> list[RestoreAction]:
             )
             continue
 
-        current_bytes = restore_path.read_bytes() if current_exists else b""
+        current_bytes = restore_path.read_bytes() if current_exists and not current_directory else b""
         current_mode = stat.S_IMODE(restore_path.stat().st_mode) if current_exists else None
 
         if entry.existed_before:
@@ -427,25 +439,59 @@ def build_restore_actions(snapshot: SnapshotRecord) -> list[RestoreAction]:
                 restore_path=restore_path,
             )
         )
-    return actions
+    return _order_restore_actions(snapshot, actions)
+
+
+def _order_restore_actions(snapshot: SnapshotRecord, actions: list[RestoreAction]) -> list[RestoreAction]:
+    # Restore leaves before ancestor files, and directory modes after children.
+    deletions = sorted(
+        (action for action in actions if action.action == "delete"),
+        key=lambda action: (-len(action.live_path.parts), action.live_path.as_posix()),
+    )
+    recorded_paths = {entry.live_path for entry in snapshot.entries}
+    for index, action in enumerate(deletions):
+        ancestor = next((path for path in reversed(action.live_path.parents) if path in recorded_paths), None)
+        if ancestor is not None:
+            deletions[index] = replace(action, prune_root=ancestor.parent)
+    directories = sorted(
+        (action for action in actions if action.path_kind == "directory"),
+        key=lambda action: (len(action.live_path.parts), action.live_path.as_posix()),
+    )
+    creations = [replace(action, desired_mode=None) for action in directories
+                 if not (action.restore_path or action.live_path).is_dir()]
+    payloads = sorted(
+        (action for action in actions if action.action != "delete" and action.path_kind != "directory"),
+        key=lambda action: action.live_path.as_posix(),
+    )
+    return deletions + creations + payloads + directories
 
 
 def execute_restore_action(action: RestoreAction) -> RestoreActionResult:
     try:
         target_path = action.restore_path or action.live_path
-        if action.after_link_target is not None:
+        if action.path_kind == "directory":
+            if target_path.is_symlink():
+                raise ValueError(f"Restore directory must not be a symlink: {target_path}")
+            if target_path.exists() and not target_path.is_dir():
+                target_path.unlink()
+            target_path.mkdir(parents=True, exist_ok=True)
+            if action.desired_mode is not None:
+                target_path.chmod(action.desired_mode)
+        elif action.after_link_target is not None:
             if action.action in {"create", "update"}:
                 write_symlink_atomic(target_path, action.after_link_target)
             elif action.action == "delete":
-                delete_path_and_prune_empty_parents(target_path, root=target_path.parent)
+                delete_path_and_prune_empty_parents(target_path, root=action.prune_root or target_path.parent)
             else:
                 raise ValueError(f"unsupported restore action '{action.action}'")
         elif action.action in {"create", "update"}:
+            if target_path.is_dir() and not target_path.is_symlink():
+                remove_empty_directory_tree(target_path)
             write_bytes_atomic(target_path, action.after_bytes)
             if action.desired_mode is not None:
                 target_path.chmod(action.desired_mode)
         elif action.action == "delete":
-            delete_path_and_prune_empty_parents(target_path, root=target_path.parent)
+            delete_path_and_prune_empty_parents(target_path, root=action.prune_root or target_path.parent)
         else:
             raise ValueError(f"unsupported restore action '{action.action}'")
         return RestoreActionResult(action=action, status="ok")
@@ -485,6 +531,7 @@ def _iter_push_snapshot_entries(plans: Sequence[PackagePlan]):
                 "package_id": target.package_id,
                 "target_name": target.target_name,
                 "file_symlink_mode": target.file_symlink_mode,
+                "structural": target.child_path is not None or target.target_kind == "directory",
             }
 
 

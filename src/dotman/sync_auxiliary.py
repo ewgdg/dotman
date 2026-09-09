@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import Literal
+import stat
 
 from dotman.command_runtime import CommandRuntime
 from dotman.models import ResolvedSyncTarget, package_ref_text
@@ -66,6 +67,10 @@ def plan_auxiliary(
     rows = []
     for identity, (_item, target) in inputs.items():
         directions = tuple(direction for direction in ("push", "pull") if identity in admitted[direction])
+        if (target.target.target_type == "directory" and "push" in directions and target.chmod is not None
+                and target.live_path.is_dir() and not target.live_path.is_symlink()
+                and stat.S_IMODE(target.live_path.stat().st_mode) != int(target.chmod, 8)):
+            rows.append(AuxiliaryRow(identity.canonical, "directory-root", False, identity.canonical, ("push",)))
         if target.probe_command is not None and directions and run_probe_command(command_runtime, target):
             rows.append(AuxiliaryRow(identity.canonical, "probe", False, identity.canonical, directions))
 

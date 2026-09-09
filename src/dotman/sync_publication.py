@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+import heapq
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Literal, Protocol, Sequence
@@ -32,6 +33,7 @@ class PublicationUnit:
     row_id: str
     identity: ResolvedSyncTarget
     effects: tuple[Effect, ...]
+    auxiliary: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,7 +71,7 @@ def prepare_publication(
             TargetPlan(
                 package_id=target.package_id, target_name=target.target_name,
                 repo_path=target.repo_path, live_path=target.live_path,
-                action="noop", target_kind="probe" if target.probe_command is not None else "file", projection_kind="raw",
+                action="noop", target_kind="probe" if target.probe_command is not None else target.target.target_type, chmod=target.chmod, projection_kind="raw",
                 command_cwd=target.command_cwd,
                 # One static target may supply metadata to both Sync stages.
                 command_env={**target.command_env, "DOTMAN_OPERATION": "push"},
@@ -176,9 +178,13 @@ def _effect_path(effect: Effect, target: TargetPlan) -> Path:
             raise ValueError(f"Live symlink replacement is not authorized: {path}")
     try:
         shape = path.lstat()
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         if effect.kind == "chmod":
             raise ValueError(f"Cannot chmod missing live endpoint: {path}") from None
+        return path
+    if target.target_kind == "directory" and target.child_path is None and stat.S_ISDIR(shape.st_mode) and effect.kind == "chmod":
+        return path
+    if target.child_path is not None and stat.S_ISDIR(shape.st_mode) and effect.kind == "write":
         return path
     if not stat.S_ISREG(shape.st_mode) and not (effect.kind == "delete" and stat.S_ISLNK(shape.st_mode)):
         raise ValueError(f"Publication expects a regular file: {path}")
@@ -204,7 +210,7 @@ def freeze_child_metadata(metadata: PublicationMetadata, observations) -> Public
 
 
 def _unit_targets(metadata: PublicationMetadata, package: PackagePlan, target: TargetPlan) -> tuple[TargetPlan, ...]:
-    return dict(metadata.children).get(_target_identity(package, target), (target,))
+    return (target,) + dict(metadata.children).get(_target_identity(package, target), ())
 
 
 def stage_target_order(metadata: PublicationMetadata) -> tuple[ResolvedSyncTarget, ...]:
@@ -215,6 +221,36 @@ def stage_target_order(metadata: PublicationMetadata) -> tuple[ResolvedSyncTarge
         for scope_target in package.target_plans
         for target in _unit_targets(metadata, package, scope_target)
     )
+
+
+def _topology_order(metadata, package, target, target_work) -> tuple[TargetPlan, ...]:
+    """Stable topological order: every selected deletion precedes its writer."""
+    targets = {unit.child_path or "": unit for unit in _unit_targets(metadata, package, target)}
+    work = {path: target_work.get(_target_identity(package, unit), ()) for path, unit in targets.items()}
+    deletions = {path for path, actions in work.items() if any(action == "delete" for _, action in actions)}
+    dependencies = {
+        path: {blocker for blocker in deletions if blocker != path and (
+            path.startswith(blocker + "/") or blocker.startswith(path + "/")
+        )} if any(action in ("write", "update") for _, action in actions) else set()
+        for path, actions in work.items()
+    }
+    dependents = {path: set() for path in targets}
+    for path, blockers in dependencies.items():
+        for blocker in blockers:
+            dependents[blocker].add(path)
+    ready = [path for path, blockers in dependencies.items() if not blockers]
+    heapq.heapify(ready)
+    ordered = []
+    while ready:
+        path = heapq.heappop(ready)
+        ordered.append(targets[path])
+        for dependent in dependents[path]:
+            dependencies[dependent].remove(path)
+            if not dependencies[dependent]:
+                heapq.heappush(ready, dependent)
+    if len(ordered) != len(targets):
+        raise ValueError("Cyclic directory topology")
+    return tuple(ordered)
 
 
 def ordered_stage_steps(
@@ -253,7 +289,7 @@ def ordered_stage_steps(
                 target_hooks = [hook for hook in values if hook.scope_kind == "target"
                                 and hook.target_name == target.target_name]
                 hooks(target_hooks, f"pre_{direction}", identity.canonical, package, target)
-                for unit_target in _unit_targets(metadata, package, target):
+                for unit_target in _topology_order(metadata, package, target, target_work):
                     unit_identity = _target_identity(package, unit_target)
                     if unit_identity in target_work:
                         matched.add(unit_identity)
@@ -306,7 +342,7 @@ def execute_publication(
     planned = ordered_stage_steps(
         metadata, {
             unit.identity: tuple(("chmod" if effect.kind == "chmod" else "target", effect.kind)
-                                 for effect in unit.effects) + ((("unit-completion", "complete"),) if unit.effects else ())
+                                 for effect in unit.effects) + ((("unit-completion", "complete"),) if unit.effects and not unit.auxiliary else ())
             for unit in units
         },
         direction="push", active_targets=[unit.identity for unit in units if unit.effects],
@@ -364,11 +400,20 @@ def execute_publication(
                             raise _PublicationStopped(failure.error, interrupted=failure.status == "interrupted") from exc
                         snapshot_started = True
                     if effect.kind == "write":
+                        root = directory_root(path, step.target_plan.child_path)
+                        if step.target_plan.child_path is not None and not root.exists():
+                            root.mkdir(parents=True)
+                            if step.target_plan.chmod is not None:
+                                file_access.chmod(root, int(step.target_plan.chmod, 8))
+                        if step.target_plan.child_path is not None and path.is_dir():
+                            file_access.remove_empty_directory_tree(path)
                         file_access.write_bytes_atomic(path, effect.content)
                     elif effect.kind == "delete":
-                        file_access.delete_path_and_prune_empty_parents(path, root=path.parent)
+                        file_access.delete_path_and_prune_empty_parents(path, root=directory_root(path, step.target_plan.child_path))
                     else:
                         file_access.chmod(path, effect.mode)
+                    if unit.auxiliary:
+                        results[unit.row_id] = PublicationUnitResult(unit.row_id, "ok")
                     result = ExecutionStepResult(step, "ok")
                 steps.append(result)
                 if result.status != "ok":
@@ -395,3 +440,7 @@ def execute_publication(
                 interrupted = interrupted or failure.status == "interrupted"
                 error = error or failure.error
     return PublicationResult(tuple(results.values()), error, tuple(steps), snapshot, interrupted)
+
+
+def directory_root(path: Path, child_path: str | None) -> Path:
+    return path.parents[len(Path(child_path).parts) - 1] if child_path else path.parent

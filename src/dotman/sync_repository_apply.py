@@ -17,7 +17,7 @@ from dotman.sync_base_store import FilePresent, Missing, DirectoryChildPresent, 
 from dotman.sync_publication import (
     HookActivation, PublicationMetadata, PublicationResult, PublicationUnitResult,
     ordered_stage_steps, stage_target_order, unattempted_steps, _target_identity,
-    _PublicationStopped, _failed_step,
+    _PublicationStopped, _failed_step, directory_root,
 )
 
 
@@ -121,6 +121,7 @@ def execute_repository_apply(
                 else:
                     apply_repository_source(
                         step.target_plan.repo_path, unit.outcome, repo_root=step.package_plan.repo_root,
+                        target_root=directory_root(step.target_plan.repo_path, step.target_plan.child_path),
                     )
                     if unit.requires_publication:
                         results[unit.row_id] = PublicationUnitResult(unit.row_id, "ok")
@@ -144,7 +145,7 @@ def execute_repository_apply(
     return PublicationResult(tuple(results.values()), error, tuple(steps), interrupted=interrupted)
 
 
-def apply_repository_source(path, outcome: SyncBasePayload, *, repo_root) -> None:
+def apply_repository_source(path, outcome: SyncBasePayload, *, repo_root, target_root=None) -> None:
     """Apply frozen bytes with the same confinement checks for every Source Change."""
     path.relative_to(repo_root)
     # Atomic replacement protects the leaf, not a retargeted parent link.
@@ -157,6 +158,9 @@ def apply_repository_source(path, outcome: SyncBasePayload, *, repo_root) -> Non
         shape = path.lstat()
     except FileNotFoundError:
         shape = None
+    if shape is not None and stat.S_ISDIR(shape.st_mode) and isinstance(outcome, DirectoryChildPresent):
+        file_access.remove_empty_directory_tree(path)
+        shape = None
     if shape is not None and not stat.S_ISREG(shape.st_mode):
         raise ValueError(f"Repository apply expects a regular file: {path}")
     if isinstance(outcome, (FilePresent, DirectoryChildPresent)):
@@ -168,4 +172,4 @@ def apply_repository_source(path, outcome: SyncBasePayload, *, repo_root) -> Non
             )
         file_access.write_bytes_atomic(path, outcome.content, mode=mode)
     else:
-        file_access.delete_path_and_prune_empty_parents(path, root=path.parent)
+        file_access.delete_path_and_prune_empty_parents(path, root=target_root or path.parent)

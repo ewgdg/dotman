@@ -178,7 +178,8 @@ class SyncDeckCommandRunner:
                     dispatched = session.execute()
                 if isinstance(dispatched, CommandRejected):
                     self._emit(args, session, None, diagnostic={
-                        "code": "command-rejected", "message": dispatched.reason,
+                        "code": dispatched.diagnostics[0].code if dispatched.diagnostics else "command-rejected",
+                        "message": dispatched.diagnostics[0].message if dispatched.diagnostics else dispatched.reason,
                     })
                     return 1
                 self._emit(args, session, dispatched.result)

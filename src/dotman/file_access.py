@@ -294,3 +294,15 @@ __all__ = [
     "write_bytes_atomic",
     "write_symlink_atomic",
 ]
+
+
+def remove_empty_directory_tree(path: Path) -> None:
+    """Remove structural directories only; never recursively remove payloads."""
+    if path.is_symlink():
+        raise ValueError(f"Cannot prune a directory symlink: {path}")
+    for child in sorted(path.iterdir()):
+        if child.is_dir() and not child.is_symlink():
+            remove_empty_directory_tree(child)
+        else:
+            raise ValueError(f"Structural directory contains an unmanaged entry: {child}")
+    path.rmdir()
