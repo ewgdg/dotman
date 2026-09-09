@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from dotman.command_runtime import (
     ArgvCommand, CommandRequest, CommandRuntime, raise_for_command_interruption,
 )
-from dotman.sync_base_store import FilePresent, Missing
+from dotman.sync_base_store import FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 
 
 class ReconciliationConflict(ValueError):
@@ -18,20 +18,33 @@ class ReconciliationFailed(ValueError):
 
 
 def reconcile(
-    base: FilePresent | Missing,
-    repository: FilePresent | Missing,
-    captured: FilePresent | Missing,
+    base: SyncBasePayload,
+    repository: SyncBasePayload,
+    captured: SyncBasePayload,
     *,
     command_runtime: CommandRuntime,
-) -> FilePresent | Missing:
+) -> SyncBasePayload:
     if repository == captured:
         return repository
     if repository == base:
         return captured
     if captured == base:
         return repository
-    if not all(isinstance(value, FilePresent) for value in (base, repository, captured)):
+    if not all(isinstance(value, (FilePresent, DirectoryChildPresent)) for value in (base, repository, captured)):
         raise ReconciliationConflict("Repository and Capture disagree on file presence")
+    if isinstance(repository, DirectoryChildPresent):
+        if not isinstance(base, DirectoryChildPresent) or not isinstance(captured, DirectoryChildPresent):
+            raise ValueError("Child reconciliation requires child ancestry and Capture")
+        # Bytes and Git executable state are independent merge operands. A mode
+        # change must not turn otherwise non-overlapping byte changes into conflict.
+        content = reconcile(
+            FilePresent(base.content), FilePresent(repository.content), FilePresent(captured.content),
+            command_runtime=command_runtime,
+        ).content
+        executable = (repository.executable if repository.executable == captured.executable
+                      else captured.executable if repository.executable == base.executable
+                      else repository.executable)
+        return DirectoryChildPresent(content, executable)
     with TemporaryDirectory(prefix="dotman-merge-") as directory:
         root = Path(directory)
         for name, value in (("base", base), ("repository", repository), ("capture", captured)):

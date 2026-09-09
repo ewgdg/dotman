@@ -823,6 +823,7 @@ class TargetPlan:
     desired_bytes: bytes | None = field(default=None, repr=False)
     review_before_bytes: bytes | None = field(default=None, repr=False)
     review_after_bytes: bytes | None = field(default=None, repr=False)
+    child_path: str | None = None
     directory_items: tuple["DirectoryPlanItem", ...] = ()
     probe_command: str | None = None
 

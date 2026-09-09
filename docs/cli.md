@@ -100,12 +100,12 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   During editing, **Ctrl-C** cancels only the Editor attempt.
   Terminal Editors take terminal ownership temporarily and return to the same
   focused deck. No Editor runs automatically or under `--unattended`.
-- **Unsupported** means the session offers no resolution capability, not that
-  observing the filesystem failed. **Observation failed** and **Proposal failed**
-  retain their diagnostic details below the table. Directory scopes discover
-  independent canonical child rows. Their **Selection** toggles inclusion, not
-  Approval; child convergence is unavailable and never runs as file-target work.
-  Child capability diagnostics are separate from successful Observation.
+- **Observation failed** and **Proposal failed** retain their diagnostic details
+  below the table. Directory scopes discover independent canonical child rows.
+  Their **Selection** grants opt-in Approval, just like file targets. Each child
+  has its own policy-allowed Resolution, Proposal, effects and completion result.
+  Review shows child executable changes with Git mode lines. Exact Path Rule
+  chmod affects live publication only; it is not repository or Merge ancestry.
   Controls and exclusions apply symmetrically even for an exact child scope.
 - `--unattended` explicitly selects supported Proposals and auxiliary work and confirms execution.
   Missing terminals and `--json` do not grant consent. Required interactive
@@ -131,9 +131,8 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   (`status: unattempted`, `skip_reason: earlier-failure`). Units with successful
   repository changes but unattempted live work report `not-converged`, rather
   than `skipped`; previously completed units remain `converged`.
-  Each Sync Unit also exposes `capability_diagnostics`, separate from Observation
-  and materialization failures. For directory children, `selected` means inclusion
-  while `approved` remains false.
+  Directory children expose the same Observation, Approval, Proposal and result
+  fields as file targets; Primary Source write summaries also include `executable`.
   `probe_work`, `directory_root_work` and `hook_work` contain canonical `identity`, `selected`,
   `directions` and `diagnostics`, without file/Proposal/Base fields.
   `summary.selected_auxiliary` counts directly selected auxiliary rows.

@@ -7,10 +7,12 @@ from dataclasses import dataclass, replace
 from typing import Callable, Literal
 from pathlib import Path
 from uuid import uuid4
+import stat
 
 from dotman.command_runtime import CommandOperation, command_operation, command_runtime_session
 from dotman.elevation import elevation_broker_session
-from dotman.execution import ExecutionStep
+from dotman.execution import ExecutionStep, directory_synced_file_mode
+from dotman.atomic_files import default_created_file_mode
 from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
 from dotman.sync_auxiliary import AuxiliaryRow, plan_auxiliary, retain_directional_hooks
@@ -18,13 +20,13 @@ from dotman.sync_reconciliation import reconcile, ReconciliationConflict, Reconc
 from dotman.projection import project_frozen_file
 from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
-from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError, FilePresent, Missing
+from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError, FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 from dotman.sync_base_lifecycle import (
     FrozenBaseUnit, ProposalCompletion, SyncBaseGit, SyncBaseGitError, SyncBaseLifecycle,
 )
 from dotman.operation_lock import OperationBusy, OperationLock, OperationLockError
 from dotman.sync_observation import Diagnostic, Observation, observe_scope, _resolve_inputs, _base_unit
-from dotman.sync_publication import HookActivation, PublicationResult, PublicationUnit, execute_publication, prepare_publication
+from dotman.sync_publication import HookActivation, PublicationResult, PublicationUnit, execute_publication, prepare_publication, freeze_child_metadata
 from dotman.sync_repository_apply import (
     RepositoryApplyUnit, apply_repository_source, execute_repository_apply, prepare_repository_apply,
 )
@@ -49,12 +51,12 @@ class PublicationEffect:
 
 @dataclass(frozen=True)
 class Proposal:
-    repository: FilePresent | Missing
-    live: FilePresent | Missing
-    primary_source_change: FilePresent | Missing | None
+    repository: SyncBasePayload
+    live: SyncBasePayload
+    primary_source_change: SyncBasePayload | None
     publication_effects: tuple[PublicationEffect, ...]
     intent: ResolutionIntent | Literal["editor"] = "use-repository"
-    capture: FilePresent | Missing | None = None
+    capture: SyncBasePayload | None = None
     reconciliation: str | None = None
     generation: int = 0
     additional_changes: tuple[AdditionalEdit, ...] = ()
@@ -63,10 +65,10 @@ class Proposal:
 def materialize(
     observation: Observation,
     *,
-    capture: Callable[[Observation], FilePresent | Missing] | None = None,
+    capture: Callable[[Observation], SyncBasePayload] | None = None,
     intent: ResolutionIntent | None = None,
-    render: Callable[[Observation, FilePresent | Missing], FilePresent | Missing] | None = None,
-    merge: Callable[[Observation, FilePresent | Missing], FilePresent | Missing] | None = None,
+    render: Callable[[Observation, SyncBasePayload], SyncBasePayload] | None = None,
+    merge: Callable[[Observation, SyncBasePayload], SyncBasePayload] | None = None,
 ) -> Proposal:
     intent = intent or ("use-live" if observation.effective_policy == "pull-only" else "use-repository")
     repository = observation.repository
@@ -97,17 +99,31 @@ def materialize(
         raise ValueError("Proposal requires successfully frozen publication outcome")
     effects = []
     path = observation.live_path
-    if live != observation.live:
+    if isinstance(live, DirectoryChildPresent) and observation.chmod is not None:
+        live = replace(live, executable=bool(int(observation.chmod, 8) & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)))
+    # A Git mode-only change is a chmod effect, not a redundant payload write.
+    content_changed = (
+        isinstance(live, Missing) != isinstance(observation.live, Missing)
+        or not isinstance(live, Missing) and live.content != observation.live.content
+    )
+    if content_changed:
         if path is None:
             raise ValueError("Publication requires a live endpoint path")
         effects.append(
             PublicationEffect("write", path, content=live.content)
-            if isinstance(live, FilePresent)
+            if isinstance(live, (FilePresent, DirectoryChildPresent))
             else PublicationEffect("delete", path)
         )
-    if isinstance(live, FilePresent) and observation.chmod is not None:
-        mode = int(observation.chmod, 8)
-        if observation.live_mode != mode:
+    if isinstance(live, (FilePresent, DirectoryChildPresent)):
+        mode = int(observation.chmod, 8) if observation.chmod is not None else None
+        if isinstance(live, DirectoryChildPresent) and mode is None:
+            mode = observation.live_mode
+            if not isinstance(observation.live, DirectoryChildPresent) or live.executable != observation.live.executable:
+                mode = directory_synced_file_mode(
+                    destination_mode=observation.live_mode if observation.live_mode is not None else default_created_file_mode(),
+                    source_mode=stat.S_IXUSR if live.executable else 0,
+                )
+        if mode is not None and (observation.live_mode != mode or isinstance(observation.live, Missing)):
             if path is None:
                 raise ValueError("Publication requires a live endpoint path")
             effects.append(PublicationEffect("chmod", path, mode=mode))
@@ -123,11 +139,8 @@ def materialize(
 
 
 def supports_proposal(unit: Observation) -> bool:
-    # Child effects require executable-state and structural publication support;
-    # file-target materialization cannot safely represent them.
     return (
         unit.state == "drifted" and not unit.diagnostics
-        and unit.identity.child_path is None
         and unit.configured_policy in ("push-only", "push-only-delete", "pull-only", "both")
         and unit.effective_policy in ("push-only", "push-only-delete", "pull-only", "both")
     )
@@ -164,7 +177,6 @@ class SessionRow:
     intent: ResolutionIntent | None = None
     fallback_reason: str | None = None
     diagnostics: tuple[Diagnostic, ...] = ()
-    capability_diagnostics: tuple[Diagnostic, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -355,7 +367,7 @@ def _step_scope_identity(step: ExecutionStep) -> str | None:
             package_id=step.package_id,
             bound_profile=package.bound_profile,
             target_name=step.target_plan.target_name,
-        )
+        ) + (f"/{step.target_plan.child_path}" if step.target_plan.child_path is not None else "")
     return f"{step.repo_name}:{package_ref_text(package_id=step.package_id, bound_profile=package.bound_profile)}"
 
 
@@ -466,10 +478,6 @@ class SyncSession:
                     else ("set-included",)
                     if unit.state == "drifted" and not unit.diagnostics
                     else (),
-                    capability_diagnostics=(Diagnostic(
-                        "directory-convergence-unavailable",
-                        "Directory child Observation is available; child convergence is not supported.",
-                    ),) if unit.identity.child_path is not None and unit.state == "drifted" and not unit.diagnostics else (),
                     allowed_intents=allowed_intents(unit),
                     intent=default_intent(unit),
                     fallback_reason=(unit.base.reason or "absent")
@@ -573,10 +581,10 @@ class SyncSession:
                     observation.git.primary_clean,
                 )
                 for observation in observations
-                if observation.identity.child_path is None and observation.configured_policy in ("pull-only", "both") and not observation.diagnostics
+                if observation.configured_policy in ("pull-only", "both") and not observation.diagnostics
             }
-            session._publication_metadata = publication_metadata
-            session._repository_metadata = repository_metadata
+            session._publication_metadata = freeze_child_metadata(publication_metadata, observations)
+            session._repository_metadata = freeze_child_metadata(repository_metadata, observations)
             # Adapter exceptions are programming failures, not planning results.
             session._emit(SessionOpened(session.view))
             resources.pop_all()
@@ -636,7 +644,7 @@ class SyncSession:
                 else replace(row, approved=command.approved)
                 if isinstance(row, AdditionalRow)
                 else replace(row, included=command.approved)
-                if (isinstance(row, AuxiliaryRow) or isinstance(row, SessionRow) and row.observation.identity.child_path is not None) and "set-included" in row.allowed_commands
+                if isinstance(row, AuxiliaryRow) and "set-included" in row.allowed_commands
                 else row
                 for row in view.rows
             )
@@ -1021,7 +1029,7 @@ class SyncSession:
             status = "failed"
         return SyncResult(status, tuple(units), operation_diagnostics, steps, additional)
 
-    def _capture(self, observation: Observation) -> FilePresent | Missing:
+    def _capture(self, observation: Observation) -> SyncBasePayload:
         self.check_cancelled()
         item, metadata = self._resolved_inputs[observation.identity]
         if observation.identity not in self._captures:
@@ -1043,7 +1051,7 @@ class SyncSession:
                 raise CaptureError(observation.repository_path, str(exc)) from exc
         return self._captures[observation.identity]
 
-    def _render(self, observation: Observation, repository: FilePresent | Missing) -> FilePresent | Missing:
+    def _render(self, observation: Observation, repository: SyncBasePayload) -> SyncBasePayload:
         self.check_cancelled()
         key = (observation.identity, repository)
         if key not in self._renders:
@@ -1057,14 +1065,17 @@ class SyncSession:
                 outcome = project_frozen_file(
                     self._context.projection.command_runtime, metadata=metadata,
                     context=item.package_context.context,
-                    repository=repository.content if isinstance(repository, FilePresent) else None,
-                    live=observation.live.content if isinstance(observation.live, FilePresent) else None,
+                    repository=repository.content if isinstance(repository, (FilePresent, DirectoryChildPresent)) else None,
+                    live=observation.live.content if isinstance(observation.live, (FilePresent, DirectoryChildPresent)) else None,
                     view="render", repo_side=True,
                 )
-            self._renders[key] = Missing() if outcome is None else FilePresent(outcome)
+            self._renders[key] = Missing() if outcome is None else (
+                DirectoryChildPresent(outcome, repository.executable)
+                if isinstance(repository, DirectoryChildPresent) else FilePresent(outcome)
+            )
         return self._renders[key]
 
-    def _merge(self, observation: Observation, captured: FilePresent | Missing) -> FilePresent | Missing:
+    def _merge(self, observation: Observation, captured: SyncBasePayload) -> SyncBasePayload:
         self.check_cancelled()
         if observation.base.status != "usable" or observation.base.record is None:
             raise ValueError("Merge requires a usable Sync Base")

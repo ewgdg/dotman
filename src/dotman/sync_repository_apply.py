@@ -9,10 +9,11 @@ from typing import Callable, Sequence
 from dotman import file_access
 from dotman.command_runtime import CommandRuntime, command_runtime_session, current_command_runtime
 from dotman.elevation import elevation_broker_session
-from dotman.execution import ExecutionStepResult, _execute_step
+from dotman.execution import ExecutionStepResult, _execute_step, directory_synced_file_mode
+from dotman.atomic_files import default_created_file_mode
 from dotman.models import PackagePlan, ResolvedSyncTarget, TargetPlan
 from dotman.planning import PackagePlanningInput, plan_hooks, plan_repo_hooks
-from dotman.sync_base_store import FilePresent, Missing
+from dotman.sync_base_store import FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 from dotman.sync_publication import (
     HookActivation, PublicationMetadata, PublicationResult, PublicationUnitResult,
     ordered_stage_steps, stage_target_order, unattempted_steps, _target_identity,
@@ -24,7 +25,7 @@ from dotman.sync_publication import (
 class RepositoryApplyUnit:
     row_id: str
     identity: ResolvedSyncTarget
-    outcome: FilePresent | Missing | None
+    outcome: SyncBasePayload | None
     requires_publication: bool = False
 
 
@@ -87,7 +88,7 @@ def execute_repository_apply(
     by_identity = {unit.identity: unit for unit in units}
     if len(by_identity) != len(units) or len({unit.row_id for unit in units}) != len(units):
         raise ValueError("Duplicate repository apply unit")
-    if any(unit.outcome is not None and not isinstance(unit.outcome, (FilePresent, Missing)) for unit in units):
+    if any(unit.outcome is not None and not isinstance(unit.outcome, (FilePresent, DirectoryChildPresent, Missing)) for unit in units):
         raise ValueError("Invalid frozen repository outcome")
     planned = ordered_stage_steps(
         metadata, {
@@ -143,7 +144,7 @@ def execute_repository_apply(
     return PublicationResult(tuple(results.values()), error, tuple(steps), interrupted=interrupted)
 
 
-def apply_repository_source(path, outcome: FilePresent | Missing, *, repo_root) -> None:
+def apply_repository_source(path, outcome: SyncBasePayload, *, repo_root) -> None:
     """Apply frozen bytes with the same confinement checks for every Source Change."""
     path.relative_to(repo_root)
     # Atomic replacement protects the leaf, not a retargeted parent link.
@@ -158,7 +159,13 @@ def apply_repository_source(path, outcome: FilePresent | Missing, *, repo_root) 
         shape = None
     if shape is not None and not stat.S_ISREG(shape.st_mode):
         raise ValueError(f"Repository apply expects a regular file: {path}")
-    if isinstance(outcome, FilePresent):
-        file_access.write_bytes_atomic(path, outcome.content)
+    if isinstance(outcome, (FilePresent, DirectoryChildPresent)):
+        mode = None
+        if isinstance(outcome, DirectoryChildPresent):
+            mode = directory_synced_file_mode(
+                destination_mode=stat.S_IMODE(shape.st_mode) if shape is not None else default_created_file_mode(),
+                source_mode=stat.S_IXUSR if outcome.executable else 0,
+            )
+        file_access.write_bytes_atomic(path, outcome.content, mode=mode)
     else:
         file_access.delete_path_and_prune_empty_parents(path, root=path.parent)

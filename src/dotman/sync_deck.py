@@ -19,14 +19,14 @@ from textual.errors import NoWidget
 from textual.widgets import DataTable, OptionList, RichLog, Static
 
 from dotman.cli_style import render_sync_term, render_package_label
-from dotman.sync_base_store import FilePresent, Missing
+from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
 from dotman.sync_session import AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
 
 
 def _frozen_difference(
-    before: FilePresent | Missing | None,
-    after: FilePresent | Missing | None,
+    before: FilePresent | DirectoryChildPresent | Missing | None,
+    after: FilePresent | DirectoryChildPresent | Missing | None,
     *,
     before_label: str,
     after_label: str,
@@ -34,27 +34,42 @@ def _frozen_difference(
 ) -> list[str]:
     if before is None or after is None:
         return ["    Comparison evidence unavailable"]
-    before_bytes = before.content if isinstance(before, FilePresent) else b""
-    after_bytes = after.content if isinstance(after, FilePresent) else b""
-    if before_bytes == after_bytes:
+    present_types = (FilePresent, DirectoryChildPresent)
+    before_bytes = before.content if isinstance(before, present_types) else b""
+    after_bytes = after.content if isinstance(after, present_types) else b""
+    mode_changed = (
+        isinstance(before, DirectoryChildPresent)
+        and isinstance(after, DirectoryChildPresent)
+        and before.executable != after.executable
+    )
+    if before_bytes == after_bytes and not mode_changed:
         return ["    No content difference"]
-    try:
-        diff = unified_diff(
-            before_bytes.decode("utf-8").splitlines(keepends=True),
-            after_bytes.decode("utf-8").splitlines(keepends=True),
-            fromfile="/dev/null" if isinstance(before, Missing) else before_label,
-            tofile="/dev/null" if isinstance(after, Missing) else after_label,
-            lineterm="\n",
-        )
-        lines = []
-        for line in diff:
-            lines.append(line.rstrip("\n"))
-            # Retain newline-only drift in both evidence and effect previews.
-            if not line.endswith("\n"):
-                lines.append("\\ No newline at end of file")
-        return lines
-    except UnicodeDecodeError:
-        return [f"  Binary {description}: {len(before_bytes)} → {len(after_bytes)} bytes"]
+
+    lines: list[str] = []
+    if mode_changed:
+        # Directory children carry Git's executable bit, so use the same mode
+        # evidence as Git diffs instead of presenting host-specific permissions.
+        lines.extend([
+            f"old mode {'100755' if before.executable else '100644'}",
+            f"new mode {'100755' if after.executable else '100644'}",
+        ])
+    if before_bytes != after_bytes:
+        try:
+            diff = unified_diff(
+                before_bytes.decode("utf-8").splitlines(keepends=True),
+                after_bytes.decode("utf-8").splitlines(keepends=True),
+                fromfile="/dev/null" if isinstance(before, Missing) else before_label,
+                tofile="/dev/null" if isinstance(after, Missing) else after_label,
+                lineterm="\n",
+            )
+            for line in diff:
+                lines.append(line.rstrip("\n"))
+                # Retain newline-only drift in both evidence and effect previews.
+                if not line.endswith("\n"):
+                    lines.append("\\ No newline at end of file")
+        except UnicodeDecodeError:
+            lines.append(f"  Binary {description}: {len(before_bytes)} → {len(after_bytes)} bytes")
+    return lines
 
 
 class CommandDeck:
@@ -563,8 +578,6 @@ class SyncDeckApp(App[bool]):
         else:
             diagnostics = row_diagnostics(row)
             detail = "\n".join(item.message for item in diagnostics)
-            if not diagnostics and not row.allowed_intents:
-                detail = "Unsupported: this session has no resolution for this target. Directory convergence is not supported."
             if row.fallback_reason:
                 detail += f"\nFallback: {row.fallback_reason}"
             detail = f"{row.row_id}\n{detail}" if detail else row.row_id

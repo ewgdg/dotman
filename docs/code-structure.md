@@ -144,9 +144,11 @@ and directional Path Rule Guard evaluation; it does not reuse aggregate
 one-sided directory plans. The census retains local diagnostics and combined
 controls before narrowing to selected identities. Any ancestor discovery failure
 propagates to existing and explicitly selected descendants before payload reads.
-Root metadata remains only a
-hook/discovery scope. Expanded child inputs cannot enter the file-only Proposal
-and Base execution adapters; child rows expose a distinct capability diagnostic.
+Root metadata remains only a hook/discovery scope. Expanded children enter the
+shared Proposal and Base adapters as `Missing` or `DirectoryChildPresent` with
+bytes and executable state. Capture and Render preserve that state; three-way
+Reconciliation merges bytes and executable independently. Exact chmod is applied
+only while freezing the live outcome.
 
 Session/operation adapters own the manager lock, exclusions, actual Observation,
 final effect execution, and invoking these boundaries in order. Base inspection
@@ -209,14 +211,14 @@ Before adding more logic to `cli.py` or `engine.py`, ask:
 
 Prefer the dedicated module unless there is a strong reason not to.
 
-## File SyncSession clients
+## SyncSession clients
 
 Resolve selectors with `engine.resolve_sync_scope(...)`, then call
 `engine.open_sync_session(scope, preview=..., run_noop=..., event_sink=...)`. Opening returns
-a `SyncSession` or typed `SessionOpenFailed`. Files and auxiliary scopes are
-supported. File drift materializes policy-allowed Proposals; Probe/hook work is
-directly included without an Observation or Proposal. Directory children and
-Editors remain outside this boundary.
+a `SyncSession` or typed `SessionOpenFailed`. File targets, directory children and
+auxiliary scopes are supported. File and child drift materializes policy-allowed
+Proposals and supports transactional editing; Probe/hook work is directly included
+without an Observation or Proposal.
 
 Read `session.view` rather than private plans. `SetIncluded`, `SetApproval`,
 `PrepareProposalReview`, `Preview`, `Execute` and `Abort` carry the view's session
@@ -252,7 +254,9 @@ outcomes. A failed repository stage prevents all Live Publication.
 publishes approved file effects through the existing file-access, snapshot and
 hook mechanics. Both stages use its shared ordered stage-step construction:
 repository order, package plan order, target plan order and nested directional
-hooks. That frozen sequence drives execution and explicit unattempted-tail
+hooks. Child execution paths are frozen separately from their enclosing target,
+so hooks run once per target while each child retains its own effects and result.
+That frozen sequence drives execution and explicit unattempted-tail
 reporting; it is not reconstructed from filesystem outcomes. Cancellation checks
 precede hooks, effects and completion. Publication acknowledgment failures have
 their own failed completion step, distinct from successful content or chmod.

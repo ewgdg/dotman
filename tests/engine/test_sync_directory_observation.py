@@ -1,7 +1,7 @@
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.sync_base_store import FilePresent, Missing
+from dotman.sync_base_store import DirectoryChildPresent, Missing
 from dotman.sync_session import SyncSession
 from tests.engine.test_sync_session import make_engine
 
@@ -41,7 +41,7 @@ def test_directory_census_unions_independent_children_without_aggregate(tmp_path
         ]
         assert [unit.state for unit in units] == ['drifted', 'drifted', 'directly-in-sync']
         assert units[0].repository == Missing()
-        assert units[0].live == FilePresent(b'live')
+        assert units[0].live == DirectoryChildPresent(b'live', False)
         assert units[1].live == Missing()
         assert [row.row_id for row in session.view.rows] == [
             'main:app.tree/live-only', 'main:app.tree/nested/repo-only',
@@ -159,12 +159,12 @@ chmod = "0600"
         units = {unit.identity.child_path: unit for unit in session.view.observations}
         assert units['permissions'].state == 'directly-in-sync'
         assert units['executable'].state == 'drifted'
-        assert units['executable'].repository_executable is False
+        assert units['executable'].repository.executable is False
         assert units['exact'].state == 'drifted'
 
 
-def test_children_freeze_independent_selection_but_cannot_execute_as_file_targets(tmp_path, monkeypatch):
-    from dotman.sync_session import CommandRejected, SetApproval, SetIncluded
+def test_children_freeze_independent_selection_and_endpoints(tmp_path, monkeypatch):
+    from dotman.sync_session import SetApproval, SetIncluded
 
     engine = directory_engine(tmp_path, monkeypatch)
     repo, live = tmp_path / 'repo/packages/app/tree', tmp_path / 'live/tree'
@@ -175,17 +175,16 @@ def test_children_freeze_independent_selection_but_cannot_execute_as_file_target
         assert len(before) == 2
         assert all(not unit.base.acknowledged for unit in before)
         a, b = session.view.rows
-        assert a.capability_diagnostics[0].code == 'directory-convergence-unavailable'
         assert a.observation.state == 'drifted' and not a.observation.diagnostics
-        assert a.allowed_commands == ('set-included',)
-        assert isinstance(session.dispatch(SetApproval(session.view.session_id, session.view.revision, a.row_id, True)), CommandRejected)
+        assert 'set-approval' in a.allowed_commands
+        session.dispatch(SetApproval(session.view.session_id, session.view.revision, a.row_id, True))
         session.dispatch(SetIncluded(session.view.session_id, session.view.revision, a.row_id, False))
         assert not session.view.rows[0].included and session.view.rows[1].included
         put(repo, 'b', b'changed after open')
         assert session.view.observations == before
         result = session.execute().result
         assert [unit.status for unit in result.units] == ['excluded', 'pending']
-        assert result.status == 'incomplete'
+        assert result.status == 'completed'
         assert (live / 'b').read_bytes() == b'live'
         assert (repo / 'b').read_bytes() == b'changed after open'
 
@@ -208,7 +207,7 @@ def test_live_directory_links_keep_lexical_identity_and_failures_local(tmp_path,
     with open_directory(engine) as session:
         units = {unit.identity.child_path: unit for unit in session.view.observations}
         assert set(units) == {'good', 'link/child'}
-        assert units['link/child'].live == FilePresent(b'live')
+        assert units['link/child'].live == DirectoryChildPresent(b'live', False)
         assert units['link/child'].live_path == live / 'link/child'
         assert units['link/child'].inputs.dir_symlink_mode == 'follow'
 

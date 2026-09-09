@@ -74,16 +74,29 @@ affected descendant before either payload endpoint is read, including children
 already found on the opposite side and exact child selections. Failures do not
 discard unrelated child evidence.
 
-Child Observation and independent inclusion/exclusion are supported. Child
-convergence is not: drift rows expose `directory-convergence-unavailable` as a
-separate capability diagnostic and offer no Proposal, Approval, Editor or
-Publication Effects. Inclusion never routes a child through file-target
-execution. Unsupported participating drift prevents unattended mutation; an
-interactive operation may execute unrelated supported approved work and reports
-remaining included children as pending. Child Base inspection, acknowledgment,
-maintenance and structural/root effects are not performed by Sync yet. Direct
-child agreement remains a successful Observation, not a convergence capability
-failure, and does not acknowledge a Base.
+Each child supports the same policy-constrained Resolution Intents, lazy Proposal,
+standing opt-in Approval, transactional Editor and independent completion as a
+file target. Its repository representation is `Missing` or
+`Present(bytes, executable)`. Merge reconciles bytes and executable state
+independently: agreement wins; otherwise the side changed from the Base wins.
+A conflict remains blocked without changing intent.
+
+Exact Path Rule chmod derives only the approved live outcome with surviving push
+capability. Equal bytes and `Use live` can therefore produce chmod-only
+Publication Effects. It never changes the repository outcome or the committed
+executable state stored as ancestry. Other permission bits remain outside Merge.
+
+Each child path is its exclusive Primary Source. Transform and Editor dependencies
+use canonical independently approved Additional Sources, including shared
+dependencies across children. There is no directory source bundle. A rename is a
+deletion and an addition with separate Approval and Base identities.
+
+Child Git facts are batched with file targets. Direct eligible agreement can
+acknowledge immediately in a real session; drifted eligible children acknowledge
+independently after their own required effects. Ineligible children complete
+without a Base. Both stages keep one enclosing target hook scope and report each
+child's exact identity. Directory topology closure and root-mode auxiliary work
+are separate from child reconciliation.
 
 ## Auxiliary work
 
@@ -124,7 +137,7 @@ not directly agreeing units. Its aligned table uses canonical target identities
 and a **Selection** column. Selection authorizes Proposals and canonical Additional Source Changes through
 independent Approval and directly includes auxiliary work. Unsupported resolution capability is labeled separately
 from Observation and Proposal failures; focused diagnostic details explain the
-current row. Directory child rows support inclusion, not Approval. The deck and
+current row. Directory child rows use the same opt-in Approval as file targets. The deck and
 output adapter also recognize semantic **Directory Root Work** as direct Auxiliary
 inclusion, without Proposal or Approval; discovering and executing root mode drift
 belongs to directory topology support.
@@ -296,10 +309,9 @@ the prior Base and does not undo earlier committed acknowledgments.
 
 ## Session lifetime and current engine boundary
 
-File-target sessions support frozen Observation, push-only, pull-only and both-policy
+File-target and directory-child sessions support frozen Observation, push-only, pull-only and both-policy
 Proposals, Approval, review, preview, Repository Apply and Live Publication.
-File sessions also support auxiliary work and explicit Proposal editing.
-Directory children are not yet supported.
+Sessions also support auxiliary work and explicit Proposal editing.
 Unapproved or excluded healthy work remains untouched. Abort does not undo Base
 maintenance already committed while opening.
 Deliberately unapproved supported drift remains `pending` without failing the

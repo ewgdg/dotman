@@ -7,7 +7,7 @@ import sys
 
 from dotman.cli_style import render_sync_term, render_package_label, style_text, MENU_REPO_STYLE
 from dotman.sync_scope import _parse_scope_selector
-from dotman.sync_base_store import FilePresent, Missing
+from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_session import (
     AdditionalRow, BatchSetApproval, PrepareSourceReview, AuxiliaryRow, CommandRejected, EditProposal, PrepareProposalReview, Preview, SessionOpenFailed,
     SetApproval, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession,
@@ -21,9 +21,9 @@ def approve(session: SyncSession, row_id: str, approved: bool):
 
 
 def selection_uses_inclusion(row) -> bool:
-    return isinstance(row, AuxiliaryRow) or (
-        not isinstance(row, AdditionalRow) and row.observation.identity.child_path is not None
-    )
+    # Directory children are ordinary Proposal rows; only auxiliary work uses
+    # inclusion because it has no independent Proposal/Approval.
+    return isinstance(row, AuxiliaryRow)
 
 
 def set_selected(session: SyncSession, row, selected: bool):
@@ -45,7 +45,7 @@ def additional_label(row, *, use_color: bool = False) -> str:
 def row_diagnostics(row):
     if isinstance(row, AdditionalRow):
         return ()
-    return row.diagnostics if isinstance(row, AuxiliaryRow) else (*row.observation.diagnostics, *row.diagnostics, *row.capability_diagnostics)
+    return row.diagnostics if isinstance(row, AuxiliaryRow) else (*row.observation.diagnostics, *row.diagnostics)
 
 
 def auxiliary_resolution(kind: str) -> str:
@@ -191,7 +191,7 @@ class SyncDeckCommandRunner:
             return
         print(":: Sync preview" if args.dry_run else ":: Sync")
         for unit in payload["sync_units"]:
-            selection = ("selected" if unit["selected"] else "unselected") if unit["capability_diagnostics"] else ("approved" if unit["approved"] else "unapproved")
+            selection = "approved" if unit["approved"] else "unapproved"
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {unit['identity']}")
             if unit["resolution"]:
                 print(f"      {render_sync_term(resolution_label(unit['resolution']), use_color=self._use_color)}")
@@ -201,7 +201,7 @@ class SyncDeckCommandRunner:
                 print(f"      repository {unit['primary_source_change']['kind']}")
             for effect in unit["effects"]:
                 print(f"      {effect['kind']}")
-            for item in (*unit["diagnostics"], *unit["capability_diagnostics"]):
+            for item in unit["diagnostics"]:
                 print(f"      {item['message']}")
             if unit["result"]:
                 print(f"      {render_sync_term(unit['result'], use_color=self._use_color)}")
@@ -265,8 +265,6 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "identity": identity,
             "policy": observation.effective_policy,
             "observation": observation.state,
-            "capability_diagnostics": [{"code": item.code, "message": item.message}
-                                       for item in row.capability_diagnostics] if row else [],
             "resolution_intent": intent,
             "resolution": proposal.intent if proposal else intent,
             "generation": proposal.generation if proposal else None,
@@ -367,7 +365,10 @@ def primary_change_summary(proposal, path) -> dict | None:
     if proposal is None or proposal.primary_source_change is None:
         return None
     change = proposal.primary_source_change
-    summary = {"kind": "write" if isinstance(change, FilePresent) else "delete", "path": str(path)}
-    if isinstance(change, FilePresent):
+    present_types = (FilePresent, DirectoryChildPresent)
+    summary = {"kind": "write" if isinstance(change, present_types) else "delete", "path": str(path)}
+    if isinstance(change, present_types):
         summary["bytes"] = len(change.content)
+        if isinstance(change, DirectoryChildPresent):
+            summary["executable"] = change.executable
     return summary

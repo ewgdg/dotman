@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import sys
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Mapping
 from dotman.atomic_files import write_text_atomic
 from dotman.models import AdditionalSource, EditorSpec
 from dotman.command_runtime import ArgvCommand, CommandRequest, CommandResult, current_command_runtime
-from dotman.file_access import read_bytes, write_bytes_atomic as sudo_write_bytes_atomic
+from dotman.file_access import chmod, read_bytes, write_bytes_atomic as sudo_write_bytes_atomic
 from dotman.terminal import read_prompt_line
 
 
@@ -21,6 +22,7 @@ ANSI_RESET = "\033[0m"
 MENU_HEADER_MARKER = "::"
 MENU_HEADER_MARKER_STYLE = ("1", "34")
 MENU_PROMPT_STYLE = ("1",)
+_EXECUTABLE_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 MENU_HINT_STYLE = ("2",)
 
 
@@ -30,6 +32,7 @@ class EditableSourceCopy:
     editable_copy_path: Path
     original_text: str
     original_bytes: bytes = b""
+    original_mode: int | None = None
 
 
 def prompt(message: str) -> str:
@@ -180,6 +183,7 @@ def _write_review_file(
 
 def _write_editable_source_copies(
     *, root: Path, source_paths: list[Path], source_bytes: Mapping[Path, bytes] | None = None,
+    preserve_primary_executable: bool = False,
 ) -> list[EditableSourceCopy]:
     editable_sources: list[EditableSourceCopy] = []
     for index, source_path in enumerate(source_paths, start=1):
@@ -187,12 +191,16 @@ def _write_editable_source_copies(
         original_bytes = source_bytes[source_path] if source_bytes is not None and source_path in source_bytes else read_bytes(source_path)
         original_text = original_bytes.decode("utf-8", errors="replace")
         editable_copy_path.write_bytes(original_bytes)
+        original_mode = stat.S_IMODE(source_path.stat().st_mode) if preserve_primary_executable and index == 1 else None
+        if original_mode is not None:
+            editable_copy_path.chmod(original_mode)
         editable_sources.append(
             EditableSourceCopy(
                 destination_path=source_path,
                 editable_copy_path=editable_copy_path,
                 original_text=original_text,
                 original_bytes=original_bytes,
+                original_mode=original_mode,
             )
         )
     return editable_sources
@@ -203,6 +211,8 @@ def _changed_editable_sources(editable_sources: list[EditableSourceCopy]) -> lis
         editable_source
         for editable_source in editable_sources
         if editable_source.editable_copy_path.read_bytes() != editable_source.original_bytes
+        or editable_source.original_mode is not None and bool(editable_source.original_mode & _EXECUTABLE_BITS)
+        != bool(editable_source.editable_copy_path.stat().st_mode & _EXECUTABLE_BITS)
     ]
 
 
@@ -248,6 +258,11 @@ def _write_confirmed_sources(changed_sources: list[EditableSourceCopy]) -> None:
             # Source inputs may be readable only through the elevation broker,
             # and binary editor inputs must still be copied byte-for-byte.
             sudo_write_bytes_atomic(changed_source.destination_path, content)
+        if changed_source.original_mode is not None:
+            # Only child Git executable state is editable; exact permissions are live policy.
+            executable = bool(changed_source.editable_copy_path.stat().st_mode & _EXECUTABLE_BITS)
+            chmod(changed_source.destination_path, (changed_source.original_mode & ~_EXECUTABLE_BITS)
+                  | (_EXECUTABLE_BITS if executable else 0))
 
 
 def resolve_editor_additional_sources(
@@ -301,6 +316,7 @@ def run_basic_reconcile(
     editor_elevation: str = "none",
     stream_output: bool = False,
     return_result: bool = False,
+    preserve_primary_executable: bool = False,
     quiet: bool = False,
 ) -> int | CommandResult:
     resolved_repo_path = Path(repo_path).expanduser().resolve()
@@ -333,6 +349,7 @@ def run_basic_reconcile(
         temp_root = Path(temp_dir)
         editable_sources = _write_editable_source_copies(
             root=temp_root, source_paths=source_paths, source_bytes=source_bytes,
+            preserve_primary_executable=preserve_primary_executable,
         )
         if review_repo_bytes is not None:
             resolved_review_repo_path = temp_root / "review-repo"

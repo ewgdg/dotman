@@ -4,10 +4,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import shutil
 import tempfile
+import stat
 
 from dotman.reconcile import run_basic_reconcile, resolve_editor_additional_sources
 from dotman.templates import discover_template_file_dependencies
-from dotman.sync_base_store import FilePresent, Missing
+from dotman.execution import directory_synced_file_mode
+from dotman.projection import file_is_executable
+
+from dotman.sync_base_store import FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 
 
 class EditorCommandFailed(Exception):
@@ -24,7 +28,7 @@ class AdditionalEdit:
 @dataclass(frozen=True)
 class EditorOutput:
     exit_code: int
-    repository: FilePresent | Missing
+    repository: SyncBasePayload
     additional: tuple[AdditionalEdit, ...] = ()
 
 
@@ -76,23 +80,29 @@ def edit_sources(*, observation, proposal, metadata, repo_root, preimages, addit
         if primary.is_symlink() or primary.resolve() != primary:
             raise ValueError('Editor sources must be regular repository paths')
         primary.parent.mkdir(parents=True, exist_ok=True)
-        primary.write_bytes(initial.content if isinstance(initial, FilePresent) else b'')
+        primary.write_bytes(initial.content if isinstance(initial, (FilePresent, DirectoryChildPresent)) else b'')
+        if isinstance(initial, DirectoryChildPresent):
+            primary.chmod(directory_synced_file_mode(
+                destination_mode=stat.S_IMODE(primary.stat().st_mode),
+                source_mode=stat.S_IXUSR if initial.executable else 0,
+            ))
         for path in sources:
             staged(path).write_bytes(retained[path].candidate if path in retained else preimages[path])
         live = directory / 'live'
-        live.write_bytes(observation.live.content if isinstance(observation.live, FilePresent) else b'')
+        live.write_bytes(observation.live.content if isinstance(observation.live, (FilePresent, DirectoryChildPresent)) else b'')
         try:
             result = run_basic_reconcile(
                 repo_path=str(primary), live_path=str(live),
                 additional_sources=[str(staged(path)) for path in sources],
                 editor=metadata.editor.run if metadata.editor.type is None else None,
                 assume_yes=True, review_repo_bytes=observation.comparison_repository.content
-                if isinstance(observation.comparison_repository, FilePresent) else b'',
+                if isinstance(observation.comparison_repository, (FilePresent, DirectoryChildPresent)) else b'',
                 review_live_bytes=observation.comparison_live.content
-                if isinstance(observation.comparison_live, FilePresent) else b'',
+                if isinstance(observation.comparison_live, (FilePresent, DirectoryChildPresent)) else b'',
                 editor_env=staged_metadata.command_env, editor_cwd=staged_metadata.command_cwd,
                 editor_io=metadata.editor.io, editor_elevation=metadata.editor.elevation,
                 return_result=True, quiet=True,
+                preserve_primary_executable=observation.identity.child_path is not None,
             )
         except InterruptedError:
             # Runtime cancellation is an OSError subclass, not a provider failure.
@@ -101,6 +111,8 @@ def edit_sources(*, observation, proposal, metadata, repo_root, preimages, addit
             raise EditorCommandFailed(str(exc)) from exc
         content = primary.read_bytes()
         repository = Missing() if isinstance(initial, Missing) and content == b'' else FilePresent(content)
+        if isinstance(repository, FilePresent) and observation.identity.child_path is not None:
+            repository = DirectoryChildPresent(content, file_is_executable(primary.stat().st_mode))
         changes = tuple(AdditionalEdit(path, preimages[path], staged(path).read_bytes())
                         for path in sources if staged(path).read_bytes() != preimages[path])
         return EditorOutput(result.exit_code, repository, changes)

@@ -3,7 +3,7 @@
 from dotman.capture import BUILTIN_PATCH_CAPTURE, CaptureError, apply_review_patch
 from dotman.command_runtime import CommandRuntime
 from dotman.projection import TargetMetadata, project_frozen_file
-from dotman.sync_base_store import FilePresent, Missing
+from dotman.sync_base_store import FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 from dotman.sync_observation import Observation
 
 
@@ -14,7 +14,7 @@ def capture_observation(
     context: dict,
     command_runtime: CommandRuntime,
     reuse_comparison: bool = True,
-) -> FilePresent | Missing:
+) -> SyncBasePayload:
     if isinstance(observation.live, Missing):
         return Missing()
     if observation.live is None or observation.repository is None:
@@ -35,10 +35,10 @@ def capture_observation(
 
     repository = (
         observation.repository.content
-        if isinstance(observation.repository, FilePresent) else None
+        if isinstance(observation.repository, (FilePresent, DirectoryChildPresent)) else None
     )
     if metadata.capture_command == BUILTIN_PATCH_CAPTURE:
-        if not all(isinstance(state, FilePresent) for state in (
+        if not all(isinstance(state, (FilePresent, DirectoryChildPresent)) for state in (
             observation.repository, observation.comparison_repository,
             observation.comparison_live,
         )):
@@ -50,6 +50,10 @@ def capture_observation(
         )
         if project(candidate, observation.compare_repo, repo_side=True) != observation.comparison_live.content:
             raise CaptureError(observation.repository_path, "captured bytes do not match the review live bytes")
-        return FilePresent(candidate)
+        return (DirectoryChildPresent(candidate, observation.live.executable)
+                if isinstance(observation.live, DirectoryChildPresent) else FilePresent(candidate))
     captured = project(repository, "capture", repo_side=False)
-    return Missing() if captured is None else FilePresent(captured)
+    return Missing() if captured is None else (
+        DirectoryChildPresent(captured, observation.live.executable)
+        if isinstance(observation.live, DirectoryChildPresent) else FilePresent(captured)
+    )

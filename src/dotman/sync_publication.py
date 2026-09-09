@@ -38,6 +38,7 @@ class PublicationUnit:
 class PublicationMetadata:
     packages: tuple[PackagePlan, ...]
     repo_hooks: tuple[tuple[str, tuple[HookPlan, ...]], ...]
+    children: tuple[tuple[ResolvedSyncTarget, tuple[TargetPlan, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ def _target_identity(package: PackagePlan, target: TargetPlan) -> ResolvedSyncTa
     return ResolvedSyncTarget(
         repo=package.repo_name, package_id=target.package_id,
         bound_profile=package.bound_profile, target_name=target.target_name,
+        child_path=target.child_path,
     )
 
 
@@ -133,7 +135,7 @@ def _hook_scopes(
     normal = set()
     noop = set()
     for identity in active_targets:
-        normal.update(ancestors.get(identity.canonical, ()))
+        normal.update(ancestors.get(replace(identity, child_path=None).canonical, ()))
     for activation in auxiliary:
         if activation.scope not in ancestors:
             raise ValueError("Hook activation has no captured metadata")
@@ -183,12 +185,35 @@ def _effect_path(effect: Effect, target: TargetPlan) -> Path:
     return path
 
 
+def freeze_child_metadata(metadata: PublicationMetadata, observations) -> PublicationMetadata:
+    """Retain one target hook scope, with independent frozen child execution paths."""
+    children = []
+    for package in metadata.packages:
+        for target in package.target_plans:
+            identity = _target_identity(package, target)
+            units = [unit for unit in observations
+                     if unit.identity.child_path is not None
+                     and replace(unit.identity, child_path=None) == identity]
+            if units:
+                children.append((identity, tuple(
+                    replace(target, child_path=unit.identity.child_path,
+                            repo_path=unit.repository_path, live_path=unit.live_path)
+                    for unit in units
+                )))
+    return replace(metadata, children=tuple(children))
+
+
+def _unit_targets(metadata: PublicationMetadata, package: PackagePlan, target: TargetPlan) -> tuple[TargetPlan, ...]:
+    return dict(metadata.children).get(_target_identity(package, target), (target,))
+
+
 def stage_target_order(metadata: PublicationMetadata) -> tuple[ResolvedSyncTarget, ...]:
     return tuple(
         _target_identity(package, target)
         for repo, _ in metadata.repo_hooks
         for package in metadata.packages if package.repo_name == repo
-        for target in package.target_plans
+        for scope_target in package.target_plans
+        for target in _unit_targets(metadata, package, scope_target)
     )
 
 
@@ -228,14 +253,16 @@ def ordered_stage_steps(
                 target_hooks = [hook for hook in values if hook.scope_kind == "target"
                                 and hook.target_name == target.target_name]
                 hooks(target_hooks, f"pre_{direction}", identity.canonical, package, target)
-                if identity in target_work:
-                    matched.add(identity)
-                    for kind, action in target_work[identity]:
-                        steps.append(ExecutionStep(
-                            repo_name=repo, package_id=package.package_id,
-                            package_plan=package, target_plan=target, kind=kind,
-                            action=action, scope_kind="target",
-                        ))
+                for unit_target in _unit_targets(metadata, package, target):
+                    unit_identity = _target_identity(package, unit_target)
+                    if unit_identity in target_work:
+                        matched.add(unit_identity)
+                        for kind, action in target_work[unit_identity]:
+                            steps.append(ExecutionStep(
+                                repo_name=repo, package_id=package.package_id,
+                                package_plan=package, target_plan=unit_target, kind=kind,
+                                action=action, scope_kind="target",
+                            ))
                 hooks(target_hooks, f"post_{direction}", identity.canonical, package, target)
             hooks(package_hooks, f"post_{direction}", _package_scope(package), package)
         hooks(repo_hooks, f"post_{direction}", repo)
@@ -293,11 +320,12 @@ def execute_publication(
     snapshot_packages, snapshot_endpoints = [], []
     for package in metadata.packages:
         targets = []
-        for target in package.target_plans:
-            unit = by_identity.get(_target_identity(package, target))
-            if unit is not None and unit.effects:
-                snapshot_endpoints.append((unit.effects[0], target))
-                targets.append(replace(target, action="delete" if unit.effects[0].kind == "delete" else "update"))
+        for scope_target in package.target_plans:
+            for target in _unit_targets(metadata, package, scope_target):
+                unit = by_identity.get(_target_identity(package, target))
+                if unit is not None and unit.effects:
+                    snapshot_endpoints.append((unit.effects[0], target))
+                    targets.append(replace(target, action="delete" if unit.effects[0].kind == "delete" else "update"))
         if targets:
             snapshot_packages.append(replace(package, target_plans=targets))
     steps, snapshot, error, interrupted = [], None, None, False

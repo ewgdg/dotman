@@ -27,12 +27,14 @@ from dotman.sync_base_lifecycle import (
 from dotman.sync_base_store import (
     DATABASE_FILE_NAME,
     FilePresent,
+    DirectoryChildPresent,
+    SyncBasePayload,
     Missing,
     SyncBaseRecord,
     SyncBaseStore,
 )
 
-FileState = FilePresent | Missing
+FileState = SyncBasePayload
 ObservationState = Literal["directly-in-sync", "drifted", "observation-failed"]
 
 
@@ -76,7 +78,6 @@ class Observation:
     chmod: str | None = None
     live_is_symlink: bool = False
     live_mode: int | None = None
-    repository_executable: bool | None = None
     diagnostics: tuple[Diagnostic, ...] = ()
     repository_path: Path | None = None
     live_path: Path | None = None
@@ -232,13 +233,16 @@ def _observe_file(
         )
     try:
         repository, _link, repository_mode = _read_endpoint(metadata.repo_path, repository=True)
-        observation = replace(observation, repository=repository,
-                              repository_executable=projection.file_is_executable(repository_mode) if repository_mode is not None and identity.child_path is not None else None)
+        if identity.child_path is not None and isinstance(repository, FilePresent):
+            repository = DirectoryChildPresent(repository.content, projection.file_is_executable(repository_mode))
+        observation = replace(observation, repository=repository)
         live, live_is_symlink, live_mode = _read_endpoint(
             metadata.live_path,
             repository=False,
             follow_missing=context.config.file_symlink_mode == "follow",
         )
+        if identity.child_path is not None and isinstance(live, FilePresent):
+            live = DirectoryChildPresent(live.content, projection.file_is_executable(live_mode))
         observation = replace(
             observation, live=live, live_is_symlink=live_is_symlink, live_mode=live_mode
         )
@@ -252,13 +256,16 @@ def _observe_file(
                     metadata=metadata,
                     context=item.package_context.context,
                     repository=repository.content
-                    if isinstance(repository, FilePresent)
+                    if isinstance(repository, (FilePresent, DirectoryChildPresent))
                     else None,
-                    live=live.content if isinstance(live, FilePresent) else None,
+                    live=live.content if isinstance(live, (FilePresent, DirectoryChildPresent)) else None,
                     view=view,
                     repo_side=repo_side,
                 )
-                return Missing() if content is None else FilePresent(content)
+                return Missing() if content is None else (
+                    DirectoryChildPresent(content, (repository if repo_side else live).executable)
+                    if identity.child_path is not None else FilePresent(content)
+                )
 
             compared_repo = projected(
                 "render" if effective == "push-only" else metadata.compare_repo,
@@ -272,6 +279,8 @@ def _observe_file(
                     repo_side=False,
                 )
             )
+        if effective == "push-only" and metadata.chmod is not None and isinstance(compared_repo, DirectoryChildPresent):
+            compared_repo = replace(compared_repo, executable=projection.file_is_executable(int(metadata.chmod, 8)))
         exact_mode_active = effective == "push-only" or (identity.child_path is not None and effective == "both")
         mode_agrees = (
             not exact_mode_active
@@ -279,12 +288,6 @@ def _observe_file(
             or metadata.chmod is None
             or live_mode == int(metadata.chmod, 8)
         )
-        if (identity.child_path is not None and effective != "push-only-delete"
-                and repository_mode is not None and live_mode is not None
-                and not (effective == "push-only" and metadata.chmod is not None)):
-            mode_agrees = mode_agrees and (
-                projection.file_is_executable(repository_mode) == projection.file_is_executable(live_mode)
-            )
         return replace(
             observation,
             state="directly-in-sync"
@@ -329,6 +332,49 @@ def observe_scope(
     directory_inputs = {identity: value for identity, value in inputs.items() if value[1].target.target_type == "directory"}
     ordered_inputs = inputs
     inputs = {identity: value for identity, value in inputs.items() if identity not in directory_inputs}
+    eligibility = evaluate_directional_guards(
+        directional, command_runtime=context.projection.command_runtime, run_noop=run_noop,
+    )
+    directional = {direction: value.inputs for direction, value in eligibility.items()}
+    admitted = {
+        direction: {_identity(metadata) for item in survivors for metadata in item.target_metadata}
+        for direction, survivors in directional.items()
+    }
+
+    child_policies, child_failures = {}, {}
+    expanded_inputs = {**inputs, **probe_inputs}
+    for identity, (item, metadata) in directory_inputs.items():
+        selected_paths = {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
+        census = census_directory(
+            metadata, follow_live_directories=context.config.dir_symlink_mode == "follow",
+            selected_paths=tuple(sorted(path for path in selected_paths if path is not None)),
+        )
+        children = {
+            relative: (replace(identity, child_path=relative or None), child_metadata(metadata, relative), failures)
+            for relative, failures in census.entries
+            if None in selected_paths or relative in selected_paths
+        }
+        child_admitted = {}
+        for direction in ("push", "pull"):
+            candidates = {
+                relative for relative, (_child, child, _failures) in children.items()
+                if identity in admitted[direction] and sync_policy_allows_operation(
+                    resolve_sync_policy(package=child.package, target=child.target), operation=direction)
+            }
+            child_admitted[direction], _skips = evaluate_directory_path_rule_guards(
+                command_runtime=context.projection.command_runtime, path_rules=metadata.path_rules,
+                candidate_paths=candidates, operation=direction, context=item.package_context.context,
+                target_env={**metadata.command_env, "DOTMAN_OPERATION": direction},
+                repo_name=identity.repo, package_id=identity.package_id,
+                bound_profile=identity.bound_profile, target_name=identity.target_name,
+            )
+        for relative, (child_identity, child, failures) in children.items():
+            expanded_inputs[child_identity] = (item, child)
+            unit = _base_unit(context, child_identity, item, child)
+            child_policies[child_identity] = _effective_policy(unit.configured_policy, relative in child_admitted["push"], relative in child_admitted["pull"])
+            child_failures[child_identity] = failures
+
+    inputs = {identity: value for identity, value in expanded_inputs.items() if identity not in probe_inputs}
     units = {
         identity: _base_unit(context, identity, item, metadata)
         for identity, (item, metadata) in inputs.items()
@@ -374,15 +420,6 @@ def observe_scope(
                     units[identity]
                 ).deleted
 
-        eligibility = evaluate_directional_guards(
-            directional, command_runtime=context.projection.command_runtime, run_noop=run_noop,
-        )
-        directional = {direction: value.inputs for direction, value in eligibility.items()}
-        admitted = {
-            direction: {_identity(metadata) for item in survivors for metadata in item.target_metadata}
-            for direction, survivors in directional.items()
-        }
-
         frozen, git_failures = {}, {}
         for repo_name, git in gits.items():
             repo_units = tuple(
@@ -396,51 +433,10 @@ def observe_scope(
                 git_failures[repo_name] = Diagnostic("git-failed", str(exc))
 
         observations = []
-        expanded_inputs = {**inputs, **probe_inputs}
-        for identity, (item, metadata) in directory_inputs.items():
-            selected_paths = {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
-            census = census_directory(
-                metadata, follow_live_directories=context.config.dir_symlink_mode == "follow",
-                selected_paths=tuple(sorted(path for path in selected_paths if path is not None)),
-            )
-            children = {
-                relative: (replace(identity, child_path=relative or None), child_metadata(metadata, relative), failures)
-                for relative, failures in census.entries
-                if None in selected_paths or relative in selected_paths
-            }
-            child_admitted = {}
-            for direction in ("push", "pull"):
-                candidates = {
-                    relative for relative, (_child, child, _failures) in children.items()
-                    if identity in admitted[direction] and sync_policy_allows_operation(
-                        resolve_sync_policy(package=child.package, target=child.target), operation=direction)
-                }
-                child_admitted[direction], _skips = evaluate_directory_path_rule_guards(
-                    command_runtime=context.projection.command_runtime, path_rules=metadata.path_rules,
-                    candidate_paths=candidates, operation=direction, context=item.package_context.context,
-                    target_env={**metadata.command_env, "DOTMAN_OPERATION": direction},
-                    repo_name=identity.repo, package_id=identity.package_id,
-                    bound_profile=identity.bound_profile, target_name=identity.target_name,
-                )
-            for relative, (child_identity, child, failures) in children.items():
-                expanded_inputs[child_identity] = (item, child)
-                unit = _base_unit(context, child_identity, item, child)
-                effective = _effective_policy(unit.configured_policy, relative in child_admitted["push"], relative in child_admitted["pull"])
-                base = BaseEvidence("unavailable" if unit.eligible else "not-applicable", "absent" if unit.eligible else "ineligible")
-                if failures:
-                    observation = Observation(
-                        child_identity, "observation-failed", unit.configured_policy, effective,
-                        unit.inputs, child.compare_repo, child.compare_live, GitEvidence(), base,
-                        chmod=child.chmod, repository_path=child.repo_path, live_path=child.live_path,
-                        diagnostics=tuple(Diagnostic(failure.code, failure.message) for failure in failures),
-                    )
-                else:
-                    observation = _observe_file(context, child_identity, item, child, unit, effective, GitEvidence(), base)
-                observations.append(observation)
         for identity, (item, metadata) in inputs.items():
             unit = units[identity]
             push, pull = identity in admitted["push"], identity in admitted["pull"]
-            effective = _effective_policy(unit.configured_policy, push, pull)
+            effective = child_policies.get(identity, _effective_policy(unit.configured_policy, push, pull))
             lifecycle = lifecycles.get(identity.repo)
             fact = frozen.get(identity)
             git_evidence = (
@@ -469,9 +465,17 @@ def observe_scope(
                     )
                 except SyncBaseGitError as exc:
                     git_failure = Diagnostic("git-failed", str(exc))
-            observation = _observe_file(
-                context, identity, item, metadata, unit, effective, git_evidence, base
-            )
+            if child_failures.get(identity):
+                observation = Observation(
+                    identity, "observation-failed", unit.configured_policy, effective,
+                    unit.inputs, metadata.compare_repo, metadata.compare_live, git_evidence, base,
+                    chmod=metadata.chmod, repository_path=metadata.repo_path, live_path=metadata.live_path,
+                    diagnostics=tuple(Diagnostic(failure.code, failure.message) for failure in child_failures[identity]),
+                )
+            else:
+                observation = _observe_file(
+                    context, identity, item, metadata, unit, effective, git_evidence, base
+                )
             if fact is not None and fact.failure is not None:
                 git_failure = Diagnostic("git-failed", str(fact.failure))
             if git_failure is not None:
