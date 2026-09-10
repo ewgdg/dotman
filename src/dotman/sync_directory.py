@@ -8,7 +8,7 @@ import stat
 
 from dotman import projection
 from dotman.file_access import read_bytes
-from dotman.ignore import IgnoreMatcher, _prefix_nested_gitignore_pattern
+from dotman.ignore import IgnoreMatcher, GitIgnoreChain
 from dotman.manifest import resolve_sync_policy
 
 
@@ -46,7 +46,7 @@ def census_directory(
     entries: dict[str, list[CensusFailure]] = {}
     markers: set[str] = set()
     directories: set[str] = set()
-    git_patterns: list[str] = []
+    git_controls = list(metadata.gitignore.controls) if metadata.gitignore else []
     leaves = {True: set(), False: set()}
     exclusions = IgnoreMatcher.from_patterns(metadata.ignore_patterns)
 
@@ -118,8 +118,9 @@ def census_directory(
                                     # Controls must be regular files, never links or FIFOs.
                                     if stat.S_ISREG(child.lstat().st_mode):
                                         content = read_bytes(child).decode('utf-8', errors='replace')
-                                        git_patterns.extend(_prefix_nested_gitignore_pattern(line, relative or '.')
-                                                            for line in content.splitlines() if line and not line.startswith('#'))
+                                        target = metadata.gitignore.target if metadata.gitignore else ''
+                                        scope = '/'.join(part for part in (target, relative) if part)
+                                        git_controls.append((scope, tuple(content.splitlines())))
                                 continue
                             visit(child, child_relative)
                     finally:
@@ -148,7 +149,8 @@ def census_directory(
                      for failure in failures]
         if inherited:
             entries.setdefault(relative, []).extend(inherited)
-    git = IgnoreMatcher.from_patterns(git_patterns)
+    git = IgnoreMatcher.from_patterns(metadata.ignore_patterns, gitignore=GitIgnoreChain(
+        metadata.gitignore.target if metadata.gitignore else "", tuple(git_controls)))
     return DirectoryCensus(tuple(
         (relative, tuple(failures)) for relative, failures in sorted(entries.items())
         if not any(not prefix or relative == prefix or relative.startswith(prefix + '/') for prefix in markers)
@@ -158,7 +160,7 @@ def census_directory(
         # A directory exclusion must also hide diagnostics on a directory link.
         and not (relative in directories and (git.matches_directory(relative) or exclusions.matches_directory(relative)))
     ), tuple(sorted(leaves[True])), tuple(sorted(leaves[False])),
-       not metadata.ignore_patterns and not markers and not git_patterns
+       not metadata.ignore_patterns and not markers and not git_controls
        and not any(failures for failures in entries.values()))
 
 

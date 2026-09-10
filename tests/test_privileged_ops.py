@@ -63,3 +63,20 @@ def test_privileged_ops_list_directory_files_accepts_skip_markers(tmp_path: Path
     assert json.loads(completed.stdout.decode("utf-8")) == {
         "keep.txt": str(root / "keep.txt"),
     }
+
+def test_privileged_directory_census_keeps_git_control_coordinates(tmp_path: Path) -> None:
+    (tmp_path / "private.log").write_text("private")
+    (tmp_path / "keep.log").write_text("keep")
+    completed = subprocess.run(
+        [sys.executable, "-m", "dotman.privileged_ops", "list-directory-files", str(tmp_path)],
+        input=json.dumps({
+            "ignore_patterns": ["!keep.log"],
+            "gitignore": {"target": "packages/app/config", "controls": [
+                ["", ["/packages/*/config/*.log"]]
+            ]},
+        }).encode(),
+        capture_output=True,
+        timeout=5,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert set(json.loads(completed.stdout)) == {"keep.log"}

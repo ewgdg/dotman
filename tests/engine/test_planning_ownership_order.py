@@ -368,7 +368,7 @@ def test_public_push_planning_does_not_scan_overridden_directory(
     assert [target.target_name for target in plans_by_package["winner"].target_plans] == ["shared"]
 
 
-def test_public_query_planning_rejects_nested_collision_before_gitignore_scan(
+def test_public_query_planning_rejects_nested_collision_without_disabled_git_controls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -381,10 +381,10 @@ def test_public_query_planning_rejects_nested_collision_before_gitignore_scan(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    def fail_gitignore_scan(_root: Path) -> tuple[str, ...]:
-        raise AssertionError("gitignore scan ran before static collision validation")
+    def fail_gitignore_scan(*args, **kwargs):
+        raise AssertionError("disabled Git controls must not be read")
 
-    monkeypatch.setattr(projection, "collect_gitignore_patterns", fail_gitignore_scan)
+    monkeypatch.setattr(projection, "collect_gitignore_chain", fail_gitignore_scan)
 
     with pytest.raises(ValueError, match="incompatible nested targets"):
         engine.plan_push_query("fixture:all@default")

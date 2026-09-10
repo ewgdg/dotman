@@ -296,7 +296,10 @@ def resolve_sync_scope(
                         metadata.live_path_symlink_target,
                     )
                 )
-        validate_target_collisions(rendered_targets, operation=operation)
+        validate_target_collisions(rendered_targets, operation=operation, gitignore_chains={
+            (metadata.repo_path, metadata.live_path): metadata.gitignore
+            for planning_input in planning_inputs for metadata in planning_input.target_metadata
+        })
 
     selected_targets: list[ResolvedSyncTarget] = []
     selected_target_keys: set[tuple[str, str, str | None, str, str | None]] = set()

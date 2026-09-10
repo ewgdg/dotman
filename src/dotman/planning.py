@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, Mapping
 
+from dotman.ignore import collect_gitignore_chain
 from dotman.collisions import (
     TrackedTargetCandidate,
     TrackedTargetOverride,
@@ -664,7 +665,10 @@ def _validate_preprojection_conflicts(
             for metadata in planning_input.target_metadata
             if target_claims_path(metadata.target)
         ]
-        validate_target_collisions(rendered_targets, operation=operation)
+        validate_target_collisions(rendered_targets, operation=operation, gitignore_chains={
+            (metadata.repo_path, metadata.live_path): metadata.gitignore
+            for planning_input in repo_inputs for metadata in planning_input.target_metadata
+        })
         if operation == "push":
             _validate_preprojection_reserved_path_conflicts(repo_inputs, rendered_targets=rendered_targets)
 
@@ -1125,12 +1129,17 @@ def _validate_direct_package_plan_conflicts(
             continue
         repo = repo_by_name[repo_name]
         rendered_targets = []
+        gitignore_chains = {}
         for plan in repo_package_plans:
             for target in plan.target_plans:
                 if target.target_kind == "probe":
                     continue
                 package = repo.resolve_package(target.package_id)
                 target_spec = (package.targets or {})[target.target_name]
+                enabled = package.gitignore_enabled if package.gitignore_enabled is not None else repo.ignore_defaults.gitignore
+                gitignore_chains[(target.repo_path, target.live_path)] = (
+                    collect_gitignore_chain(target.repo_path, repo.root, nested=False) if enabled else None
+                )
                 rendered_targets.append(
                     (
                         package,
@@ -1143,7 +1152,7 @@ def _validate_direct_package_plan_conflicts(
                     )
                 )
         operation = repo_package_plans[0].operation
-        validate_target_collisions(rendered_targets, operation=operation)
+        validate_target_collisions(rendered_targets, operation=operation, gitignore_chains=gitignore_chains)
         if operation == "push":
             _validate_reserved_path_conflicts_for_package_plans(repo_package_plans, repo=repo, rendered_targets=rendered_targets)
 

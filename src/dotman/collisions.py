@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from dotman.config import expand_path
-from dotman.ignore import IgnoreMatcher
+from dotman.ignore import GitIgnoreChain, IgnoreMatcher, collect_gitignore_chain
 from dotman.models import PackageSpec, ResolvedPackageSelection, TargetSpec, TrackedTargetSummary
 from dotman.templates import render_template_string
 
@@ -99,7 +99,20 @@ def validate_target_collisions(
     rendered_targets: list[tuple[PackageSpec, TargetSpec, Path, Path, tuple[str, ...], bool, str | None]],
     *,
     operation: str,
+    gitignore_chains: dict[tuple[Path, Path], GitIgnoreChain | None] | None = None,
 ) -> None:
+    def parent_matcher(repo_path: Path, live_path: Path, relative: str, patterns: tuple[str, ...]) -> IgnoreMatcher:
+        chain = (gitignore_chains or {}).get((repo_path, live_path))
+        if chain is not None:
+            repository_root = repo_path
+            for _part in Path(chain.target).parts:
+                repository_root = repository_root.parent
+            # Static ownership does not census payloads. Read only the control
+            # chain leading to this overlapping claim, not unrelated subtrees.
+            controls = collect_gitignore_chain(repo_path / relative, repository_root, nested=False)
+            chain = GitIgnoreChain(chain.target, controls.controls)
+        return IgnoreMatcher.from_patterns(patterns, gitignore=chain)
+
     for index, (package, target, repo_path, live_path, ignore_patterns, _live_path_is_symlink, _live_path_symlink_target) in enumerate(rendered_targets):
         path = operation_write_path(repo_path=repo_path, live_path=live_path, operation=operation)
         for (
@@ -118,14 +131,14 @@ def validate_target_collisions(
                 )
             if path in other_path.parents:
                 relative = other_path.relative_to(path).as_posix()
-                parent_ignore = IgnoreMatcher.from_patterns(ignore_patterns)
+                parent_ignore = parent_matcher(repo_path, live_path, relative, ignore_patterns)
                 if not parent_ignore.matches(relative):
                     raise ValueError(
                         f"incompatible nested targets: {package.id}:{target.name} contains {other_package.id}:{other_target.name}"
                     )
             elif other_path in path.parents:
                 relative = path.relative_to(other_path).as_posix()
-                parent_ignore = IgnoreMatcher.from_patterns(other_ignore_patterns)
+                parent_ignore = parent_matcher(other_repo_path, other_live_path, relative, other_ignore_patterns)
                 if not parent_ignore.matches(relative):
                     raise ValueError(
                         f"incompatible nested targets: {other_package.id}:{other_target.name} contains {package.id}:{target.name}"

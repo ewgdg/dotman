@@ -523,65 +523,6 @@ def test_repo_toml_rejects_empty_prune_marker_names(tmp_path: Path) -> None:
         )
 
 
-def test_collect_gitignore_patterns_from_root(tmp_path: Path) -> None:
-    from dotman.ignore import collect_gitignore_patterns
-
-    root = tmp_path / "src"
-    root.mkdir()
-    (root / "visible.conf").write_text("keep\n", encoding="utf-8")
-    (root / ".gitignore").write_text("*.log\nsecret/\n", encoding="utf-8")
-    (root / "app.log").write_text("log\n", encoding="utf-8")
-    (root / "secret").mkdir()
-    (root / "secret" / "key.txt").write_text("key\n", encoding="utf-8")
-
-    patterns = collect_gitignore_patterns(root)
-
-    assert "*.log" in patterns
-    assert "secret/" in patterns
-    assert len(patterns) == 2
-
-
-def test_collect_gitignore_patterns_includes_nested_files(tmp_path: Path) -> None:
-    from dotman.ignore import collect_gitignore_patterns
-
-    root = tmp_path / "src"
-    root.mkdir()
-    (root / ".gitignore").write_text("*.log\n", encoding="utf-8")
-    sub = root / "sub"
-    sub.mkdir()
-    (sub / ".gitignore").write_text("*.tmp\n!important.tmp\n/deep\n", encoding="utf-8")
-    (sub / "data.tmp").write_text("tmp\n", encoding="utf-8")
-    (sub / "important.tmp").write_text("keep\n", encoding="utf-8")
-    (sub / "nested").mkdir()
-    (sub / "nested" / "data.tmp").write_text("nested tmp\n", encoding="utf-8")
-    deep = sub / "deep"
-    deep.mkdir()
-    (deep / ".gitignore").write_text("*.cache\n", encoding="utf-8")
-    (deep / "output.cache").write_text("cache\n", encoding="utf-8")
-
-    patterns = collect_gitignore_patterns(root)
-
-    assert "*.log" in patterns
-    assert "sub/**/*.tmp" in patterns
-    assert "!sub/**/important.tmp" in patterns
-    assert "/sub/deep" in patterns
-    assert "sub/deep/**/*.cache" in patterns
-
-    files = list_directory_files(root, patterns)
-    assert "sub/important.tmp" in files
-    assert "sub/nested/data.tmp" not in files
-    assert "sub/deep/output.cache" not in files
-
-
-def test_collect_gitignore_patterns_non_directory_returns_empty(tmp_path: Path) -> None:
-    from dotman.ignore import collect_gitignore_patterns
-
-    f = tmp_path / "file.txt"
-    f.write_text("data\n", encoding="utf-8")
-
-    assert collect_gitignore_patterns(f) == ()
-
-
 def test_repo_toml_loads_gitignore_from_ignore_table(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     (repo_root / "profiles").mkdir(parents=True)
@@ -1051,3 +992,101 @@ def test_pull_unified_controls_preserve_excluded_repository_children(tmp_path, m
     for name in ("excluded/a", "private.secret", "a.ignored", "repo-marked/a", "live-marked/a"):
         assert (repo / name).read_bytes() == b"preserve"
     assert (repo / ".gitignore").read_bytes() == b"*.ignored\n"
+
+@pytest.mark.parametrize("operation", ["push", "pull", "sync"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_repository_gitignore_chain_is_symmetric(tmp_path, monkeypatch, operation, enabled):
+    home = tmp_path / "home"
+    live = home / "config"
+    live.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    root = tmp_path / "repo"
+    source = root / "packages/sample/files/config"
+    source.mkdir(parents=True)
+    (root / "profiles").mkdir()
+    (root / "profiles/default.toml").write_text("")
+    (root / "repo.toml").write_text("[ignore]\ngitignore = true\n")
+    (root / "packages/sample/package.toml").write_text(
+        'id = "sample"\n[ignore]\ngitignore = ' + str(enabled).lower() +
+        '\n[targets.config]\nsource = "files/config"\npath = "~/config"\n')
+    (root / ".gitignore").write_text('/packages/*/files/config/root-*\n*.log\n')
+    (root / "packages/.gitignore").write_text('sample/files/config/ancestor-*\n')
+    (source / ".gitignore").write_text('!keep.log\n/target-*\nblocked/\n')
+    for base in (source, live):
+        (base / "nested").mkdir()
+        (base / "blocked").mkdir()
+        for name in ("visible", "root-only", "ancestor-only", "target-only", "drop.log", "keep.log", "nested/drop.tmp", "nested/keep.tmp", "blocked/keep"):
+            (base / name).write_text(operation + str(base))
+    (source / "nested/.gitignore").write_text('*.tmp\n!keep.tmp\n')
+    (source / "blocked/.gitignore").write_text('!keep\n')
+    (live / "live-only.log").write_text("live")
+    (live / ".gitignore").write_text("visible\n")
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=root))
+    if operation == "push":
+        plan = single_package_plan(engine, "fixture:sample@default")
+        paths = {item.relative_path for item in plan.target_plans[0].directory_items}
+    else:
+        from tests.helpers import initialize_git_repository, write_tracked_packages_state
+        initialize_git_repository(root)
+        write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("sample", "default")])
+        opener = engine.open_pull_session if operation == "pull" else engine.open_sync_session
+        with opener(engine.resolve_sync_scope(), preview=True) as session:
+            paths = {row.observation.identity.child_path for row in session.view.rows}
+    if enabled:
+        assert paths == {"visible", "keep.log", "nested/keep.tmp"}
+    else:
+        assert {"root-only", "ancestor-only", "target-only", "drop.log", "live-only.log", "nested/drop.tmp", "blocked/keep"} <= paths
+
+def test_scoped_gitignore_preserves_git_pattern_syntax_and_parent_exclusion(tmp_path):
+    from dotman.ignore import IgnoreMatcher, collect_gitignore_chain
+
+    source = tmp_path / "packages/app/config"
+    source.mkdir(parents=True)
+    (tmp_path / ".gitignore").write_text(
+        "/packages/[ab]pp/config/root-*\n"
+        "packages/**/config/double-*\n"
+        "/packages/app/config/blocked/\n"
+        "*.log\n")
+    (source / ".gitignore").write_text(
+        "!keep.log\n/local-*\n\\#literal\n\\!literal\nspace\\ \n")
+    (source / "blocked").mkdir()
+    (source / "blocked/.gitignore").write_text("!keep\n")
+    (source / "nested").mkdir()
+    (source / "nested/.gitignore").write_text("/only-here\n")
+    matcher = IgnoreMatcher.from_patterns((), gitignore=collect_gitignore_chain(source, tmp_path))
+    for path in ("root-file", "double-file", "drop.log", "#literal", "!literal", "space ", "blocked/keep", "nested/only-here"):
+        assert matcher.matches(path), path
+    for path in ("keep.log", "nested/local-file", "nested/deeper/only-here", "only-here", "space"):
+        assert not matcher.matches(path), path
+
+@pytest.mark.parametrize("operation", ["push", "pull", "sync"])
+@pytest.mark.parametrize("control_scope", ["repository", "target"])
+def test_gitignore_exclusion_allows_separately_owned_nested_target(tmp_path, monkeypatch, operation, control_scope):
+    from tests.helpers import initialize_git_repository, write_tracked_packages_state
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    root = tmp_path / "repo"
+    package = root / "packages/app"
+    (package / "tree").mkdir(parents=True)
+    (package / "tree/keep").write_text("keep")
+    (package / "owned").write_text("owned")
+    if control_scope == "repository":
+        (root / ".gitignore").write_text("/packages/*/tree/owned\n")
+    else:
+        (package / "tree/.gitignore").write_text("/owned\n")
+    (root / "profiles").mkdir()
+    (root / "profiles/default.toml").write_text("")
+    (root / "repo.toml").write_text("[ignore]\ngitignore = true\n")
+    (package / "package.toml").write_text(
+        'id = "app"\n[targets.tree]\nsource = "tree"\npath = "~/tree"\n'
+        '[targets.owned]\nsource = "owned"\npath = "~/tree/owned"\n')
+    initialize_git_repository(root)
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=root))
+    if operation == "push":
+        assert len(single_package_plan(engine, "fixture:app@default").target_plans) == 2
+    else:
+        opener = engine.open_pull_session if operation == "pull" else engine.open_sync_session
+        with opener(engine.resolve_sync_scope(), preview=True) as session:
+            assert session.view.observations

@@ -22,43 +22,76 @@ from dotman.command_runtime import (
 GITIGNORE_CONTROL_FILE_PATTERNS = (".gitignore", "**/.gitignore")
 
 
-def _prefix_nested_gitignore_pattern(pattern: str, relative_directory: str) -> str:
-    if relative_directory == ".":
-        return pattern
-    negated = pattern.startswith("!")
-    body = pattern[1:] if negated else pattern
-    if body.startswith("/") or "/" in body.rstrip("/"):
-        prefixed = f"/{relative_directory}{body}" if body.startswith("/") else f"{relative_directory}/{body}"
-    else:
-        prefixed = f"{relative_directory}/**/{body}"
-    return f"!{prefixed}" if negated else prefixed
+@dataclass(frozen=True)
+class GitIgnoreChain:
+    """Control files retain their own coordinate system; Git globs are never rebased."""
+    target: str
+    controls: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+    def matcher(self) -> "GitIgnoreMatcher":
+        return GitIgnoreMatcher(self.target, tuple(
+            (directory, GitIgnoreSpec.from_lines(lines)) for directory, lines in self.controls
+        ))
 
 
-def collect_gitignore_patterns(root: Path) -> tuple[str, ...]:
-    """Return .gitignore patterns under root, flattened relative to root."""
-    if not root.is_dir():
-        return ()
-    patterns: list[str] = []
-    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
-        if ".gitignore" not in filenames:
-            continue
-        dir_path = Path(dirpath)
+@dataclass(frozen=True)
+class GitIgnoreMatcher:
+    target: str
+    controls: tuple[tuple[str, GitIgnoreSpec], ...]
+
+    def matches(self, relative: str) -> bool:
+        path = "/".join(part for part in (self.target, relative.rstrip("/")) if part)
+        parts = path.split("/")
+        # An excluded directory cannot be reopened by a child's control file.
+        for index in range(1, len(parts) + 1):
+            candidate = "/".join(parts[:index])
+            directory = index < len(parts) or relative.endswith("/")
+            ignored = False
+            for scope, spec in self.controls:
+                prefix = scope + "/" if scope else ""
+                if not candidate.startswith(prefix):
+                    continue
+                local = candidate[len(prefix):] + ("/" if directory else "")
+                result = spec.check_file(local)
+                if result.include is not None:
+                    ignored = result.include
+            if ignored:
+                return True
+        return False
+
+    def matches_directory(self, relative: str) -> bool:
+        return self.matches(relative.rstrip("/") + "/")
+
+
+def collect_gitignore_chain(root: Path, repository_root: Path, *, nested: bool = True) -> GitIgnoreChain:
+    from dotman.file_access import read_bytes
+    import stat
+
+    relative = root.relative_to(repository_root)
+    directories = [repository_root]
+    for part in relative.parts:
+        directories.append(directories[-1] / part)
+    if not nested:
+        # Sync reads target and nested controls inside its diagnostic-aware census.
+        directories.pop()
+    if nested and root.is_dir() and not root.is_symlink():
+        for directory, children, _files in os.walk(root, followlinks=False):
+            children.sort()
+            if Path(directory) != root:
+                directories.append(Path(directory))
+    controls = []
+    for directory in directories:
+        control = directory / ".gitignore"
         try:
-            relative_directory = dir_path.relative_to(root).as_posix()
-        except ValueError:
+            shape = control.lstat()
+        except (FileNotFoundError, NotADirectoryError):
             continue
-        gitignore_path = dir_path / ".gitignore"
-        try:
-            content = gitignore_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for raw_line in content.splitlines():
-            pattern = raw_line.strip()
-            if not pattern or pattern.startswith("#"):
-                continue
-            patterns.append(_prefix_nested_gitignore_pattern(pattern, relative_directory))
-    return tuple(patterns)
-
+        # Ignore controls are data, not symlink or special-file payloads.
+        if stat.S_ISREG(shape.st_mode):
+            scope = directory.relative_to(repository_root).as_posix()
+            controls.append(("" if scope == "." else scope,
+                             tuple(read_bytes(control).decode("utf-8", errors="replace").splitlines())))
+    return GitIgnoreChain("" if relative == Path(".") else relative.as_posix(), tuple(controls))
 
 
 def _normalize_relative_path(relative_path: str) -> str:
@@ -71,18 +104,22 @@ def _normalize_relative_path(relative_path: str) -> str:
 @dataclass(frozen=True, slots=True)
 class IgnoreMatcher:
     spec: PathSpec | None = None
+    gitignore: GitIgnoreMatcher | None = None
 
     @classmethod
-    def from_patterns(cls, patterns: Iterable[str]) -> "IgnoreMatcher":
+    def from_patterns(cls, patterns: Iterable[str], *, gitignore: GitIgnoreChain | None = None) -> "IgnoreMatcher":
         normalized_patterns = tuple(pattern for pattern in patterns if pattern)
         if not normalized_patterns:
-            return cls()
-        return cls(GitIgnoreSpec.from_lines(normalized_patterns))
+            return cls(gitignore=gitignore.matcher() if gitignore else None)
+        return cls(GitIgnoreSpec.from_lines(normalized_patterns), gitignore.matcher() if gitignore else None)
 
     def matches(self, relative_path: str) -> bool:
-        if self.spec is None:
-            return False
-        return self.spec.match_file(_normalize_relative_path(relative_path))
+        relative = _normalize_relative_path(relative_path)
+        result = self.spec.check_file(relative) if self.spec else None
+        # Dotman patterns are target-relative overrides, including explicit negations.
+        if result is not None and result.include is not None:
+            return bool(result.include)
+        return bool(self.gitignore and self.gitignore.matches(relative))
 
     def matches_directory(self, relative_path: str) -> bool:
         return self.matches(f"{_normalize_relative_path(relative_path).rstrip('/')}/")
@@ -133,12 +170,13 @@ def _list_directory_files_without_sudo(
     skip_markers: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
     force_ignore_patterns: tuple[str, ...] = (),
+    gitignore: GitIgnoreChain | None = None,
 ) -> dict[str, Path]:
     files: dict[str, Path] = {}
     if not root.exists():
         return files
 
-    matcher = IgnoreMatcher.from_patterns(ignore_patterns)
+    matcher = IgnoreMatcher.from_patterns(ignore_patterns, gitignore=gitignore)
     force_matcher = IgnoreMatcher.from_patterns(force_ignore_patterns)
     active_dirs: set[tuple[int, int]] = set()
 
@@ -190,6 +228,7 @@ def _list_directory_files_via_sudo(
     skip_markers: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
     force_ignore_patterns: tuple[str, ...] = (),
+    gitignore: GitIgnoreChain | None = None,
 ) -> dict[str, Path]:
     from dotman.file_access import request_sudo
 
@@ -213,6 +252,7 @@ def _list_directory_files_via_sudo(
                     "skip_markers": skip_markers,
                     "follow_dir_symlinks": follow_dir_symlinks,
                     "force_ignore_patterns": force_ignore_patterns,
+                    "gitignore": {"target": gitignore.target, "controls": gitignore.controls} if gitignore else None,
                 }
             ).encode("utf-8"),
         )
@@ -233,6 +273,7 @@ def list_directory_files(
     skip_markers: tuple[str, ...] = (),
     follow_dir_symlinks: bool = False,
     force_ignore_patterns: tuple[str, ...] = (),
+    gitignore: GitIgnoreChain | None = None,
 ) -> dict[str, Path]:
     try:
         return _list_directory_files_without_sudo(
@@ -241,6 +282,7 @@ def list_directory_files(
             skip_markers=skip_markers,
             follow_dir_symlinks=follow_dir_symlinks,
             force_ignore_patterns=force_ignore_patterns,
+            gitignore=gitignore,
         )
     except PermissionError:
         return _list_directory_files_via_sudo(
@@ -249,4 +291,5 @@ def list_directory_files(
             skip_markers=skip_markers,
             follow_dir_symlinks=follow_dir_symlinks,
             force_ignore_patterns=force_ignore_patterns,
+            gitignore=gitignore,
         )

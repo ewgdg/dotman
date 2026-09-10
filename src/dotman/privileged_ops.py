@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from dotman.atomic_files import write_bytes_atomic, write_symlink_atomic
-from dotman.ignore import _list_directory_files_without_sudo
+from dotman.ignore import GitIgnoreChain, _list_directory_files_without_sudo
 from dotman.repo_access import restore_repo_path_access_for_invoking_user
 
 
@@ -62,17 +62,21 @@ def _list_directory_files(root: Path) -> None:
         skip_markers = tuple(payload.get("skip_markers", ()))
         follow_dir_symlinks = bool(payload.get("follow_dir_symlinks", False))
         force_ignore_patterns = tuple(payload.get("force_ignore_patterns", ()))
+        gitignore_payload = payload.get("gitignore")
+        gitignore = GitIgnoreChain(**gitignore_payload) if gitignore_payload else None
     else:
         ignore_patterns = tuple(payload)
         skip_markers = ()
         follow_dir_symlinks = False
         force_ignore_patterns = ()
+        gitignore = None
     files = _list_directory_files_without_sudo(
         root,
         ignore_patterns,
         skip_markers=skip_markers,
         follow_dir_symlinks=follow_dir_symlinks,
         force_ignore_patterns=force_ignore_patterns,
+        gitignore=gitignore,
     )
     sys.stdout.write(json.dumps({relative: str(path) for relative, path in files.items()}))
 

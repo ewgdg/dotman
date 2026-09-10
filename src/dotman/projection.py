@@ -17,7 +17,7 @@ from dotman.command_runtime import (
 from dotman.collisions import validate_reserved_path_conflicts, validate_target_collisions
 from dotman.config import expand_path
 from dotman.file_access import needs_sudo_for_read, read_bytes
-from dotman.ignore import GITIGNORE_CONTROL_FILE_PATTERNS, collect_gitignore_patterns, list_directory_files
+from dotman.ignore import GITIGNORE_CONTROL_FILE_PATTERNS, GitIgnoreChain, collect_gitignore_chain, list_directory_files
 from dotman.manifest import (
     FORCED_COMMAND_PREFIX,
     flatten_vars,
@@ -72,6 +72,7 @@ class TargetMetadata:
     command_env: dict[str, str]
     package: PackageSpec
     target: TargetSpec
+    gitignore: GitIgnoreChain | None = None
     editor: Any = None
     additional_sources: tuple[str, ...] = ()
     additional_source_entries: tuple[AdditionalSource, ...] = ()
@@ -239,8 +240,10 @@ def build_target_metadata(
             )
             gitignore_enabled = package.gitignore_enabled if package.gitignore_enabled is not None else repo.ignore_defaults.gitignore
             pattern_layers: list[tuple[str, ...]] = [repo.ignore_defaults.patterns]
-            if gitignore_enabled and inspect_gitignore_patterns:
-                pattern_layers.append(collect_gitignore_patterns(repo_path))
+            gitignore = (
+                collect_gitignore_chain(repo_path, repo.root, nested=inspect_gitignore_patterns)
+                if gitignore_enabled else None
+            )
             if package.ignore_patterns is not None:
                 pattern_layers.append(package.ignore_patterns)
             if target.ignore_patterns is not None:
@@ -264,6 +267,7 @@ def build_target_metadata(
                     compare_live=target.compare_live,
                     ignore_patterns=ignore_patterns,
                     gitignore_enabled=gitignore_enabled,
+                    gitignore=gitignore,
                     skip_markers=skip_markers,
                     chmod=target.chmod,
                     path_rules=path_rules,
@@ -292,7 +296,9 @@ def build_target_metadata(
 
     if validate_declaration_conflicts:
         rendered_targets = [_metadata_collision_tuple(metadata) for metadata in metadata_targets if target_claims_path(metadata.target)]
-        validate_target_collisions(rendered_targets, operation=operation)
+        validate_target_collisions(rendered_targets, operation=operation, gitignore_chains={
+            (metadata.repo_path, metadata.live_path): metadata.gitignore for metadata in metadata_targets
+        })
         if operation == "push":
             validate_reserved_path_conflicts(packages, rendered_targets, context)
     return metadata_targets
@@ -388,6 +394,7 @@ def plan_targets(
                     live_path=live_path,
                     skip_markers=metadata.skip_markers,
                     force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if metadata.gitignore_enabled else (),
+                    gitignore=metadata.gitignore,
                     follow_dir_symlinks=projection_context.config.dir_symlink_mode == "follow",
                     command_runtime=projection_context.command_runtime,
                     path_rules=metadata.path_rules,
@@ -528,6 +535,7 @@ def plan_targets(
                 live_path=live_path,
                 skip_markers=metadata.skip_markers,
                 force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if metadata.gitignore_enabled else (),
+                gitignore=metadata.gitignore,
                 operation=operation,
                 ignore_patterns=effective_ignore_patterns,
                 render_command=render_command,
@@ -958,10 +966,10 @@ def plan_directory_action(
     target_env: dict[str, str],
     path_rules: tuple[TargetPathRule, ...] = (),
     force_ignore_patterns: tuple[str, ...] = (),
+    gitignore: GitIgnoreChain | None = None,
     guard_skips: list[GuardSkip] | None = None,
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
-    # The operation-specific metadata already includes any selected .gitignore
-    # controls; apply the same patterns to repository and live census inputs.
+    # Both endpoints use repository controls; live control files never set policy.
     operation_ignore = ignore_patterns
     follow_dir_symlinks = projection_context.config.dir_symlink_mode == "follow"
     desired_files = list_directory_files(
@@ -970,6 +978,7 @@ def plan_directory_action(
         skip_markers=skip_markers,
         follow_dir_symlinks=follow_dir_symlinks,
         force_ignore_patterns=force_ignore_patterns,
+        gitignore=gitignore,
     )
     live_exists = live_path.exists()
     live_files = (
@@ -979,6 +988,7 @@ def plan_directory_action(
             skip_markers=skip_markers,
             follow_dir_symlinks=follow_dir_symlinks,
             force_ignore_patterns=force_ignore_patterns,
+            gitignore=gitignore,
         )
         if live_exists
         else {}
@@ -1356,6 +1366,7 @@ def plan_live_delete_directory_action(
     target_name: str,
     guard_skips: list[GuardSkip] | None,
     force_ignore_patterns: tuple[str, ...] = (),
+    gitignore: GitIgnoreChain | None = None,
     follow_dir_symlinks: bool = False,
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
     live_files = (
@@ -1365,6 +1376,7 @@ def plan_live_delete_directory_action(
             skip_markers=skip_markers,
             follow_dir_symlinks=follow_dir_symlinks,
             force_ignore_patterns=force_ignore_patterns,
+            gitignore=gitignore,
         )
         if live_path.exists()
         else {}
