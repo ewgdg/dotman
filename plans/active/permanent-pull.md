@@ -38,3 +38,8 @@ Additional input alignment and editing. Run affected suites after focused checks
   Issue remains incomplete: obsolete Pull engine/planning/execution and tests
   have not been removed/ported, dedicated Pull directory/symlink regression
   coverage and full affected-suite validation remain. Keep plan active.
+
+- Continuation authorized. Removed dead Pull dispatch from the push/restore runner and
+  ported its Pull lock checks to the permanent deck boundary (including structured
+  failure and release after observation failure). Both command-runner modules:
+  10 passed. Engine/projection/execution cleanup and acceptance remain outstanding.

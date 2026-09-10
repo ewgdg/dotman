@@ -21,7 +21,7 @@ def test_sync_command_runner_declares_owned_commands_and_rejects_other_commands(
         use_color=False,
     )
 
-    assert runner.command_names == frozenset({"push", "pull", "restore"})
+    assert runner.command_names == frozenset({"push", "restore"})
     with pytest.raises(ValueError, match="unsupported sync command 'list'"):
         runner.run(SimpleNamespace(command="list"))
 
@@ -35,7 +35,7 @@ def test_sync_command_runner_uses_typed_plan_and_resets_ui_scope(capsys) -> None
                 enabled=False, path=Path("/unused"), max_generations=0
             ),
         ),
-        plan_push=lambda *, sink, run_noop: OperationPlan(
+        plan_push=lambda *, sink, run_noop, maintain_sync_bases: OperationPlan(
             operation="push",
             package_plans=(),
         ),
@@ -71,7 +71,7 @@ def test_sync_command_runner_uses_typed_plan_and_resets_ui_scope(capsys) -> None
     assert current_ui_config() is None
 
 
-@pytest.mark.parametrize("operation", ["push", "pull"])
+@pytest.mark.parametrize("operation", ["push"])
 def test_real_directional_command_conflicts_with_live_sync_session(
     operation, tmp_path, monkeypatch
 ):
@@ -100,7 +100,7 @@ def test_real_directional_command_conflicts_with_live_sync_session(
         assert runner.run(args) == 0
 
 
-@pytest.mark.parametrize("operation", ["push", "pull"])
+@pytest.mark.parametrize("operation", ["push"])
 def test_directional_runner_holds_lock_during_planning_and_releases_after_failure(
     operation, tmp_path
 ):

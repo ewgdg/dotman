@@ -16,12 +16,12 @@ from dotman.ui_context import ui_config_scope
 
 
 EngineFactory = Callable[[str | None], DotmanEngine]
-SyncOperation = Literal["push", "pull"]
+SyncOperation = Literal["push"]
 INTERRUPTED_EXIT_CODE = 130
 
 
 class SyncCommandRunner:
-    """Plan and run push, pull, and restore through typed operation boundaries."""
+    """Plan and run push and restore through typed operation boundaries."""
 
     command_names = frozenset({"push", "restore"})
 
@@ -36,7 +36,7 @@ class SyncCommandRunner:
         engine = self._engine_factory(args.config)
         full_paths = args.full_path if args.full_path is not None else engine.config.ui.full_paths
         with ui_config_scope(engine.config.ui):
-            if args.command in {"push", "pull"}:
+            if args.command == "push":
                 # Own the operation before planning and retain it throughout
                 # review, early returns and execution. Preview never takes it.
                 with nullcontext() if args.dry_run else OperationLock.acquire(default_state_root()):
@@ -66,12 +66,8 @@ class SyncCommandRunner:
                 json_output=args.json_output,
             )
             binding_text = f"{binding.repo}:{binding.selector}"
-            if operation == "push":
-                return engine.plan_push_query(binding_text, profile=binding.profile, run_noop=run_noop, maintain_sync_bases=not args.dry_run)
-            return engine.plan_pull_query(binding_text, profile=binding.profile, run_noop=run_noop)
-        if operation == "push":
-            return engine.plan_push(sink=sink, run_noop=run_noop, maintain_sync_bases=not args.dry_run)
-        return engine.plan_pull(sink=sink, run_noop=run_noop)
+            return engine.plan_push_query(binding_text, profile=binding.profile, run_noop=run_noop, maintain_sync_bases=not args.dry_run)
+        return engine.plan_push(sink=sink, run_noop=run_noop, maintain_sync_bases=not args.dry_run)
 
     def _finish_all_guard_skipped_operation(
         self,
