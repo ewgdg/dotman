@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 import stat
 
+from dotman.interaction_policy import unattended_enabled
 from dotman.command_runtime import CommandOperation, command_operation, command_runtime_session
 from dotman.elevation import elevation_broker_session
 from dotman.execution import ExecutionStep, directory_synced_file_mode
@@ -1243,6 +1244,7 @@ class ProposalSession:
             ) for row in selected),
             command_runtime=self._context.projection.command_runtime,
             complete=complete, auxiliary=auxiliary["pull"], run_noop=self._run_noop,
+            unattended=unattended_enabled(),
             check_cancelled=self.check_cancelled, blocked=bool(additional_diagnostics),
         )
         units, diagnostics, repository_steps = self._execution_outcome(result, "repository-apply")
@@ -1367,6 +1369,7 @@ class ProposalSession:
             complete=complete,
             snapshot_config=self._context.config.snapshots,
             auxiliary=auxiliary, run_noop=self._run_noop,
+            unattended=unattended_enabled(),
             check_cancelled=self.check_cancelled, blocked=blocked,
             command_runtime=self._context.projection.command_runtime,
         )

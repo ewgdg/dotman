@@ -6,6 +6,7 @@ import json
 from dataclasses import replace
 import sys
 
+from dotman.interaction_policy import interaction_scope
 from dotman.cli_style import render_sync_term, render_package_label, style_text, MENU_REPO_STYLE
 from dotman.sync_scope import _parse_scope_selector
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
@@ -105,6 +106,10 @@ class SyncDeckCommandRunner:
         self._use_color = use_color
 
     def run(self, args) -> int:
+        with interaction_scope(unattended=args.unattended):
+            return self._run(args)
+
+    def _run(self, args) -> int:
         interactive = (
             not args.json_output and not args.unattended
             and sys.stdin.isatty() and sys.stdout.isatty()

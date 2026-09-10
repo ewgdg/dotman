@@ -364,3 +364,15 @@ def test_failed_planning_commands_do_not_copy_output_into_json(tmp_path, monkeyp
     output = capsys.readouterr().out
     assert json.loads(output)["summary"]["diagnostics"]
     assert "private-command-output" not in output
+
+def test_unattended_sync_propagates_mode_to_both_hook_families(tmp_path, monkeypatch, capsys):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live",
+         'render = "sed s/live/published/ $DOTMAN_SOURCE"\ncompare = { repo = "raw", live = "raw" }\n'
+         '[targets.unit.hooks]\npre_pull = "test \\"$DOTMAN_UNATTENDED\\" = 1"\n'
+         'pre_push = "test \\"$DOTMAN_UNATTENDED\\" = 1"'),
+    ])
+    assert runner_for(engine).run(arguments(dry_run=False)) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert {step["action"] for step in payload["stages"] if step["kind"] == "hook"} == {"pre_pull", "pre_push"}
+    assert all(step["status"] == "ok" for step in payload["stages"])
