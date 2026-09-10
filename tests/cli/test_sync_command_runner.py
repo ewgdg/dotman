@@ -58,7 +58,7 @@ def test_sync_command_runner_uses_typed_plan_and_resets_ui_scope(capsys) -> None
             json_output=True,
             dry_run=True,
             run_noop=False,
-            assume_yes=False,
+            unattended=False,
         )
     )
 
@@ -90,7 +90,7 @@ def test_real_directional_command_conflicts_with_live_sync_session(
         json_output=True,
         dry_run=False,
         run_noop=False,
-        assume_yes=False,
+        unattended=False,
     )
     with open_session(engine, preview=False):
         with pytest.raises(OperationBusy):
@@ -127,7 +127,7 @@ def test_directional_runner_holds_lock_during_planning_and_releases_after_failur
                 json_output=True,
                 dry_run=False,
                 run_noop=False,
-                assume_yes=False,
+                unattended=False,
             )
         )
     with OperationLock.acquire(default_state_root()):

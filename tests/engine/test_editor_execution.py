@@ -25,7 +25,7 @@ def test_push_only_delete_directory_child_executes_delete_not_push(tmp_path):
     package = make_package_plan(operation="push", repo_name="fixture", package_id="app",
                                 requested_profile="default", target_plans=[target], repo_root=tmp_path)
     result = execute_session(build_execution_session([package], operation="push"), stream_output=False,
-                             assume_yes=True, command_runtime=MemoryCommandRuntime([]))
+                             unattended=True, command_runtime=MemoryCommandRuntime([]))
     assert result.status == "ok"
     assert not live_file.exists()
 

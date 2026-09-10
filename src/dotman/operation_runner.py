@@ -117,7 +117,7 @@ def run_sync_operation(
     plans: Sequence[PackagePlan] | OperationPlan,
     stream_output: bool,
     run_noop: bool = False,
-    assume_yes: bool = False,
+    unattended: bool = False,
     command_runtime: CommandRuntime | None = None,
     event_sink: SyncEventSink | None = None,
     snapshot_config: SnapshotConfig | None = None,
@@ -148,7 +148,7 @@ def run_sync_operation(
             result = execute_session(
                 session,
                 stream_output=stream_output,
-                assume_yes=assume_yes,
+                unattended=unattended,
                 command_runtime=command_runtime,
                 on_package_start=lambda package: emit(SyncPackageStarted(package)),
                 on_step_start=emit_step_started,

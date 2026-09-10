@@ -60,7 +60,7 @@ def test_planning_uses_injected_runtime_for_guard_probe_and_projection(
         ShellCommand("probe-command"),
         ShellCommand("render-command"),
     ]
-    assert runtime.requests[0].excluded_env_keys == frozenset({"DOTMAN_ASSUME_YES"})
+    assert runtime.requests[0].excluded_env_keys == frozenset({"DOTMAN_UNATTENDED"})
     assert [(target.target_name, target.action) for target in plan.package_plans[0].target_plans] == [
         ("available", "probe"),
         ("config", "create"),

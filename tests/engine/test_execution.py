@@ -359,11 +359,11 @@ def test_build_execution_session_keeps_hooks_unprivileged_even_when_target_needs
     assert all(not step.privileged for step in session.repos[0].post_steps)
 
 
-@pytest.mark.parametrize(("assume_yes", "expected_value"), [(False, "0"), (True, "1")])
-def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
+@pytest.mark.parametrize(("unattended", "expected_value"), [(False, "0"), (True, "1")])
+def test_execute_session_passes_unattended_policy_to_hook_envs(
     monkeypatch,
     tmp_path: Path,
-    assume_yes: bool,
+    unattended: bool,
     expected_value: str,
 ) -> None:
     plan = make_package_plan(
@@ -433,7 +433,7 @@ def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
     result = execute_session(
         session,
         stream_output=False,
-        assume_yes=assume_yes,
+        unattended=unattended,
         command_runtime=runtime,
     )
 
@@ -443,9 +443,9 @@ def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
         for request in runtime.requests
         if isinstance(request.command, ShellCommand)
     }
-    assert recorded_envs["echo repo guard"]["DOTMAN_ASSUME_YES"] == expected_value
+    assert recorded_envs["echo repo guard"]["DOTMAN_UNATTENDED"] == expected_value
     assert recorded_envs["echo repo guard"]["EXISTING_REPO_ENV"] == "repo"
-    assert recorded_envs["echo package guard"]["DOTMAN_ASSUME_YES"] == expected_value
+    assert recorded_envs["echo package guard"]["DOTMAN_UNATTENDED"] == expected_value
     assert recorded_envs["echo package guard"]["DOTMAN_REPO_NAME"] == "fixture"
     assert recorded_envs["echo package guard"]["DOTMAN_PACKAGE_ID"] == "app"
     assert recorded_envs["echo package guard"]["DOTMAN_PROFILE"] == "default"
@@ -454,7 +454,7 @@ def test_execute_session_passes_dotman_assume_yes_to_hook_envs(
     assert recorded_envs["echo package guard"]["DOTMAN_STATE_PATH"] == str(tmp_path / "state")
     assert recorded_envs["echo package guard"]["DOTMAN_OS"] == "linux"
     assert recorded_envs["echo package guard"]["DOTMAN_VAR_feature__flag"] == "on"
-    assert recorded_envs["echo target guard"]["DOTMAN_ASSUME_YES"] == expected_value
+    assert recorded_envs["echo target guard"]["DOTMAN_UNATTENDED"] == expected_value
     assert recorded_envs["echo target guard"]["EXISTING_TARGET_ENV"] == "target"
     assert recorded_envs["echo target guard"]["DOTMAN_TARGET_NAME"] == "config"
 
@@ -1111,7 +1111,7 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
     )
     monkeypatch.setattr(
         "dotman.execution._execute_step",
-        lambda step, *, stream_output, assume_yes: (
+        lambda step, *, stream_output, unattended: (
             recorded_events.append("step")
             or execution.ExecutionStepResult(step=step, status="ok")
         ),

@@ -102,7 +102,7 @@ class SyncCommandRunner:
         operation: SyncOperation,
         full_paths: bool,
     ) -> int:
-        assume_yes = getattr(args, "unattended", False)
+        unattended = getattr(args, "unattended", False)
         run_noop = getattr(args, "run_noop", False)
         plans = self._plan_operation(
             args=args,
@@ -118,14 +118,14 @@ class SyncCommandRunner:
         )
         if skipped_result is not None:
             return skipped_result
-        if not args.dry_run and not assume_yes and not cli_interaction.interactive_mode_enabled(json_output=args.json_output):
+        if not args.dry_run and not unattended and not cli_interaction.interactive_mode_enabled(json_output=args.json_output):
             raise cli_interaction.InteractionRequiredError("push requires confirmation; use --unattended to accept default work")
         if not cli_interaction.review_plans_for_interactive_diffs(
             plans=plans,
             operation=operation,
             json_output=args.json_output,
             full_paths=full_paths,
-            assume_yes=assume_yes,
+            assume_yes=unattended,
         ):
             cli_interaction.emit_interrupt_notice()
             return INTERRUPTED_EXIT_CODE
@@ -152,7 +152,7 @@ class SyncCommandRunner:
                 plans=plans,
                 json_output=args.json_output,
                 full_paths=full_paths,
-                assume_yes=assume_yes,
+                assume_yes=unattended,
             )
             if prepared_plans is None:
                 cli_interaction.emit_interrupt_notice()
@@ -164,7 +164,7 @@ class SyncCommandRunner:
             json_output=args.json_output,
             full_paths=full_paths,
             run_noop=run_noop,
-            assume_yes=assume_yes,
+            unattended=unattended,
             snapshot_config=engine.config.snapshots if operation == "push" else None,
         )
 
@@ -229,7 +229,7 @@ class SyncCommandRunner:
         json_output: bool,
         full_paths: bool,
         run_noop: bool,
-        assume_yes: bool,
+        unattended: bool,
         snapshot_config: SnapshotConfig | None = None,
     ) -> int:
         renderer = (
@@ -242,7 +242,7 @@ class SyncCommandRunner:
             plans=plans,
             stream_output=renderer.stream_output,
             run_noop=run_noop,
-            assume_yes=assume_yes,
+            unattended=unattended,
             snapshot_config=snapshot_config,
             event_sink=renderer.render_sync_event,
         )

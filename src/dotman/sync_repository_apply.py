@@ -77,7 +77,7 @@ def execute_repository_apply(
     command_runtime: CommandRuntime | None = None,
     complete: Callable[[RepositoryApplyUnit], None],
     stream_output: bool = False,
-    assume_yes: bool = False,
+    unattended: bool = False,
     auxiliary: Sequence[HookActivation] = (),
     run_noop: bool = False,
     check_cancelled: Callable[[], None] | None = None,
@@ -113,7 +113,7 @@ def execute_repository_apply(
                 if check_cancelled is not None:
                     check_cancelled()
                 if step.kind == "hook":
-                    result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
+                    result = _execute_step(step, stream_output=stream_output, unattended=unattended)
                 elif step.kind == "unit-completion":
                     complete(unit)
                     results[unit.row_id] = PublicationUnitResult(unit.row_id, "ok")

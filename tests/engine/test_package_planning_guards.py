@@ -68,7 +68,7 @@ def test_package_guard_exit_100_omits_package_before_host_projection(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("DOTMAN_ASSUME_YES", "1")
+    monkeypatch.setenv("DOTMAN_UNATTENDED", "1")
     live_path = home / ".config" / "app" / "config.txt"
     live_path.parent.mkdir(parents=True)
     live_path.write_text("live value\n", encoding="utf-8")
@@ -79,7 +79,7 @@ def test_package_guard_exit_100_omits_package_before_host_projection(
     _write_guarded_target_package(
         repo_root,
         operation=operation,
-        guard_command="[ -z \"${DOTMAN_ASSUME_YES+x}\" ] || exit 9; printf 'not for this host\\n' >&2; exit 100",
+        guard_command="[ -z \"${DOTMAN_UNATTENDED+x}\" ] || exit 9; printf 'not for this host\\n' >&2; exit 100",
         projection_marker=projection_marker,
     )
     engine = _engine(tmp_path, repo_root)

@@ -445,7 +445,7 @@ def execute_session(
     session: ExecutionSession,
     *,
     stream_output: bool,
-    assume_yes: bool = False,
+    unattended: bool = False,
     command_runtime: CommandRuntime | None = None,
     on_package_start=None,
     on_step_start=None,
@@ -457,7 +457,7 @@ def execute_session(
         return _execute_session_inner(
             session,
             stream_output=stream_output,
-            assume_yes=assume_yes,
+            unattended=unattended,
             on_package_start=on_package_start,
             on_step_start=on_step_start,
             on_step_finish=on_step_finish,
@@ -469,7 +469,7 @@ def _execute_session_inner(
     session: ExecutionSession,
     *,
     stream_output: bool,
-    assume_yes: bool = False,
+    unattended: bool = False,
     on_package_start=None,
     on_step_start=None,
     on_step_finish=None,
@@ -510,7 +510,7 @@ def _execute_session_inner(
         for step_index, step in enumerate(repo.pre_steps, start=1):
             if on_step_start is not None:
                 on_step_start(repo, step, step_index, len(repo.pre_steps))
-            result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
+            result = _execute_step(step, stream_output=stream_output, unattended=unattended)
             repo_step_results.append(result)
             if on_step_finish is not None:
                 on_step_finish(repo, result, step_index, len(repo.pre_steps))
@@ -541,7 +541,7 @@ def _execute_session_inner(
             package_result = _execute_package_unit(
                 package,
                 stream_output=stream_output,
-                assume_yes=assume_yes,
+                unattended=unattended,
                 on_package_start=on_package_start,
                 on_step_start=on_step_start,
                 on_step_finish=on_step_finish,
@@ -564,7 +564,7 @@ def _execute_session_inner(
             for step_index, step in enumerate(repo.post_steps, start=1):
                 if on_step_start is not None:
                     on_step_start(repo, step, step_index, len(repo.post_steps))
-                result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
+                result = _execute_step(step, stream_output=stream_output, unattended=unattended)
                 repo_step_results.append(result)
                 if on_step_finish is not None:
                     on_step_finish(repo, result, step_index, len(repo.post_steps))
@@ -601,7 +601,7 @@ def _execute_package_unit(
     package: PackageExecutionUnit,
     *,
     stream_output: bool,
-    assume_yes: bool,
+    unattended: bool,
     on_package_start=None,
     on_step_start=None,
     on_step_finish=None,
@@ -627,7 +627,7 @@ def _execute_package_unit(
             continue
         if on_step_start is not None:
             on_step_start(package, step, step_index, total_steps)
-        result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
+        result = _execute_step(step, stream_output=stream_output, unattended=unattended)
         step_results.append(result)
         if on_step_finish is not None:
             on_step_finish(package, result, step_index, total_steps)
@@ -800,7 +800,7 @@ def _build_target_steps(*, plan: PackagePlan, target_plan: TargetPlan) -> list[E
     return steps
 
 
-def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool) -> ExecutionStepResult:
+def _execute_step(step: ExecutionStep, *, stream_output: bool, unattended: bool) -> ExecutionStepResult:
     try:
         if step.kind == "hook":
             if step.hook_plan.io == "tty":
@@ -809,7 +809,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, assume_yes: bool)
                 CommandRequest(
                     command=ShellCommand(step.hook_plan.command),
                     cwd=step.hook_plan.cwd,
-                    env=_build_hook_env(step, assume_yes=assume_yes),
+                    env=_build_hook_env(step, unattended=unattended),
                     io=step.hook_plan.io,
                     stream_output=stream_output if step.hook_plan.io == "pipe" else False,
                     elevation=step.hook_plan.elevation,
@@ -1059,7 +1059,7 @@ def _require_interactive_terminal(*, setting_name: str) -> None:
     raise ValueError(f"{setting_name} 'tty' requires an interactive terminal")
 
 
-def _build_hook_env(step: ExecutionStep, *, assume_yes: bool) -> dict[str, str]:
+def _build_hook_env(step: ExecutionStep, *, unattended: bool) -> dict[str, str]:
     hook_plan = step.hook_plan
     if hook_plan is not None and hook_plan.env is not None:
         env = dict(hook_plan.env)
@@ -1082,7 +1082,7 @@ def _build_hook_env(step: ExecutionStep, *, assume_yes: bool) -> dict[str, str]:
                 env.setdefault("DOTMAN_OS", plan.inferred_os)
             for key, value in plan.variables.items():
                 _flatten_vars(env, prefix=f"DOTMAN_VAR_{key}", value=value)
-    env["DOTMAN_ASSUME_YES"] = "1" if assume_yes else "0"
+    env["DOTMAN_UNATTENDED"] = "1" if unattended else "0"
     return env
 
 

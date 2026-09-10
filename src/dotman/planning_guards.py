@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from dotman.progress import ProgressSink
 
 
-PLANNING_GUARD_EXCLUDED_ENV_KEYS = frozenset({"DOTMAN_ASSUME_YES"})
+PLANNING_GUARD_EXCLUDED_ENV_KEYS = frozenset({"DOTMAN_UNATTENDED"})
 
 
 class GuardPlanningError(ValueError):

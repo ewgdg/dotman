@@ -75,7 +75,6 @@ class StandaloneCommandRunner:
                 review_repo_path=args.review_repo_path,
                 review_live_path=args.review_live_path,
                 editor=args.editor,
-                assume_yes=getattr(args, "unattended", False),
             )
         if args.command == "reconcile" and args.reconcile_helper == "jinja":
             return run_jinja_reconcile(
@@ -84,7 +83,6 @@ class StandaloneCommandRunner:
                 review_repo_path=args.review_repo_path,
                 review_live_path=args.review_live_path,
                 editor=args.editor,
-                assume_yes=getattr(args, "unattended", False),
             )
         if args.command == "render" and args.render_command == "jinja":
             return run_jinja_render(

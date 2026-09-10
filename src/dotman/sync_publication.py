@@ -350,7 +350,7 @@ def execute_publication(
     complete: Callable[[PublicationUnit], None] | None = None,
     command_runtime: CommandRuntime | None = None,
     stream_output: bool = False,
-    assume_yes: bool = False,
+    unattended: bool = False,
     auxiliary: Sequence[HookActivation] = (),
     run_noop: bool = False,
     check_cancelled: Callable[[], None] | None = None,
@@ -404,7 +404,7 @@ def execute_publication(
                 if check_cancelled is not None:
                     check_cancelled()
                 if step.kind == "hook":
-                    result = _execute_step(step, stream_output=stream_output, assume_yes=assume_yes)
+                    result = _execute_step(step, stream_output=stream_output, unattended=unattended)
                 elif step.kind == "unit-completion":
                     if complete is not None:
                         complete(unit)
