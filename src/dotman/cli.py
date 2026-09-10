@@ -30,12 +30,14 @@ def main(
     *,
     interaction: Interaction | None = None,
 ) -> int:
+    unattended = False
     try:
         raw_argv = list(argv) if argv is not None else sys.argv[1:]
         args = build_parser().parse_args(normalize_edit_query_argv(raw_argv))
-        active_interaction = interaction
+        unattended = args.unattended
+        active_interaction = None if unattended else interaction
         stdin_isatty = getattr(sys.stdin, "isatty", None)
-        if active_interaction is None and stdin_isatty is not None and stdin_isatty():
+        if not args.unattended and active_interaction is None and stdin_isatty is not None and stdin_isatty():
             active_interaction = TerminalInteraction()
         engine_factory = lambda config_path: DotmanEngine.from_config_path(
             config_path,
@@ -73,8 +75,11 @@ def main(
         selected_runner = runner_by_command.get(args.command)
         if selected_runner is None:
             raise ValueError(f"unsupported command '{args.command}'")
-        with command_operation():
+        with command_operation(), cli_interaction.interaction_scope(unattended=args.unattended):
             return selected_runner.run(args)
+    except cli_interaction.InteractionRequiredError as exc:
+        cli_emit.emit_error(exc, use_color=colors_enabled())
+        return 1
     except KeyboardInterrupt:
         cli_interaction.emit_interrupt_notice()
         return INTERRUPTED_EXIT_CODE
@@ -83,7 +88,7 @@ def main(
             exc,
             use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None,
         )
-        return 2
+        return 1 if unattended else 2
 
 
 if __name__ == "__main__":  # pragma: no cover

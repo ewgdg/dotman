@@ -519,7 +519,7 @@ def test_track_cli_keeps_existing_binding_when_profile_replacement_is_declined(
     )
 
 
-def test_track_cli_assume_yes_replaces_profile_without_interactive_stdin(
+def test_track_cli_unattended_replaces_profile_without_interactive_stdin(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -548,8 +548,8 @@ def test_track_cli_assume_yes_replaces_profile_without_interactive_stdin(
         [
             "--config",
             str(write_manager_config(tmp_path)),
+            "--unattended",
             "track",
-            "--yes",
             "example:git@work",
         ]
     )
@@ -561,7 +561,7 @@ def test_track_cli_assume_yes_replaces_profile_without_interactive_stdin(
     assert "tracked example:git@work" in output
 
 
-def test_track_cli_json_assume_yes_replaces_profile_without_human_summary(
+def test_track_cli_json_unattended_replaces_profile_without_human_summary(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -591,8 +591,8 @@ def test_track_cli_json_assume_yes_replaces_profile_without_human_summary(
             "--config",
             str(write_manager_config(tmp_path)),
             "--json",
+            "--unattended",
             "track",
-            "--yes",
             "example:git@work",
         ]
     )

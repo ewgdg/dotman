@@ -102,7 +102,7 @@ class SyncCommandRunner:
         operation: SyncOperation,
         full_paths: bool,
     ) -> int:
-        assume_yes = getattr(args, "assume_yes", False)
+        assume_yes = getattr(args, "unattended", False)
         run_noop = getattr(args, "run_noop", False)
         plans = self._plan_operation(
             args=args,
@@ -118,6 +118,8 @@ class SyncCommandRunner:
         )
         if skipped_result is not None:
             return skipped_result
+        if not args.dry_run and not assume_yes and not cli_interaction.interactive_mode_enabled(json_output=args.json_output):
+            raise cli_interaction.InteractionRequiredError("push requires confirmation; use --unattended to accept default work")
         if not cli_interaction.review_plans_for_interactive_diffs(
             plans=plans,
             operation=operation,
@@ -173,12 +175,14 @@ class SyncCommandRunner:
             json_output=args.json_output,
         )
         actions = build_restore_actions(snapshot)
+        if not args.dry_run and not getattr(args, "unattended", False) and not cli_interaction.interactive_mode_enabled(json_output=args.json_output):
+            raise cli_interaction.InteractionRequiredError("restore requires confirmation; use --unattended to accept default work")
         if not cli_interaction.review_restore_actions_for_interactive_diffs(
             snapshot=snapshot,
             actions=actions,
             json_output=args.json_output,
             full_paths=full_paths,
-            assume_yes=getattr(args, "assume_yes", False),
+            assume_yes=getattr(args, "unattended", False),
         ):
             cli_interaction.emit_interrupt_notice()
             return INTERRUPTED_EXIT_CODE

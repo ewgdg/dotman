@@ -27,7 +27,7 @@ from tests.helpers import (
 
 def test_track_help_uses_explicit_selector_profile_placeholder(capsys) -> None:
     output = capture_parser_help(capsys, "track")
-    assert "usage: dotman track [-h] [--yes] [<repo>:]<selector>[@<profile>]" in output
+    assert "usage: dotman track [-h] [<repo>:]<selector>[@<profile>]" in output
     assert "positional arguments:" in output
     assert "[<repo>:]<selector>[@<profile>]" in output
 
@@ -40,7 +40,7 @@ def test_search_help_uses_explicit_query_placeholder(capsys) -> None:
 
 def test_push_help_lists_dry_run_and_full_path_flags(capsys) -> None:
     output = capture_parser_help(capsys, "push")
-    assert "usage: dotman push [-h] [-d] [--full-path] [--yes] [--run-noop]" in output
+    assert "usage: dotman push [-h] [-d] [--full-path] [--run-noop]" in output
     assert "[[<repo>:]<package>[@<profile>]]" in output
     assert "-d, --dry-run" in output
     assert "--full-path" in output
@@ -55,14 +55,12 @@ def test_pull_help_lists_dry_run_and_full_path_flags(capsys) -> None:
 
 def test_add_help_lists_yes_flag(capsys) -> None:
     output = capture_parser_help(capsys, "add")
-    assert "usage: dotman add [-h] [--yes] <live-path> [<package-query>]" in output
-    assert "--yes" in output
+    assert "usage: dotman add [-h] <live-path> [<package-query>]" in output
 
 
 def test_restore_help_lists_yes_flag(capsys) -> None:
     output = capture_parser_help(capsys, "restore")
-    assert "usage: dotman restore [-h] [-d] [--full-path] [--yes] [<snapshot>]" in output
-    assert "--yes" in output
+    assert "usage: dotman restore [-h] [-d] [--full-path] [<snapshot>]" in output
 
 
 def test_removed_snapshot_command_is_rejected_instead_of_aliased(capsys) -> None:
@@ -195,7 +193,6 @@ def test_reconcile_editor_help_uses_explicit_option_placeholders(capsys) -> None
     assert "--review-live-path <review-live-path>" in output
     assert "--additional-source <source-path>" in output
     assert "--editor <editor-command>" in output
-    assert "--yes" in output
 
 
 def test_capture_help_lists_patch_shortcut(capsys) -> None:
@@ -235,7 +232,6 @@ def test_reconcile_jinja_help_uses_explicit_option_placeholders(capsys) -> None:
     assert "--review-repo-path <review-repo-path>" in output
     assert "--review-live-path <review-live-path>" in output
     assert "--editor <editor-command>" in output
-    assert "--yes" in output
 
 
 def test_render_help_uses_nested_command_placeholder_and_summaries(capsys) -> None:

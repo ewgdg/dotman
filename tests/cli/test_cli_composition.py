@@ -78,3 +78,35 @@ def test_config_only_edit_uses_manager_ui_scope(
     assert rendered_menu.index("alpha") < rendered_menu.index("alpine")
     assert current_ui_config() is None
     assert "Local override path:" in capsys.readouterr().out
+
+
+def test_unattended_is_global_command_policy() -> None:
+    assert build_parser().parse_args(["--unattended", "push"]).unattended
+
+
+@pytest.mark.parametrize("command", [["edit", "config"], ["reconcile", "editor", "--repo-path", "repo", "--live-path", "live"]])
+def test_unattended_rejects_editor_commands_before_opening(command, capsys, monkeypatch) -> None:
+    monkeypatch.setattr("dotman.cli_interaction.open_editor_path", lambda *a, **kw: pytest.fail("editor opened"))
+    assert main(["--unattended", *command]) == 1
+    assert "unattended" in capsys.readouterr().err
+
+
+def test_unattended_disables_terminal_interaction_scope(monkeypatch) -> None:
+    from dotman import cli_interaction
+    monkeypatch.setattr("sys.stdin", StringIO())
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    with cli_interaction.interaction_scope(unattended=True):
+        assert not cli_interaction.interactive_mode_enabled(json_output=False)
+    assert cli_interaction.interactive_mode_enabled(json_output=False)
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_push_requires_execution_consent_without_terminal(json_output, tmp_path, monkeypatch, capsys) -> None:
+    from tests.helpers import write_manager_config
+    config = write_manager_config(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert main(["--config", str(config), "track", "example:git@basic"]) == 0
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    flags = ["--json"] if json_output else []
+    assert main(["--config", str(config), *flags, "push"]) == 1
+    assert "--unattended" in capsys.readouterr().err

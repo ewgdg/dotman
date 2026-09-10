@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from dotman.capture import capture_patch
+from dotman.cli_interaction import InteractionRequiredError
 from dotman.command_runtime import (
     CommandRequest,
     ShellCommand,
@@ -32,6 +33,8 @@ class StandaloneCommandRunner:
     command_names = frozenset({"rewrite", "transform", "elevation", "capture", "reconcile", "render"})
 
     def run(self, args: Any) -> int:
+        if args.command in {"reconcile", "elevation"} and getattr(args, "unattended", False):
+            raise InteractionRequiredError(f"{args.command} requires interaction and is unavailable in unattended mode")
         if args.command == "rewrite" and args.rewrite_name == "home":
             from dotman.rewrites.cli import run_home_rewrite
 
@@ -72,7 +75,7 @@ class StandaloneCommandRunner:
                 review_repo_path=args.review_repo_path,
                 review_live_path=args.review_live_path,
                 editor=args.editor,
-                assume_yes=getattr(args, "assume_yes", False),
+                assume_yes=getattr(args, "unattended", False),
             )
         if args.command == "reconcile" and args.reconcile_helper == "jinja":
             return run_jinja_reconcile(
@@ -81,7 +84,7 @@ class StandaloneCommandRunner:
                 review_repo_path=args.review_repo_path,
                 review_live_path=args.review_live_path,
                 editor=args.editor,
-                assume_yes=getattr(args, "assume_yes", False),
+                assume_yes=getattr(args, "unattended", False),
             )
         if args.command == "render" and args.render_command == "jinja":
             return run_jinja_render(

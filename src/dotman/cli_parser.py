@@ -124,15 +124,6 @@ def add_dry_run_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_assume_yes_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--yes",
-        action="store_true",
-        dest="assume_yes",
-        help="Auto-confirm yes/no prompts without prompting",
-    )
-
-
 def add_run_noop_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--run-noop",
@@ -187,7 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(full_path=None)
     parser.add_argument("--config", metavar="<config-path>", help="Path to dotman config.toml")
     parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
-    parser.add_argument("--unattended", action="store_true", help="Approve default work without interaction for sync or pull")
+    parser.add_argument("--unattended", action="store_true", help="Use policy defaults without menus, editors, pagers, or prompts")
     parser.add_argument(
         "--file-symlink-mode",
         choices=("prompt", "follow"),
@@ -230,7 +221,6 @@ def build_parser() -> argparse.ArgumentParser:
         description="Track packages in manager state",
     )
     add_track_request_argument(track_parser)
-    add_assume_yes_argument(track_parser)
 
     search_parser = subparsers.add_parser(
         "search",
@@ -250,7 +240,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_live_path_argument(add_parser)
     add_package_query_argument(add_parser, required=False)
-    add_assume_yes_argument(add_parser)
 
     edit_parser = subparsers.add_parser(
         "edit",
@@ -335,7 +324,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_dry_run_argument(push_parser)
     add_full_path_argument(push_parser)
     add_tracked_package_argument(push_parser, required=False)
-    add_assume_yes_argument(push_parser)
     add_run_noop_argument(push_parser)
 
     pull_parser = subparsers.add_parser(
@@ -365,7 +353,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_dry_run_argument(restore_parser)
     add_full_path_argument(restore_parser)
     add_snapshot_argument(restore_parser, required=False)
-    add_assume_yes_argument(restore_parser)
 
     untrack_parser = subparsers.add_parser(
         "untrack",
@@ -544,7 +531,6 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="<editor-command>",
         help="Editor command to run instead of the default editor",
     )
-    add_assume_yes_argument(reconcile_editor_parser)
 
     reconcile_jinja_parser = reconcile_subparsers.add_parser(
         "jinja",
@@ -578,7 +564,6 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="<editor-command>",
         help="Editor command to run instead of the default editor",
     )
-    add_assume_yes_argument(reconcile_jinja_parser)
 
     render_parser = subparsers.add_parser(
         "render",

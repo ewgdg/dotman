@@ -5,6 +5,8 @@ import shlex
 import shutil
 import sys
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -631,8 +633,24 @@ def print_review_command_help() -> None:
     print('  "?"        show this help')
 
 
+_unattended = ContextVar("unattended", default=False)
+
+
+@contextmanager
+def interaction_scope(*, unattended: bool):
+    token = _unattended.set(unattended)
+    try:
+        yield
+    finally:
+        _unattended.reset(token)
+
+
+class InteractionRequiredError(ValueError):
+    """Execution requires a decision unavailable in this invocation."""
+
+
 def interactive_mode_enabled(*, json_output: bool) -> bool:
-    return not json_output and sys.stdin.isatty()
+    return not _unattended.get() and not json_output and sys.stdin.isatty()
 
 
 def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
@@ -1933,7 +1951,7 @@ def prepare_push_plans_for_execution(
         raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
 
     if assume_yes:
-        return cli_emit.allow_push_live_symlink_replacements(plans)
+        raise InteractionRequiredError(f"unsafe symlink decision in unattended mode: {hazard_descriptions}")
     if not interactive:
         raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
 
