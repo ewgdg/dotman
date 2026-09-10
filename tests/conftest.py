@@ -17,6 +17,15 @@ from dotman.command_runtime import (
 
 
 @pytest.fixture(autouse=True)
+def isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # CLI execution tests resolve real managed paths such as ~/.gitconfig.
+    # Isolate HOME suite-wide so a missed per-test override cannot write user files.
+    home = tmp_path / "isolated-home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+
+@pytest.fixture(autouse=True)
 def isolate_xdg_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     xdg_config_home = tmp_path / "xdg-config"
     xdg_config_home.mkdir(parents=True, exist_ok=True)
