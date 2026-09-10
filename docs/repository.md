@@ -427,9 +427,19 @@ commands = [
 
 - Hook and guard command lists run in declaration order and stop on first non-zero exit.
 - Repo, package, and target `guard_*` hooks are non-interactive planning eligibility rules. They run after static ownership resolution and before host-state work for their scopes.
-- Guard order is repo, package, then target. A repo skip omits its lower scopes while sibling repos continue; package and target skips stay local while siblings and dependents continue.
+- Guard order is repository, package, then target, followed by active named Path Rule Guards. Each outcome applies within its declared scope; sibling scopes remain independently eligible.
 - Target guards run before file projection, directory scanning, and probe commands.
-- Exit code `0` admits the scope, `100` records a planning skip and omits that scope, and any other non-zero exit aborts planning.
+- Exit `0` retains the Guard's directional capability; `100` removes it within
+  that scope; any other non-zero exit aborts planning. One-sided Push and Pull
+  omit work denied by their operation's Guard.
+- Sync intersects surviving capabilities with configured `sync_policy`.
+  A `both` unit with `guard_push` exiting `100` retains pull-only capability.
+  A `push-only` unit with the same outcome has no route and remains a visible,
+  non-approvable diagnostic. It is not a successful planning omission. Such
+  blockers fail unattended Sync before mutation; unrelated interactive work may
+  execute, but the diagnostic still makes the result a failure.
+- Neither directional narrowing nor no-route outcomes change Base eligibility,
+  which follows configured policy. Guards cannot enable policy-forbidden flow.
 - Guards use captured pipe I/O, never receive `DOTMAN_UNATTENDED`, and may use configured elevation.
 - Each repo, resolved package instance, and target guard runs once per plan build. Guards are not emitted as execution steps or rerun after review or selection.
 - Guard outcomes never change static ownership or hide malformed configuration and ownership conflicts.

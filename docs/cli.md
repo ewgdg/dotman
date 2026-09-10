@@ -37,11 +37,20 @@ See [Sync lifecycle](sync.md) for convergence semantics and
 - `--run-noop` now feeds normal planning and selection instead of reviving hooks late in execution.
 - For the active operation, `--run-noop` temporarily treats pre/post hooks as noop-eligible, even if they do not declare `run_noop = true` in the manifest.
 - `--run-noop` still does not fabricate target writes or snapshots.
-- A repo, package, or target `guard_*` that exits `100` omits that scope during planning. Lower work in a skipped repo is omitted; package and target skips stay local.
-- A directory path-rule guard that exits `100` omits only matching managed child paths. Its diagnostic keeps `repo:package.target` identity and shows path-rule pattern as an annotation.
-- Human planning output shows the omission as `skipped (guard)` before review or selection.
-- JSON planning output exposes structured `guard_skips` without guard command text.
-- If every selected scope is guard-skipped and no higher-scope pre/post work remains, the command succeeds without review, selection, execution, or snapshots.
+- In one-sided Push and Pull, exit `100` from the operation's Guard omits
+  its scope during planning; a Path Rule Guard omits matching child work.
+  Repository exclusions cover lower scopes, while sibling scopes remain eligible.
+- Push human planning output shows `skipped (guard)`; its planning JSON exposes
+  `guard_skips` without command text. A wholly Guard-skipped one-sided operation
+  with no retained higher-scope hooks succeeds without execution or snapshots.
+- Sync instead intersects configured policy with surviving directional
+  capabilities. For `both`, `guard_push = 100` leaves pull-only capability;
+  for `push-only`, the same outcome leaves a visible non-approvable no-route
+  diagnostic, not a successful omission. Guards never grant the opposite route.
+  Sync reports these diagnostics in its unit/work rows, not Push's
+  `guard_skips` output. Unattended Sync rejects a no-route blocker before
+  mutation; interactive execution may retain unrelated approved work but still
+  reports failure. Configured policy continues to determine Base eligibility.
 
 ## Sync scope resolution
 
