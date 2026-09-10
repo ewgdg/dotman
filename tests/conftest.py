@@ -33,6 +33,14 @@ def isolate_xdg_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.fixture(autouse=True)
+def isolate_xdg_data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Snapshot retention must never inspect or prune the user's snapshot store.
+    data_home = tmp_path / "xdg-data"
+    data_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+
+@pytest.fixture(autouse=True)
 def isolate_xdg_state_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     xdg_state_home = tmp_path / "state"
     xdg_state_home.mkdir(parents=True, exist_ok=True)
