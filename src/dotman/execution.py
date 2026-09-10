@@ -826,6 +826,7 @@ def _execute_step(step: ExecutionStep, *, stream_output: bool, unattended: bool)
                     step=step,
                     status="interrupted",
                     exit_code=INTERRUPTED_EXIT_CODE,
+                    error=f"command interrupted with status {INTERRUPTED_EXIT_CODE}",
                     stdout=stdout,
                     stderr=stderr,
                 )

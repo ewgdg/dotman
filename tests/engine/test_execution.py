@@ -1010,7 +1010,7 @@ def test_execute_session_marks_command_exit_130_as_interrupted() -> None:
     step_result = result.packages[0].steps[0]
     assert step_result.status == "interrupted"
     assert step_result.exit_code == 130
-    assert step_result.error is None
+    assert step_result.error == "command interrupted with status 130"
 
 
 def test_execute_session_uses_sudo_writer_for_system_live_paths(

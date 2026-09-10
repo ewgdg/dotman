@@ -376,3 +376,21 @@ def test_unattended_sync_propagates_mode_to_both_hook_families(tmp_path, monkeyp
     payload = json.loads(capsys.readouterr().out)
     assert {step["action"] for step in payload["stages"] if step["kind"] == "hook"} == {"pre_pull", "pre_push"}
     assert all(step["status"] == "ok" for step in payload["stages"])
+
+@pytest.mark.parametrize("hook", ["pre_pull", "pre_push"])
+def test_interrupted_hook_json_keeps_exit_evidence_without_output(tmp_path, monkeypatch, capsys, hook):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live",
+         'render = "sed s/live/published/ $DOTMAN_SOURCE"\ncompare = { repo = "raw", live = "raw" }\n'
+         f'[targets.unit.hooks]\n{hook} = "printf SECRET_PAYLOAD >&2; exit 130"'),
+    ])
+    assert runner_for(engine).run(arguments(dry_run=False)) == 130
+    output = capsys.readouterr().out
+    document = json.loads(output)
+    assert document["status"] == "aborted"
+    assert "SECRET_PAYLOAD" not in output
+    interrupted = [step for step in document["stages"] if step["status"] == "interrupted"]
+    assert len(interrupted) == 1
+    assert interrupted[0]["action"] == hook
+    assert interrupted[0]["exit_code"] == 130
+    assert document["summary"]["diagnostics"][0]["code"] == "interrupted"

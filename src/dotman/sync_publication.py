@@ -455,7 +455,7 @@ def execute_publication(
                 steps.append(result)
                 if result.status != "ok":
                     raise _PublicationStopped(
-                        result.error or result.stderr or f"{step.action} exited {result.exit_code}",
+                        result.error or f"{step.action} exited {result.exit_code}",
                         interrupted=result.status == "interrupted",
                     )
             except (_PublicationStopped, OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
