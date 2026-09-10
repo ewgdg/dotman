@@ -110,3 +110,7 @@ def test_push_requires_execution_consent_without_terminal(json_output, tmp_path,
     flags = ["--json"] if json_output else []
     assert main(["--config", str(config), *flags, "push"]) == 1
     assert "--unattended" in capsys.readouterr().err
+
+
+def test_sync_accepts_full_path_display_option() -> None:
+    assert build_parser().parse_args(["sync", "--full-path"]).full_path is True

@@ -184,14 +184,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("prompt", "follow"),
         default=None,
         metavar="<mode>",
-        help="Override file symlink handling for push planning and execution",
+        help="Override file symlink handling for managed endpoints",
     )
     parser.add_argument(
         "--dir-symlink-mode",
         choices=("fail", "follow"),
         default=None,
         metavar="<mode>",
-        help="Override directory symlink handling for push planning and execution",
+        help="Override directory symlink handling for managed endpoints",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True, title="commands", metavar="<command>")
@@ -314,6 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Exact tracked scopes (default: all tracked targets)",
     )
     add_dry_run_argument(sync_parser)
+    add_full_path_argument(sync_parser)
     add_run_noop_argument(sync_parser)
 
     push_parser = subparsers.add_parser(
