@@ -1685,6 +1685,6 @@ def project_frozen_file(
             # Provider output can contain payload bytes and private staging paths;
             # public diagnostics retain only the operation and exit evidence.
             raise ValueError(
-                f"comparison projection failed with exit {result.exit_code}"
+                f"comparison projection failed for {metadata.repo_path} with exit {result.exit_code}"
             )
         return result.stdout
