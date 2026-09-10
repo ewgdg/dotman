@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
+from tests.helpers import open_tracked_pull_session
 from tests.helpers import (
     write_manager_config,
     write_profile_ambiguous_dependency_repo,
@@ -205,9 +206,8 @@ def test_pull_allows_nested_live_paths_within_package_when_repo_paths_do_not_con
     write_same_package_nested_pull_only_repo(repo_root)
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    plan = engine.plan_pull_query("fixture:app@default")
-
-    assert [target.target_name for target in plan.package_plans[0].target_plans] == ["config", "generated"]
+    with open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")]) as session:
+        assert {unit.identity.target_name for unit in session.view.observations} == {"config", "generated"}
 
 
 def test_pull_allows_nested_live_paths_when_repo_paths_do_not_conflict(
@@ -223,12 +223,8 @@ def test_pull_allows_nested_live_paths_when_repo_paths_do_not_conflict(
     write_nested_pull_only_repo(repo_root, nested_repo_paths=False)
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    plan = engine.plan_pull_query("fixture:all@default")
-
-    assert [(item.package_id, item.operation) for item in plan.package_plans] == [
-        ("parent", "pull"),
-        ("child", "pull"),
-    ]
+    with open_tracked_pull_session(engine, tmp_path, entries=[("parent", "default"), ("child", "default")]) as session:
+        assert {unit.identity.package_id for unit in session.view.observations} == {"parent", "child"}
 
 
 def test_pull_rejects_nested_repo_paths_even_when_live_paths_do_not_conflict(
@@ -245,7 +241,7 @@ def test_pull_rejects_nested_repo_paths_even_when_live_paths_do_not_conflict(
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
     with pytest.raises(ValueError, match=r"incompatible nested targets: parent:config contains child:generated"):
-        engine.plan_pull_query("fixture:all@default")
+        open_tracked_pull_session(engine, tmp_path, entries=[("parent", "default"), ("child", "default")])
 
 
 def test_tracked_pull_allows_same_live_path_when_repo_paths_do_not_conflict(
@@ -267,12 +263,8 @@ def test_tracked_pull_allows_same_live_path_when_repo_paths_do_not_conflict(
     )
     engine = DotmanEngine.from_config_path(config_path)
 
-    plan = engine.plan_pull()
-
-    assert [(item.package_id, item.operation) for item in plan.package_plans] == [
-        ("alpha", "pull"),
-        ("beta", "pull"),
-    ]
+    with open_tracked_pull_session(engine, tmp_path) as session:
+        assert [unit.identity.package_id for unit in session.view.observations] == ["alpha", "beta"]
 
 
 def test_tracked_pull_rejects_same_repo_path_when_live_paths_do_not_conflict(
@@ -299,7 +291,7 @@ def test_tracked_pull_rejects_same_repo_path_when_live_paths_do_not_conflict(
         ValueError,
         match=r"conflicting explicit tracked targets for .+shared\.conf: fixture:alpha@default -> fixture:alpha\.shared, fixture:beta@default -> fixture:beta\.shared",
     ):
-        engine.plan_pull()
+        engine.resolve_sync_scope()
 
 
 def test_record_binding_allows_pull_only_same_live_path_when_repo_paths_do_not_conflict(
@@ -609,7 +601,7 @@ def test_plan_push_fails_for_invalid_singleton_implicit_dependency_profile_state
         engine.plan_push()
 
 
-def test_plan_pull_fails_for_invalid_singleton_implicit_dependency_profile_state(
+def test_pull_scope_fails_for_invalid_singleton_implicit_dependency_profile_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -628,7 +620,7 @@ def test_plan_pull_fails_for_invalid_singleton_implicit_dependency_profile_state
     engine = DotmanEngine.from_config_path(config_path)
 
     with pytest.raises(ValueError, match=r"ambiguous implicit profile contexts for fixture:shared"):
-        engine.plan_pull()
+        engine.resolve_sync_scope()
 
 
 def test_same_profile_singleton_implicit_dependency_dedupes(

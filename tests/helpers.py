@@ -111,11 +111,8 @@ def make_package_plan(
 
 
 def single_package_plan(engine, query_text: str, *, operation: str = "push", profile: str | None = None) -> PackagePlan:
-    operation_plan = (
-        engine.plan_push_query(query_text, profile=profile)
-        if operation == "push"
-        else engine.plan_pull_query(query_text, profile=profile)
-    )
+    assert operation == "push"
+    operation_plan = engine.plan_push_query(query_text, profile=profile)
     assert len(operation_plan.package_plans) == 1
     return operation_plan.package_plans[0]
 
@@ -524,3 +521,29 @@ def write_package_override_preview_repo(repo_root: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def open_tracked_pull_session(
+    engine, tmp_path: Path, *, repo_name: str = "fixture",
+    entries: list[tuple[str, str]] | None = None, selectors: list[str] | None = None,
+    preview: bool = True,
+):
+    """Open the public Pull seam from real tracked state, never synthetic plans."""
+    if entries is not None:
+        write_tracked_packages_state(tmp_path / "state", repo_name=repo_name, entries=entries)
+    return engine.open_pull_session(engine.resolve_sync_scope(selectors), preview=preview)
+
+
+def initialize_git_repository(repo_root: Path) -> None:
+    from dotman.command_runtime import ArgvCommand, CommandRequest, current_command_runtime
+
+    for arguments in [
+        ("init", "-q"),
+        ("add", "."),
+        ("-c", "user.name=Test", "-c", "user.email=test@example.test",
+         "commit", "-qm", "fixture"),
+    ]:
+        result = current_command_runtime().run(
+            CommandRequest(ArgvCommand(("git", *arguments)), cwd=repo_root)
+        )
+        assert result.exit_code == 0, result.stderr

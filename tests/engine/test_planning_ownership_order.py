@@ -7,6 +7,7 @@ import pytest
 
 from dotman import projection
 from dotman.engine import DotmanEngine
+from tests.helpers import open_tracked_pull_session
 from tests.helpers import write_single_repo_config, write_tracked_packages_state
 
 
@@ -238,15 +239,18 @@ def test_public_planning_skips_overridden_target_projection(
     )
     engine = DotmanEngine.from_config_path(config_path)
 
-    operation_plan = engine.plan_push() if operation == "push" else engine.plan_pull()
+    if operation == "pull":
+        with open_tracked_pull_session(engine, tmp_path) as session:
+            assert [(unit.identity.package_id, unit.identity.target_name) for unit in session.view.observations] == [("winner", "shared")]
+        assert not loser_marker.exists()
+        return
+
+    operation_plan = engine.plan_push()
 
     plans_by_package = {plan.package_id: plan for plan in operation_plan.package_plans}
     loser_targets = plans_by_package["loser"].target_plans
-    if operation == "push":
-        assert [(target.target_name, target.target_kind) for target in loser_targets] == [("probe", "probe")]
-        assert probe_marker is not None and probe_marker.read_text(encoding="utf-8") == "probe"
-    else:
-        assert loser_targets == []
+    assert [(target.target_name, target.target_kind) for target in loser_targets] == [("probe", "probe")]
+    assert probe_marker is not None and probe_marker.read_text(encoding="utf-8") == "probe"
     assert [target.target_name for target in plans_by_package["winner"].target_plans] == ["shared"]
     assert not loser_marker.exists()
 
@@ -270,9 +274,11 @@ def test_public_query_planning_rejects_static_conflict_before_projection(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    planning = engine.plan_push_query if operation == "push" else engine.plan_pull_query
     with pytest.raises(ValueError):
-        planning("fixture:all@default")
+        if operation == "push":
+            engine.plan_push_query("fixture:all@default")
+        else:
+            open_tracked_pull_session(engine, tmp_path, entries=[("alpha", "default"), ("beta", "default")])
 
     assert not any(marker.exists() for marker in markers)
 
@@ -294,12 +300,14 @@ def test_public_query_planning_rejects_same_package_target_conflict(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    planning = engine.plan_push_query if operation == "push" else engine.plan_pull_query
     with pytest.raises(
         ValueError,
         match=r"fixture:app@default -> fixture:app\.a, fixture:app@default -> fixture:app\.b",
     ):
-        planning("fixture:app@default")
+        if operation == "push":
+            engine.plan_push_query("fixture:app@default")
+        else:
+            open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")])
 
 
 def test_public_push_planning_does_not_scan_overridden_directory(
@@ -412,6 +420,8 @@ def test_public_planning_normalizes_static_paths_without_resolving_filesystem(
 
     monkeypatch.setattr(Path, "resolve", fail_resolve)
 
-    operation_plan = engine.plan_push() if operation == "push" else engine.plan_pull()
-
-    assert operation_plan.operation == operation
+    if operation == "pull":
+        # Scope ownership is static; opening a session subsequently accesses endpoints.
+        assert engine.resolve_sync_scope().targets
+    else:
+        assert engine.plan_push().operation == operation

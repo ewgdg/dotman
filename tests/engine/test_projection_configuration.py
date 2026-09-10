@@ -182,7 +182,6 @@ editor = { run = "custom-editor", io = "pipe", additional_sources = ["inc"] }
     assert item.to_dict()["sync_policy"] == "push-only"
 
     # A child rule can narrow participation independently of its directory target.
-    assert e.plan_pull_query("r:app@default").package_plans[0].target_plans[0].directory_items == ()
 
 
 def test_path_rule_preset_compare_sides_merge_independently(tmp_path):
@@ -264,12 +263,6 @@ def test_forced_builtin_commands_execute_as_commands_for_render_capture_compare(
     assert push.render == "__dotman_command__:jinja"
     assert push.render_command == "__dotman_command__:jinja"
     assert seen[0].command.source == "jinja"
-    pull = e.plan_pull_query("r:app@default").package_plans[0].target_plans[0]
-    assert [request.command.source for request in seen[1:]] == ["render", "capture"]
-    assert pull.to_dict()["render"] == {"run": "jinja"}
-    assert pull.to_dict()["capture"] == {"run": "patch"}
-    assert pull.to_dict()["compare"] == {"repo": {"run": "render"}, "live": {"run": "capture"}}
-    assert "__dotman_command__" not in str(pull.to_dict())
 
 
 def test_forced_builtin_path_rule_identity_survives_execution_and_serialization(tmp_path, monkeypatch):
@@ -301,9 +294,6 @@ def test_forced_builtin_path_rule_identity_survives_execution_and_serialization(
     assert child.compare_repo == "__dotman_command__:render"
     assert child.compare_live == "__dotman_command__:capture"
     assert "__dotman_command__" not in str(child.to_dict())
-    pulled = e.plan_pull_query("r:app@default").package_plans[0].target_plans[0]
-    assert pulled.directory_items == ()
-    assert [request.command.source for request in seen[1:]] == ["render", "capture"]
 
 
 def test_push_only_delete_directory_plan_resolves_child_compare_editor_and_deletes(tmp_path, monkeypatch):
@@ -420,3 +410,48 @@ type = "directory"
     assert rule.pattern == "*.md"
     assert rule.priority == 7
     assert rule.render == "jinja"
+
+
+@pytest.mark.parametrize("directory", [False, True])
+def test_pull_forced_builtin_commands_keep_command_identity(tmp_path, monkeypatch, directory):
+    import shlex
+
+    from dotman.sync_base_store import DirectoryChildPresent, FilePresent
+    from tests.helpers import initialize_git_repository, open_tracked_pull_session
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    bin_root = tmp_path / "bin"
+    bin_root.mkdir()
+    marker = tmp_path / "commands"
+    for name, output in [("jinja", "rendered"), ("render", "repo-view"),
+                         ("capture", "live-view"), ("patch", "captured")]:
+        command = bin_root / name
+        command.write_text(
+            f"#!/bin/sh\nprintf '%s\\n' {name} >> {shlex.quote(str(marker))}\nprintf {output}\n"
+        )
+        command.chmod(0o755)
+    import os
+    monkeypatch.setenv("PATH", f"{bin_root}:{os.environ['PATH']}")
+    lines = [
+        'render={run="jinja"}', 'capture={run="patch"}',
+        'compare={repo={run="render"},live={run="capture"}}',
+    ]
+    root = repo(tmp_path, (
+        ['[targets.x.path_rules.docs]', 'pattern="*.md"', *lines] if directory else lines
+    ), directory=directory)
+    live = tmp_path / "home/.x"
+    if directory:
+        live.mkdir(parents=True)
+        live = live / "a.md"
+    else:
+        live.parent.mkdir(parents=True)
+    live.write_bytes(b"live")
+    initialize_git_repository(root)
+    with open_tracked_pull_session(engine(tmp_path, root), tmp_path, repo_name="r",
+                                   entries=[("app", "default")]) as session:
+        row = session.view.rows[0]
+        assert row.approved
+        expected = DirectoryChildPresent(b"captured", False) if directory else FilePresent(b"captured")
+        assert row.proposal.repository == expected
+        assert marker.read_text().splitlines() == ["render", "capture", "patch"]
+    assert live.read_bytes() == b"live"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import stat
 from dataclasses import replace
 from pathlib import Path
 from threading import Thread
@@ -10,17 +9,11 @@ import pytest
 
 import dotman.execution as execution
 from dotman import command_runtime as command_runtime_module, file_access
-from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime, ShellCommand, command_runtime_session
+from dotman.command_runtime import CommandResult, MemoryCommandRuntime, ShellCommand, command_runtime_session
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
-from dotman.models import DirectoryPlanItem, EditorSpec, HookCommandSpec, HookPlan, OperationPlan, TargetPlan
-from tests.helpers import (
-    make_package_plan,
-    single_package_plan,
-    write_named_manager_config,
-    write_shared_stack_repo,
-    write_single_repo_config,
-)
+from dotman.models import HookPlan, OperationPlan, TargetPlan
+from tests.helpers import make_package_plan, write_shared_stack_repo, write_single_repo_config
 
 
 def test_build_execution_session_orders_push_steps_per_package() -> None:
@@ -562,7 +555,6 @@ def test_execute_session_marks_only_tty_hook_commands_interactive(monkeypatch) -
     ]
 
 
-
 def test_build_execution_session_keeps_package_hooks_unprivileged_when_package_needs_sudo(monkeypatch) -> None:
     monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == Path("/etc/sddm.conf"))
 
@@ -624,201 +616,45 @@ def test_build_execution_session_marks_privileged_hook_commands() -> None:
     assert [step.privileged for step in session.packages[0].steps] == [True]
 
 
-def test_build_execution_session_does_not_mark_custom_editor_steps_privileged(monkeypatch) -> None:
-    monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: True)
-
+def test_build_execution_session_keeps_hook_only_packages_when_hooks_are_finalized() -> None:
     plan = make_package_plan(
-        operation="pull",
+        operation="push",
         repo_name="fixture",
         package_id="app",
         requested_profile="default",
         variables={},
         hooks={
-            "guard_pull": [HookPlan(package_id="app", hook_name="guard_pull", command="echo guard", cwd=Path("/repo"))],
-            "post_pull": [HookPlan(package_id="app", hook_name="post_pull", command="echo post", cwd=Path("/repo"))],
+            "guard_push": [
+                HookPlan(package_id="app", hook_name="guard_push", command="echo guard push", cwd=Path("/repo")),
+            ],
+            "pre_push": [
+                HookPlan(package_id="app", hook_name="pre_push", command="echo pre push", cwd=Path("/repo")),
+            ],
+            "post_push": [
+                HookPlan(package_id="app", hook_name="post_push", command="echo post push", cwd=Path("/repo")),
+            ],
         },
         target_plans=[
             TargetPlan(
                 package_id="app",
                 target_name="config",
-                repo_path=Path("/repo/app.conf"),
-                live_path=Path("/etc/sddm.conf"),
-                action="update",
+                repo_path=Path("/repo/config"),
+                live_path=Path("/live/config"),
+                action="noop",
                 target_kind="file",
                 projection_kind="raw",
-                editor=EditorSpec(type=None, run="sh hooks/reconcile.sh", io="pipe", elevation="none"),
-                editor_explicit=True,
             )
         ],
     )
 
-    session = build_execution_session([plan], operation="pull")
+    session = build_execution_session([plan], operation="push")
 
-    assert session.requires_privilege is False
-    assert [step.privileged for step in session.packages[0].steps] == [False, False, False]
-
-
-def test_build_execution_session_marks_explicit_privileged_editor(monkeypatch) -> None:
-    monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: False)
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=Path("/repo/app.conf"),
-                live_path=Path("/etc/sddm.conf"),
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                editor=EditorSpec(type=None, run="sh hooks/reconcile.sh", io="pipe", elevation="root"),
-                editor_explicit=True,
-            )
-        ],
-    )
-
-    session = build_execution_session([plan], operation="pull")
-
-    assert session.requires_privilege is True
-    assert [step.privileged for step in session.packages[0].steps] == [True]
-
-
-def test_build_execution_session_marks_privileged_editor_fallback(monkeypatch) -> None:
-    monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: False)
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=Path("/repo/app.conf"),
-                live_path=Path("/etc/sddm.conf"),
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                capture_command="capture-command",
-                editor=EditorSpec(type=None, run="sh hooks/reconcile.sh", io="pipe", elevation="root"),
-                editor_explicit=True,
-            )
-        ],
-    )
-
-    session = build_execution_session([plan], operation="pull")
-
-    assert session.requires_privilege is True
-    assert [step.privileged for step in session.packages[0].steps] == [True]
-    assert execution._execution_session_sudo_reason(session) == "execute privileged editor for fixture:app.config"
-
-
-
-def test_build_execution_session_prefers_capture_step_when_capture_and_editor_both_defined() -> None:
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=Path("/repo/app.conf"),
-                live_path=Path("/live/app.conf"),
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                capture_command="printf 'captured\\n'",
-                editor=EditorSpec(type=None, run="printf 'reconcile\\n'", io="pipe", elevation="none"),
-                editor_explicit=True,
-            )
-        ],
-    )
-
-    session = build_execution_session([plan], operation="pull")
-
-    assert [step.action for step in session.packages[0].steps] == ["update_repo"]
-
-
-def test_build_execution_session_does_not_add_pull_chmod_steps() -> None:
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=Path("/repo/app.conf"),
-                live_path=Path("/live/app.conf"),
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                chmod="600",
-            )
-        ],
-    )
-
-    session = build_execution_session([plan], operation="pull")
-
-    assert [step.action for step in session.packages[0].steps] == ["update_repo"]
-
-
-def test_build_execution_session_keeps_hook_only_packages_when_hooks_are_finalized() -> None:
-    for operation, hook_name_prefix in (("push", "push"), ("pull", "pull")):
-        plan = make_package_plan(
-            operation=operation,
-            repo_name="fixture",
-            package_id="app",
-            requested_profile="default",
-            variables={},
-            hooks={
-                f"guard_{hook_name_prefix}": [
-                    HookPlan(package_id="app", hook_name=f"guard_{hook_name_prefix}", command=f"echo guard {hook_name_prefix}", cwd=Path("/repo")),
-                ],
-                f"pre_{hook_name_prefix}": [
-                    HookPlan(package_id="app", hook_name=f"pre_{hook_name_prefix}", command=f"echo pre {hook_name_prefix}", cwd=Path("/repo")),
-                ],
-                f"post_{hook_name_prefix}": [
-                    HookPlan(package_id="app", hook_name=f"post_{hook_name_prefix}", command=f"echo post {hook_name_prefix}", cwd=Path("/repo")),
-                ],
-            },
-            target_plans=[
-                TargetPlan(
-                    package_id="app",
-                    target_name="config",
-                    repo_path=Path("/repo/config"),
-                    live_path=Path("/live/config"),
-                    action="noop",
-                    target_kind="file",
-                    projection_kind="raw",
-                )
-            ],
-        )
-
-        session = build_execution_session([plan], operation=operation)
-
-        assert [unit.package_id for unit in session.packages] == ["app"]
-        assert [step.action for step in session.packages[0].steps] == [
-            f"guard_{hook_name_prefix}",
-            f"pre_{hook_name_prefix}",
-            f"post_{hook_name_prefix}",
-        ]
+    assert [unit.package_id for unit in session.packages] == ["app"]
+    assert [step.action for step in session.packages[0].steps] == [
+        "guard_push",
+        "pre_push",
+        "post_push",
+    ]
 
 
 def test_execute_session_soft_skips_push_package_on_guard_exit_100_and_continues_next_package(
@@ -931,116 +767,6 @@ def test_execute_session_soft_skips_push_package_on_guard_exit_100_and_continues
     assert not alpha_live_path.exists()
 
 
-def test_execute_session_soft_skips_pull_package_on_guard_exit_100_and_continues_next_package(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    alpha_repo_path = tmp_path / "alpha.repo"
-    beta_repo_path = tmp_path / "beta.repo"
-    alpha_live_path = tmp_path / "alpha.live"
-    beta_live_path = tmp_path / "beta.live"
-    alpha_repo_path.write_text("alpha repo\n", encoding="utf-8")
-    beta_repo_path.write_text("beta repo\n", encoding="utf-8")
-    alpha_live_path.write_text("alpha live\n", encoding="utf-8")
-    beta_live_path.write_text("beta live\n", encoding="utf-8")
-
-    alpha_plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="alpha",
-        requested_profile="default",
-        source_selector="stack",
-        variables={},
-        hooks={
-            "guard_pull": [
-                HookPlan(package_id="alpha", hook_name="guard_pull", command="echo alpha guard 1", cwd=Path("/repo")),
-                HookPlan(package_id="alpha", hook_name="guard_pull", command="echo alpha guard 2", cwd=Path("/repo")),
-            ],
-            "pre_pull": [
-                HookPlan(package_id="alpha", hook_name="pre_pull", command="echo alpha pre", cwd=Path("/repo")),
-            ],
-            "post_pull": [
-                HookPlan(package_id="alpha", hook_name="post_pull", command="echo alpha post", cwd=Path("/repo")),
-            ],
-        },
-        target_plans=[
-            TargetPlan(
-                package_id="alpha",
-                target_name="config",
-                repo_path=alpha_repo_path,
-                live_path=alpha_live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-            ),
-        ],
-    )
-    beta_plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="beta",
-        requested_profile="default",
-        source_selector="stack",
-        variables={},
-        hooks={
-            "guard_pull": [
-                HookPlan(package_id="beta", hook_name="guard_pull", command="echo beta guard", cwd=Path("/repo")),
-            ],
-            "pre_pull": [
-                HookPlan(package_id="beta", hook_name="pre_pull", command="echo beta pre", cwd=Path("/repo")),
-            ],
-            "post_pull": [
-                HookPlan(package_id="beta", hook_name="post_pull", command="echo beta post", cwd=Path("/repo")),
-            ],
-        },
-        target_plans=[
-            TargetPlan(
-                package_id="beta",
-                target_name="config",
-                repo_path=beta_repo_path,
-                live_path=beta_live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-            ),
-        ],
-    )
-    session = build_execution_session([alpha_plan, beta_plan], operation="pull")
-
-    def fake_run(request):
-        command = request.command.source
-        stdout_by_command = {
-            "echo alpha guard 1": CommandResult(exit_code=100, stdout=b"alpha guard 1\n"),
-            "echo alpha guard 2": CommandResult(exit_code=0, stdout=b"alpha guard 2\n"),
-            "echo beta guard": CommandResult(exit_code=0, stdout=b"beta guard\n"),
-            "echo beta pre": CommandResult(exit_code=0, stdout=b"beta pre\n"),
-            "echo beta post": CommandResult(exit_code=0, stdout=b"beta post\n"),
-        }
-        if command not in stdout_by_command:
-            raise AssertionError(f"unexpected command: {command}")
-        return stdout_by_command[command]
-
-    runtime = MemoryCommandRuntime([fake_run] * 4)
-
-    result = execute_session(session, stream_output=False, command_runtime=runtime)
-
-    assert result.status == "ok"
-    alpha_result, beta_result = result.packages
-    assert alpha_result.status == "skipped"
-    assert alpha_result.skip_reason == "guard"
-    assert [step.status for step in alpha_result.steps] == ["skipped", "skipped", "skipped", "skipped", "skipped"]
-    assert alpha_result.steps[0].skip_reason == "guard"
-    assert alpha_result.steps[1].skip_reason == "guard"
-    recorded_commands = [request.command.source for request in runtime.requests]
-    assert "echo alpha guard 2" not in recorded_commands
-    assert "echo alpha pre" not in recorded_commands
-    assert "echo alpha post" not in recorded_commands
-    assert beta_result.status == "ok"
-    assert [step.status for step in beta_result.steps] == ["ok", "ok", "ok", "ok"]
-    assert alpha_repo_path.read_text(encoding="utf-8") == "alpha repo\n"
-    assert beta_repo_path.read_text(encoding="utf-8") == "beta live\n"
-
-
 def test_execute_session_fails_when_live_target_becomes_symlink_before_execution(
     tmp_path: Path,
 ) -> None:
@@ -1133,7 +859,6 @@ def test_execute_session_allows_live_target_symlink_replacement_when_explicitly_
     assert real_live_path.read_text(encoding="utf-8") == "live\n"
 
 
-
 def test_execute_session_follows_live_target_symlink_when_configured(
     tmp_path: Path,
 ) -> None:
@@ -1180,189 +905,6 @@ def test_execute_session_follows_live_target_symlink_when_configured(
     assert real_live_path.read_text(encoding="utf-8") == "repo\n"
 
 
-def test_execute_session_runs_tty_editor_steps_with_terminal_passthrough(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("repo\n", encoding="utf-8")
-    live_path.write_text("live\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=repo_path,
-                live_path=live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                editor=EditorSpec(
-                    type=None,
-                    run="dotman reconcile editor --repo-path \"$DOTMAN_REPO_PATH\" --live-path \"$DOTMAN_LIVE_PATH\"",
-                    io="tty",
-                ),
-                editor_explicit=True,
-                command_env={
-                    "DOTMAN_REPO_PATH": str(repo_path),
-                    "DOTMAN_LIVE_PATH": str(live_path),
-                },
-            )
-        ],
-    )
-    session = build_execution_session([plan], operation="pull")
-
-    runtime = MemoryCommandRuntime([CommandResult(exit_code=0)])
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-    monkeypatch.setattr("sys.stderr.isatty", lambda: True)
-
-    result = execute_session(session, stream_output=True, command_runtime=runtime)
-
-    assert result.status == "ok"
-    assert result.packages[0].steps[0].step.action == "editor"
-    request = runtime.requests[0]
-    assert isinstance(request.command, ShellCommand)
-    assert request.command.source.startswith(
-        'dotman reconcile editor --repo-path "$DOTMAN_REPO_PATH" --live-path "$DOTMAN_LIVE_PATH"'
-    )
-    assert request.cwd is None
-    assert request.io == "tty"
-    assert Path(request.env["DOTMAN_REPO_PATH"]) != repo_path
-    assert Path(request.env["DOTMAN_LIVE_PATH"]) == live_path
-
-
-def test_execute_session_runs_builtin_jinja_editor_helper(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("repo\n", encoding="utf-8")
-    live_path.write_text("live\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=repo_path,
-                live_path=live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                editor=EditorSpec(type="jinja", io="tty"),
-                review_before_bytes=b"repo planning view\n",
-                review_after_bytes=b"live planning view\n",
-            )
-        ],
-    )
-    session = build_execution_session([plan], operation="pull")
-
-    recorded: dict[str, object] = {}
-
-    def fake_run_jinja_reconcile(
-        *,
-        repo_path: str,
-        live_path: str,
-        review_repo_path: str | None = None,
-        review_live_path: str | None = None,
-        editor: str | None = None,
-        assume_yes: bool = False,
-    ) -> int:
-        recorded["repo_path"] = repo_path
-        recorded["live_path"] = live_path
-        recorded["review_repo_path"] = review_repo_path
-        recorded["review_live_path"] = review_live_path
-        recorded["editor"] = editor
-        recorded["assume_yes"] = assume_yes
-        assert review_repo_path is not None
-        assert review_live_path is not None
-        assert Path(review_repo_path).read_text(encoding="utf-8") == "repo planning view\n"
-        assert Path(review_live_path).read_text(encoding="utf-8") == "live planning view\n"
-        return 0
-
-    monkeypatch.setattr("dotman.execution.run_jinja_reconcile", fake_run_jinja_reconcile)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-    monkeypatch.setattr("sys.stderr.isatty", lambda: True)
-
-    result = execute_session(session, stream_output=True, assume_yes=True)
-
-    assert result.status == "ok"
-    assert result.packages[0].steps[0].step.action == "editor"
-    assert recorded["repo_path"] == str(repo_path)
-    assert recorded["live_path"] == str(live_path)
-    assert recorded["editor"] is None
-    assert recorded["assume_yes"] is True
-
-
-
-def test_execute_session_fails_tty_editor_without_terminal(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("repo\n", encoding="utf-8")
-    live_path.write_text("live\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=repo_path,
-                live_path=live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                editor=EditorSpec(
-                    type=None,
-                    run="dotman reconcile editor --repo-path \"$DOTMAN_REPO_PATH\" --live-path \"$DOTMAN_LIVE_PATH\"",
-                    io="tty",
-                ),
-                editor_explicit=True,
-                command_env={
-                    "DOTMAN_REPO_PATH": str(repo_path),
-                    "DOTMAN_LIVE_PATH": str(live_path),
-                },
-            )
-        ],
-    )
-    session = build_execution_session([plan], operation="pull")
-
-    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
-    monkeypatch.setattr("sys.stderr.isatty", lambda: False)
-
-    result = execute_session(session, stream_output=True)
-
-    assert result.status == "failed"
-    assert result.packages[0].steps[0].status == "failed"
-    assert result.packages[0].steps[0].error == "editor io 'tty' requires an interactive terminal"
-
-
 def test_execute_session_fails_tty_hook_without_terminal(
     monkeypatch,
 ) -> None:
@@ -1391,7 +933,6 @@ def test_execute_session_fails_tty_hook_without_terminal(
     assert result.status == "failed"
     assert result.packages[0].steps[0].error == "hook command io 'tty' requires an interactive terminal"
     assert runtime.requests == []
-
 
 
 @pytest.mark.parametrize("interactive", [False, True])
@@ -1472,61 +1013,6 @@ def test_execute_session_marks_command_exit_130_as_interrupted() -> None:
     assert step_result.error is None
 
 
-
-def test_execute_session_restores_repo_path_access_for_pull_updates_run_via_sudo(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_root = tmp_path / "repo"
-    repo_path = repo_root / "packages" / "app" / "config.txt"
-    repo_path.parent.mkdir(parents=True)
-    live_path = tmp_path / "live.txt"
-    live_path.write_text("live\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        repo_root=repo_root,
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=repo_path,
-                live_path=live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-            )
-        ],
-    )
-    session = build_execution_session([plan], operation="pull")
-
-    recorded_chown_calls: list[tuple[Path, int, int]] = []
-    monkeypatch.setattr("dotman.execution.os.geteuid", lambda: 0)
-    monkeypatch.setenv("SUDO_UID", "1234")
-    monkeypatch.setenv("SUDO_GID", "5678")
-    monkeypatch.setattr(
-        "dotman.execution.os.chown",
-        lambda path, uid, gid: recorded_chown_calls.append((Path(path), uid, gid)),
-    )
-
-    result = execute_session(session, stream_output=False)
-
-    assert result.status == "ok"
-    assert repo_path.read_text(encoding="utf-8") == "live\n"
-    assert recorded_chown_calls == [
-        (repo_path, 1234, 5678),
-        (repo_path.parent, 1234, 5678),
-        (repo_path.parent.parent, 1234, 5678),
-        (repo_root, 1234, 5678),
-    ]
-
-
-
 def test_execute_session_uses_sudo_writer_for_system_live_paths(
     tmp_path: Path,
     monkeypatch,
@@ -1571,64 +1057,6 @@ def test_execute_session_uses_sudo_writer_for_system_live_paths(
 
     assert result.status == "ok"
     assert recorded_calls == [(live_path, b"repo\n", None, None)]
-
-
-def test_execute_session_passes_directory_pull_executable_bit_to_privileged_repo_write(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_root = tmp_path / "repo"
-    repo_path = repo_root / "packages" / "app" / "files" / "config" / "script.sh"
-    live_path = tmp_path / "home" / ".config" / "app" / "script.sh"
-    repo_path.parent.mkdir(parents=True)
-    live_path.parent.mkdir(parents=True)
-    repo_path.write_text("old\n", encoding="utf-8")
-    repo_path.chmod(0o644)
-    live_path.write_text("live\n", encoding="utf-8")
-    live_path.chmod(0o755)
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        repo_root=repo_root,
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=repo_path.parent,
-                live_path=live_path.parent,
-                action="update",
-                target_kind="directory",
-                projection_kind="raw",
-                directory_items=(
-                    DirectoryPlanItem(
-                        relative_path="script.sh",
-                        action="update",
-                        repo_path=repo_path,
-                        live_path=live_path,
-                    ),
-                ),
-            )
-        ],
-    )
-    session = build_execution_session([plan], operation="pull")
-
-    recorded_calls: list[tuple[Path, bytes, Path | None, int | None]] = []
-    monkeypatch.setattr("dotman.execution.needs_sudo_for_write", lambda path: path == repo_path)
-    monkeypatch.setattr(
-        "dotman.execution.sudo_write_bytes_atomic",
-        lambda path, content, restore_root=None, mode=None: recorded_calls.append((Path(path), content, restore_root, mode)),
-    )
-
-    result = execute_session(session, stream_output=False)
-
-    assert result.status == "ok"
-    assert recorded_calls == [(repo_path, b"live\n", repo_root, 0o755)]
-
 
 
 def test_execute_session_requests_sudo_before_privileged_execution_steps(
@@ -1699,7 +1127,6 @@ def test_execute_session_requests_sudo_before_privileged_execution_steps(
     assert recorded_events == ["sudo:write protected path: /etc/sddm.conf", "package", "step"]
 
 
-
 def test_execute_session_keeps_hooks_unprivileged_when_target_step_needs_sudo(
     monkeypatch,
 ) -> None:
@@ -1756,7 +1183,6 @@ def test_execute_session_keeps_hooks_unprivileged_when_target_step_needs_sudo(
     assert ("echo post", "none") in recorded_events
 
 
-
 def test_write_bytes_atomic_cleans_up_temp_file_after_failed_replace(
     tmp_path: Path,
     monkeypatch,
@@ -1775,7 +1201,6 @@ def test_write_bytes_atomic_cleans_up_temp_file_after_failed_replace(
 
     leftover_temp_files = list(tmp_path.glob(f"{temp_name_prefix}*{temp_name_suffix}"))
     assert leftover_temp_files == []
-
 
 
 def test_write_bytes_atomic_removes_stale_dotman_temp_files_before_write(tmp_path: Path) -> None:
@@ -1813,7 +1238,6 @@ def test_request_sudo_emits_user_facing_reason_only_when_password_prompt_is_need
 
     captured = capsys.readouterr()
     assert captured.err == "[sudo] password required to list protected directory: /etc/sddm.conf.d\n"
-
 
 
 def test_request_sudo_emits_user_facing_reason_again_when_cached_lease_expires(monkeypatch, capsys) -> None:
@@ -1881,424 +1305,3 @@ def test_sudo_lease_keepalive_uses_runtime_captured_on_creation(monkeypatch) -> 
         ("sudo", "-n", "true")
     ]
     assert default_runtime_requests == []
-
-
-def test_restore_repo_path_access_adds_owner_write_bits_for_repo_files_and_dirs(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_root = tmp_path / "repo"
-    repo_path = repo_root / "packages" / "app" / "config.txt"
-    repo_path.parent.mkdir(parents=True)
-    repo_path.write_text("repo\n", encoding="utf-8")
-    repo_path.chmod(0o400)
-    repo_path.parent.chmod(0o500)
-
-    recorded_chown_calls: list[tuple[Path, int, int]] = []
-    monkeypatch.setattr("dotman.execution.os.geteuid", lambda: 0)
-    monkeypatch.setenv("SUDO_UID", "1234")
-    monkeypatch.setenv("SUDO_GID", "5678")
-    monkeypatch.setattr(
-        "dotman.execution.os.chown",
-        lambda path, uid, gid: recorded_chown_calls.append((Path(path), uid, gid)),
-    )
-
-    execution._restore_repo_path_access_for_invoking_user(repo_path, repo_root=repo_root)
-
-    assert stat.S_IMODE(repo_path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(repo_path.parent.stat().st_mode) == 0o700
-    assert recorded_chown_calls == [
-        (repo_path, 1234, 5678),
-        (repo_path.parent, 1234, 5678),
-        (repo_path.parent.parent, 1234, 5678),
-        (repo_root, 1234, 5678),
-    ]
-
-
-
-def test_execute_session_keeps_batch_editor_on_piped_command_path(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("repo\n", encoding="utf-8")
-    live_path.write_text("live\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=repo_path,
-                live_path=live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                editor=EditorSpec(type=None, run="printf 'batch reconcile\\n'", io="pipe", elevation="none"),
-                editor_explicit=True,
-                command_env={
-                    "DOTMAN_REPO_PATH": str(repo_path),
-                    "DOTMAN_LIVE_PATH": str(live_path),
-                },
-            )
-        ],
-    )
-    session = build_execution_session([plan], operation="pull")
-
-    runtime = MemoryCommandRuntime(
-        [CommandResult(exit_code=0, stdout=b"batch reconcile\n")]
-    )
-
-    result = execute_session(session, stream_output=True, command_runtime=runtime)
-
-    assert result.status == "ok"
-    assert result.packages[0].steps[0].stdout == "batch reconcile\n"
-    assert isinstance(runtime.requests[0].command, ArgvCommand)
-    assert runtime.requests[0].command.arguments[:2] == ("printf", r"batch reconcile\n")
-    assert len(runtime.requests[0].command.arguments) == 3
-    assert runtime.requests[0].io == "pipe"
-
-
-def test_execute_session_runs_custom_editor_without_auto_sudo(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("repo\n", encoding="utf-8")
-    live_path.write_text("live\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=repo_path,
-                live_path=live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                editor=EditorSpec(type=None, run="printf 'batch reconcile\\n'", io="pipe", elevation="none"),
-                editor_explicit=True,
-                command_env={
-                    "DOTMAN_REPO_PATH": str(repo_path),
-                    "DOTMAN_LIVE_PATH": str(live_path),
-                },
-            )
-        ],
-    )
-    monkeypatch.setattr("dotman.execution.needs_sudo_for_read", lambda path: True)
-    session = build_execution_session([plan], operation="pull")
-
-    monkeypatch.setattr(
-        "dotman.execution.request_sudo",
-        lambda reason=None: (_ for _ in ()).throw(AssertionError(f"unexpected sudo request: {reason}")),
-    )
-    runtime = MemoryCommandRuntime(
-        [CommandResult(exit_code=0, stdout=b"batch reconcile\n")]
-    )
-
-    result = execute_session(session, stream_output=False, command_runtime=runtime)
-
-    assert result.status == "ok"
-    assert isinstance(runtime.requests[0].command, ArgvCommand)
-    assert runtime.requests[0].command.arguments[:2] == ("printf", r"batch reconcile\n")
-    assert len(runtime.requests[0].command.arguments) == 3
-    assert runtime.requests[0].elevation == "none"
-
-
-def test_execute_session_uses_explicit_privileged_editor_reason_and_runner(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("repo\n", encoding="utf-8")
-    live_path.write_text("live\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=repo_path,
-                live_path=live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                editor=EditorSpec(type=None, run="printf 'batch reconcile\n'", io="pipe", elevation="root"),
-                editor_explicit=True,
-                command_env={
-                    "DOTMAN_REPO_PATH": str(repo_path),
-                    "DOTMAN_LIVE_PATH": str(live_path),
-                },
-            )
-        ],
-    )
-    session = build_execution_session([plan], operation="pull")
-
-    sudo_reasons: list[str | None] = []
-
-    monkeypatch.setattr(
-        "dotman.execution.request_sudo",
-        lambda reason=None: sudo_reasons.append(reason),
-    )
-    runtime = MemoryCommandRuntime(
-        [CommandResult(exit_code=0, stdout=b"batch reconcile\n")]
-    )
-
-    result = execute_session(session, stream_output=False, command_runtime=runtime)
-
-    assert result.status == "ok"
-    assert sudo_reasons == ["execute privileged editor for fixture:app.config"]
-    assert isinstance(runtime.requests[0].command, ArgvCommand)
-    assert runtime.requests[0].command.arguments[:2] == ("printf", "batch reconcile\n")
-    assert len(runtime.requests[0].command.arguments) == 3
-    assert runtime.requests[0].elevation == "root"
-
-
-
-@pytest.mark.parametrize("capture_exit_code", [1, 100])
-def test_execute_session_falls_back_to_editor_when_capture_fails(
-    tmp_path: Path,
-    monkeypatch,
-    capture_exit_code: int,
-) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("repo\n", encoding="utf-8")
-    live_path.write_text("live\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="fixture",
-        package_id="app",
-        requested_profile="default",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="app",
-                target_name="config",
-                repo_path=repo_path,
-                live_path=live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                capture_command="capture-command",
-                editor=EditorSpec(type=None, run="reconcile-command", io="pipe"),
-                editor_explicit=True,
-                review_before_bytes=b"repo planning view\n",
-                review_after_bytes=b"capture live planning view\n",
-                command_env={
-                    "DOTMAN_REPO_PATH": str(repo_path),
-                    "DOTMAN_LIVE_PATH": str(live_path),
-                },
-            )
-        ],
-    )
-    session = build_execution_session([plan], operation="pull")
-
-    recorded: dict[str, object] = {}
-
-    def fake_run(request):
-        command = request.command.source if hasattr(request.command, "source") else request.command.arguments[0]
-        if command == "capture-command":
-            return CommandResult(exit_code=capture_exit_code, stderr=b"capture exploded")
-        if command == "reconcile-command":
-            arguments = request.command.arguments
-            recorded["review_repo_text"] = Path(request.env["DOTMAN_EDITOR_REVIEW_PATH"]).read_text(encoding="utf-8")
-            recorded["review_live_text"] = Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8")
-            recorded["editor_elevation"] = request.elevation
-            Path(arguments[-1]).write_text(live_path.read_text(encoding="utf-8"), encoding="utf-8")
-            return CommandResult(exit_code=0, stdout=b"reconciled\n")
-        raise AssertionError(f"unexpected command: {command}")
-
-    runtime = MemoryCommandRuntime([fake_run] * 2)
-
-    result = execute_session(session, stream_output=False, assume_yes=True, command_runtime=runtime)
-
-    assert result.status == "ok"
-    assert result.packages[0].steps[0].step.action == "update_repo"
-    assert result.packages[0].steps[0].stdout == "reconciled\n"
-    assert "capture failed" in result.packages[0].steps[0].stderr
-    assert repo_path.read_text(encoding="utf-8") == "live\n"
-    assert "repo planning view" in recorded["review_repo_text"]
-    assert "capture live planning view" in recorded["review_repo_text"]
-    assert recorded["editor_elevation"] == "none"
-
-
-def _write_patch_capture_execution_repo(repo_root: Path) -> None:
-    package_root = repo_root / "packages" / "shell"
-    (package_root / "files").mkdir(parents=True)
-    (repo_root / "profiles").mkdir(parents=True)
-
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (package_root / "files" / "profile").write_text("greeting = {{ vars.greeting }}\n", encoding="utf-8")
-    (package_root / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "shell"',
-                "",
-                '[vars]',
-                'greeting = "hello"',
-                "",
-                '[targets.profile]',
-                'source = "files/profile"',
-                'path = "~/.profile"',
-                'render = "jinja"',
-                'capture = "patch"',
-                'compare = { repo = "render", live = "raw" }',
-                                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-
-def _write_command_patch_capture_execution_repo(repo_root: Path) -> None:
-    package_root = repo_root / "packages" / "shell"
-    (package_root / "files").mkdir(parents=True)
-    (repo_root / "profiles").mkdir(parents=True)
-
-    render_command = 'sed "s/@@greeting@@/$DOTMAN_VAR_greeting/g" "$DOTMAN_SOURCE"'
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (package_root / "files" / "profile").write_text("greeting = @@greeting@@\n", encoding="utf-8")
-    (package_root / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "shell"',
-                "",
-                '[vars]',
-                'greeting = "hello"',
-                "",
-                '[targets.profile]',
-                'source = "files/profile"',
-                'path = "~/.profile"',
-                f"render = '{render_command}'",
-                'capture = "patch"',
-                'compare = { repo = "render", live = "raw" }',
-                                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-def test_execute_session_uses_review_env_for_patch_capture_and_writes_patched_repo_bytes(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_patch_capture_execution_repo(repo_root)
-    live_path = home / ".profile"
-    live_path.write_text("greeting = world\n", encoding="utf-8")
-
-    engine = DotmanEngine.from_config_path(write_named_manager_config(tmp_path, {"fixture": repo_root}))
-    plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
-    session = build_execution_session([plan], operation="pull")
-
-    recorded: dict[str, object] = {}
-
-    def fake_capture_patch(*, repo_path, project_repo_bytes, review_repo_path=None, review_live_path=None):
-        recorded["repo_path"] = repo_path
-        recorded["review_repo_path"] = review_repo_path
-        recorded["review_live_path"] = review_live_path
-        assert review_repo_path is None
-        assert review_live_path is None
-        assert execution.os.environ["DOTMAN_REVIEW_REPO_PATH"]
-        assert execution.os.environ["DOTMAN_REVIEW_LIVE_PATH"]
-        assert Path(execution.os.environ["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8") == "greeting = hello\n"
-        assert Path(execution.os.environ["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8") == "greeting = world\n"
-        assert project_repo_bytes(b"greeting = world\n") == b"greeting = world\n"
-        return b"greeting = world\n"
-
-    monkeypatch.setattr("dotman.execution.capture_patch", fake_capture_patch)
-
-    result = execute_session(session, stream_output=False)
-
-    assert result.status == "ok"
-    assert recorded["repo_path"] == str(repo_root / "packages" / "shell" / "files" / "profile")
-    assert live_path.read_text(encoding="utf-8") == "greeting = world\n"
-    assert (repo_root / "packages" / "shell" / "files" / "profile").read_text(encoding="utf-8") == "greeting = world\n"
-
-
-
-def test_execute_session_projects_patch_capture_through_command_renderers(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_command_patch_capture_execution_repo(repo_root)
-    live_path = home / ".profile"
-    live_path.write_text("greeting = world\n", encoding="utf-8")
-
-    engine = DotmanEngine.from_config_path(write_named_manager_config(tmp_path, {"fixture": repo_root}))
-    plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
-    session = build_execution_session([plan], operation="pull")
-
-    result = execute_session(session, stream_output=False)
-
-    assert result.status == "ok"
-    assert live_path.read_text(encoding="utf-8") == "greeting = world\n"
-    assert (repo_root / "packages" / "shell" / "files" / "profile").read_text(encoding="utf-8") == "greeting = world\n"
-
-
-def test_execute_session_aborts_when_patch_capture_verification_fails(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_patch_capture_execution_repo(repo_root)
-    live_path = home / ".profile"
-    live_path.write_text("greeting = world\n", encoding="utf-8")
-
-    engine = DotmanEngine.from_config_path(write_named_manager_config(tmp_path, {"fixture": repo_root}))
-    plan = single_package_plan(engine, "fixture:shell@default", operation="pull")
-    session = build_execution_session([plan], operation="pull")
-
-    monkeypatch.setattr(
-        "dotman.execution.capture_patch",
-        lambda **kwargs: (_ for _ in ()).throw(
-            ValueError("capture verification mismatch: captured bytes do not match the review live bytes")
-        ),
-    )
-
-    result = execute_session(session, stream_output=False)
-
-    assert result.status == "failed"
-    assert result.packages[0].steps[0].status == "failed"
-    assert "verification mismatch" in result.packages[0].steps[0].error
-    assert (repo_root / "packages" / "shell" / "files" / "profile").read_text(encoding="utf-8") == "greeting = {{ vars.greeting }}\n"

@@ -10,6 +10,7 @@ from dotman import sync_commands
 from dotman.cli import main
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session
+from tests.helpers import open_tracked_pull_session
 from tests.helpers import write_single_repo_config, write_tracked_packages_state
 
 
@@ -83,10 +84,15 @@ def test_package_guard_exit_100_omits_package_before_host_projection(
     )
     engine = _engine(tmp_path, repo_root)
 
+    if operation == "pull":
+        with open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")]) as session:
+            assert session.view.observations == ()
+            assert session.view.rows == ()
+        assert not projection_marker.exists()
+        return
+
     operation_plan = (
         engine.plan_push_query("fixture:app@default")
-        if operation == "push"
-        else engine.plan_pull_query("fixture:app@default")
     )
 
     assert operation_plan.package_plans == ()

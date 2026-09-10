@@ -10,6 +10,7 @@ from dotman.cli import main
 from dotman.engine import DotmanEngine
 from dotman.models import HookCommandSpec
 from dotman.planning_guards import GuardPlanningError
+from tests.helpers import open_tracked_pull_session
 from tests.helpers import write_single_repo_config, write_tracked_packages_state
 
 
@@ -137,15 +138,13 @@ def test_path_rule_guards_activate_once_for_repo_live_shared_and_noop_candidates
     (live_root / "shared-noop.txt").write_text("same\n", encoding="utf-8")
 
     engine = _engine(tmp_path, repo_root)
-    operation_plan = (
-        engine.plan_push_query("fixture:app@default")
-        if operation == "push"
-        else engine.plan_pull_query("fixture:app@default")
-    )
-
+    if operation == "push":
+        operation_plan = engine.plan_push_query("fixture:app@default")
+        assert operation_plan.guard_skips == ()
+    else:
+        with open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")]) as session:
+            assert len(session.view.observations) == 4
     assert marker.read_text(encoding="utf-8").splitlines() == patterns[:-1]
-    assert operation_plan.guard_skips == ()
-
 
 
 def test_path_rule_activation_excludes_ignored_control_and_skip_marker_paths(
@@ -181,7 +180,6 @@ def test_path_rule_activation_excludes_ignored_control_and_skip_marker_paths(
     _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
 
     assert marker.read_text(encoding="utf-8").splitlines() == ["keep.txt"]
-
 
 
 def test_overlapping_path_rule_guards_run_in_order_prune_work_and_keep_scalar_precedence(
@@ -249,7 +247,6 @@ def test_overlapping_path_rule_guards_run_in_order_prune_work_and_keep_scalar_pr
     ]
 
 
-
 def test_path_rule_guard_environment_uses_target_roots_and_pattern_without_child_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -284,7 +281,6 @@ def test_path_rule_guard_environment_uses_target_roots_and_pattern_without_child
     assert operation_plan.guard_skips[0].reason == "host mismatch"
 
 
-
 def test_path_rule_guard_hard_failure_exposes_target_and_pattern_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -311,7 +307,6 @@ def test_path_rule_guard_hard_failure_exposes_target_and_pattern_metadata(
     assert caught.value.scope_kind == "path_rule"
     assert caught.value.target_name == "config"
     assert caught.value.path_rule_pattern == "*.txt"
-
 
 
 def test_all_path_rule_work_skipped_cli_reports_pattern_and_bypasses_interaction(

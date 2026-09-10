@@ -168,17 +168,10 @@ def test_canonical_manifest_vocabulary_loads_unchanged(
 
     engine = load_manifest_repo(tmp_path, repo_root)
     push_plan = engine.plan_push_query("fixture:app@default")
-    pull_plan = engine.plan_pull_query("fixture:app@default")
     push_target = push_plan.package_plans[0].target_plans[0]
-    pull_target = pull_plan.package_plans[0].target_plans[0]
 
     assert push_plan.repo_hooks["fixture"]["pre_push"][0].elevation == "root"
     assert "push_ignore" not in push_target.to_dict()
-    assert "pull_ignore" not in pull_target.to_dict()
-    assert pull_target.compare_repo == "render"
-    assert pull_target.compare_live == "raw"
-    assert pull_target.path_rules[0].compare_repo == "render"
-    assert pull_target.path_rules[0].compare_live == "raw"
 
 
 def test_ignore_schema_has_no_directional_or_anonymous_fields(tmp_path: Path) -> None:

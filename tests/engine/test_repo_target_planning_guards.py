@@ -9,6 +9,7 @@ import pytest
 from dotman.cli import main
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session, execute_session
+from tests.helpers import open_tracked_pull_session, initialize_git_repository
 from tests.helpers import write_named_manager_config, write_single_repo_config, write_tracked_packages_state
 
 
@@ -312,11 +313,9 @@ def test_repo_and_target_pull_guards_use_same_hierarchy(
         ],
     )
 
-    operation_plan = _engine(tmp_path, repo_root).plan_pull_query("fixture:app@default")
-
+    with open_tracked_pull_session(_engine(tmp_path, repo_root), tmp_path, entries=[("app", "default")]) as session:
+        assert session.view.observations == ()
     assert marker.read_text(encoding="utf-8").splitlines() == ["repo", "target"]
-    assert operation_plan.package_plans[0].target_plans == []
-    assert operation_plan.guard_skips[0].scope_label == "fixture:app.config"
 
 
 def test_repo_package_and_target_guards_are_deduplicated_per_plan_build(
@@ -623,7 +622,7 @@ def test_generated_execution_session_omits_all_guards_and_late_state_change_fail
     assert guard_runs.read_text(encoding="utf-8") == "repopackagetarget"
 
 
-def test_capture_exit_100_remains_a_strict_planning_failure(
+def test_capture_exit_100_is_a_visible_unapproved_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -648,8 +647,11 @@ def test_capture_exit_100_remains_a_strict_planning_failure(
     )
     package_path.write_text(package_text, encoding="utf-8")
 
-    with pytest.raises(ValueError, match="command projection failed.*unavailable"):
-        _engine(tmp_path, repo_root).plan_pull_query("fixture:app@default")
+    initialize_git_repository(repo_root)
+    with open_tracked_pull_session(_engine(tmp_path, repo_root), tmp_path, entries=[("app", "default")]) as session:
+        row = session.view.rows[0]
+        assert not row.approved
+        assert "unavailable" in str(row.observation.diagnostics or row.diagnostics)
 
 
 def test_cli_renders_repo_and_target_guard_diagnostics_in_human_and_json_output(
