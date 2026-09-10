@@ -48,8 +48,8 @@ def test_push_help_lists_dry_run_and_full_path_flags(capsys) -> None:
 
 def test_pull_help_lists_dry_run_and_full_path_flags(capsys) -> None:
     output = capture_parser_help(capsys, "pull")
-    assert "usage: dotman pull [-h] [-d] [--full-path] [--yes] [--run-noop]" in output
-    assert "[[<repo>:]<package>[@<profile>]]" in output
+    assert "usage: dotman pull [-h] [-d] [--full-path] [--run-noop]" in output
+    assert "[<repo:package.target> ...]" in output
     assert "-d, --dry-run" in output
     assert "--full-path" in output
 

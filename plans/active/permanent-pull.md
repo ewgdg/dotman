@@ -57,3 +57,10 @@ Additional input alignment and editing. Run affected suites after focused checks
 - Push review/selection/execution rendering validation: 89 passed.
 - Obsolete engine/CLI tests are being ported to current session/deck contracts;
   final affected validation and acceptance review remain pending.
+
+
+- Completed engine ports: 934 engine tests passed; later selected cleanup: 75 passed.
+- First full repository validation: 1,820 passed, 15 failed in 90.58s.
+  Failures were stale CLI Pull selector/result/editor expectations, obsolete help
+  syntax, and a UI fixture missing the now-required session operation.
+  Porting those assertions/fixtures before final affected validation.

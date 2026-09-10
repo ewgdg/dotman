@@ -64,7 +64,7 @@ def test_canonical_json_reports_one_shared_source_and_execution_failure():
 
 def test_table_tracks_canonical_source_rows_added_and_removed():
     async def interact():
-        session = SimpleNamespace(view=SimpleNamespace(rows=()))
+        session = SimpleNamespace(view=SimpleNamespace(rows=(), operation="sync"))
         app = SyncDeckApp(CommandDeck(session, use_color=False))
         async with app.run_test() as pilot:
             table = app.query_one(WorksetTable)
