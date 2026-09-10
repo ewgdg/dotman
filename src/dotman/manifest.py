@@ -747,24 +747,11 @@ def merge_ignore_patterns(*pattern_sets: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(pattern for pattern_set in pattern_sets for pattern in pattern_set)
 
 
-VALID_GITIGNORE_OPS = frozenset({"push", "pull"})
-
-
-def normalize_gitignore_list(value: Any) -> tuple[str, ...] | None:
-    """Normalize and validate a gitignore ops list.
-
-    Accepts a list of operation names ("push", "pull"). Returns None
-    when absent (inherit repo default), or tuple of ops (possibly empty
-    to explicitly disable).
-    """
-    if value is None:
-        return None
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError(f"gitignore must be a list[str], got {type(value).__name__}")
-    for op in value:
-        if op not in VALID_GITIGNORE_OPS:
-            raise ValueError(f"gitignore only supports 'push' and 'pull', got '{op}'")
-    return tuple(value)
+def normalize_gitignore_enabled(value: Any) -> bool | None:
+    """Absent package enablement inherits; an explicit boolean overrides."""
+    if value is not None and not isinstance(value, bool):
+        raise ValueError(f"gitignore must be a boolean, got {type(value).__name__}")
+    return value
 
 
 def flatten_vars(data: dict[str, Any], prefix: str = "") -> dict[str, str]:
@@ -880,7 +867,6 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         additional_source_entries=editor.source_entries(),
         additional_sources_root=editor.additional_sources_root,
         ignore_patterns=override.ignore_patterns if override.ignore_patterns is not None else base.ignore_patterns,
-        gitignore_ops=override.gitignore_ops if override.gitignore_ops is not None else base.gitignore_ops,
         path_rules=tuple(sorted(base_rules.values(), key=lambda r: (r.priority, r.name))),
         hooks=hooks, disabled=override.disabled or base.disabled,
     )
@@ -915,7 +901,7 @@ def merge_package_specs(base: PackageSpec, override: PackageSpec) -> PackageSpec
         extends=None,
         reserved_paths=override.reserved_paths if override.reserved_paths is not None else base.reserved_paths,
         ignore_patterns=override.ignore_patterns if override.ignore_patterns is not None else base.ignore_patterns,
-        gitignore_ops=override.gitignore_ops if override.gitignore_ops is not None else base.gitignore_ops,
+        gitignore_enabled=override.gitignore_enabled if override.gitignore_enabled is not None else base.gitignore_enabled,
         vars=deep_merge(base.vars or {}, override.vars or {}),
         targets=targets,
         hooks=hooks,
@@ -1038,7 +1024,7 @@ def _normalize_append_values(
             )
             return (*current, *normalized)
         if (current and isinstance(current[0], str)) or path.endswith(
-            (".depends", ".reserved_paths", ".ignore_patterns", ".gitignore_ops")
+            (".depends", ".reserved_paths", ".ignore_patterns")
         ):
             if not all(isinstance(item, str) for item in values):
                 raise ValueError(f"append target '{path}' must contain only strings")

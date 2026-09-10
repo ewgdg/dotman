@@ -64,7 +64,7 @@ class TargetMetadata:
     compare_repo: str
     compare_live: str
     ignore_patterns: tuple[str, ...]
-    gitignore_control_ops: tuple[str, ...]
+    gitignore_enabled: bool
     skip_markers: tuple[str, ...]
     chmod: str | None
     path_rules: tuple[TargetPathRule, ...]
@@ -115,7 +115,6 @@ def validate_probe_target_config(*, package: PackageSpec, target: TargetSpec) ->
             else None
         ),
         "ignore": target.ignore_patterns,
-        "gitignore": target.gitignore_ops,
         "path_rules": target.path_rules or None,
     }
     forbidden = sorted(name for name, value in forbidden_probe_fields.items() if value is not None)
@@ -185,7 +184,7 @@ def build_target_metadata(
                         compare_repo="raw",
                         compare_live="raw",
                         ignore_patterns=(),
-                        gitignore_control_ops=(),
+                        gitignore_enabled=False,
                         skip_markers=(),
                         chmod=None,
                         path_rules=(),
@@ -238,9 +237,9 @@ def build_target_metadata(
                 if target.capture != "raw"
                 else None
             )
-            gitignore_ops = package.gitignore_ops if package.gitignore_ops is not None else repo.ignore_defaults.gitignore
+            gitignore_enabled = package.gitignore_enabled if package.gitignore_enabled is not None else repo.ignore_defaults.gitignore
             pattern_layers: list[tuple[str, ...]] = [repo.ignore_defaults.patterns]
-            if gitignore_ops and operation in gitignore_ops and inspect_gitignore_patterns:
+            if gitignore_enabled and inspect_gitignore_patterns:
                 pattern_layers.append(collect_gitignore_patterns(repo_path))
             if package.ignore_patterns is not None:
                 pattern_layers.append(package.ignore_patterns)
@@ -264,7 +263,7 @@ def build_target_metadata(
                     compare_repo=target.compare_repo if target.compare_repo != "raw" else "raw",
                     compare_live=target.compare_live,
                     ignore_patterns=ignore_patterns,
-                    gitignore_control_ops=gitignore_ops,
+                    gitignore_enabled=gitignore_enabled,
                     skip_markers=skip_markers,
                     chmod=target.chmod,
                     path_rules=path_rules,
@@ -388,7 +387,7 @@ def plan_targets(
                     repo_path=repo_path,
                     live_path=live_path,
                     skip_markers=metadata.skip_markers,
-                    force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if operation in metadata.gitignore_control_ops else (),
+                    force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if metadata.gitignore_enabled else (),
                     follow_dir_symlinks=projection_context.config.dir_symlink_mode == "follow",
                     command_runtime=projection_context.command_runtime,
                     path_rules=metadata.path_rules,
@@ -528,7 +527,7 @@ def plan_targets(
                 repo_path=repo_path,
                 live_path=live_path,
                 skip_markers=metadata.skip_markers,
-                force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if operation in metadata.gitignore_control_ops else (),
+                force_ignore_patterns=GITIGNORE_CONTROL_FILE_PATTERNS if metadata.gitignore_enabled else (),
                 operation=operation,
                 ignore_patterns=effective_ignore_patterns,
                 render_command=render_command,

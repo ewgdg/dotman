@@ -587,7 +587,7 @@ def test_repo_toml_loads_gitignore_from_ignore_table(tmp_path: Path) -> None:
     (repo_root / "profiles").mkdir(parents=True)
     (repo_root / "packages").mkdir()
     (repo_root / "repo.toml").write_text(
-        "\n".join(["[ignore]", 'gitignore = ["push", "pull"]', ""]),
+        "\n".join(["[ignore]", 'gitignore = true', ""]),
         encoding="utf-8",
     )
 
@@ -595,10 +595,10 @@ def test_repo_toml_loads_gitignore_from_ignore_table(tmp_path: Path) -> None:
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    assert engine.get_repo("fixture").ignore_defaults.gitignore == ("push", "pull")
+    assert engine.get_repo("fixture").ignore_defaults.gitignore is True
 
 
-def test_repo_toml_gitignore_defaults_to_empty(tmp_path: Path) -> None:
+def test_repo_toml_gitignore_defaults_to_disabled(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     (repo_root / "profiles").mkdir(parents=True)
     (repo_root / "packages").mkdir()
@@ -611,18 +611,18 @@ def test_repo_toml_gitignore_defaults_to_empty(tmp_path: Path) -> None:
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    assert engine.get_repo("fixture").ignore_defaults.gitignore == ()
+    assert engine.get_repo("fixture").ignore_defaults.gitignore is False
 
 
 def test_repo_toml_rejects_invalid_gitignore_values(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     (repo_root / "repo.toml").write_text(
-        "\n".join(["[ignore]", 'gitignore = ["push", "sync"]', ""]),
+        "\n".join(["[ignore]", 'gitignore = 1', ""]),
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="gitignore only supports 'push' and 'pull'"):
+    with pytest.raises(ValueError, match="gitignore must be a boolean"):
         DotmanEngine.from_config_path(
             write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
         )
@@ -656,7 +656,7 @@ def test_directory_target_applies_gitignore_patterns_during_push(tmp_path: Path,
     (source_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
     (source_root / "app.log").write_text("log\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"push\"]\n", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = true\n", encoding="utf-8")
 
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
@@ -700,7 +700,7 @@ def test_directory_target_gitignore_applies_to_both_repo_and_live_scans_during_p
     (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
     (source_root / ".gitignore").write_text("*.local\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"push\"]\n", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = true\n", encoding="utf-8")
 
     live_root = home / ".config" / "sample"
     live_root.mkdir(parents=True)
@@ -749,7 +749,7 @@ def test_gitignore_control_files_are_not_reincluded_by_negation(
     (source_root / "nested" / ".gitignore").write_text("*.tmp\n", encoding="utf-8")
     (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"push\"]\n", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = true\n", encoding="utf-8")
 
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
@@ -795,7 +795,7 @@ def test_explicit_ignore_can_override_gitignore_with_negation(
     (source_root / "important.log").write_text("important\n", encoding="utf-8")
     (source_root / "trash.log").write_text("trash\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = [\"push\"]\n", encoding="utf-8")
+    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = true\n", encoding="utf-8")
 
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
@@ -863,7 +863,7 @@ def test_package_ignore_patterns_are_resolved_and_applied_during_push(
     assert not (live_root / "machine.secret").exists()
 
 
-def test_package_gitignore_operations_are_resolved_and_applied_during_push(
+def test_package_gitignore_enablement_is_resolved_and_applied_during_push(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
@@ -880,7 +880,7 @@ def test_package_gitignore_operations_are_resolved_and_applied_during_push(
                 'id = "sample"',
                 "",
                 "[ignore]",
-                'gitignore = ["push"]',
+                'gitignore = true',
                 "",
                 "[targets.config]",
                 'source = "files/config"',
@@ -901,7 +901,7 @@ def test_package_gitignore_operations_are_resolved_and_applied_during_push(
 
     package = engine.get_repo("fixture").resolve_package("sample")
     assert package.ignore_patterns is None
-    assert package.gitignore_ops == ("push",)
+    assert package.gitignore_enabled is True
 
     plan = single_package_plan(engine, "fixture:sample@default", operation="push")
     target = plan.target_plans[0]
@@ -945,7 +945,7 @@ def test_ignore_patterns_compose_repo_package_target_in_order_and_keep_empty_pac
     source_root.mkdir(parents=True)
     (repo_root / "profiles").mkdir()
     (repo_root / "repo.toml").write_text(
-        '[ignore]\npatterns = ["*.tmp"]\ngitignore = ["push"]\n',
+        '[ignore]\npatterns = ["*.tmp"]\ngitignore = true\n',
         encoding="utf-8",
     )
     (repo_root / "packages" / "sample" / "package.toml").write_text(

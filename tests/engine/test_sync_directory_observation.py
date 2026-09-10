@@ -11,7 +11,7 @@ def directory_engine(tmp_path, monkeypatch, *, extra='', policy='both', inferred
     manifest = tmp_path / 'repo/packages/app/package.toml'
     text = manifest.read_text().replace('type = "file"', '' if inferred else 'type = "directory"')
     manifest.write_text(text + '\n' + extra)
-    (tmp_path / 'repo/repo.toml').write_text('[ignore]\ngitignore = ["push", "pull"]\nskip_markers = [".dotman-skip"]\n')
+    (tmp_path / 'repo/repo.toml').write_text('[ignore]\ngitignore = true\nskip_markers = [".dotman-skip"]\n')
     return DotmanEngine.from_config_path(tmp_path / 'config.toml')
 
 
@@ -389,3 +389,22 @@ def test_unified_exclusions_hide_synthesized_descendants_of_failed_scopes(tmp_pa
     with open_directory(engine, ['main:app.tree/link/private.secret']) as session:
         assert session.view.observations == ()
         assert session.view.rows == ()
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_package_gitignore_boolean_overrides_repository_for_sync_and_push(tmp_path, monkeypatch, enabled):
+    engine = directory_engine(tmp_path, monkeypatch, policy="push-only")
+    manifest = tmp_path / "repo/packages/app/package.toml"
+    manifest.write_text(manifest.read_text() + f"\n[ignore]\ngitignore = {str(enabled).lower()}\n")
+    put(tmp_path / "repo/packages/app/tree", ".gitignore", b"private\n")
+    put(tmp_path / "repo/packages/app/tree", "private", b"payload")
+    put(tmp_path / "repo/packages/app/tree", "visible", b"payload")
+    from dotman.engine import DotmanEngine
+    engine = DotmanEngine.from_config_path(tmp_path / "config.toml")
+    with open_directory(engine) as session:
+        names = {item.identity.child_path for item in session.view.observations}
+        assert ("private" in names) is not enabled
+        assert "visible" in names
+    plan = engine.plan_push()
+    names = {item.relative_path for package in plan.package_plans
+             for target in package.target_plans for item in target.directory_items}
+    assert ("private" in names) is not enabled

@@ -14,7 +14,7 @@ from dotman.manifest import (
     merge_package_specs,
     _validate_resolved_package,
     normalize_default_command_elevation,
-    normalize_gitignore_list,
+    normalize_gitignore_enabled,
     normalize_string_list,
     normalize_sync_policy,
     patch_remove_and_append,
@@ -127,7 +127,7 @@ class Repository:
             context=f"repo config {repo_config_path} [ignore]",
         )
         patterns = normalize_string_list(ignore_payload.get("patterns")) or ()
-        gitignore = normalize_gitignore_list(ignore_payload.get("gitignore")) or ()
+        gitignore = normalize_gitignore_enabled(ignore_payload.get("gitignore")) or False
         return RepoIgnoreDefaults(
             patterns=patterns,
             skip_markers=normalize_skip_markers(ignore_payload.get("skip_markers"), repo_config_path=repo_config_path),
@@ -228,10 +228,10 @@ class Repository:
                 validate_supported_keys(package_ignore_payload, supported_keys={"gitignore", "patterns"},
                                         context=f"package manifest {manifest_path} ignore")
                 package_ignore_patterns = normalize_string_list(package_ignore_payload.get("patterns"))
-                package_gitignore_ops = normalize_gitignore_list(package_ignore_payload.get("gitignore"))
+                package_gitignore_enabled = normalize_gitignore_enabled(package_ignore_payload.get("gitignore"))
             else:
                 package_ignore_patterns = None
-                package_gitignore_ops = None
+                package_gitignore_enabled = None
 
             packages[package_id] = PackageSpec(
                 id=package_id,
@@ -243,7 +243,7 @@ class Repository:
                 extends=normalize_string_list(payload.get("extends")),
                 reserved_paths=normalize_string_list(payload.get("reserved_paths")),
                 ignore_patterns=package_ignore_patterns,
-                gitignore_ops=package_gitignore_ops,
+                gitignore_enabled=package_gitignore_enabled,
                 vars=_copy_map(payload.get("vars")) if isinstance(payload.get("vars"), dict) else None,
                 targets=targets,
                 hooks=hooks,

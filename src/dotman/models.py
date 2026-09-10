@@ -174,7 +174,6 @@ class TargetSpec:
     compare_live_explicit: bool = field(default=False, repr=False, compare=False)
     editor_explicit: bool = field(default=False, repr=False, compare=False)
     ignore_patterns: tuple[str, ...] | None = None
-    gitignore_ops: tuple[str, ...] | None = None
     path_rules: tuple[TargetPathRule, ...] = ()
     hooks: dict[str, "HookSpec"] | None = None
     disabled: bool = False
@@ -221,7 +220,7 @@ class PackageSpec:
     extends: tuple[str, ...] | None = None
     reserved_paths: tuple[str, ...] | None = None
     ignore_patterns: tuple[str, ...] | None = None
-    gitignore_ops: tuple[str, ...] | None = None
+    gitignore_enabled: bool | None = None
     vars: dict[str, Any] | None = None
     targets: dict[str, TargetSpec] | None = None
     hooks: dict[str, HookSpec] | None = None
@@ -249,7 +248,7 @@ class ProfileSpec:
 class RepoIgnoreDefaults:
     patterns: tuple[str, ...] = ()
     skip_markers: tuple[str, ...] = ()
-    gitignore: tuple[str, ...] = ()
+    gitignore: bool = False
 
 
 SelectorKind = Literal["package", "group"]

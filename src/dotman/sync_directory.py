@@ -114,7 +114,7 @@ def census_directory(
                             child_relative = f'{relative}/{child.name}' if relative else child.name
                             if child.name == '.gitignore':
                                 leaves[repository].add(child_relative)
-                                if repository and metadata.gitignore_control_ops:
+                                if repository and metadata.gitignore_enabled:
                                     # Controls must be regular files, never links or FIFOs.
                                     if stat.S_ISREG(child.lstat().st_mode):
                                         content = read_bytes(child).decode('utf-8', errors='replace')

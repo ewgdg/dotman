@@ -159,7 +159,7 @@ def test_path_rule_activation_excludes_ignored_control_and_skip_marker_paths(
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     repo_root.joinpath("repo.toml").write_text(
-        '[ignore]\ngitignore = ["push"]\nskip_markers = [".dotman-skip"]\n',
+        '[ignore]\ngitignore = true\nskip_markers = [".dotman-skip"]\n',
         encoding="utf-8",
     )
     source_root = _write_directory_package(

@@ -150,7 +150,7 @@ def test_canonical_manifest_vocabulary_loads_unchanged(
             "",
             "[ignore]",
             'patterns = ["repo.one", "repo.two"]',
-            'gitignore = ["push"]',
+            'gitignore = true',
         ],
         target_manifest=[
             'type = "directory"',
