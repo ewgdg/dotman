@@ -82,6 +82,16 @@ class InspectionCommandRunner:
         engine = self._engine_factory(args.config)
         full_paths = args.full_path if args.full_path is not None else engine.config.ui.full_paths
         with ui_config_scope(engine.config.ui):
+            if args.command == "list" and args.list_command == "sync-bases":
+                return cli_emit.emit_sync_bases(
+                    entries=engine.list_sync_bases(), json_output=args.json_output,
+                    use_color=self._use_color,
+                )
+            if args.command == "info" and args.info_command == "sync-base":
+                return cli_emit.emit_sync_base(
+                    detail=engine.info_sync_base(args.sync_unit), operation="info-sync-base",
+                    json_output=args.json_output, use_color=self._use_color,
+                )
             if args.command == "doctor":
                 return cli_emit.emit_doctor_summary(
                     engine=engine,

@@ -333,6 +333,30 @@ class ObservedScope:
     directory_censuses: tuple = ()
 
 
+def _discard_ineligible_bases(
+    context: planning.PlanningContext,
+    inputs: _ResolvedInputs,
+    *,
+    preview: bool,
+) -> dict[ResolvedSyncTarget, bool]:
+    """Resolved configured policy is authoritative before volatile Guards."""
+    deleted = {}
+    if preview:
+        return deleted
+    with ExitStack() as resources:
+        stores = {}
+        for identity, (item, metadata) in inputs.items():
+            unit = _base_unit(context, identity, item, metadata)
+            if unit.eligible:
+                continue
+            if identity.repo not in stores:
+                stores[identity.repo] = resources.enter_context(SyncBaseStore.open(
+                    context.tracked_state.state_root, item.repo.config.state_key,
+                ))
+            deleted[identity] = stores[identity.repo].delete(unit.identity_bytes)
+    return deleted
+
+
 def observe_scope(
     context: planning.PlanningContext,
     scope: ResolvedSyncScope,
@@ -347,6 +371,27 @@ def observe_scope(
     directory_inputs = {identity: value for identity, value in inputs.items() if value[1].target.target_type == "directory"}
     ordered_inputs = inputs
     inputs = {identity: value for identity, value in inputs.items() if identity not in directory_inputs}
+    maintenance = _discard_ineligible_bases(context, inputs, preview=preview)
+    # Resolve the control-aware child workset before volatile ancestor Guards;
+    # configured ineligibility must survive a later Guard failure. Reuse this
+    # census for Observation rather than discovering children a second time.
+    resolved_directories = {}
+    for identity, (item, metadata) in directory_inputs.items():
+        selected_paths = {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
+        census = census_directory(
+            metadata, follow_live_directories=context.config.dir_symlink_mode == "follow",
+            selected_paths=tuple(sorted(path for path in selected_paths if path is not None)),
+        )
+        children = {
+            relative: (replace(identity, child_path=relative or None), child_metadata(metadata, relative), failures)
+            for relative, failures in census.entries
+            if None in selected_paths or relative in selected_paths
+        }
+        maintenance.update(_discard_ineligible_bases(context, {
+            child_identity: (item, child) for child_identity, child, failures in children.values()
+            if child_identity.child_path is not None and not failures
+        }, preview=preview))
+        resolved_directories[identity] = (selected_paths, census, children)
     configured_directional = directional
     eligibility = evaluate_directional_guards(
         directional, command_runtime=context.projection.command_runtime, run_noop=run_noop,
@@ -361,11 +406,7 @@ def observe_scope(
     directory_censuses = []
     expanded_inputs = {**inputs, **probe_inputs}
     for identity, (item, metadata) in directory_inputs.items():
-        selected_paths = {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
-        census = census_directory(
-            metadata, follow_live_directories=context.config.dir_symlink_mode == "follow",
-            selected_paths=tuple(sorted(path for path in selected_paths if path is not None)),
-        )
+        selected_paths, census, children = resolved_directories[identity]
         # Any Guard narrowing invalidates a complete participation proof.
         configured_directions = {direction for direction in ("push", "pull")
                                  if any(_identity(target) == identity for candidate in configured_directional[direction]
@@ -374,11 +415,6 @@ def observe_scope(
                     and all(identity in admitted[direction] for direction in configured_directions)
                     and not any((rule.hooks or {}).get("guard_push") or (rule.hooks or {}).get("guard_pull") for rule in metadata.path_rules))
         directory_censuses.append((identity, item, census, complete))
-        children = {
-            relative: (replace(identity, child_path=relative or None), child_metadata(metadata, relative), failures)
-            for relative, failures in census.entries
-            if None in selected_paths or relative in selected_paths
-        }
         child_admitted = {}
         for direction in ("push", "pull"):
             candidates = {
@@ -406,7 +442,7 @@ def observe_scope(
         for identity, (item, metadata) in inputs.items()
     }
     with ExitStack() as resources:
-        lifecycles, gits, maintenance = {}, {}, {}
+        lifecycles, gits = {}, {}
         for identity, (item, _metadata) in inputs.items():
             if identity.repo not in gits:
                 git = SyncBaseGit(item.repo.root, context.projection.command_runtime)
@@ -444,7 +480,7 @@ def observe_scope(
             if lifecycle is not None:
                 maintenance[identity] = lifecycle.selected_policy_resolved(
                     units[identity]
-                ).deleted
+                ).deleted or maintenance.get(identity, False)
 
         frozen, git_failures = {}, {}
         for repo_name, git in gits.items():
@@ -482,7 +518,7 @@ def observe_scope(
             git_failure = git_failures.get(identity.repo)
             if lifecycle is not None and fact is not None:
                 try:
-                    inspection = lifecycle.inspect(unit, fact.head)
+                    inspection = lifecycle.maintain(unit, fact.head)
                     base = replace(
                         base,
                         status=inspection.status,

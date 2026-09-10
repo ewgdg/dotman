@@ -27,6 +27,7 @@ class DoctorCheck:
     path: Path | None = None
     repo_name: str | None = None
     hint: str | None = None
+    count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +37,7 @@ class DoctorCheck:
             "path": None if self.path is None else str(self.path),
             "repo_name": self.repo_name,
             "hint": self.hint,
+            **({"count": self.count} if self.count is not None else {}),
         }
 
 

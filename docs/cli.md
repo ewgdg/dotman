@@ -206,7 +206,11 @@ dotman --unattended sync main:app.settings
 
 ## Diagnostics And Catalog Inspection
 
-- `dotman doctor` checks manager configuration, configured repo paths, tracked state, and required external tools.
+- `dotman doctor` checks manager configuration, configured repo paths, tracked state, required external tools, and aggregate corrupt/orphaned Sync Base counts. Store failures include repository, path, and cause; no repair is performed.
+- `dotman list sync-bases` lists only currently usable Sync Bases.
+- `dotman info sync-base <sync-unit>` shows metadata and applicability for one exact repo-qualified file target or directory child; unavailable and ineligible results succeed.
+- `dotman reset sync-base <sync-unit>` immediately and idempotently discards one exact Base under the manager operation lock. It has no confirmation, dry-run, fuzzy selection, or scope expansion.
+- Sync Base inspection never observes drift, runs projections, or accesses Verification Records. See [Sync Base workflows and output](sync-base-storage.md#public-inspection-and-reset).
 - `dotman list repo` lists configured repos in configured order.
 - `dotman list trackables` lists every package and group available across configured repos.
 - `dotman info trackable <query>` shows one package or group definition with its tracked status.

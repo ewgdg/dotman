@@ -67,10 +67,10 @@ class SyncCommandRunner:
             )
             binding_text = f"{binding.repo}:{binding.selector}"
             if operation == "push":
-                return engine.plan_push_query(binding_text, profile=binding.profile, run_noop=run_noop)
+                return engine.plan_push_query(binding_text, profile=binding.profile, run_noop=run_noop, maintain_sync_bases=not args.dry_run)
             return engine.plan_pull_query(binding_text, profile=binding.profile, run_noop=run_noop)
         if operation == "push":
-            return engine.plan_push(sink=sink, run_noop=run_noop)
+            return engine.plan_push(sink=sink, run_noop=run_noop, maintain_sync_bases=not args.dry_run)
         return engine.plan_pull(sink=sink, run_noop=run_noop)
 
     def _finish_all_guard_skipped_operation(

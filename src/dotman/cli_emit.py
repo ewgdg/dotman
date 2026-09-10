@@ -835,7 +835,7 @@ def _doctor_check_category(check: Any) -> str:
         return "environment"
     if check.key in {"repo_path", "profiles"}:
         return "repository"
-    if check.key in {"state_dir", "tracked_packages_file", "orphan_tracked_packages_file", "snapshots"}:
+    if check.key.startswith("sync_bases_") or check.key in {"state_dir", "tracked_packages_file", "orphan_tracked_packages_file", "snapshots"}:
         return "state"
     return "other"
 
@@ -1703,3 +1703,42 @@ def emit_error(error: Exception, *, use_color: bool) -> None:
         fields=_structured_error_fields(error, use_color=use_color),
         use_color=use_color,
     )
+
+_SYNC_BASE_REASONS = {
+    "absent": "absent", "ineligible": "ineligible", "inputs_changed": "inputs changed",
+    "commit_missing": "commit missing", "history_changed": "history changed",
+    "record_corrupt": "corrupt", "payload_corrupt": "corrupt",
+}
+
+
+def emit_sync_base(*, detail, operation: str, json_output: bool, use_color: bool) -> int:
+    if json_output:
+        print(json.dumps({"operation": operation, **detail}, indent=2, sort_keys=True))
+        return 0
+    status = detail["status"].replace("not-applicable", "not applicable")
+    print(f'{detail["identity"]} {cli_style.render_sync_term(status, use_color=use_color)}')
+    if detail.get("reason"):
+        print(f'  Reason: {_SYNC_BASE_REASONS[detail["reason"]]}')
+    if "policy" in detail:
+        print(f'  Policy: {detail["policy"]}')
+        print(f'  Eligible: {"yes" if detail["eligibility"] else "no"}')
+    if detail.get("commit"):
+        print(f'  Commit: {detail["commit"]}')
+        print(f'  Provenance: {detail["provenance"]}')
+        payload = detail["payload"]
+        print(f'  Payload: {payload["kind"]}, {payload["size"]} bytes')
+        if payload["digest"]:
+            print(f'  Digest: {payload["digest"]}')
+        if payload["executable"] is not None:
+            print(f'  Executable: {"yes" if payload["executable"] else "no"}')
+        print("  Integrity: valid; inputs: match; commit: available; ancestry: confirmed")
+    return 0
+
+
+def emit_sync_bases(*, entries, json_output: bool, use_color: bool) -> int:
+    if json_output:
+        print(json.dumps({"operation": "list-sync-bases", "sync_bases": entries}, indent=2, sort_keys=True))
+        return 0
+    for detail in entries:
+        emit_sync_base(detail=detail, operation="info-sync-base", json_output=False, use_color=use_color)
+    return 0

@@ -410,6 +410,23 @@ class BaseLifecycleResult:
     failure: SyncBaseStoreError | SyncBaseGitError | None = None
 
 
+def record_matches_identity(
+    record: SyncBaseRecord, identity: ResolvedSyncTarget
+) -> bool:
+    """Validate non-Git record shape against its canonical Sync Unit identity."""
+    return (
+        record.identity == sync_unit_identity_bytes(identity)
+        and not (
+            isinstance(record.payload, FilePresent)
+            and identity.child_path is not None
+        )
+        and not (
+            isinstance(record.payload, DirectoryChildPresent)
+            and identity.child_path is None
+        )
+    )
+
+
 class SyncBaseLifecycle:
     """No session orchestration: invoke each method at its documented boundary."""
 
@@ -439,15 +456,7 @@ class SyncBaseLifecycle:
         if record is None:
             return BaseInspection("unavailable", "absent")
         if (
-            record.identity != unit.identity_bytes
-            or (
-                isinstance(record.payload, FilePresent)
-                and unit.identity.child_path is not None
-            )
-            or (
-                isinstance(record.payload, DirectoryChildPresent)
-                and unit.identity.child_path is None
-            )
+            not record_matches_identity(record, unit.identity)
             or record.envelope.object_format != head.object_format
         ):
             return BaseInspection("unavailable", "record_corrupt")
@@ -458,6 +467,22 @@ class SyncBaseLifecycle:
         if not self.git.is_ancestor(record.envelope.commit_oid, head):
             return BaseInspection("unavailable", "history_changed")
         return BaseInspection("usable", record=record)
+
+    def maintain(self, unit: BaseUnit, head: FrozenGitHead) -> BaseInspection:
+        """Inspect selected applicability, reclaiming only proven unusable records."""
+        inspected = self.inspect(unit, head)
+        if self.preview or inspected.status != "unavailable":
+            return inspected
+        if inspected.reason in ("record_corrupt", "payload_corrupt"):
+            self.store.discard_corrupt(unit.identity_bytes)
+            # Envelope/unit mismatches can be valid store records but invalid
+            # for this resolved unit; discard only this identity in that case.
+            self.store.delete(unit.identity_bytes)
+            return BaseInspection("unavailable", "absent")
+        if inspected.reason in ("inputs_changed", "commit_missing", "history_changed"):
+            self.store.delete(unit.identity_bytes)
+            return BaseInspection("unavailable", "absent")
+        return inspected
 
     def selected_policy_resolved(self, unit: BaseUnit) -> BaseLifecycleResult:
         """Real Push/Sync: immediately after selected static resolution, before Guards/review."""

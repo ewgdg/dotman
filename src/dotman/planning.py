@@ -438,6 +438,7 @@ def build_tracked_plans(
     entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
     sink: "ProgressSink | None" = None,
     run_noop: bool = False,
+    maintain_sync_bases: bool = False,
 ) -> OperationPlan:
     selections = resolve_tracked_package_selections(planning_context, entries_by_repo=entries_by_repo)
     planning_result = build_package_plans(
@@ -446,6 +447,7 @@ def build_tracked_plans(
         operation=operation,
         sink=sink,
         run_noop=run_noop,
+        maintain_sync_bases=maintain_sync_bases,
     )
     repo_by_name = {
         repo_config.name: get_repository(planning_context, repo_config.name)
@@ -468,6 +470,7 @@ def build_package_plans(
     operation: str,
     sink: "ProgressSink | None" = None,
     run_noop: bool = False,
+    maintain_sync_bases: bool = False,
 ) -> PackagePlanningResult:
     if sink is not None:
         sink.start(len(selections))
@@ -483,6 +486,12 @@ def build_package_plans(
             winner_indexes=winner_indexes,
         )
         _validate_preprojection_conflicts(selected_inputs, operation=operation)
+        if maintain_sync_bases:
+            if operation != "push":
+                raise ValueError("selected-policy Base maintenance is only available for Push")
+            from dotman.sync_base_maintenance import discard_push_ineligible_bases
+
+            discard_push_ineligible_bases(planning_context, selected_inputs)
         considered_repo_names = tuple(
             dict.fromkeys(planning_input.selection.identity.repo for planning_input in selected_inputs)
         )

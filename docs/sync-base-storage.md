@@ -71,16 +71,10 @@ The manager state directory, `repos`, and repository state directory must be
 current-user-owned directories with exact mode `0700`. The database, lock, and
 SQLite sidecars must be current-user-owned regular files with exact mode `0600`.
 Symlinks, hard-linked files, unexpected store filenames, nonregular files,
-and wrong owners are rejected. When opening a store (including read-only
-access), Dotman automatically sets these three owned directories to `0700`
-and its database, store lock, and recognized SQLite sidecars to `0600`.
-Repairs use verified descriptors and revalidate modes and bindings afterwards;
-file descriptors must identify current-user-owned regular single-link files
-before any chmod. No root access is requested. The XDG parent directory and
-unrelated files are not changed. If a path cannot be opened safely or its
-permissions cannot be secured, the operation fails with a filesystem security
-error. Securing sidecar permissions does not authorize recovery: unexpected
-sidecars remain rejected with their contents and inode bindings preserved.
+and wrong owners are rejected. Opening a store never changes permissions. Insecure modes are a
+store-level security failure, including during read-only inspection. No root
+access is requested; the XDG parent and unrelated files are not changed.
+Unexpected sidecars remain rejected with contents and inode bindings preserved.
 
 Managed directories, the database, and the lock are pinned by file descriptors.
 Opens use no-follow flags and compare `fstat` device/inode identities against
@@ -106,8 +100,10 @@ or delete it. A live cooperating writer is reported as lock contention instead.
 
 Envelope validation failures report `record_corrupt` for the affected record.
 Payload digest/length failures report `payload_corrupt` and every referencing
-record identity. Both remain distinct from container corruption. The storage
-and read-only applicability seams perform no automatic record cleanup.
+record identity. Both remain distinct from container corruption. Read-only applicability performs no cleanup. During real selected Base handling,
+individually corrupt records can be deleted; a corrupt shared payload removes
+every referencing Base in one transaction. Proven stale applicability may also
+be removed. Store-level failures are never repaired or deleted automatically.
 
 SQLite temporary tables and indexes stay in memory. A SQLite build that forces
 disk temporary storage is rejected; preflight makes no disk copy.
@@ -165,3 +161,64 @@ the absent identity. Candidate keys are frozen before review, so the operation
 cannot reclaim a deletion it just acknowledged. Partial selectors, exclusions,
 ignores, markers, Guard restrictions and discovery failures cannot provide that
 proof; preview and aborted sessions do no reclamation.
+
+
+## Public inspection and reset
+
+- `dotman list sync-bases` returns only currently usable entries, including usable
+  Missing payloads. Empty output succeeds; unusable metadata is not disclosed.
+- `dotman info sync-base main:app.settings` inspects exactly one current file Sync
+  Unit. A directory child uses `main:app.tree/nested/file`; package instances use
+  `main:app<work>.tree/nested/file`.
+- `dotman reset sync-base main:app.settings` immediately discards exactly that
+  record and payloads made unreferenced. Already absent succeeds. There is no
+  confirmation, preview, wildcard, fuzzy selector, package scope, directory-target
+  scope, or all-units form. Reset takes the manager non-blocking operation lock
+  before resolution and fails while a real Push, Pull, or Sync owns it.
+- `dotman doctor` warns with aggregate corrupt and proven orphaned record counts
+  per repository, without identities or repair plans. A complete unrestricted
+  directory census can prove absent children; excluded, guarded, or failed discovery cannot.
+  Unsafe/unreadable stores are failures carrying repository, database path, and
+  cause. Nothing is repaired.
+
+Info reports `usable`, `unavailable`, or human `not applicable` (structured
+`not-applicable`). Successful unavailable/ineligible inspection exits successfully;
+invalid identities and store failures are errors. Human reasons are exactly
+`absent`, `ineligible`, `inputs changed`, `commit missing`, `history changed`,
+or `corrupt`. JSON reason codes are respectively `absent`, `ineligible`,
+`inputs_changed`, `commit_missing`, `history_changed`, and
+`record_corrupt`/`payload_corrupt`.
+
+Structured list entries and info carry canonical identity, policy, eligibility,
+status, reason, full commit OID, provenance, payload kind/size/full digest and
+directory-child executable state, plus integrity, fingerprint match, commit
+availability, and ancestry checks. Unknown/not-performed checks are null.
+Unavailable output has null commit, provenance, and payload rather than stale
+record metadata. Payload bytes are never output. Reset returns identity and
+`reset` or `already_absent`.
+
+List, info, and doctor use short read transactions, never take the manager
+operation lock, and never perform cleanup. They never inspect or mutate
+Verification Records or run Guards, Render, Capture, Pull View, live comparison,
+or drift Observation. Static identity resolution and doctor directory-control
+census do not establish ancestry. A stored Missing directory-child Base remains
+inspectable until a real operation safely reclaims it.
+
+### Real Push maintenance boundary
+
+The real Push command opts into configured-ineligibility cleanup while holding
+the manager operation lock. Cleanup follows successful static package, target,
+ownership, and conflict resolution and precedes Guards and review. Only selected
+configured `push-only` or `push-only-delete` file units and successfully discovered,
+unexcluded directory children lose existing Bases. Eligible units and unrelated
+package selections remain untouched; missing or failed child discovery never
+proves a stored identity obsolete. Cleanup does not create a missing Base store.
+
+Dry-run and ordinary engine planning remain read-only. Push acknowledgment and
+full Pull convergence/Base wiring are not implemented by this maintenance path;
+they remain existing integration gaps, with Pull assigned to issue #77.
+
+Exact reset opens an existing store without creation: missing database or lock
+artifacts are failures, not permission to reconstruct storage. Doctor and info
+share record-shape validation against canonical file/child identities; a mismatch
+is record corruption even when SQLite and the payload digest remain valid.

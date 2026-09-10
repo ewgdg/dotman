@@ -243,21 +243,6 @@ def _validate_status(path: Path, status: os.stat_result, *, directory: bool) -> 
         )
 
 
-def _secure_permissions(path: Path, descriptor: int, *, directory: bool) -> None:
-    status = os.fstat(descriptor)
-    _validate_inode(path, status, directory=directory)
-    expected_mode = _PRIVATE_DIRECTORY_MODE if directory else _PRIVATE_FILE_MODE
-    if stat.S_IMODE(status.st_mode) != expected_mode:
-        # Repair only the verified inode, never its replaceable pathname.
-        try:
-            os.fchmod(descriptor, expected_mode)
-        except OSError as exc:
-            kind = "directory" if directory else "file"
-            raise SyncBaseStoreSecurityError(
-                f"cannot secure Sync Base {kind} permissions: {path}: {exc}"
-            ) from exc
-    _validate_status(path, os.fstat(descriptor), directory=directory)
-
 
 class _PrivateLayout:
     """Pin the private tree; never follow a replaced directory during Python I/O."""
@@ -298,7 +283,7 @@ class _PrivateLayout:
                     raise SyncBaseStoreSecurityError(
                         f"Sync Base directory changed while opening: {path}"
                     )
-                _secure_permissions(path, descriptor, directory=True)
+                _validate_status(path, os.fstat(descriptor), directory=True)
                 self.check_directories()
                 parent_descriptor = descriptor
         except BaseException:
@@ -344,7 +329,7 @@ class _PrivateLayout:
                 raise SyncBaseStoreSecurityError(
                     f"Sync Base file changed while opening: {path}"
                 )
-            _secure_permissions(path, descriptor, directory=False)
+            _validate_status(path, os.fstat(descriptor), directory=False)
             current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
             _validate_status(path, current, directory=False)
             if _identity(current) != _identity(opened):
@@ -385,7 +370,7 @@ class _PrivateLayout:
                     f"unexpected Sync Base store file: {path}"
                 )
             current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
-            _validate_inode(path, current, directory=False)
+            _validate_status(path, current, directory=False)
             if name in self._files:
                 descriptor = self._files[name]
                 opened = os.fstat(descriptor)
@@ -394,18 +379,13 @@ class _PrivateLayout:
                     raise SyncBaseStoreSecurityError(
                         f"Sync Base file was substituted: {path}"
                     )
-                _secure_permissions(path, descriptor, directory=False)
+                _validate_status(path, os.fstat(descriptor), directory=False)
                 current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
                 _validate_status(path, current, directory=False)
                 if _identity(current) != _identity(opened):
                     raise SyncBaseStoreSecurityError(
                         f"Sync Base file was substituted: {path}"
                     )
-            elif stat.S_IMODE(current.st_mode) != _PRIVATE_FILE_MODE:
-                # Sidecars are transient: verify and secure them without pinning
-                # them as persistent files that must survive SQLite's commit.
-                descriptor = self._open_file_descriptor(name)
-                os.close(descriptor)
         if not self._files.keys() <= names:
             raise SyncBaseStoreSecurityError("an opened Sync Base file disappeared")
         sidecars = names - {DATABASE_FILE_NAME, _LOCK_FILE_NAME}
@@ -505,14 +485,17 @@ class SyncBaseStore:
         repo_state_key: str,
         *,
         read_only: bool = False,
+        create: bool = True,
     ) -> SyncBaseStore:
+        """Open trusted storage; create=False requires an intact existing store."""
+        create = create and not read_only
         manager_root = Path(manager_state_root)
         if not manager_root.is_absolute():
             raise ValueError("manager state root must be absolute")
         state_key = validate_state_key(repo_state_key, repo_name=repo_state_key)
         with _store_errors():
             cls._check_runtime()
-            layout = _PrivateLayout(manager_root, state_key, create=not read_only)
+            layout = _PrivateLayout(manager_root, state_key, create=create)
             try:
                 # Acquire an existing lock before examining sidecars: a live
                 # writer's journal is contention, not evidence to recover.
@@ -536,10 +519,10 @@ class SyncBaseStore:
                     if database_descriptor is not None:
                         with closing(cls._preflight(layout, database_descriptor)):
                             pass
-                    elif read_only:
-                        raise SyncBaseStoreError("Sync Base store does not exist")
+                    elif not create:
+                        raise SyncBaseStoreError("Sync Base store database is missing")
                 if lock_descriptor is None:
-                    if read_only:
+                    if not create:
                         raise SyncBaseStoreSecurityError(
                             "Sync Base store lock is missing"
                         )
@@ -600,7 +583,7 @@ class SyncBaseStore:
             )
             or not all(
                 callable(getattr(os, name, None))
-                for name in ("pread", "fchmod", "geteuid")
+                for name in ("pread", "geteuid")
             )
             or not callable(getattr(fcntl, "flock", None))
         ):
@@ -871,7 +854,11 @@ class SyncBaseStore:
         if self._read_connection is None:
             with self.read_transaction():
                 return self.read(canonical_identity)
-        connection = self._read_connection
+        return self._read_record(self._read_connection, canonical_identity)
+
+    def _read_record(
+        self, connection: sqlite3.Connection, canonical_identity: bytes
+    ) -> SyncBaseRecord | None:
         try:
             row = connection.execute(
                 """SELECT r.shape, r.payload_id, r.executable,
@@ -1127,6 +1114,41 @@ class SyncBaseStore:
             (payload_id,),
         )
 
+    def discard_corrupt(self, identity: bytes) -> bool:
+        """Delete only verified individual corruption, including shared references."""
+        canonical_identity = _require_bytes(
+            identity, field_name="canonical identity", allow_empty=False
+        )
+        with self._write_transaction() as connection:
+            try:
+                self._read_record(connection, canonical_identity)
+            except SyncBaseRecordCorruptionError as exc:
+                # Revalidate under the write transaction so maintenance cannot
+                # delete a healthy replacement committed after an earlier read.
+                for affected_identity in exc.affected_identities:
+                    self._delete_record(connection, affected_identity)
+                return True
+            return False
+
+    def _delete_record(
+        self, connection: sqlite3.Connection, canonical_identity: bytes
+    ) -> bool:
+        prior_row = connection.execute(
+            "SELECT payload_id FROM base_records WHERE identity = ?",
+            (canonical_identity,),
+        ).fetchone()
+        prior_payload_id = None if prior_row is None else prior_row[0]
+        if prior_payload_id is not None and type(prior_payload_id) is not int:
+            raise SyncBaseStoreCorruptionError(
+                "existing Sync Base record has an invalid payload reference"
+            )
+        cursor = connection.execute(
+            "DELETE FROM base_records WHERE identity = ?",
+            (canonical_identity,),
+        )
+        self._garbage_collect_payload(connection, prior_payload_id)
+        return cursor.rowcount == 1
+
     def delete(self, identity: bytes) -> bool:
         canonical_identity = _require_bytes(
             identity,
@@ -1134,21 +1156,7 @@ class SyncBaseStore:
             allow_empty=False,
         )
         with self._write_transaction() as connection:
-            prior_row = connection.execute(
-                "SELECT payload_id FROM base_records WHERE identity = ?",
-                (canonical_identity,),
-            ).fetchone()
-            prior_payload_id = None if prior_row is None else prior_row[0]
-            if prior_payload_id is not None and type(prior_payload_id) is not int:
-                raise SyncBaseStoreCorruptionError(
-                    "existing Sync Base record has an invalid payload reference"
-                )
-            cursor = connection.execute(
-                "DELETE FROM base_records WHERE identity = ?",
-                (canonical_identity,),
-            )
-            self._garbage_collect_payload(connection, prior_payload_id)
-        return cursor.rowcount == 1
+            return self._delete_record(connection, canonical_identity)
 
     def close(self) -> None:
         if self._read_connection is not None:

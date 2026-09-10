@@ -399,6 +399,13 @@ Exact live permission policy is not a Base payload.
 Guards narrow the available route for an operation, not Base eligibility.
 Changing between eligible policies preserves ancestry.
 
+Use `list sync-bases` to see usable ancestry, `info sync-base <sync-unit>` for
+metadata-only applicability, and `reset sync-base <sync-unit>` to discard one
+exact Base immediately under the manager lock. `doctor` reports aggregate
+corrupt/orphaned counts without identities or repair plans. Inspection never
+runs Observation or projections and never accesses Verification Records.
+See [public workflows](sync-base-storage.md#public-inspection-and-reset).
+
 ### Applicability and provenance
 
 A usable Base has a valid identity and envelope, intact payload, matching

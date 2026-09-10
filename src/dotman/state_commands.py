@@ -41,7 +41,7 @@ class StateCommandRuntime(Protocol):
 
 
 class StateCommandRunner:
-    command_names = frozenset({"track", "untrack", "add", "edit"})
+    command_names = frozenset({"track", "untrack", "add", "edit", "reset"})
 
     def __init__(
         self,
@@ -67,6 +67,11 @@ class StateCommandRunner:
 
         engine = self._engine_factory(args.config)
         with ui_config_scope(engine.config.ui):
+            if args.command == "reset":
+                return cli_emit.emit_sync_base(
+                    detail=engine.reset_sync_base(args.sync_unit), operation="reset-sync-base",
+                    json_output=args.json_output, use_color=self._use_color,
+                )
             if args.command == "track":
                 return self._run_track(args=args, engine=engine)
             if args.command == "untrack":

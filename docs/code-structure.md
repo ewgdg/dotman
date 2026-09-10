@@ -79,6 +79,8 @@ Current responsibility split:
 - `sync_auxiliary.py` — immutable Probe/hook rows, one-shot Probe activity and Guard-admitted directional hook retention
 - `operation_lock.py` — manager-wide non-blocking real-operation ownership shared by sessions and Push/Pull command workflows
 - `sync_base_lifecycle.py` — configured-policy Base eligibility, frozen Git facts, input fingerprints, applicability inspection, and per-unit acknowledgment/deletion decisions
+- `sync_base_maintenance.py` — real Push selected-policy cleanup after static ownership/conflict resolution and before Guards; preserves excluded or unresolved children and never acknowledges ancestry
+- `sync_base_inspection.py` — metadata-only list/info, exact manager-locked reset, and aggregate doctor diagnostics using shared static resolution and Base applicability
 - `sync_base_store.py` — secure fixed-epoch, per-repository SQLite storage for exact Sync Base records and content-addressed payloads
 
 Interactive Sync materialization uses one dedicated thread in `sync_deck.py`.

@@ -12,6 +12,8 @@ from dotman.inspection_commands import InspectionCommandRunner
 from dotman.interaction import Interaction, TerminalInteraction
 from dotman.standalone_commands import StandaloneCommandRunner
 from dotman.state_commands import StateCommandRunner
+from dotman.sync_base_store import SyncBaseStoreError
+from dotman.sync_base_lifecycle import SyncBaseGitError
 from dotman.sync_commands import SyncCommandRunner
 from dotman.sync_deck_command import SyncDeckCommandRunner
 
@@ -75,7 +77,7 @@ def main(
     except KeyboardInterrupt:
         cli_interaction.emit_interrupt_notice()
         return INTERRUPTED_EXIT_CODE
-    except ValueError as exc:
+    except (ValueError, SyncBaseStoreError, SyncBaseGitError) as exc:
         cli_emit.emit_error(
             exc,
             use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None,

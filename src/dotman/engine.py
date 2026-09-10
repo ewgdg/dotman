@@ -252,6 +252,7 @@ class DotmanEngine:
         operation: str,
         profile: str | None,
         run_noop: bool,
+        maintain_sync_bases: bool = False,
     ) -> OperationPlan:
         _repo, query = self.resolve_full_spec_selector_text(query_text, profile=profile)
         selections = planning.resolve_full_spec_selector(self._planning_context, query, operation=operation)
@@ -260,6 +261,7 @@ class DotmanEngine:
             selections,
             operation=operation,
             run_noop=run_noop,
+            maintain_sync_bases=maintain_sync_bases,
         )
         return planning.build_operation_plan(
             list(result.package_plans),
@@ -285,12 +287,13 @@ class DotmanEngine:
         """Resolve exact tracked identities for a SyncSession."""
         return resolve_sync_scope(self._planning_context, selectors)
 
-    def plan_push_query(self, query_text: str, *, profile: str | None = None, run_noop: bool = False) -> OperationPlan:
+    def plan_push_query(self, query_text: str, *, profile: str | None = None, run_noop: bool = False, maintain_sync_bases: bool = False) -> OperationPlan:
         return self._plan_query(
             query_text,
             operation="push",
             profile=profile,
             run_noop=run_noop,
+            maintain_sync_bases=maintain_sync_bases,
         )
 
     def plan_pull_query(self, query_text: str, *, profile: str | None = None, run_noop: bool = False) -> OperationPlan:
@@ -390,12 +393,13 @@ class DotmanEngine:
         }
         return selector, profile, exact_matches, list(unique_partials.values()), list(unique_owners.values())
 
-    def plan_push(self, *, sink: "ProgressSink | None" = None, run_noop: bool = False) -> OperationPlan:
+    def plan_push(self, *, sink: "ProgressSink | None" = None, run_noop: bool = False, maintain_sync_bases: bool = False) -> OperationPlan:
         return planning.build_tracked_plans(
             self._planning_context,
             operation="push",
             sink=sink,
             run_noop=run_noop,
+            maintain_sync_bases=maintain_sync_bases,
         )
 
     def plan_pull(self, *, sink: "ProgressSink | None" = None, run_noop: bool = False) -> OperationPlan:
@@ -448,7 +452,22 @@ class DotmanEngine:
     def doctor(self) -> Any:
         from dotman.doctor import doctor_context
 
-        return doctor_context(self._tracked_state_context)
+        from dotman.sync_base_inspection import doctor_sync_bases
+
+        summary = doctor_context(self._tracked_state_context)
+        return replace(summary, checks=[*summary.checks, *doctor_sync_bases(self._planning_context)])
+
+    def list_sync_bases(self):
+        from dotman.sync_base_inspection import list_sync_bases
+        return list_sync_bases(self._planning_context)
+
+    def info_sync_base(self, identity: str):
+        from dotman.sync_base_inspection import info_sync_base
+        return info_sync_base(self._planning_context, identity)
+
+    def reset_sync_base(self, identity: str):
+        from dotman.sync_base_inspection import reset_sync_base
+        return reset_sync_base(self._planning_context, identity)
 
     def read_tracked_package_entries(self, repo: Repository) -> list[FullSpecSelector]:
         return tracking.read_tracked_package_entries(repo)

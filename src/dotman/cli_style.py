@@ -471,6 +471,11 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "skipped": ("2",),
     "execution-failed": ("1", "31"),
     "not-converged": ("1", "33"),
+    "usable": ("1", "32"),
+    "unavailable": ("33",),
+    "not applicable": ("2",),
+    "reset": ("1", "32"),
+    "already_absent": ("2",),
     "unattempted": ("2",),
     "interrupted": ("1", "31"),
 }

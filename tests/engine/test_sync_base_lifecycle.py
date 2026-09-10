@@ -972,3 +972,57 @@ def test_repository_graft_cannot_make_unrelated_commit_a_usable_base(
     assert result.status == "unavailable" and result.reason == "history_changed"
     assert result.record is None
     assert grafts.read_text() == graft_content
+
+
+@pytest.mark.parametrize('preview', [False, True])
+@pytest.mark.parametrize('operation', ['push', 'pull', 'sync'])
+def test_selected_applicability_maintenance_preserves_preview_and_usable_bases(
+    repository, tmp_path, preview, operation,
+):
+    root, runtime, _ = repository
+    facts = SyncBaseGit(root, runtime)
+    head = facts.freeze_head()
+    (frozen,) = facts.freeze_units(head, (unit(),))
+    with SyncBaseStore.open(tmp_path / 'state' / 'dotman', 'main') as store:
+        store.replace(frozen.record())
+        lifecycle = SyncBaseLifecycle(store, facts, operation=operation, preview=preview)
+        assert lifecycle.maintain(unit(), head).status == 'usable'
+        assert store.read(unit().identity_bytes) == frozen.record()
+        changed = unit(render='changed')
+        assert lifecycle.inspect(changed, head).reason == 'inputs_changed'
+        assert store.read(unit().identity_bytes) is not None
+        inspected = lifecycle.maintain(changed, head)
+        assert inspected.reason == ('inputs_changed' if preview else 'absent')
+        assert (store.read(unit().identity_bytes) is not None) is preview
+
+
+@pytest.mark.parametrize('preview', [False, True])
+@pytest.mark.parametrize('payload_corrupt', [False, True])
+def test_real_corrupt_maintenance_removes_shared_payload_references_only_when_corrupt(
+    repository, tmp_path, preview, payload_corrupt,
+):
+    import sqlite3
+
+    root, runtime, _ = repository
+    facts = SyncBaseGit(root, runtime)
+    head = facts.freeze_head()
+    peer = replace(unit(), identity=ResolvedSyncTarget('main', 'peer', 'config'))
+    frozen, other = facts.freeze_units(head, (unit(), peer))
+    state = tmp_path / 'state' / 'dotman'
+    with SyncBaseStore.open(state, 'main') as store:
+        store.replace(frozen.record())
+        store.replace(other.record())
+        path = store.database_path
+    with sqlite3.connect(path) as connection:
+        if payload_corrupt:
+            connection.execute('UPDATE payloads SET content = ?', (b'broken',))
+        else:
+            connection.execute('UPDATE base_records SET provenance = ? WHERE identity = ?',
+                               ('broken', unit().identity_bytes))
+    with SyncBaseStore.open(state, 'main', read_only=preview) as store:
+        lifecycle = SyncBaseLifecycle(store, facts, operation='sync', preview=preview)
+        inspected = lifecycle.maintain(unit(), head)
+        assert inspected.reason == (('payload_corrupt' if payload_corrupt else 'record_corrupt') if preview else 'absent')
+        remaining = store.identities()
+        assert (unit().identity_bytes in remaining) is preview
+        assert (peer.identity_bytes in remaining) is (preview or not payload_corrupt)

@@ -408,6 +408,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="List available snapshots",
         description="List available snapshots",
     )
+    list_subparsers.add_parser("sync-bases", help="List currently usable Sync Bases")
+    reset_parser = subparsers.add_parser("reset", help="Discard exact Sync Base ancestry")
+    reset_subparsers = reset_parser.add_subparsers(dest="reset_command", required=True)
+    reset_base_parser = reset_subparsers.add_parser("sync-base", help="Immediately reset one exact Sync Base")
+    reset_base_parser.add_argument("sync_unit", metavar="<sync-unit>", help="Exact repo-qualified file target or directory child")
     info_parser = subparsers.add_parser(
         "info",
         help="Show detailed information about tracked package state items",
@@ -419,6 +424,8 @@ def build_parser() -> argparse.ArgumentParser:
         title="info commands",
         metavar="<info-command>",
     )
+    info_base_parser = info_subparsers.add_parser("sync-base", help="Show exact Sync Base applicability without observing drift")
+    info_base_parser.add_argument("sync_unit", metavar="<sync-unit>", help="Exact repo-qualified file target or directory child")
     info_tracked_parser = info_subparsers.add_parser(
         "tracked",
         help="Show tracked package details",
