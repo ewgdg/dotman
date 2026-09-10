@@ -4,9 +4,13 @@ import json
 import stat
 from pathlib import Path
 
+import pytest
+
 import dotman.cli_interaction as cli
 import dotman.cli_emit as cli_emit
 from dotman.cli import main
+from dotman.sync_session import EditProposal, SetApproval
+from tests.engine.test_sync_session import make_engine
 from tests.helpers import write_named_manager_config
 
 
@@ -110,178 +114,6 @@ def _write_directory_execution_repo(
         encoding="utf-8",
     )
 
-
-
-def _write_editor_execution_repo(repo_root: Path) -> None:
-    package_root = repo_root / "packages" / "app"
-    (package_root / "files").mkdir(parents=True)
-    (package_root / "hooks").mkdir(parents=True)
-    (repo_root / "profiles").mkdir(parents=True)
-
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (package_root / "files" / "config.txt").write_text("repo value\n", encoding="utf-8")
-    (package_root / "hooks" / "reconcile.sh").write_text(
-        "\n".join(
-            [
-                "#!/bin/sh",
-                "set -eu",
-                "printf 'editor:%s:%s\\n' \"$DOTMAN_REPO_PATH\" \"$DOTMAN_LIVE_PATH\"",
-                "cp \"$DOTMAN_LIVE_PATH\" \"$DOTMAN_REPO_PATH\"",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (package_root / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "app"',
-                "",
-                "[targets.config]",
-                'source = "files/config.txt"',
-                'path = "~/.config/app/config.txt"',
-                f'editor = {{ run = "sh {package_root / "hooks" / "reconcile.sh"}", io = "pipe" }}',
-                "",
-                "[hooks]",
-                'guard_pull = "printf \'guard pull\\n\'"',
-                'post_pull = "printf \'post pull\\n\'"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-
-def _write_editor_preview_execution_repo(repo_root: Path) -> None:
-    package_root = repo_root / "packages" / "app"
-    (package_root / "files").mkdir(parents=True)
-    (package_root / "hooks").mkdir(parents=True)
-    (repo_root / "profiles").mkdir(parents=True)
-
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (package_root / "files" / "config.txt").write_text("repo source value\n", encoding="utf-8")
-    (package_root / "hooks" / "render.sh").write_text(
-        "\n".join(
-            [
-                "#!/bin/sh",
-                "set -eu",
-                "printf 'rendered repo view\\n'",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (package_root / "hooks" / "capture.sh").write_text(
-        "\n".join(
-            [
-                "#!/bin/sh",
-                "set -eu",
-                "printf 'captured live view\\n'",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (package_root / "hooks" / "reconcile.sh").write_text(
-        "\n".join(
-            [
-                "#!/bin/sh",
-                "set -eu",
-                "printf 'review:%s|%s\\n' \"$(tr -d '\\n' < \"$DOTMAN_REVIEW_REPO_PATH\")\" \"$(tr -d '\\n' < \"$DOTMAN_REVIEW_LIVE_PATH\")\"",
-                "cp \"$DOTMAN_LIVE_PATH\" \"$DOTMAN_REPO_PATH\"",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (package_root / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "app"',
-                "",
-                "[targets.config]",
-                'source = "files/config.txt"',
-                'path = "~/.config/app/config.txt"',
-                'render = "sh hooks/render.sh"',
-                'capture = "sh hooks/capture.sh"',
-                'compare = { repo = "render", live = "raw" }',
-                f'editor = {{ run = "sh {package_root / "hooks" / "reconcile.sh"}", io = "pipe" }}',
-                "",
-                "[hooks]",
-                'guard_pull = "printf \'guard pull\\n\'"',
-                'post_pull = "printf \'post pull\\n\'"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-
-def _write_capture_fallback_editor_execution_repo(repo_root: Path) -> None:
-    package_root = repo_root / "packages" / "app"
-    (package_root / "files").mkdir(parents=True)
-    (package_root / "hooks").mkdir(parents=True)
-    (repo_root / "profiles").mkdir(parents=True)
-
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (package_root / "files" / "config.txt").write_text("repo source value\n", encoding="utf-8")
-    (package_root / "hooks" / "render.sh").write_text(
-        "\n".join(
-            [
-                "#!/bin/sh",
-                "set -eu",
-                "printf 'rendered repo view\\n'",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (package_root / "hooks" / "capture.sh").write_text(
-        "\n".join(
-            [
-                "#!/bin/sh",
-                "set -eu",
-                "printf 'capture failed\\n' >&2",
-                "exit 1",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (package_root / "hooks" / "reconcile.sh").write_text(
-        "\n".join(
-            [
-                "#!/bin/sh",
-                "set -eu",
-                "printf 'review:%s|%s\\n' \"$(tr -d '\\n' < \"$DOTMAN_REVIEW_REPO_PATH\")\" \"$(tr -d '\\n' < \"$DOTMAN_REVIEW_LIVE_PATH\")\"",
-                "cp \"$DOTMAN_LIVE_PATH\" \"$DOTMAN_REPO_PATH\"",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (package_root / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "app"',
-                "",
-                "[targets.config]",
-                'source = "files/config.txt"',
-                'path = "~/.config/app/config.txt"',
-                'render = "sh hooks/render.sh"',
-                'capture = "sh hooks/capture.sh"',
-                'compare = { repo = "render", live = "raw" }',
-                f'editor = {{ run = "sh {package_root / "hooks" / "reconcile.sh"}", io = "pipe" }}',
-                "",
-                "[hooks]",
-                'guard_pull = "printf \'guard pull\\n\'"',
-                'post_pull = "printf \'post pull\\n\'"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
 
 
 def _write_tracked_binding(state_root: Path, *, repo_name: str = "fixture", selector: str = "app") -> None:
@@ -537,110 +369,6 @@ def test_push_directory_target_path_rule_render_overrides_default_render(
     assert (live_root / "data.json").read_text(encoding="utf-8") == "json:json value\n"
 
 
-def test_pull_directory_target_uses_capture_for_child_files(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_directory_execution_repo(repo_root, target_config=['capture = "sh hooks/capture.sh"'])
-    package_root = repo_root / "packages" / "app"
-    (package_root / "hooks").mkdir()
-    (package_root / "hooks" / "capture.sh").write_text(
-        "#!/bin/sh\nsed 's/^live:/repo:/' \"$DOTMAN_LIVE_PATH\"\n",
-        encoding="utf-8",
-    )
-    live_path = home / ".config" / "app" / "nested.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("live:new value\n", encoding="utf-8")
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    exit_code = main(["--config", str(config_path), "pull"])
-
-    assert exit_code == 0
-    repo_path = package_root / "files" / "config" / "nested.txt"
-    assert repo_path.read_text(encoding="utf-8") == "repo:new value\n"
-
-
-def test_pull_directory_target_patch_capture_updates_child_repo_source(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_directory_execution_repo(
-        repo_root,
-        target_config=[
-            'render = "jinja"',
-            'capture = "patch"',
-            'compare = { repo = "render", live = "raw" }',
-        ],
-    )
-    repo_path = repo_root / "packages" / "app" / "files" / "config" / "nested.txt"
-    repo_path.write_text("greeting = hello\n", encoding="utf-8")
-    live_path = home / ".config" / "app" / "nested.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("greeting = world\n", encoding="utf-8")
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    exit_code = main(["--config", str(config_path), "pull"])
-
-    assert exit_code == 0
-    assert repo_path.read_text(encoding="utf-8") == "greeting = world\n"
-
-
-def test_pull_directory_target_path_rule_capture_overrides_default_capture(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_directory_execution_repo(
-        repo_root,
-        target_config=['capture = "sh hooks/default-capture.sh"'],
-        path_rules=[
-            "[targets.config.path_rules.rule]",
-            'pattern = "*.json"',
-            'capture = "sh hooks/json-capture.sh"',
-        ],
-    )
-    package_root = repo_root / "packages" / "app"
-    (package_root / "files" / "config" / "data.json").write_text("old json\n", encoding="utf-8")
-    (package_root / "hooks").mkdir()
-    (package_root / "hooks" / "default-capture.sh").write_text(
-        "#!/bin/sh\nsed 's/^/default:/' \"$DOTMAN_LIVE_PATH\"\n",
-        encoding="utf-8",
-    )
-    (package_root / "hooks" / "json-capture.sh").write_text(
-        "#!/bin/sh\nsed 's/^/json:/' \"$DOTMAN_LIVE_PATH\"\n",
-        encoding="utf-8",
-    )
-    live_root = home / ".config" / "app"
-    live_root.mkdir(parents=True)
-    (live_root / "nested.txt").write_text("plain value\n", encoding="utf-8")
-    (live_root / "data.json").write_text("json value\n", encoding="utf-8")
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    exit_code = main(["--config", str(config_path), "pull"])
-
-    assert exit_code == 0
-    repo_root_path = package_root / "files" / "config"
-    assert (repo_root_path / "nested.txt").read_text(encoding="utf-8") == "default:plain value\n"
-    assert (repo_root_path / "data.json").read_text(encoding="utf-8") == "json:json value\n"
-
-
 def test_push_cli_dry_run_emits_symlink_hazard_metadata(
     tmp_path: Path,
     monkeypatch,
@@ -867,305 +595,6 @@ def test_push_cli_human_execution_colors_step_status_only(
 
 
 
-def test_pull_cli_creates_missing_repo_source_file_and_emits_json_results(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_basic_execution_repo(repo_root)
-    repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
-    repo_path.unlink()
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("live value\n", encoding="utf-8")
-
-    exit_code = main(["--config", str(config_path), "--json", "pull"])
-
-    assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert repo_path.read_text(encoding="utf-8") == "live value\n"
-    assert payload["mode"] == "execute"
-    assert payload["operation"] == "pull"
-    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "pre_pull",
-        "create_repo",
-        "post_pull",
-    ]
-
-
-
-def test_pull_cli_executes_directory_pull_when_repo_source_directory_is_missing(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    package_root = repo_root / "packages" / "app"
-    (repo_root / "profiles").mkdir(parents=True)
-    package_root.mkdir(parents=True)
-    (package_root / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "app"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/app"',
-                "",
-                "[hooks]",
-                'guard_pull = "printf \'guard pull\\n\'"',
-                'post_pull = "printf \'post pull\\n\'"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    live_path = home / ".config" / "app" / "config.toml"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("live value\n", encoding="utf-8")
-
-    exit_code = main(["--config", str(config_path), "--json", "pull"])
-
-    assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
-    repo_path = repo_root / "packages" / "app" / "files" / "config" / "config.toml"
-    assert repo_path.read_text(encoding="utf-8") == "live value\n"
-    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "create_repo",
-        "post_pull",
-    ]
-
-
-def test_pull_directory_target_updates_repo_executable_bit_when_only_live_executable_bit_changed(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_directory_execution_repo(repo_root)
-    repo_path = repo_root / "packages" / "app" / "files" / "config" / "nested.txt"
-    repo_path.chmod(0o644)
-    live_path = home / ".config" / "app" / "nested.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("repo directory value\n", encoding="utf-8")
-    live_path.chmod(0o755)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    exit_code = main(["--config", str(config_path), "pull"])
-
-    assert exit_code == 0
-    assert repo_path.read_text(encoding="utf-8") == "repo directory value\n"
-    assert stat.S_IMODE(repo_path.stat().st_mode) == 0o755
-
-
-def test_pull_directory_target_ignores_non_executable_mode_drift(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_directory_execution_repo(repo_root)
-    repo_path = repo_root / "packages" / "app" / "files" / "config" / "nested.txt"
-    repo_path.chmod(0o644)
-    live_path = home / ".config" / "app" / "nested.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("repo directory value\n", encoding="utf-8")
-    live_path.chmod(0o600)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    exit_code = main(["--config", str(config_path), "pull"])
-
-    assert exit_code == 0
-    assert repo_path.read_text(encoding="utf-8") == "repo directory value\n"
-    assert stat.S_IMODE(repo_path.stat().st_mode) == 0o644
-
-
-
-def test_pull_cli_allows_symlinked_live_target_and_updates_repo(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_basic_execution_repo(repo_root)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    live_root = home / ".config" / "app"
-    live_root.mkdir(parents=True)
-    symlink_target = live_root / "config-real.txt"
-    symlink_target.write_text("live value\n", encoding="utf-8")
-    (live_root / "config.txt").symlink_to(symlink_target)
-
-    exit_code = main(["--config", str(config_path), "--json", "pull"])
-
-    assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
-    repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
-    assert repo_path.read_text(encoding="utf-8") == "live value\n"
-    assert payload["packages"][0]["steps"][1]["action"] == "update_repo"
-
-
-
-def test_pull_cli_executes_direct_repo_update_and_emits_json_results(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_basic_execution_repo(repo_root)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("live value\n", encoding="utf-8")
-
-    exit_code = main(["--config", str(config_path), "--json", "pull"])
-
-    assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
-    repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
-    assert repo_path.read_text(encoding="utf-8") == "live value\n"
-    assert payload["mode"] == "execute"
-    assert payload["operation"] == "pull"
-    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "pre_pull",
-        "update_repo",
-        "post_pull",
-    ]
-
-
-
-def test_pull_cli_uses_editor_for_selected_target_execution(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_editor_execution_repo(repo_root)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("live value\n", encoding="utf-8")
-
-    exit_code = main(["--config", str(config_path), "--json", "pull", "--yes"])
-
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    payload = json.loads(output[output.index("{"):])
-    repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
-    assert repo_path.read_text(encoding="utf-8") == "live value\n"
-    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "editor",
-        "post_pull",
-    ]
-    assert payload["packages"][0]["steps"][0]["stdout"].startswith("editor:")
-
-
-
-def test_pull_cli_prefers_capture_over_editor_when_both_are_defined(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_editor_preview_execution_repo(repo_root)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("raw live value\n", encoding="utf-8")
-
-    exit_code = main(["--config", str(config_path), "--json", "pull"])
-
-    assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
-    repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
-    assert repo_path.read_text(encoding="utf-8") == "captured live view\n"
-    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "update_repo",
-        "post_pull",
-    ]
-    assert payload["packages"][0]["steps"][0]["stdout"] == ""
-
-
-def test_pull_cli_falls_back_to_editor_when_capture_fails(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_capture_fallback_editor_execution_repo(repo_root)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("raw live value\n", encoding="utf-8")
-
-    exit_code = main(["--config", str(config_path), "--json", "pull", "--yes"])
-
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    payload = json.loads(output[output.index("{"):])
-    repo_path = repo_root / "packages" / "app" / "files" / "config.txt"
-    assert repo_path.read_text(encoding="utf-8") == "raw live value\n"
-    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "update_repo",
-        "post_pull",
-    ]
-    assert payload["packages"][0]["steps"][0]["stdout"] == "review:rendered repo view|raw live value\n"
-    assert "capture failed" in payload["packages"][0]["steps"][0]["stderr"]
-
-
 def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(
     tmp_path: Path,
     monkeypatch,
@@ -1286,40 +715,6 @@ def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_in_json(
     assert payload["package_entries"] == []
     assert payload["guard_skips"][0]["scope"] == "fixture:app"
     assert payload["guard_skips"][0]["reason"] == "guard push"
-
-
-def test_pull_cli_run_noop_executes_hooks_for_all_noop_pull_plan(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_basic_execution_repo(repo_root)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("repo value\n", encoding="utf-8")
-
-    exit_code = main(["--config", str(config_path), "pull", "--run-noop"])
-
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    assert ":: executing pull" in output
-    assert "packages: 1" in output
-    assert "steps: 2" in output
-    assert "[1/2] pre_pull" in output
-    assert "[2/2] post_pull" in output
-    assert "guard pull" not in output
-    assert "pre pull" in output
-    assert "post pull" in output
-    assert "noop" not in output
-    assert "[1/2] update_repo" not in output
 
 
 def test_push_cli_fails_fast_and_skips_post_push_after_failed_guard(
@@ -1444,3 +839,111 @@ def test_capture_patch_cli_accepts_command_renderers(
 
     assert exit_code == 0
     assert capsys.readouterr().out == "greeting = world\n"
+
+
+@pytest.mark.parametrize(
+    "source,live,change",
+    [(None, b"live", "write"), (b"repo", b"live", "write"), (b"repo", None, "delete")],
+)
+def test_pull_cli_applies_repository_changes_and_emits_stages(
+    tmp_path, monkeypatch, capsys, source, live, change,
+):
+    make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", source, live,
+         '[targets.unit.hooks]\npre_pull = "true"\npost_pull = "true"'),
+    ])
+    tracked = tmp_path / "state/dotman/repos/main/tracked-packages.toml"
+    tracked_before = tracked.read_bytes()
+
+    assert main([
+        "--config", str(tmp_path / "config.toml"), "--unattended", "--json",
+        "pull", "main:app.unit",
+    ]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["operation"] == "pull"
+    assert payload["mode"] == "execute"
+    unit, = payload["sync_units"]
+    assert unit["identity"] == "main:app.unit"
+    assert unit["result"] == "applied"
+    assert unit["primary_source_change"]["kind"] == change
+    assert all(step["stage"] == "repository-apply" for step in payload["stages"])
+    assert [step["action"] for step in payload["stages"]] == ["pre_pull", "update" if change == "write" else "delete", "post_pull"]
+    assert all(step["status"] == "ok" for step in payload["stages"])
+    repo_path = tmp_path / "repo/packages/app/unit"
+    live_path = tmp_path / "live/unit"
+    assert (repo_path.read_bytes() if repo_path.exists() else None) == live
+    assert (live_path.read_bytes() if live_path.exists() else None) == live
+    assert tracked.read_bytes() == tracked_before
+
+
+def test_pull_cli_uses_capture_without_launching_configured_editor(tmp_path, monkeypatch, capsys):
+    make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live",
+         'capture = "printf captured"\ncompare = {repo = "raw", live = "raw"}\n'
+         'editor = {run = "exit 9", io = "pipe"}'),
+    ])
+
+    assert main([
+        "--config", str(tmp_path / "config.toml"), "--unattended", "--json",
+        "pull", "main:app.unit",
+    ]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sync_units"][0]["result"] == "applied"
+    assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"captured"
+    assert (tmp_path / "live/unit").read_bytes() == b"live"
+
+
+@pytest.mark.parametrize("capture_fails", [False, True])
+def test_pull_cli_editor_is_explicit_deck_action_with_approval(
+    tmp_path, monkeypatch, capsys, capture_fails,
+):
+    make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live",
+         ('capture = "false"\ncompare = {repo = "raw", live = "raw"}\n' if capture_fails else "")
+         + 'editor = {run = "printf edited > \\"$DOTMAN_SOURCE\\"", io = "pipe"}'),
+    ])
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    def edit_and_approve(session, *, use_color):
+        row, = session.view.rows
+        assert row.approved is not capture_fails
+        assert bool(row.diagnostics) is capture_fails
+        view = session.view
+        edited = session.dispatch(EditProposal(view.session_id, view.revision, row.row_id))
+        assert edited.result.status == "saved"
+        assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"repo"
+        view = session.view
+        session.dispatch(SetApproval(view.session_id, view.revision, row.row_id, True))
+        return True
+
+    monkeypatch.setattr("dotman.sync_deck.run_command_deck", edit_and_approve)
+
+    assert main(["--config", str(tmp_path / "config.toml"), "pull", "main:app.unit"]) == 0
+    assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"edited"
+    assert (tmp_path / "live/unit").read_bytes() == b"live"
+    output = capsys.readouterr().out
+    assert "[approved] main:app.unit" in output
+    assert "applied" in output
+
+
+def test_pull_cli_run_noop_executes_only_pull_hooks(tmp_path, monkeypatch, capsys):
+    make_engine(tmp_path, monkeypatch, [("unit", "both", b"same", b"same", "")])
+    package = tmp_path / "repo/packages/app/package.toml"
+    with package.open("a") as stream:
+        stream.write(
+            '\n[hooks]\npre_pull = "true"\npost_pull = "true"\npre_push = "exit 9"\n'
+        )
+
+    assert main([
+        "--config", str(tmp_path / "config.toml"), "--unattended", "--json",
+        "pull", "--run-noop", "main:app",
+    ]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert [step["action"] for step in payload["stages"]] == ["pre_pull", "post_pull"], payload
+    assert all(step["status"] == "completed" for step in payload["stages"])
+    assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"same"
