@@ -72,3 +72,23 @@ Additional input alignment and editing. Run affected suites after focused checks
   reapproval that could retry failed materializations. Explicit exclusion still
   works; shared Sync opt-in behavior is unchanged.
 - Pull session/CLI execution/deck plus shared auxiliary validation: 73 passed.
+
+## Outcomes
+- Permanent Pull now has one execution path: resolved tracked scope → frozen
+  shared Observation/workset → repository-only Apply. Obsolete engine planning,
+  Pull execution/fallback and plan-based lazy review paths/tests were removed
+  or ported, while Push retains its independent behavior.
+- Fixed raw, Capture, Patch Capture, Missing and transactional Editor outcomes,
+  opt-out Proposal/Additional/auxiliary selection, frozen inputs, independent
+  Additional approval, partial-failure honesty, pull-only Guards/hooks, no live
+  snapshot, direct-agreement Base establishment and no changed-Pull Base
+  reconciliation/acknowledgment are covered by executable tests.
+- Added dedicated directory child/topology/symlink and Capture reuse coverage;
+  ported engine, CLI, review and UI fixtures to the current public contracts.
+- Durable lifecycle, CLI, vocabulary, style and architecture guidance describe
+  the current shared-workset Pull behavior.
+- Final full repository validation: `uv run pytest -q` — **1,833 passed** in
+  89.68s. `uv run python -m compileall -q src/dotman` and
+  `git diff --check` passed. No obsolete Pull facade/helper references remain
+  in source, tests or domain docs.
+- Completion acceptance met; no implementation or validation gaps remain.
