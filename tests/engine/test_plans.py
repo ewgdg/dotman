@@ -375,7 +375,7 @@ def test_probe_target_non_soft_nonzero_exit_rejects_planning(
     repo_root = write_probe_repo(tmp_path, probe_command="printf 'bad version check\\n' >&2; exit 12")
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    with pytest.raises(ValueError, match="probe failed for app:version.*bad version check"):
+    with pytest.raises(ValueError, match="probe failed for app:version.*status 12"):
         single_package_plan(engine, "fixture:app@default", operation="push")
 
 

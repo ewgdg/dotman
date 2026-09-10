@@ -21,6 +21,7 @@ from dotman.sync_reconciliation import reconcile, ReconciliationConflict, Reconc
 from dotman.projection import project_frozen_file
 from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
+from dotman.planning_guards import GuardPlanningError
 from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError, FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 from dotman.sync_base_lifecycle import (
     FrozenBaseUnit, ProposalCompletion, SyncBaseGit, SyncBaseGitError, SyncBaseLifecycle,
@@ -580,6 +581,11 @@ class ProposalSession:
                 return SessionOpenFailed(Diagnostic("operation-lock-failed", str(exc)))
             except (SyncBaseStoreError, SyncBaseGitError) as exc:
                 return SessionOpenFailed(Diagnostic("base-failed", str(exc)))
+            except GuardPlanningError as exc:
+                # Guard output may contain managed content; report typed command evidence only.
+                return SessionOpenFailed(Diagnostic(
+                    "planning-failed", f"{exc.hook_name} failed with exit {exc.exit_code}",
+                ))
             except ValueError as exc:
                 return SessionOpenFailed(Diagnostic("planning-failed", str(exc)))
             except (KeyboardInterrupt, InterruptedError):

@@ -349,3 +349,18 @@ def test_sync_review_honors_full_path_option(tmp_path, monkeypatch, capsys, full
 
     monkeypatch.setattr(sync_deck, "run_command_deck", inspect)
     assert runner_for(engine).run(arguments(unattended=False, json_output=False, full_path=full_path)) == 0
+
+@pytest.mark.parametrize("command", ["guard", "probe"])
+def test_failed_planning_commands_do_not_copy_output_into_json(tmp_path, monkeypatch, capsys, command):
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
+    manifest = tmp_path / "repo/packages/app/package.toml"
+    if command == "guard":
+        manifest.write_text(manifest.read_text() + '\n[targets.unit.hooks]\nguard_push = "printf private-command-output >&2; exit 7"\n')
+    else:
+        manifest.write_text('id = "app"\n[targets.unit]\nprobe = "printf private-command-output >&2; exit 7"\nsync_policy = "push-only"\n')
+    from dotman.engine import DotmanEngine
+    engine = DotmanEngine.from_config_path(engine.config.config_path)
+    assert runner_for(engine).run(arguments()) == 1
+    output = capsys.readouterr().out
+    assert json.loads(output)["summary"]["diagnostics"]
+    assert "private-command-output" not in output

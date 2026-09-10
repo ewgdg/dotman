@@ -1466,12 +1466,10 @@ def run_probe_command(command_runtime: CommandRuntime, metadata: TargetMetadata)
         return True
     if result.exit_code == 100:
         return False
-    stderr = result.stderr.decode("utf-8", errors="replace").strip()
-    stdout = result.stdout.decode("utf-8", errors="replace").strip()
-    detail = stderr or stdout or f"exit status {result.exit_code}"
+    # Probe output is untrusted command data, not public diagnostic metadata.
     raise ValueError(
         f"probe failed for {metadata.package_id}:{metadata.target_name} "
-        f"with status {result.exit_code}: {detail}"
+        f"with status {result.exit_code}"
     )
 
 
