@@ -1,5 +1,10 @@
 # Sync lifecycle
 
+This document owns the human convergence lifecycle. See [CLI](cli.md#sync) for
+commands, controls, output and exits, [repository configuration](repository.md)
+for syntax and inheritance, and [contributor architecture](code-structure.md)
+for module orientation.
+
 A file target is one **Sync Unit**. Each regular-file child of a directory target
 is an independent Sync Unit; a directory root has no aggregate Base.
 
@@ -14,7 +19,7 @@ Exit 0 retains capability, 100 removes that direction within the Guard's scope,
 and other non-zero exits abort planning. Review and execution never rerun Guards.
 Configured Sync Policy remains the upper bound; narrowing never changes Base
 eligibility (configured `pull-only` or `both`). It retains the resolved scope order, effective projections, typed
-endpoint bytes and live mode/link evidence. File targets also retain Git facts
+endpoint bytes and live mode/link evidence. Each unit also retains Git facts
 and applicable Base evidence.
 
 | Effective policy | Direct comparison |
@@ -23,7 +28,12 @@ and applicable Base evidence.
 | `pull-only`, `both` | Configured repository and live comparison projections |
 | `push-only-delete` | Desired `Missing` against live presence |
 
-`Missing` differs from a present empty file. Each unit is exactly **Directly
+`Missing` differs from a present empty file. Missing endpoints remain typed
+absence rather than passing invented empty bytes through a projection. Under
+push-only, a Missing repository produces a Missing live outcome; under
+push-only-delete, live deletion retains the repository source and does not
+invoke Render, Capture, or comparison commands. Directories at file endpoints,
+FIFOs, sockets, and other unsupported nodes are Observation failures, not absence. Each unit is exactly **Directly
 InSync**, **Drifted**, or **Observation Failed**. Direct agreement has no drift
 row; drift has one stable canonical row, initially unapproved. Failed
 Observation and Base acknowledgment diagnostics stay visible and non-approvable.
@@ -134,8 +144,8 @@ Repository Apply, then push hooks during Live Publication.
 
 Independently noop-eligible hooks remain selectable **Hook Work**, identified
 only by canonical repository, package-instance or target scope plus
-`(pull-hooks)` or `(push-hooks)`. Manifest command/hook `run_noop` is retained;
-`sync --run-noop` makes both surviving families noop-eligible. A child Guard does
+`(pull-hooks)` or `(push-hooks)`. The operation's noop option makes both surviving families noop-eligible,
+in addition to manifest-level eligibility. A child Guard does
 not remove an ancestor's independently retained noop hooks. Selection coalesces
 nested hooks with Probe and file work so each hook runs once. Auxiliary-only
 execution writes no payload and creates no snapshot or Base acknowledgment.
@@ -143,7 +153,7 @@ Preview freezes Guard and Probe results but executes no hooks.
 
 ## Resolution Intents and the Command Deck
 
-Drifted push-only files offer **Use repository**; pull-only files offer only
+Drifted push-only and push-only-delete files offer **Use repository**; pull-only files offer only
 **Use live**. Both-policy files offer **Use repository**, **Use live**, and
 **Merge** when a usable Sync Base exists. Their default is Merge with a usable
 Base; otherwise Use live is an explicit fallback, with the Base reason shown in
@@ -168,12 +178,10 @@ the frozen repository/live Pull Views separately from repository-effect and
 publication previews. A no-write Proposal still shows the observed drift even
 when Capture returns the unchanged repository representation. Returning preserves
 the workset.
-Press **R** or click a Resolution cell to open the focused row's policy-allowed
-choices. Use arrows and Enter, or click a choice; Escape dismisses the menu.
 Changing Resolution Intent preserves Approval, discards the prior Proposal, and
-rematerializes approved work. **T** explicitly retries failed materialization.
-Review exposes the frozen Capture result and Reconciliation evidence separately
-from both repository and live effect previews.
+rematerializes approved work. Review exposes Capture and Reconciliation evidence
+separately from repository and live effects. The [CLI reference](cli.md#sync)
+defines keyboard and mouse interactions.
 Execution confirmation is available only when every approved participating Proposal
 has a valid materialization. It summarizes approved units, independently approved
 Additional writes, auxiliary inclusion and live effects. Cancelling confirmation
@@ -181,24 +189,16 @@ preserves Approval, inclusion, focus and review state. Confirming closes the dec
 and executes exactly those already-materialized outcomes; it does not trigger
 Capture, Render, re-observation or another planning pass.
 
-During Capture, Merge, or Render, the deck remains visible with an animated
-**Materializing Proposal** indicator. Review, Approval, batch actions, Resolution
-changes, and retries share one serialized execution lane. While it is busy,
-competing keyboard and mouse actions are ignored rather than queued. **Ctrl-C**
-(or OS SIGINT) cancels the operation, including the remainder of a batch, and exits
-with status 130. Repeated Ctrl-C is safe. Dotman waits for materialization and
-owned subprocess cleanup before discarding temporary files or releasing its lock.
-The Command Runtime interrupts an owned process group and escalates to termination
-if it does not stop promptly. Cancellation cannot undo completed provider effects
-or control deliberately detached descendants. Apply and Publication still consume
-frozen approved outcomes; this does not make those stages background work.
+Materialization is serialized: review and execution never race with changing
+Approval or provider work. Interruption drains owned provider work before the
+session discards scratch state and releases its lock. It does not roll back
+completed effects or control deliberately detached descendants.
 
 For pull-only files, review or Approval lazily Captures frozen live evidence into
 the repository outcome. Capture does not read live again. Review shows the
 Primary Source Change (write, deletion, or none) authorized by Proposal Approval;
 live remains unchanged. Confirmation counts repository changes separately from
-live effects. JSON reports `primary_source_change` metadata separately from
-Publication `effects`, without exposing payload bytes.
+live effects. Structured output keeps repository changes separate from Publication Effects.
 
 Real execution applies approved repository outcomes through pull hooks before
 publishing approved live outcomes through push hooks. Pull-only work creates no
@@ -214,8 +214,8 @@ post-hook failure fails the operation without undoing a unit's convergence.
 
 ### Transactional Proposal Editor
 
-Press **E** from the workset or Proposal Review to deliberately edit a drifted
-file unit with a surviving route. One-sided policies permit this explicit
+Open the Proposal Editor from the workset or Proposal Review to deliberately
+edit a drifted file unit with a surviving route. One-sided policies permit this explicit
 repository edit, including deletion-only units; they still prohibit automatic
 flow in the forbidden direction. Observation failures and Guard-blocked units
 have no Editor. Dotman never launches an Editor automatically or in unattended
@@ -268,9 +268,8 @@ of a referencing Proposal's Converged result or Base acknowledgment.
 Successful rematerialization preserves standing Approval. Failed materialization
 clears only the affected Approval and leaves a typed diagnostic with local retry.
 Conflict, Capture failure, command failure and Editor cancellation remain
-distinct; none silently chooses another Resolution Intent. **T** retries failed
-materialization; **E** can retry an Editor attempt. During an Editor attempt, **Ctrl-C** cancels that attempt rather than aborting
-the session. Terminal Editors temporarily own the terminal and return to the same focused workset or review when finished.
+distinct; none silently chooses another Resolution Intent. Materialization and Editor attempts can be retried explicitly. Cancelling an
+Editor attempt preserves the session. Terminal Editors temporarily own the terminal and return to the same focused workset or review when finished.
 
 ### Frozen execution and partial failure
 
@@ -329,7 +328,7 @@ only approved frozen effects. An eligible unit acknowledges after its own last
 required effect, before later units or enclosing post-hooks; failure preserves
 the prior Base and does not undo earlier committed acknowledgments.
 
-## Session lifetime and current engine boundary
+## Session lifetime
 
 File-target and directory-child sessions support frozen Observation, push-only, pull-only and both-policy
 Proposals, Approval, review, preview, Repository Apply and Live Publication.
@@ -345,8 +344,7 @@ unsupported workset before mutation.
 
 Prompt file-symlink mode observes a regular referent. A write or mode-only
 publication replaces the declared leaf link with the frozen regular-file
-outcome, but requires the explicit `AuthorizeSymlinkReplacement` semantic
-command first (**L** in the deck). Authorization and Proposal Approval are
+outcome, but requires explicit live-link replacement authorization first. Authorization and Proposal Approval are
 separate; unattended execution rejects required authorization. Deletion unlinks
 the declared link without replacing or deleting its referent. Pull-only work
 never replaces a live link.
@@ -399,11 +397,9 @@ Exact live permission policy is not a Base payload.
 Guards narrow the available route for an operation, not Base eligibility.
 Changing between eligible policies preserves ancestry.
 
-Use `list sync-bases` to see usable ancestry, `info sync-base <sync-unit>` for
-metadata-only applicability, and `reset sync-base <sync-unit>` to discard one
-exact Base immediately under the manager lock. `doctor` reports aggregate
-corrupt/orphaned counts without identities or repair plans. Inspection never
-runs Observation or projections and never accesses Verification Records.
+Base inspection reports metadata and applicability without Observation,
+projections, or Verification Records. Exact reset discards one Base under the
+manager lock; doctor reports aggregate corrupt/orphaned counts without repair.
 See [public workflows](sync-base-storage.md#public-inspection-and-reset).
 
 ### Applicability and provenance
@@ -471,10 +467,6 @@ Returning a deleted identity to an eligible policy requires fresh establishment.
 
 Storage security, transactions, and inspection locking are documented in
 [Sync Base storage](sync-base-storage.md).
-
-See [endpoint convergence](sync-endpoints.md) for typed Missing, deletion-only,
-unsupported endpoint evidence, and approved no-write completion.
-
 
 ## Permanent Pull
 

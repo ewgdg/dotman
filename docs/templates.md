@@ -19,7 +19,7 @@ command = "dotman transform json base.json output.json --mode cleanup --selector
 
 Input must be a flat list of strings. Bare strings, mappings, tuples, nested lists, `null`, booleans, numbers, and lists containing non-strings fail with a Jinja render error instead of being coerced. Filter is available in command/string templates, file templates, and templated variable values.
 
-If you do not configure pull correctly, dotman cannot infer how to update the repo template from the rendered live file. It will fall back to writing or diffing against the rendered output, which can overwrite the template source with the wrong content.
+Raw Capture treats live bytes as repository representation; it cannot infer template source. Configure a suitable Capture or deliberately use the Proposal Editor before approving a template replacement.
 
 For a Jinja target, make the forward render explicit:
 
@@ -37,7 +37,7 @@ The shortcut is preferred in manifests. The explicit command form is mainly usef
 
 See [`repository.md`](./repository.md) for template var resolution.
 
-For pull, you usually also want:
+For Pull or live-to-repository-capable Sync, you usually also want:
 
 - `compare.repo = "render"`
 - `compare.live = "raw"`
@@ -111,7 +111,7 @@ That preset supplies default values for:
 - `compare.repo = "render"`
 - `compare.live = "raw"`
 
-If you want the same patch-first workflow but also want built-in interactive fallback when patch capture fails, use:
+To make the Jinja Proposal Editor available for deliberate editing alongside Patch Capture, use:
 
 - `preset = "jinja-patch-editor"`
 
@@ -162,14 +162,8 @@ compare.repo = "render"
 compare.live = "raw"
 
 [targets.profile.editor]
-run = '''
-dotman reconcile editor \
-  --review-repo-path "${DOTMAN_REVIEW_REPO_PATH:-$DOTMAN_REPO_PATH}" \
-  --review-live-path "${DOTMAN_REVIEW_LIVE_PATH:-$DOTMAN_LIVE_PATH}" \
-  --repo-path "$DOTMAN_REPO_PATH" \
-  --live-path "$DOTMAN_LIVE_PATH" \
-  --additional-source "$DOTMAN_PACKAGE_ROOT/files/env.core.sh"
-'''
+run = 'vim "$@"'
+additional_sources = ["files/env.core.sh"]
 io = "tty"
 ```
 
@@ -215,8 +209,8 @@ export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
   - auto-adds recursively discovered static template dependencies as editable sources
 - `editor = { run = "...", io = "tty" }`
   - required for full-screen editor workflows
-- `--additional-source ...`
-  - includes extra repo source files that also need to be editable, such as included partials
+- `editor.additional_sources = [...]`
+  - declares package-relative repository components to stage alongside the Primary Source
 
 ## When To Use `capture` vs `editor`
 
@@ -226,63 +220,27 @@ Use `capture = "patch"` when dotman can patch the canonical source automatically
 
 Use `editor` when a human needs to decide how the live change maps back to one or more template source files.
 
-If a target defines both `capture` and `editor`, dotman now tries `capture` first during pull execution and only falls back to `editor` when that capture step errors.
+Capture runs during Observation or lazy Proposal materialization, according to the comparison configuration. Failures remain visible and retryable; Dotman never launches Editor automatically. Open it deliberately to resolve a failed Capture or edit a healthy Proposal.
 
 Typical template target:
 
 - forward path: template source -> rendered live file
 - reverse path: `editor`, not blind file copy
 
-## Built-In `dotman reconcile editor`
+## Transactional editing
 
-`dotman reconcile editor` is the built-in low-level reconcile helper for template workflows.
+The configured Jinja Editor recursively discovers static dependencies. Declare
+dynamic dependencies with `editor.additional_sources`; custom Editors receive
+only staged editable paths through `"$@"`, not writable tracked sources.
+Saving rematerializes a Proposal for review. Shared Additional Source Changes
+have independent Approval; they do not become implicitly approved with a Sync
+Proposal.
 
-It is meant for cases where the live file is rendered output, but the repo stores editable source files.
-
-Use it like this inside `editor`:
-
-```sh
-dotman reconcile editor \
-  --review-repo-path "${DOTMAN_REVIEW_REPO_PATH:-$DOTMAN_REPO_PATH}" \
-  --review-live-path "${DOTMAN_REVIEW_LIVE_PATH:-$DOTMAN_LIVE_PATH}" \
-  --repo-path "$DOTMAN_REPO_PATH" \
-  --live-path "$DOTMAN_LIVE_PATH" \
-  --additional-source "$DOTMAN_PACKAGE_ROOT/files/env.core.sh"
-```
-
-Notes:
-
-- `--repo-path` is the main repo source file to edit
-- `--live-path` is the actual live file
-- `DOTMAN_REVIEW_REPO_PATH` is the repo-side file for the editor diff view; it should contain the result of applying `compare.repo` to the repo side
-- `DOTMAN_REVIEW_LIVE_PATH` is the live-side file for the editor diff view; it should contain the result of applying `compare.live` to the live side
-- `--review-repo-path` and `--review-live-path` tell `dotman reconcile editor` which two files to show in the diff view
-- `--additional-source` adds extra editable source files, usually included partials
-
-If your template uses `{% include %}`, shared fragments, or helper files, add them with `--additional-source`. Otherwise the editor flow only edits the top-level source file.
-
-## Built-In `editor = { type = "jinja" }` and `dotman reconcile jinja`
-
-`editor = { type = "jinja" }` is the shortcut form for the common Jinja editor workflow.
-
-It uses the same helper as:
-
-```sh
-dotman reconcile jinja \
-  --review-repo-path "${DOTMAN_REVIEW_REPO_PATH:-$DOTMAN_REPO_PATH}" \
-  --review-live-path "${DOTMAN_REVIEW_LIVE_PATH:-$DOTMAN_LIVE_PATH}" \
-  --repo-path "$DOTMAN_REPO_PATH" \
-  --live-path "$DOTMAN_LIVE_PATH"
-```
-
-The Jinja reconcile helper:
-
-- starts from `--repo-path`
-- recursively discovers static template dependencies
-- adds those files to the editor session the same way you would with repeated `--additional-source`
-- still uses the projected review files from `DOTMAN_REVIEW_REPO_PATH` and `DOTMAN_REVIEW_LIVE_PATH`
-
-Keep the explicit `dotman reconcile editor ... --additional-source ...` form when you need custom extra files or dynamic template references.
+Provider defaults, inheritance, staging order and command environment are owned
+by [repository configuration](repository.md#projection-and-editor-configuration).
+The standalone reconcile helpers and their exact arguments are documented in
+the [CLI reference](cli.md). They are low-level commands, not the Sync or Pull
+session lifecycle.
 
 ## Built-In `dotman render jinja`
 

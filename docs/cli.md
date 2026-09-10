@@ -1,6 +1,8 @@
 # dotman CLI Model
 
-This document captures the current command and selector direction for `dotman`.
+This reference owns command syntax, interaction, output, and exit status.
+See [Sync lifecycle](sync.md) for convergence semantics and
+[repository configuration](repository.md) for policy and provider syntax.
 
 ## Repos
 
@@ -28,8 +30,9 @@ This document captures the current command and selector direction for `dotman`.
 ## Confirmation and execution flags
 
 - `--json` switches command output to machine-readable JSON. It is a global option and must appear before the subcommand.
-- `--yes` skips yes/no confirmation prompts, but it does not auto-resolve ambiguous selector/profile menus.
-- Dotman also exports `DOTMAN_ASSUME_YES=1` to hooks during execution when `--yes` is active, otherwise `DOTMAN_ASSUME_YES=0`.
+- Global `--unattended` suppresses every menu, Editor, pager, and prompt throughout command behavior. It uses configured defaults and fails safely when a required decision cannot be resolved.
+- A missing terminal never implies consent. Without `--unattended`, an unavailable required interactive decision fails; `--json` selects output only and never authorizes execution.
+- Execution hooks receive `DOTMAN_UNATTENDED=1` under `--unattended`, otherwise `0`; planning Guards do not receive it.
 - `--run-noop` is meaningful for `push`, `pull`, and `sync`; Sync retains both surviving directional hook families.
 - `--run-noop` now feeds normal planning and selection instead of reviving hooks late in execution.
 - For the active operation, `--run-noop` temporarily treats pre/post hooks as noop-eligible, even if they do not declare `run_noop = true` in the manifest.
@@ -54,8 +57,17 @@ unattended, and non-terminal resolution fails rather than guessing.
 
 ## Sync
 
-`dotman [--config PATH] [--json] [--unattended] sync [-d | --dry-run] [--run-noop] [<tracked-scope> ...]`
-opens a one-shot session for file targets, Probe Work and retained hook-only work. The current convergence path supports
+```text
+dotman [--config PATH] [--json] [--unattended] [--file-symlink-mode MODE] [--dir-symlink-mode MODE] sync [-d | --dry-run] [--full-path] [--run-noop] [<tracked-scope> ...]
+```
+
+File-symlink modes are `prompt` (default) and `follow`; directory-symlink modes
+are `fail` (default) and `follow`. Global mode flags override manager configuration.
+`--full-path` shows unabridged paths in detail output; deck identities remain canonical.
+Resolution is chosen through policy defaults or the deck, not automation flags.
+
+Sync opens a one-shot session for file targets, independent directory children,
+Probe Work, Directory Root Work, and retained hook-only work. It supports
 push-only and deletion-only files with **Use repository**, pull-only files with
 **Use live**, and both-policy files with **Use repository**, **Use live**, or
 Base-backed **Merge**. Both-policy drift defaults to **Merge** with a usable Base;
@@ -79,7 +91,8 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   separates configured/effective policy, repository/live paths, frozen Pull Views,
   Base availability/provenance, Capture and Reconciliation, Primary Source Change
   authorization and exact Publication Effects.
-  `X` opens compact preview/execution confirmation; cancelling returns without
+  `X` opens one compact confirmation with selected units, repository changes,
+  live writes, and live deletions; cancelling returns without
   changing Approval, inclusion or focus. Real execution is offered only for valid,
   completed approved Proposals; confirming executes the already-reviewed set without
   further materialization. Review scroll position is retained per target; arrow keys,
@@ -110,14 +123,15 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   Review shows child executable changes with Git mode lines. Exact Path Rule
   chmod affects live publication only; it is not repository or Merge ancestry.
   Controls and exclusions apply symmetrically even for an exact child scope.
-- `--unattended` explicitly selects supported Proposals and auxiliary work and confirms execution.
+- `--unattended` uses policy defaults, selects every eligible Proposal, Additional Source Change and auxiliary row, materializes that set, and confirms execution.
   Missing terminals and `--json` do not grant consent. Required interactive
   decisions without a terminal fail rather than selecting work implicitly.
-  A workset containing unsupported drift is rejected before mutation, rather
-  than executing only its supported subset.
+  Ambiguity, unsafe symlink decisions, conflicts, Observation or materialization
+  failures, and unsatisfied structural closure fail before mutation.
 - `--dry-run` reports frozen approved outcomes without hooks, managed writes,
-  snapshots, Base acknowledgment or cleanup. Use `--unattended` to select the
-  supported set for a noninteractive preview.
+  snapshots, Base acknowledgment or cleanup. Interactive preview uses the normal Command Deck. Unattended preview
+  selects and materializes all eligible work using policy defaults, reports frozen
+  effects without confirmation, and fails if any blocker makes it unexecutable.
 - Active Probe Work has no Proposal, Approval, Base or Converged result. Its
   selection activates only Guard-surviving hook families. Hook-only rows show
   canonical scope with `(pull-hooks)` or `(push-hooks)`, never a file identity
@@ -127,9 +141,11 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   outcome and leaves live unchanged. Confirmation counts repository changes
   separately from live effects. Even a no-write drift resolution requires Approval
   and successful Base acknowledgment to become Converged.
-- JSON emits one final document containing operation, mode, status, scope,
-  summary, Sync Units, auxiliary/source work categories and stages. It reports
-  evidence and effect metadata, never file content bytes or private workspaces.
+- JSON emits one clean final document with `operation`, `mode`, `status`,
+  `scope`, `summary`, `sync_units`, `additional_source_changes`, `probe_work`,
+  `directory_root_work`, `hook_work`, and `stages`. Hook output is captured
+  so stdout remains valid JSON. It reports
+  evidence and effect metadata, never file content bytes, temporary paths, workspaces, handles, or private plans.
   Stage outcomes preserve the failed step and the ordered unattempted tail
   (`status: unattempted`, `skip_reason: earlier-failure`). Units with successful
   repository changes but unattempted live work report `not-converged`, rather
@@ -143,7 +159,7 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   `resolution` reports `editor` for an Edited Proposal and `generation` identifies
   the materialized generation. Top-level `additional_source_changes`
   contains canonical `row_id`, `repo`, repository-relative `path`, `approved`,
-  reverse `references`, change `kind`, `bytes`, `result` and `diagnostics`.
+  reverse `references`, change `kind`, byte count `bytes` (not content), `result` and `diagnostics`.
   Each unit's `additional_source_changes` lists its canonical source row IDs.
   Source execution outcomes are separate from unit convergence. Candidate bytes
   enter referencing previews and the final execution set only while approved.
@@ -155,8 +171,14 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   successful real-operation acknowledgment of a Converged Base-Eligible unit.
   Execution outcomes identify their repository, package instance or target scope
   canonically, including failed hooks whose units already converged.
-- Exit codes are `0` for healthy completion, `1` for blocked or failed work or
-  an unavailable required decision, `2` for invalid syntax, and `130` for abort.
+- Human output distinguishes direct agreement, convergence, deliberately pending
+  work, and failures; summaries count repository changes, live writes and deletions,
+  and selected auxiliary work separately.
+- Exit `0` means healthy completion, including deliberately unselected healthy
+  interactive rows. Exit `1` covers Observation, materialization, blocking,
+  unattended-decision, execution, or incomplete-convergence failure. Partial
+  convergence with any failure exits `1`. Exit `2` means invalid syntax;
+  exit `130` means interruption or explicit abort.
 
 Examples:
 
@@ -289,7 +311,7 @@ Restore and unrelated state commands are outside this lock.
 - `push` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
 - Plain `push` should perform real execution after planning, interactive exclusion, and diff review.
 - `push` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
-- `push` should accept `--yes` for the confirmation prompts that already have a safe default.
+- Global `--unattended` uses safe configured defaults for Push and rejects unresolved decisions without prompting.
 - `push` should accept `--run-noop` so hook-bearing packages still execute when the finalized selected plan has only noop target steps.
 - `push <selector>` should resolve only within tracked package state and reuse the tracked profile instead of prompting for a fresh profile.
 - Because groups are not tracked identities, tracked-package-state selector lookup for `push`, `pull`, `info tracked`, and `untrack` should resolve against tracked packages, not historical group names.

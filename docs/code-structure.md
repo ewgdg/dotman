@@ -1,6 +1,8 @@
 # dotman Code Structure
 
-This document records the current code-organization intent at a high level.
+This document owns contributor module orientation. [Sync lifecycle](sync.md)
+owns behavior, [CLI](cli.md) owns the external command contract, and
+[repository configuration](repository.md) owns schema and provider rules.
 
 It is guidance, not a promise that every internal module name or boundary is permanent.
 
@@ -73,6 +75,8 @@ Current responsibility split:
 - `sync_directory.py` — symmetric control-aware census and identity-derived child metadata; no aggregate payload or publication
 - `projection.py` — shared frozen Render, Capture and comparison providers plus Push file/directory action planning through `ProjectionContext`
 - `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
+- `sync_reconciliation.py` — typed three-way repository reconciliation from frozen Base, repository, and Capture evidence
+- `sync_path_policy.py` — endpoint traversal, live-link interpretation, and execution-time path safety
 - `sync_session.py` — shared Proposal workset, immutable views, semantic commands, transactional Approval and Sync convergence orchestration
 - `pull_session.py` — fixed live-to-repository Observation, opt-out Proposal/Additional Approval and repository-only completion over the shared workset
 - `execution.py` — Push execution and the shared command-hook execution boundary
@@ -193,12 +197,13 @@ Planning passes the engine's runtime explicitly while evaluating guards, probes,
 
 `src/dotman/operation_runner.py` is the operation-level mutation boundary.
 
-- Sync execution builds one session, owns one sudo lease scope, emits ordered repo/package/step events, and preserves command-runtime streaming, TTY, interruption, and exit behavior.
+- Push execution builds one execution session, owns one sudo lease scope, emits ordered repo/package/step events, and preserves command-runtime streaming, TTY, interruption, and exit behavior.
+- Sync and Pull use their process-local Proposal sessions and shared destination stages rather than this plan runner.
 - Push snapshots are created lazily before the first live mutation, finalized once, and pruned only after final status is durable.
 - Restore executes visible actions in order, stops at the first failure, records successful restore metadata, and emits typed action events/results.
 - Human and JSON output policy is selected at CLI composition. JSON consumes no progress events and emits one final result document.
 
-Planning is package-centric now:
+Planning is package-centric:
 
 - selector queries and tracked package entries resolve into `ResolvedPackageSelection`
 - execution/review/snapshot flows consume `OperationPlan.package_plans`
@@ -214,6 +219,22 @@ Before adding more logic to `cli.py` or `engine.py`, ask:
 - Or is it a focused responsibility that belongs in a dedicated module?
 
 Prefer the dedicated module unless there is a strong reason not to.
+
+## Session orchestration boundary
+
+Static resolution belongs to `sync_scope.py`: tracked selectors, profile and
+dependency expansion, ownership, and collisions are settled before a session
+opens. `SyncSession` and `PullSession` retain distinct orchestration over shared
+frozen observation/projection, transactional sources, review, repository writes,
+path safety, and Base storage mechanics. Do not move workflow semantics into a
+pervasive `sync | pull` branch in those shared modules.
+
+`sync_deck_command.py` owns CLI consent, unattended default selection, output,
+and exit mapping. The deck consumes immutable public views and semantic commands;
+it owns focus, keybindings, menus and presentation, never private execution plans.
+JSON is an output choice, not authorization. Providers and hooks use the shared
+Command Runtime so unattended execution cannot accidentally fall into terminal
+interaction and JSON stdout contains only the final result.
 
 ## SyncSession clients
 
@@ -247,8 +268,8 @@ inclusion authorizes only retained directional hooks.
 
 `sync_capture.py` materializes Use live from frozen endpoints and comparison
 evidence through shared projection and patch mechanics. A Capture-backed comparison
-is reused rather than run again. `sync_repository_apply.py` applies approved
-Primary Source outcomes through pull hooks without accessing live state or
+is reused rather than run again. `sync_repository_apply.py` applies independently approved Additional Source
+Changes before exclusive Proposal-owned Primary Source outcomes through pull hooks without accessing live state or
 snapshots. Units without required live effects complete at their ordered position
 before the enclosing post-hook; the session uses
 the shared Base lifecycle with frozen committed Git facts to acknowledge eligible

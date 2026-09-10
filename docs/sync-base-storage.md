@@ -214,9 +214,10 @@ unexcluded directory children lose existing Bases. Eligible units and unrelated
 package selections remain untouched; missing or failed child discovery never
 proves a stored identity obsolete. Cleanup does not create a missing Base store.
 
-Dry-run and ordinary engine planning remain read-only. Push acknowledgment and
-full Pull convergence/Base wiring are not implemented by this maintenance path;
-they remain existing integration gaps, with Pull assigned to issue #77.
+Dry-run and ordinary engine planning remain read-only. Cleanup never
+acknowledges ancestry. Successful eligible Push publication and fresh direct
+agreement use the shared [Base lifecycle](sync.md#acknowledgment-and-completion);
+changed Pull does not acknowledge convergence.
 
 Exact reset opens an existing store without creation: missing database or lock
 artifacts are failures, not permission to reconstruct storage. Doctor and info

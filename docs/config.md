@@ -1,6 +1,8 @@
 # dotman Config
 
-This document captures the user-level dotman manager configuration.
+This reference owns user-level manager configuration. See
+[repository configuration](repository.md) for package policy and providers,
+[CLI](cli.md) for per-run overrides, and [Sync lifecycle](sync.md) for behavior.
 
 ## Config Path
 
@@ -19,7 +21,6 @@ This document captures the user-level dotman manager configuration.
 - If `state_key` is omitted, dotman should default it to the repo name.
 - Dotman should derive the repo state dir as `$XDG_STATE_HOME/dotman/repos/<state_key>/`.
 - `state_key` must be a non-empty simple key and must not contain path separators or use `.` / `..`.
-- Legacy `state_path` is not supported. Migrate tracked package entries into the derived `$XDG_STATE_HOME/dotman/repos/<state_key>/` path instead.
 - Repo names should be treated as stable identifiers, because dotman also uses the repo name to locate per-repo local overrides under XDG config.
 
 ## Local Overrides
@@ -51,12 +52,12 @@ This document captures the user-level dotman manager configuration.
 - `file_symlink_mode` defaults to `prompt` and accepts `prompt` or `follow`.
 - `dir_symlink_mode` defaults to `fail` and accepts `fail` or `follow`.
 - CLI flags `--file-symlink-mode` and `--dir-symlink-mode` should override the config file for a single run.
-- `prompt` means file symlinks can be replaced interactively; non-interactive runs still fail fast.
+- `prompt` requires explicit authorization when publication must replace a file symlink. Unattended runs cannot grant it. Deletion unlinks the leaf without deleting its referent; repository-only work does not replace it.
 - `follow` means dotman manages the resolved target instead of the symlink itself.
 
 ## Snapshots
 
-- Snapshot config is manager-level and applies to real `push` execution across the whole dotman run, even when that run spans multiple repos.
+- Snapshot config is manager-level and applies to real Push and Sync live publication across the whole dotman run, even when that run spans multiple repos.
 - Snapshot settings should be declared under `[snapshots]`.
 - `enabled` is optional and defaults to `true`.
 - `path` is optional and overrides the snapshot storage root.

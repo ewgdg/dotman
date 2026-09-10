@@ -84,7 +84,9 @@ For a larger real-world example repo, see [ewgdg/dotfiles](https://github.com/ew
 - Sync lifecycle and Bases: [`docs/sync.md`](docs/sync.md)
 - CLI behavior: [`docs/cli.md`](docs/cli.md)
 - User config: [`docs/config.md`](docs/config.md)
-- Repository layout: [`docs/repository.md`](docs/repository.md)
+- Contributor architecture: [`docs/code-structure.md`](docs/code-structure.md)
+- Domain vocabulary: [`CONTEXT.md`](CONTEXT.md)
+- Repository configuration: [`docs/repository.md`](docs/repository.md)
 - Template targets: [`docs/templates.md`](docs/templates.md)
 
 ## Features
