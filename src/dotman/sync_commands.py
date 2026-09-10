@@ -125,7 +125,7 @@ class SyncCommandRunner:
             operation=operation,
             json_output=args.json_output,
             full_paths=full_paths,
-            assume_yes=unattended,
+            unattended=unattended,
         ):
             cli_interaction.emit_interrupt_notice()
             return INTERRUPTED_EXIT_CODE
@@ -152,7 +152,7 @@ class SyncCommandRunner:
                 plans=plans,
                 json_output=args.json_output,
                 full_paths=full_paths,
-                assume_yes=unattended,
+                unattended=unattended,
             )
             if prepared_plans is None:
                 cli_interaction.emit_interrupt_notice()
@@ -182,7 +182,7 @@ class SyncCommandRunner:
             actions=actions,
             json_output=args.json_output,
             full_paths=full_paths,
-            assume_yes=getattr(args, "unattended", False),
+            unattended=getattr(args, "unattended", False),
         ):
             cli_interaction.emit_interrupt_notice()
             return INTERRUPTED_EXIT_CODE

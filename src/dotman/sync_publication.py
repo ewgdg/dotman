@@ -12,6 +12,7 @@ from dotman.sync_path_policy import SyncPathError
 from dotman import file_access
 from dotman.command_runtime import INTERRUPTED_EXIT_CODE, CommandRuntime, command_runtime_session, current_command_runtime
 from dotman.elevation import elevation_broker_session
+from dotman.interaction_policy import interaction_scope
 from dotman.execution import ExecutionStep, ExecutionStepResult, _execute_step
 from dotman.models import HookPlan, PackagePlan, ResolvedSyncTarget, SnapshotConfig, TargetPlan, package_ref_text
 from dotman.planning import PackagePlanningInput, plan_hooks, plan_repo_hooks
@@ -397,7 +398,7 @@ def execute_publication(
     steps, snapshot, error, interrupted = [], None, None, False
     snapshot_started = False
     effect_positions = {unit.row_id: 0 for unit in units}
-    with elevation_broker_session(), command_runtime_session(command_runtime or current_command_runtime()):
+    with interaction_scope(unattended=unattended), elevation_broker_session(), command_runtime_session(command_runtime or current_command_runtime()):
         for index, step in enumerate(planned):
             unit = None if step.kind == "hook" else by_identity[_target_identity(step.package_plan, step.target_plan)]
             try:

@@ -248,7 +248,7 @@ def test_push_execute_replaces_symlinked_target_and_restore_restores_link(
 
     answers = iter(["y"])
     monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
-    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False, assume_yes=False: True)
+    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False, unattended=False: True)
     monkeypatch.setattr(
         cli,
         "filter_plans_for_interactive_selection",
@@ -340,7 +340,7 @@ def test_push_execute_replaces_broken_symlink_and_restore_restores_link(
 
     answers = iter(["y"])
     monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
-    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False, assume_yes=False: True)
+    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False, unattended=False: True)
     monkeypatch.setattr(
         cli,
         "filter_plans_for_interactive_selection",

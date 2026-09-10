@@ -9,6 +9,7 @@ from typing import Callable, Sequence
 from dotman import file_access
 from dotman.command_runtime import CommandRuntime, command_runtime_session, current_command_runtime
 from dotman.elevation import elevation_broker_session
+from dotman.interaction_policy import interaction_scope
 from dotman.execution import ExecutionStepResult, _execute_step, directory_synced_file_mode
 from dotman.atomic_files import default_created_file_mode
 from dotman.models import PackagePlan, ResolvedSyncTarget, TargetPlan
@@ -106,7 +107,7 @@ def execute_repository_apply(
     if blocked:
         return PublicationResult(tuple(results.values()), steps=unattempted_steps(planned))
     steps, error, interrupted = [], None, False
-    with elevation_broker_session(), command_runtime_session(command_runtime or current_command_runtime()):
+    with interaction_scope(unattended=unattended), elevation_broker_session(), command_runtime_session(command_runtime or current_command_runtime()):
         for index, step in enumerate(planned):
             unit = None if step.kind == "hook" else by_identity[_target_identity(step.package_plan, step.target_plan)]
             try:

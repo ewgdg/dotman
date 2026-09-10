@@ -285,7 +285,7 @@ def test_run_basic_reconcile_reports_no_changes_when_editor_makes_no_edits(
 
 
 
-def test_run_basic_reconcile_accepts_assume_yes_without_prompting(
+def test_run_basic_reconcile_accepts_approve_write_without_prompting(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -302,7 +302,7 @@ def test_run_basic_reconcile_accepts_assume_yes_without_prompting(
     monkeypatch.setattr(
         reconcile_module,
         "prompt",
-        lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run when assume_yes is set")),
+        lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run when approve_write is set")),
     )
 
     exit_code = run_basic_reconcile(
@@ -310,7 +310,7 @@ def test_run_basic_reconcile_accepts_assume_yes_without_prompting(
         live_path=str(live_path),
         additional_sources=[],
         editor="nvim",
-        assume_yes=True,
+        approve_write=True,
     )
 
     assert exit_code == 0
@@ -420,7 +420,7 @@ def test_shell_editor_receives_primary_as_first_positional_argument(tmp_path: Pa
         additional_sources=[],
         editor='printf edited > "$1"',
         editor_io="pipe",
-        assume_yes=True,
+        approve_write=True,
     ) == 0
 
     assert repo_path.read_text() == "edited"
@@ -446,7 +446,7 @@ def test_shell_editor_receives_only_sources_in_primary_then_additional_order(
             'i=$((i + 1)); done'
         ),
         editor_io="pipe",
-        assume_yes=True,
+        approve_write=True,
     ) == 0
 
     assert [source.read_text() for source in sources] == ["edited 0", "edited 1", "edited 2"]

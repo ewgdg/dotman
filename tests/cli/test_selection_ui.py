@@ -1189,16 +1189,16 @@ def test_confirm_push_symlink_replacement_requires_explicit_answer(monkeypatch, 
     assert capsys.readouterr().err.count("invalid confirmation: enter 'y' or 'n'") == 1
 
 
-def test_confirm_review_continue_skips_prompt_when_assume_yes(monkeypatch) -> None:
+def test_confirm_review_continue_skips_prompt_when_unattended(monkeypatch) -> None:
     monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
 
-    assert cli.confirm_review_continue(assume_yes=True) is True
+    assert cli.confirm_review_continue(unattended=True) is True
 
 
-def test_confirm_push_symlink_replacement_skips_prompt_when_assume_yes(monkeypatch) -> None:
+def test_confirm_push_symlink_replacement_skips_prompt_when_unattended(monkeypatch) -> None:
     monkeypatch.setattr(cli, "prompt", lambda _message: (_ for _ in ()).throw(AssertionError("prompt should not run")))
 
-    assert cli.confirm_push_symlink_replacement(assume_yes=True) is True
+    assert cli.confirm_push_symlink_replacement(unattended=True) is True
 
 
 def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) -> None:

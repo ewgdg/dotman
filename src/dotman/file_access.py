@@ -20,6 +20,8 @@ from dotman.command_runtime import (
     raise_for_command_interruption,
 )
 
+from dotman.interaction_policy import unattended_enabled
+
 _SUDO_KEEPALIVE_INTERVAL_SECONDS = 30
 _PRIVILEGED_HELPER_MODULE = "dotman.privileged_ops"
 
@@ -45,12 +47,19 @@ class _SudoLease:
                     self._keepalive_thread.start()
                 return
             self.close()
-        _emit_sudo_notice(reason)
+        unattended = unattended_enabled()
+        if not unattended:
+            _emit_sudo_notice(reason)
         result = self._runtime.run(
-            CommandRequest(command=ArgvCommand(("sudo", "-v")), io="tty")
+            CommandRequest(
+                command=ArgvCommand(("sudo", "-n", "-v") if unattended else ("sudo", "-v")),
+                io="pipe" if unattended else "tty",
+            )
         )
         raise_for_command_interruption(result)
         if result.exit_code != 0:
+            if unattended:
+                raise ValueError("sudo authentication unavailable in unattended mode")
             raise PermissionError("sudo authentication failed")
         self._acquired = True
         self._keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True)

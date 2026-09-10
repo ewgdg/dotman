@@ -5,8 +5,6 @@ import shlex
 import shutil
 import sys
 from collections.abc import Callable, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -30,6 +28,7 @@ from dotman.diff_review import (
 )
 from dotman.engine import DotmanEngine
 from dotman.interaction import Interaction
+from dotman.interaction_policy import interaction_scope, unattended_enabled
 from dotman.models import (
     FullSpecSelector,
     OperationPlan,
@@ -603,8 +602,8 @@ def _prompt_yes_no(message: str, *, default: bool | None = None) -> bool:
         print("invalid confirmation: enter 'y' or 'n'", file=sys.stderr)
 
 
-def confirm_review_continue(*, assume_yes: bool = False) -> bool:
-    if assume_yes:
+def confirm_review_continue(*, unattended: bool = False) -> bool:
+    if unattended:
         return True
     return _prompt_yes_no(review_continue_prompt(), default=True)
 
@@ -633,32 +632,20 @@ def print_review_command_help() -> None:
     print('  "?"        show this help')
 
 
-_unattended = ContextVar("unattended", default=False)
-
-
-@contextmanager
-def interaction_scope(*, unattended: bool):
-    token = _unattended.set(unattended)
-    try:
-        yield
-    finally:
-        _unattended.reset(token)
-
-
 class InteractionRequiredError(ValueError):
     """Execution requires a decision unavailable in this invocation."""
 
 
 def interactive_mode_enabled(*, json_output: bool) -> bool:
-    return not _unattended.get() and not json_output and sys.stdin.isatty()
+    return not unattended_enabled() and not json_output and sys.stdin.isatty()
 
 
 def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
     return _prompt_yes_no(partial_match_confirmation_prompt(candidate_label=candidate_label))
 
 
-def confirm_push_symlink_replacement(*, assume_yes: bool = False) -> bool:
-    if assume_yes:
+def confirm_push_symlink_replacement(*, unattended: bool = False) -> bool:
+    if unattended:
         return True
     return _prompt_yes_no(push_symlink_replacement_prompt())
 
@@ -1827,7 +1814,7 @@ def run_diff_review_menu(
     *,
     operation: str,
     full_paths: bool | None = None,
-    assume_yes: bool = False,
+    unattended: bool = False,
 ) -> bool:
     full_paths = _effective_full_paths(full_paths)
     print_review_menu_items(review_items, operation=operation, full_paths=full_paths)
@@ -1867,7 +1854,7 @@ def run_diff_review_menu(
         if command_name == "next":
             selected_index = 0 if last_viewed_index is None else last_viewed_index + 1
             if selected_index >= len(review_items):
-                if confirm_review_continue(assume_yes=assume_yes):
+                if confirm_review_continue(unattended=unattended):
                     return True
                 continue
         if selected_index is None:
@@ -1896,7 +1883,7 @@ def review_plans_for_interactive_diffs(
     operation: str,
     json_output: bool,
     full_paths: bool | None = None,
-    assume_yes: bool = False,
+    unattended: bool = False,
 ) -> bool:
     full_paths = _effective_full_paths(full_paths)
     if not interactive_mode_enabled(json_output=json_output):
@@ -1904,7 +1891,7 @@ def review_plans_for_interactive_diffs(
     review_items = build_review_items(plans, operation=operation)
     if not review_items:
         return True
-    return run_diff_review_menu(review_items, operation=operation, full_paths=full_paths, assume_yes=assume_yes)
+    return run_diff_review_menu(review_items, operation=operation, full_paths=full_paths, unattended=unattended)
 
 
 def _push_symlink_hazard_description(hazard: cli_emit.PushSymlinkHazard, *, full_paths: bool | None) -> str:
@@ -1923,7 +1910,7 @@ def prepare_push_plans_for_execution(
     plans: OperationPlan,
     json_output: bool,
     full_paths: bool | None = None,
-    assume_yes: bool = False,
+    unattended: bool = False,
 ) -> OperationPlan | None:
     full_paths = _effective_full_paths(full_paths)
     hazards = cli_emit.collect_push_live_symlink_hazards(plans)
@@ -1950,12 +1937,12 @@ def prepare_push_plans_for_execution(
             )
         raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
 
-    if assume_yes:
+    if unattended:
         raise InteractionRequiredError(f"unsafe symlink decision in unattended mode: {hazard_descriptions}")
     if not interactive:
         raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
 
-    if not confirm_push_symlink_replacement(assume_yes=assume_yes):
+    if not confirm_push_symlink_replacement(unattended=unattended):
         return None
     return cli_emit.allow_push_live_symlink_replacements(plans)
 
@@ -2001,7 +1988,7 @@ def review_restore_actions_for_interactive_diffs(
     actions: Sequence[RestoreAction],
     json_output: bool,
     full_paths: bool | None = None,
-    assume_yes: bool = False,
+    unattended: bool = False,
 ) -> bool:
     full_paths = _effective_full_paths(full_paths)
     if not interactive_mode_enabled(json_output=json_output):
@@ -2009,7 +1996,7 @@ def review_restore_actions_for_interactive_diffs(
     review_items = build_restore_review_items(snapshot, actions)
     if not review_items:
         return True
-    return run_diff_review_menu(review_items, operation="restore", full_paths=full_paths, assume_yes=assume_yes)
+    return run_diff_review_menu(review_items, operation="restore", full_paths=full_paths, unattended=unattended)
 
 
 

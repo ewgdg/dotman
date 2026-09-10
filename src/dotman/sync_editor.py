@@ -95,7 +95,7 @@ def edit_sources(*, observation, proposal, metadata, repo_root, preimages, addit
                 repo_path=str(primary), live_path=str(live),
                 additional_sources=[str(staged(path)) for path in sources],
                 editor=metadata.editor.run if metadata.editor.type is None else None,
-                assume_yes=True, review_repo_bytes=observation.comparison_repository.content
+                approve_write=True, review_repo_bytes=observation.comparison_repository.content
                 if isinstance(observation.comparison_repository, (FilePresent, DirectoryChildPresent)) else b'',
                 review_live_bytes=observation.comparison_live.content
                 if isinstance(observation.comparison_live, (FilePresent, DirectoryChildPresent)) else b'',

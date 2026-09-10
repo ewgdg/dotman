@@ -112,7 +112,7 @@ class StateCommandRunner:
             use_color=self._use_color,
         ).resolve(
             args.binding,
-            assume_yes=getattr(args, "unattended", False),
+            unattended=getattr(args, "unattended", False),
         )
         if resolution.disposition == "kept":
             return cli_emit.emit_kept_package_entry(
@@ -205,7 +205,7 @@ class StateCommandRunner:
             if not resolver.confirm_manifest_write(
                 repo_name=repo_name,
                 package_id=package_id,
-                assume_yes=getattr(args, "unattended", False),
+                unattended=getattr(args, "unattended", False),
             ):
                 return cli_emit.emit_kept_add_result(
                     repo_name=repo_name,

@@ -207,6 +207,10 @@ class ProductionCommandRuntime(_CancellationLatch):
     @command_operation()
     def run(self, request: CommandRequest) -> CommandResult:
         self.check_cancelled()
+        from dotman.interaction_policy import unattended_enabled
+
+        if request.io == "tty" and unattended_enabled():
+            raise ValueError("TTY commands are unavailable in unattended mode")
         command, request_env = self.elevation.prepare(
             request.command,
             request.env,
