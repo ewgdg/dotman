@@ -945,5 +945,5 @@ def test_pull_cli_run_noop_executes_only_pull_hooks(tmp_path, monkeypatch, capsy
 
     payload = json.loads(capsys.readouterr().out)
     assert [step["action"] for step in payload["stages"]] == ["pre_pull", "post_pull"], payload
-    assert all(step["status"] == "completed" for step in payload["stages"])
+    assert all(step["status"] == "ok" for step in payload["stages"])
     assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"same"

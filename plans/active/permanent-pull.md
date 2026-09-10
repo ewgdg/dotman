@@ -64,3 +64,11 @@ Additional input alignment and editing. Run affected suites after focused checks
   Failures were stale CLI Pull selector/result/editor expectations, obsolete help
   syntax, and a UI fixture missing the now-required session operation.
   Porting those assertions/fixtures before final affected validation.
+
+- CLI execution ports exposed a real auxiliary-selection bug: unattended
+  `pull --run-noop` skipped its retained hooks because Pull never selected
+  Auxiliary rows. Regression failed before the fix. Pull now starts eligible
+  Probe/hook work selected alongside its opt-out Proposals, without batch
+  reapproval that could retry failed materializations. Explicit exclusion still
+  works; shared Sync opt-in behavior is unchanged.
+- Pull session/CLI execution/deck plus shared auxiliary validation: 73 passed.

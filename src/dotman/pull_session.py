@@ -22,12 +22,17 @@ class PullSession(ProposalSession):
         return ()
 
     def _prepare_workset(self):
+        # Pull is opt-out for auxiliary work too; unattended execution must not
+        # reapprove the whole workset and thereby retry failed Proposals.
         self._view = replace(self.view, operation="pull", rows=tuple(
             replace(row, approved=row.kind == "drift", intent=None,
                     allowed_intents=(), fallback_reason=None,
                     allowed_commands=tuple(command for command in row.allowed_commands
                                            if command != "set-resolution-intent"))
-            if isinstance(row, SessionRow) else row
+            if isinstance(row, SessionRow)
+            else replace(row, included=True)
+            if isinstance(row, AuxiliaryRow) and "set-included" in row.allowed_commands
+            else row
             for row in self.view.rows
         ))
         self._invalidate_inputs({row.row_id for row in self.view.rows if isinstance(row, SessionRow)},

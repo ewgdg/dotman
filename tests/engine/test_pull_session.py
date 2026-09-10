@@ -193,3 +193,28 @@ def test_pull_capture_is_reused_across_reviews_and_execution(tmp_path, monkeypat
         assert session.execute().result.units[0].status == "applied"
         assert len(captures) == 1
     assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"captured"
+
+
+@pytest.mark.parametrize("probe", [False, True])
+@pytest.mark.parametrize("include", [False, True])
+def test_pull_auxiliary_work_starts_selected_and_can_be_excluded(tmp_path, monkeypatch, probe, include):
+    from dotman.sync_session import AuxiliaryRow, SetIncluded
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"same", b"same", "")])
+    marker = tmp_path / "hook"
+    manifest = tmp_path / "repo/packages/app/package.toml"
+    if probe:
+        manifest.write_text(
+            'id = "app"\n[targets.probe]\nprobe = "true"\n'
+            f'[targets.probe.hooks]\npre_pull = "touch {marker}"\npre_push = "exit 9"\n'
+        )
+    else:
+        manifest.write_text(manifest.read_text() + f'\n[hooks]\npre_pull = "touch {marker}"\npre_push = "exit 9"\n')
+    from dotman.engine import DotmanEngine
+    engine = DotmanEngine.from_config_path(tmp_path / "config.toml")
+    with engine.open_pull_session(engine.resolve_sync_scope(), run_noop=not probe) as session:
+        row, = session.view.rows
+        assert isinstance(row, AuxiliaryRow) and row.included
+        assert row.directions == ("pull",)
+        session.dispatch(SetIncluded(session.view.session_id, session.view.revision, row.row_id, include))
+        assert session.execute().result.status == "completed"
+    assert marker.exists() == include

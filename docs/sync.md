@@ -482,6 +482,7 @@ Pull uses the same Observation, frozen projection cache, Proposal review,
 transactional Editor, canonical Additional Source Changes and repository Apply
 as Sync. Its direction is fixed live-to-repository: drifted Proposals and new
 Additional changes start approved, with no Resolution Intent or Merge.
+Active Probe and retained hook work also start selected and may be excluded.
 Unapproval changes provider inputs to their frozen originals and rematerializes
 approved dependants; unapproved dependants stay lazy.
 

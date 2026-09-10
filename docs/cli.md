@@ -354,7 +354,8 @@ Merge choice and never publishes to live paths.
 - Noninteractive execution requires global `--unattended` and aborts before Apply
   if an initially approved unit fails. This also applies to preview.
 - `-d` / `--dry-run` runs frozen planning and review without repository Apply.
-  `--run-noop` retains eligible auxiliary hook work.
+  `--run-noop` retains eligible auxiliary hook work. Active Probes and retained
+  hook work start selected and can be opted out in the deck.
 - Only pull Guards and hooks run. Guard exit 100 omits its scope before Observation.
   Apply is fail-fast and nontransactional: completed writes survive later failure,
   and remaining work is reported skipped. Pull creates no live snapshot.
