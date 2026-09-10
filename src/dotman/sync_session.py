@@ -452,6 +452,7 @@ SessionEventSink = Callable[[SessionEvent], None]
 class ProposalSession:
     """Shared frozen workset, editing, approval and command lifecycle."""
 
+    operation = "sync"
     additional_default_approval = False
 
     @staticmethod
@@ -518,6 +519,7 @@ class ProposalSession:
                 if unit.state != "directly-in-sync" or unit.diagnostics
             ) + auxiliary,
             ("batch-set-approval", "preview", "abort") if preview else ("batch-set-approval", "preview", "execute", "abort"),
+            operation=self.operation,
         )
 
     @classmethod
@@ -537,9 +539,10 @@ class ProposalSession:
                     lock = resources.enter_context(
                         OperationLock.acquire(context.tracked_state.state_root)
                     )
-                resolved_inputs = _resolve_inputs(context, scope)
+                resolved_inputs = _resolve_inputs(context, scope, operation=cls.operation)
                 observed = cls._observe(
                     context, scope, preview=preview, run_noop=run_noop, resolved_inputs=resolved_inputs,
+                    operation=cls.operation,
                 )
                 observations = observed.observations
 

@@ -138,6 +138,8 @@ _ResolvedInputs = dict[
 def _resolve_inputs(
     context: planning.PlanningContext,
     scope: ResolvedSyncScope,
+    *,
+    operation: str = "sync",
 ) -> tuple[_ResolvedInputs, dict[str, list[planning.PackagePlanningInput]]]:
     selected = {replace(target, child_path=None) for target in scope.targets}
     inputs = {}
@@ -156,7 +158,11 @@ def _resolve_inputs(
             for entry in metadata:
                 if entry.target.target_type is None and (entry.repo_path.is_dir() or entry.live_path.is_dir()):
                     entry = replace(entry, target=replace(entry.target, target_type="directory"))
-                inputs.setdefault(_identity(entry), (item, entry))
+                # Provider identity belongs to the invoking workflow, not the
+                # direction that happened to supply this unit's metadata.
+                # Keep directional candidates unchanged for Guards and hooks.
+                provider = replace(entry, command_env={**entry.command_env, "DOTMAN_OPERATION": operation})
+                inputs.setdefault(_identity(entry), (item, provider))
             # Empty selected scopes may retain independently noop-eligible hooks.
             narrowed.append(replace(item, target_metadata=metadata))
         directional[direction] = narrowed
@@ -366,10 +372,10 @@ def observe_scope(
     resolved_inputs: tuple[_ResolvedInputs, dict[str, list[planning.PackagePlanningInput]]] | None = None,
     directions: tuple[str, ...] = ("push", "pull"),
     read_bases: bool = True,
-    base_operation: str = "sync",
+    operation: str = "sync",
     omit_no_route: bool = False,
 ) -> ObservedScope:
-    inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(context, scope)
+    inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(context, scope, operation=operation)
     def participates(metadata):
         policy = resolve_sync_policy(package=metadata.package, target=metadata.target)
         return any(sync_policy_allows_operation(policy, operation=direction) for direction in directions)
@@ -499,7 +505,7 @@ def observe_scope(
                     lifecycles[identity.repo] = SyncBaseLifecycle(
                         store,
                         git,
-                        operation=base_operation,
+                        operation=operation,
                         preview=preview,
                     )
             lifecycle = lifecycles.get(identity.repo)

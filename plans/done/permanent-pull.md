@@ -92,3 +92,22 @@ Additional input alignment and editing. Run affected suites after focused checks
   `git diff --check` passed. No obsolete Pull facade/helper references remain
   in source, tests or domain docs.
 - Completion acceptance met; no implementation or validation gaps remain.
+
+
+## Provider workflow identity review
+- Independent review found that frozen projections forced `DOTMAN_OPERATION=sync`
+  and unified input selection leaked its first directional metadata into
+  Probe/Editor environments. New regressions reproduced 11 failures before
+  implementation (8 preserving cases passed).
+- Sessions now supply their workflow identity once to unified provider metadata;
+  frozen projections, directory children and staged Editors preserve it.
+  Directional metadata remains separate for Guards and hooks. This also fixes
+  Sync Probe/Editor environments without changing Push Render/Probe identity.
+- Added 20 public-boundary cases covering file/child custom comparisons,
+  Capture comparison reuse and lazy Capture, Render, transactional Editor under
+  both/pull-only policy, Probe, and directional Guard/hook environments.
+- `uv run pytest tests/engine/test_provider_workflow.py -q`: 20 passed.
+- Affected validation:
+  `uv run pytest -q tests/engine tests/cli/test_pull.py tests/cli/test_pull_deck_command.py tests/cli/test_sync_deck_command.py tests/cli/test_execute.py tests/cli/test_sync_base_inspection.py`
+  — **1,067 passed** in 35.66s. The previously recorded full-suite run predates
+  this review fix; all affected engine and CLI paths were revalidated.

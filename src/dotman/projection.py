@@ -1668,7 +1668,6 @@ def project_frozen_file(
                 path.chmod(0o400)
         env = {
             **metadata.command_env,
-            "DOTMAN_OPERATION": "sync",
             "DOTMAN_TARGET_REPO_PATH": str(repo_copy),
             "DOTMAN_REPO_PATH": str(repo_copy),
             "DOTMAN_SOURCE": str(repo_copy),

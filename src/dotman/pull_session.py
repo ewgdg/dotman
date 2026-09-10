@@ -10,12 +10,13 @@ from dotman.sync_repository_apply import RepositoryApplyUnit, execute_repository
 
 
 class PullSession(ProposalSession):
+    operation = "pull"
     additional_default_approval = True
 
     @staticmethod
     def _observe(context, scope, **kwargs):
         return observe_scope(context, scope, directions=("pull",),
-                             read_bases=False, base_operation="pull", omit_no_route=True, **kwargs)
+                             read_bases=False, omit_no_route=True, **kwargs)
 
     @staticmethod
     def _freeze_obsolete_bases(context, observed):
@@ -24,7 +25,7 @@ class PullSession(ProposalSession):
     def _prepare_workset(self):
         # Pull is opt-out for auxiliary work too; unattended execution must not
         # reapprove the whole workset and thereby retry failed Proposals.
-        self._view = replace(self.view, operation="pull", rows=tuple(
+        self._view = replace(self.view, rows=tuple(
             replace(row, approved=row.kind == "drift", intent=None,
                     allowed_intents=(), fallback_reason=None,
                     allowed_commands=tuple(command for command in row.allowed_commands

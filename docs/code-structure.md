@@ -289,6 +289,9 @@ writers or hostile same-user code.
 
 Projection providers receive private read-only copies of frozen Primary/live
 endpoints; custom commands retain configured dependency access and cwd.
+Session input metadata carries the invoking workflow into every provider,
+including Probe and transactional Editor. Directional Guard/hook metadata stays
+separate so provider identity cannot change which directional family executes.
 Jinja renders frozen Primary bytes through the shared template renderer.
 The public view exposes no staging paths, mutable configuration dictionaries,
 store handles or execution steps.

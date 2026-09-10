@@ -300,6 +300,11 @@ exit 0
 
 ## Hooks And Commands
 
+- Render, Capture, comparison, Probe and Editor command environments use
+  `DOTMAN_OPERATION` for the invoking workflow: `push`, `pull` or `sync`.
+  Guard and pre/post hook environments instead use their directional family,
+  `push` or `pull`, including during Sync.
+
 - Supported hook names are `guard_push`, `pre_push`, `post_push`, `guard_pull`, `pre_pull`, and `post_pull`.
 - Directory path-rule `[...path_rules.hooks]` tables support only `guard_push` and `guard_pull`; path-rule pre/post hooks are invalid.
 - Hook entries may be a single item, an ordered list, or a table with `commands` and optional metadata.
