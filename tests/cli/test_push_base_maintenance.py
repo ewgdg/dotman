@@ -65,7 +65,7 @@ def test_push_invalid_static_resolution_preserves_base(tmp_path, monkeypatch, ca
 
 def test_push_without_bases_does_not_create_base_store(tmp_path, monkeypatch, capsys):
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'push-only', b'same', b'same', '')])
-    assert main(['--config', str(engine.config.config_path), '--json', 'push']) == 0
+    assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push']) == 0
     capsys.readouterr()
     from dotman.sync_base_store import DATABASE_FILE_NAME
     assert not list(engine._tracked_state_context.state_root.rglob(DATABASE_FILE_NAME + '*'))

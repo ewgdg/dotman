@@ -651,7 +651,9 @@ def test_capture_exit_100_is_a_visible_unapproved_failure(
     with open_tracked_pull_session(_engine(tmp_path, repo_root), tmp_path, entries=[("app", "default")]) as session:
         row = session.view.rows[0]
         assert not row.approved
-        assert "unavailable" in str(row.observation.diagnostics or row.diagnostics)
+        diagnostics = row.observation.diagnostics or row.diagnostics
+        assert "exit 100" in str(diagnostics)
+        assert "unavailable" not in str(diagnostics)
 
 
 def test_cli_renders_repo_and_target_guard_diagnostics_in_human_and_json_output(
