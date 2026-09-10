@@ -15,7 +15,7 @@ from dotman.state_commands import StateCommandRunner
 from dotman.sync_base_store import SyncBaseStoreError
 from dotman.sync_base_lifecycle import SyncBaseGitError
 from dotman.sync_commands import SyncCommandRunner
-from dotman.sync_deck_command import SyncDeckCommandRunner
+from dotman.sync_deck_command import SyncDeckCommandRunner, PullDeckCommandRunner
 
 
 INTERRUPTED_EXIT_CODE = 130
@@ -59,6 +59,7 @@ def main(
                 engine_factory=engine_factory,
                 use_color=use_color,
             ),
+            PullDeckCommandRunner(engine_factory=engine_factory, use_color=use_color),
             SyncCommandRunner(
                 engine_factory=engine_factory,
                 use_color=use_color,

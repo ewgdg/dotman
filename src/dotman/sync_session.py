@@ -57,7 +57,7 @@ class Proposal:
     live: SyncBasePayload
     primary_source_change: SyncBasePayload | None
     publication_effects: tuple[PublicationEffect, ...]
-    intent: ResolutionIntent | Literal["editor"] = "use-repository"
+    intent: ResolutionIntent | Literal["editor"] | None = "use-repository"
     capture: SyncBasePayload | None = None
     reconciliation: str | None = None
     generation: int = 0
@@ -244,6 +244,7 @@ class SessionView:
     rows: tuple[SessionRow | AuxiliaryRow | AdditionalRow, ...]
     allowed_commands: tuple[CommandName, ...]
     topology_diagnostics: tuple[Diagnostic, ...] = ()
+    operation: str = "sync"
 
 
 @dataclass(frozen=True)
@@ -448,7 +449,18 @@ SessionEvent = SessionOpened | SessionChanged | SessionFinished
 SessionEventSink = Callable[[SessionEvent], None]
 
 
-class SyncSession:
+class ProposalSession:
+    """Shared frozen workset, editing, approval and command lifecycle."""
+
+    additional_default_approval = False
+
+    @staticmethod
+    def _observe(context, scope, **kwargs):
+        return observe_scope(context, scope, **kwargs)
+
+    def _prepare_workset(self) -> None:
+        pass
+
     def __init__(
         self,
         observations: tuple[Observation, ...],
@@ -526,7 +538,7 @@ class SyncSession:
                         OperationLock.acquire(context.tracked_state.state_root)
                     )
                 resolved_inputs = _resolve_inputs(context, scope)
-                observed = observe_scope(
+                observed = cls._observe(
                     context, scope, preview=preview, run_noop=run_noop, resolved_inputs=resolved_inputs,
                 )
                 observations = observed.observations
@@ -609,6 +621,7 @@ class SyncSession:
             }
             session._publication_metadata = freeze_child_metadata(publication_metadata, observations)
             session._repository_metadata = freeze_child_metadata(repository_metadata, observations)
+            session._prepare_workset()
             # Adapter exceptions are programming failures, not planning results.
             session._emit(SessionOpened(session.view))
             resources.pop_all()
@@ -877,7 +890,7 @@ class SyncSession:
             repo = owner.observation.identity.repo
             sources.append(AdditionalRow(
                 f"{repo}:additional/{relative.as_posix()}", repo, relative, change,
-                references, self._additional_approvals.get(path, False),
+                references, self._additional_approvals.get(path, self.additional_default_approval),
             ))
         repo_order = list(dict.fromkeys(unit.identity.repo for unit in self.view.observations))
         sources.sort(key=lambda row: (repo_order.index(row.repo), row.path.as_posix()))
@@ -886,7 +899,7 @@ class SyncSession:
     def _input_bytes(self, observation: Observation) -> dict[Path, bytes]:
         return {
             path: self._additional_candidates[path].candidate
-            if path in self._additional_candidates and self._additional_approvals.get(path, False)
+            if path in self._additional_candidates and self._additional_approvals.get(path, self.additional_default_approval)
             else before
             for path, before in self._editor_preimages.get(observation.identity, {}).items()
         }
@@ -998,7 +1011,7 @@ class SyncSession:
                     # Staged unapproved bytes are review metadata, not provider inputs.
                     changed_input_paths = {
                         path for path in prior_candidates.keys() | self._additional_candidates.keys()
-                        if self._additional_approvals.get(path, False)
+                        if self._additional_approvals.get(path, self.additional_default_approval)
                         and prior_candidates.get(path) != self._additional_candidates.get(path)
                     }
                     self._refresh_additional_rows()
@@ -1413,3 +1426,7 @@ class SyncSession:
     def __exit__(self, *_exc) -> None:
         if not self.view.terminal:
             self.abort()
+
+
+class SyncSession(ProposalSession):
+    """Two-sided convergence orchestration over the shared Proposal workset."""

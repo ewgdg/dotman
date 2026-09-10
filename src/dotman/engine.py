@@ -283,6 +283,13 @@ class DotmanEngine:
             self._planning_context, scope, preview=preview, run_noop=run_noop, event_sink=event_sink,
         )
 
+    def open_pull_session(self, scope: ResolvedSyncScope, *, preview: bool = False,
+                          run_noop: bool = False, event_sink=None):
+        """Open permanent fixed-direction Pull on the shared frozen workset."""
+        from dotman.pull_session import PullSession
+        return PullSession.open(self._planning_context, scope, preview=preview,
+                                run_noop=run_noop, event_sink=event_sink)
+
     def resolve_sync_scope(self, selectors: Sequence[str] | None = None) -> ResolvedSyncScope:
         """Resolve exact tracked identities for a SyncSession."""
         return resolve_sync_scope(self._planning_context, selectors)

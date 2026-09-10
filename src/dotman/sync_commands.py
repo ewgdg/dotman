@@ -23,7 +23,7 @@ INTERRUPTED_EXIT_CODE = 130
 class SyncCommandRunner:
     """Plan and run push, pull, and restore through typed operation boundaries."""
 
-    command_names = frozenset({"push", "pull", "restore"})
+    command_names = frozenset({"push", "restore"})
 
     def __init__(self, *, engine_factory: EngineFactory, use_color: bool) -> None:
         self._engine_factory = engine_factory

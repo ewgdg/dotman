@@ -474,3 +474,24 @@ Storage security, transactions, and inspection locking are documented in
 
 See [endpoint convergence](sync-endpoints.md) for typed Missing, deletion-only,
 unsupported endpoint evidence, and approved no-write completion.
+
+
+## Permanent Pull
+
+Pull uses the same Observation, frozen projection cache, Proposal review,
+transactional Editor, canonical Additional Source Changes and repository Apply
+as Sync. Its direction is fixed live-to-repository: drifted Proposals and new
+Additional changes start approved, with no Resolution Intent or Merge.
+Unapproval changes provider inputs to their frozen originals and rematerializes
+approved dependants; unapproved dependants stay lazy.
+
+Pull executes only repository effects and pull hooks, without live snapshots or
+Base acknowledgment. Direct agreement may establish an eligible Base during
+Observation, but changed Pull does not inspect Base records for reconciliation.
+This differs from Sync's pull-only policy, which acknowledges completed units.
+Push remains an independent one-sided operation.
+
+Interactive Pull permits a healthy approved subset after materialization failure.
+Unattended Pull aborts before Apply on initial failures, including in preview.
+Repository Apply is fail-fast, not transactional; completed effects remain
+reported even if a later hook or write fails.

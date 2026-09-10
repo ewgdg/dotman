@@ -198,7 +198,7 @@ class CommandDeck:
             return "\n".join(lines)
         proposal = row.proposal
         intent = row.intent
-        pull = intent in ("use-live", "merge")
+        pull = self.session.view.operation == "pull" or intent in ("use-live", "merge")
         capture_required = pull and not (proposal and proposal.intent == "editor")
         primary = primary_change_summary(proposal, row.observation.repository_path)
         lines = [f":: Proposal Review — {row.row_id}",
@@ -208,7 +208,7 @@ class CommandDeck:
                  f"  Configured policy: {row.observation.configured_policy}",
                  f"  Repository path: {row.observation.repository_path}",
                  f"  Live path: {row.observation.live_path}",
-                 f"  Resolution: {render_sync_term(row_resolution(row), use_color=self.use_color) if intent else 'blocked'}",
+                 f"  Resolution: {render_sync_term(row_resolution(row), use_color=self.use_color) if intent or self.session.view.operation == 'pull' else 'blocked'}",
                  f"  Sync Base: {row.observation.base.status}",
                  f"  Primary Source Change: {primary['kind'] if primary else 'none'}",
                  f"  Capture: {('missing' if isinstance(proposal.capture, Missing) else 'present') if proposal and proposal.capture is not None else 'pending' if capture_required else 'not required'}",
@@ -310,7 +310,7 @@ def row_resolution(row) -> str:
     if row.diagnostics:
         return "Proposal failed"
     if not row.allowed_intents:
-        return "Unsupported"
+        return ("Edited" if row.proposal and row.proposal.intent == "editor" else "Use live") if "prepare-proposal-review" in row.allowed_commands else "Unsupported"
     return resolution_label(row.proposal.intent if row.proposal else row.intent)
 
 
@@ -503,7 +503,7 @@ class SyncDeckApp(App[bool]):
         await super().on_event(event)
 
     def compose(self) -> ComposeResult:
-        yield Static(":: Sync Command Deck", id="title", markup=False)
+        yield Static(f":: {self.deck.session.view.operation.title()} Command Deck", id="title", markup=False)
         yield WorksetTable(id="workset", cursor_type="cell", zebra_stripes=True)
         yield Static(id="detail", markup=False)
         yield OptionList(id="resolution")
@@ -570,10 +570,12 @@ class SyncDeckApp(App[bool]):
         elif self.deck.reviewing:
             help_text = "Esc return · Space Approval · E edit · T retry · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
         else:
-            help_text = "Esc abort · X confirm · Space mark · Enter view · R intent · E edit · T retry"
+            help_text = "Esc abort · X confirm · Space mark · Enter view · E edit · T retry"
         row = self.deck.focused_row
         if row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming:
             help_text += " · L authorize link replacement"
+        if self.deck.session.view.operation == "sync" and not self.query_one(OptionList).display and not self.deck.confirming:
+            help_text += " · R Resolution"
         self.query_one("#help", Static).update(help_text)
 
     def update_detail(self) -> None:

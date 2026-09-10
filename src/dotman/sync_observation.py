@@ -364,14 +364,26 @@ def observe_scope(
     preview: bool,
     run_noop: bool = False,
     resolved_inputs: tuple[_ResolvedInputs, dict[str, list[planning.PackagePlanningInput]]] | None = None,
+    directions: tuple[str, ...] = ("push", "pull"),
+    read_bases: bool = True,
+    base_operation: str = "sync",
+    omit_no_route: bool = False,
 ) -> ObservedScope:
     inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(context, scope)
+    directional = {direction: candidates if direction in directions else [] for direction, candidates in directional.items()}
+    inputs = {
+        identity: value for identity, value in inputs.items()
+        if value[1].target.target_type == "directory" or any(
+            sync_policy_allows_operation(resolve_sync_policy(package=value[1].package, target=value[1].target), operation=direction)
+            for direction in directions
+        )
+    }
     probe_inputs = {identity: value for identity, value in inputs.items() if value[1].probe_command is not None}
     inputs = {identity: value for identity, value in inputs.items() if identity not in probe_inputs}
     directory_inputs = {identity: value for identity, value in inputs.items() if value[1].target.target_type == "directory"}
     ordered_inputs = inputs
     inputs = {identity: value for identity, value in inputs.items() if identity not in directory_inputs}
-    maintenance = _discard_ineligible_bases(context, inputs, preview=preview)
+    maintenance = _discard_ineligible_bases(context, inputs, preview=preview) if read_bases else {}
     # Resolve the control-aware child workset before volatile ancestor Guards;
     # configured ineligibility must survive a later Guard failure. Reuse this
     # census for Observation rather than discovering children a second time.
@@ -385,12 +397,13 @@ def observe_scope(
         children = {
             relative: (replace(identity, child_path=relative or None), child_metadata(metadata, relative), failures)
             for relative, failures in census.entries
-            if None in selected_paths or relative in selected_paths
+            if (None in selected_paths or relative in selected_paths)
+            and any(sync_policy_allows_operation(resolve_sync_policy(package=child_metadata(metadata, relative).package, target=child_metadata(metadata, relative).target), operation=direction) for direction in directions)
         }
         maintenance.update(_discard_ineligible_bases(context, {
             child_identity: (item, child) for child_identity, child, failures in children.values()
             if child_identity.child_path is not None and not failures
-        }, preview=preview))
+        }, preview=preview) if read_bases else {})
         resolved_directories[identity] = (selected_paths, census, children)
     configured_directional = directional
     eligibility = evaluate_directional_guards(
@@ -437,6 +450,14 @@ def observe_scope(
             child_failures[child_identity] = failures
 
     inputs = {identity: value for identity, value in expanded_inputs.items() if identity not in probe_inputs}
+    if omit_no_route:
+        inputs = {
+            identity: value for identity, value in inputs.items()
+            if child_policies.get(identity, _effective_policy(
+                resolve_sync_policy(package=value[1].package, target=value[1].target),
+                identity in admitted["push"], identity in admitted["pull"],
+            )) != "no-route"
+        }
     units = {
         identity: _base_unit(context, identity, item, metadata)
         for identity, (item, metadata) in inputs.items()
@@ -473,7 +494,7 @@ def observe_scope(
                     lifecycles[identity.repo] = SyncBaseLifecycle(
                         store,
                         git,
-                        operation="sync",
+                        operation=base_operation,
                         preview=preview,
                     )
             lifecycle = lifecycles.get(identity.repo)
@@ -516,7 +537,7 @@ def observe_scope(
                 deleted=maintenance.get(identity, False),
             )
             git_failure = git_failures.get(identity.repo)
-            if lifecycle is not None and fact is not None:
+            if read_bases and lifecycle is not None and fact is not None:
                 try:
                     inspection = lifecycle.maintain(unit, fact.head)
                     base = replace(

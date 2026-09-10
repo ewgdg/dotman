@@ -335,67 +335,36 @@ Restore and unrelated state commands are outside this lock.
 
 ## Pull
 
-- `pull` is the live-to-repo command for already modeled targets.
-- `pull` should operate only on tracked package state.
-- `pull` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
-- Plain `pull` should perform real execution after planning, interactive exclusion, and diff review.
-- `pull` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
-- `pull` should accept `--yes` for the confirmation prompts that already have a safe default.
-- `pull` should accept `--run-noop` so hook-bearing packages still execute when the finalized selected plan has only noop target steps.
-- `pull <selector>` should resolve against tracked packages and reuse the tracked profile/local context instead of prompting for a fresh profile choice.
-- `pull <package>` should also work when that package is currently included through another tracked explicit package entry; dotman should reuse the owning tracked profile in that case.
-- If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
-- `pull` with no selector should replay the current explicit package entries from persisted state.
-- `pull` should use the same expanded tracked-state validation as `push`, including singleton dependency profile ambiguity detection before target planning.
-- If the requested selector is not currently tracked, `pull` should fail instead of implicitly creating state. The user should use `track` first.
-- `pull` should first build a reverse-sync plan before changing any sources.
-- In interactive mode, `pull` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.
-- Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
-- An explicit package entry that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
-- Synthetic hook-only selection rows should stay owner-scoped, not per-hook command rows. Supported rows are repo (`[hooks] repo`), package (`[hooks] repo:package`), and target (`[hooks] repo:package.target`).
-- After the interactive selection menu, `pull` should enter an inspection-only diff review stage before continuing.
-- After diff review accepts, `pull` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
-- A repo, package, target, or active directory path-rule `guard_pull` that exits `100` omits its scope before pull review and selection while eligible sibling scopes continue planning.
-- The `pull` diff preview should compare planning views, meaning `compare.repo` against `compare.live`.
-- The interactive diff review stage should stay inspection-only.
-- Diff review should use `git diff --no-index --color=auto`.
-- Diff review headers should use explicit `repo/...` and `live/...` paths instead of opaque `before-*` or `after-*` temp names.
-- Use the same diff-review path compaction rule described in the `push` section above.
-- Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
-- In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
-- Review commands should support inspecting one item, inspecting all items, listing items, skipping remaining review, or aborting.
-- For plain copied files, pull planning can compare the package source directly against the live file.
-- For transformed targets, pull planning should compare repo-side and live-side views.
-- Default pull planning should compare:
-  - repo side: `raw`
-  - live side: `capture` if available, otherwise `raw`
-- Template-style forward-managed targets should typically override pull planning to compare:
-  - repo side: `render`
-  - live side: `raw`
-- For the current built-in Jinja patch-capture workflow, use:
-  - `render = "jinja"`
-  - `capture = "patch"`
-  - `compare.repo = "render"`
-  - `compare.live = "raw"`
-- Capture-style targets should typically keep repo side as `raw` and use `compare.live = "capture"`.
-- `compare.repo` and `compare.live` define those projections explicitly when the defaults are not right.
-- Only targets with detected drift should appear in the pull selection menu.
-- `compare.repo` and `compare.live` must stay non-interactive and side-effect free.
-- An `editor` configuration may be interactive, for example by opening an editor to reconcile repo source files against the current live output.
-- For editor-backed reverse-sync helpers, dotman should prefer transactional editing: review scratch files stay readonly, editable buffers should be temporary copies, and dotman should ask for confirmation before writing those edits back to repo sources.
-- `editor` should only run after the user selects a changed target for pull.
-- If both `capture` and `editor` are defined, `capture` should drive planning and dotman should attempt the actual pull through `capture` first.
-- If that capture attempt fails, dotman should retry the selected pull step through `editor` using the same review projections.
-- If a transformed target has no `editor`, dotman may still pull by writing repo-side content from `capture` alone.
-- `pull` should only touch sources owned by the current managed selection.
-- Managed target paths should keep the declared pathname as identity instead of silently following a live symlink to a different path.
-- `pull` may read through a symlinked declared live path, but it should still treat the declared pathname as the managed target identity.
-- Examples:
-  - `dotman pull --dry-run main:git@default`
-  - `dotman pull -d`
-  - `dotman pull --full-path main:git@default`
-  - `dotman pull main:git@default`
-  - `dotman pull`
+Pull permanently copies live outcomes into tracked repository sources. It shares
+the frozen workset and Command Deck with Sync, but has no Resolution Intent or
+Merge choice and never publishes to live paths.
+
+- `dotman pull [repo:package.target ...]` resolves exact tracked scopes. Omit
+  scopes to use all tracked targets; package instances use `repo:package<instance>.target`.
+- Drifted Proposals start approved. Space opts out; Enter inspects frozen Views
+  and the repository outcome; E edits transactionally; T retries a failed Proposal.
+- Raw, configured Capture, verified Patch Capture and Missing outcomes use frozen
+  opening evidence. Capture comparison results are reused, not rerun for review.
+- Saved Additional Source Changes start approved independently of their Primary
+  Proposal. Unapproving one restores frozen original provider inputs, eagerly
+  rebuilding approved dependants and invalidating unapproved ones for lazy reuse.
+- Capture failure never launches an Editor automatically. Explicit editing may
+  recover the failed unit, which still needs Approval. Interactive execution may
+  retain a healthy approved subset; failures remain visible in the result.
+- Noninteractive execution requires global `--unattended` and aborts before Apply
+  if an initially approved unit fails. This also applies to preview.
+- `-d` / `--dry-run` runs frozen planning and review without repository Apply.
+  `--run-noop` retains eligible auxiliary hook work.
+- Only pull Guards and hooks run. Guard exit 100 omits its scope before Observation.
+  Apply is fail-fast and nontransactional: completed writes survive later failure,
+  and remaining work is reported skipped. Pull creates no live snapshot.
+- Directly agreeing eligible observations may establish a Base. Changed Pull does
+  not read a Base for reconciliation or acknowledge one after repository Apply.
+- Symlink and directory safety use the same declared identities and frozen
+  Observation constraints as Sync.
+
+Examples: `dotman pull main:git.config`,
+`dotman --unattended pull -d`, `dotman --json --unattended pull`.
 
 ## Capture
 
@@ -404,7 +373,7 @@ Restore and unrelated state commands are outside this lock.
 - `capture patch` should accept `--repo-path`, `--render`, `--review-repo-path`, `--review-live-path`, and the same template-context flags currently used by `render jinja` (`--profile`, `--os`, and repeated `--var`).
 - `capture patch` should output the patched repo source to stdout.
 - `capture patch` reprojects the patched repo file through the forward render path and must match the reviewed live bytes exactly.
-- If that verification fails, `capture patch` exits non-zero; `pull` stops the current package and skips later packages instead of applying an unverified patch.
+- If that verification fails, `capture patch` exits non-zero and Pull leaves the Proposal failed and unapproved; an unverified patch is never applied.
 - The built-in target helper should reuse the same implementation as `dotman capture patch`.
 - Use `capture = "patch"` for automatic template-style reverse capture when dotman can patch source deterministically and verify the result; use `editor` when a human needs to inspect or edit source reconciliation manually.
 

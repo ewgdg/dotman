@@ -91,6 +91,13 @@ def retry_materialization(session: SyncSession, row_id: str):
 
 class SyncDeckCommandRunner:
     command_names = frozenset({"sync"})
+    operation = "sync"
+
+    def _open(self, engine, scope, args):
+        return engine.open_sync_session(scope, preview=args.dry_run, run_noop=getattr(args, "run_noop", False))
+
+    def _select_defaults(self, session):
+        set_all_selected(session, True)
 
     def __init__(self, *, engine_factory, use_color: bool) -> None:
         self._engine_factory = engine_factory
@@ -104,12 +111,12 @@ class SyncDeckCommandRunner:
         if not interactive and not args.unattended:
             self._emit(args, None, None, diagnostic={
                 "code": "unattended-decision",
-                "message": "Sync requires a terminal or explicit --unattended.",
+                "message": f"{self.operation.title()} requires a terminal or explicit --unattended.",
             })
             return 1
         try:
             engine = self._engine_factory(args.config)
-            scope = engine.resolve_sync_scope(args.scopes)
+            scope = engine.resolve_sync_scope(getattr(args, "scopes", None) or ([args.binding] if getattr(args, "binding", None) else []))
         except ValueError as exc:
             self._emit(args, None, None, diagnostic={
                 "code": "invalid-input", "message": str(exc),
@@ -117,13 +124,11 @@ class SyncDeckCommandRunner:
             return 2
         except (KeyboardInterrupt, InterruptedError):
             self._emit(args, None, None, diagnostic={
-                "code": "interrupted", "message": "Sync preflight interrupted",
+                "code": "interrupted", "message": f"{self.operation.title()} preflight interrupted",
             })
             return 130
         with ui_config_scope(engine.config.ui):
-            opened = engine.open_sync_session(
-                scope, preview=args.dry_run, run_noop=getattr(args, 'run_noop', False),
-            )
+            opened = self._open(engine, scope, args)
             if isinstance(opened, SessionOpenFailed):
                 self._emit(args, None, None, diagnostic={
                     "code": opened.diagnostic.code, "message": opened.diagnostic.message,
@@ -139,11 +144,11 @@ class SyncDeckCommandRunner:
                     if not confirmed:
                         aborted = session.abort()
                         self._emit(args, session, aborted.result, diagnostic={
-                            "code": "interrupted", "message": "Sync aborted",
+                            "code": "interrupted", "message": f"{self.operation.title()} aborted",
                         })
                         return 130
                 elif args.unattended:
-                    set_all_selected(session, True)
+                    self._select_defaults(session)
 
                 # Unattended failures must not permit a partially understood
                 # workset to mutate unrelated units.
@@ -158,7 +163,7 @@ class SyncDeckCommandRunner:
                         for item in row_diagnostics(row)
                     )
                     self._emit(args, session, None, diagnostic={
-                        "code": "interrupted", "message": "Sync materialization interrupted",
+                        "code": "interrupted", "message": f"{self.operation.title()} materialization interrupted",
                     } if interrupted else None)
                     return 130 if interrupted else 1
                 if not interactive and any(
@@ -190,7 +195,7 @@ class SyncDeckCommandRunner:
         if args.json_output:
             print(json.dumps(payload))
             return
-        print(":: Sync preview" if args.dry_run else ":: Sync")
+        print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""))
         for unit in payload["sync_units"]:
             selection = "approved" if unit["approved"] else "unapproved"
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {unit['identity']}")
@@ -258,7 +263,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             materialization = "ready"
         elif row and row.diagnostics:
             materialization = "failed"
-        elif row and row.allowed_intents:
+        elif row and "prepare-proposal-review" in row.allowed_commands:
             materialization = "pending"
         else:
             materialization = "not-applicable"
@@ -294,10 +299,10 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "diagnostics": diagnostics,
         })
     return {
-        "operation": "sync",
+        "operation": getattr(args, "command", "sync"),
         "mode": "dry-run" if args.dry_run else "execute",
         "status": result.status if result else "aborted" if diagnostic and diagnostic["code"] == "interrupted" else "failed",
-        "scope": list(dict.fromkeys([unit["identity"] for unit in units] + [row.scope for row in auxiliary])) if view else list(args.scopes),
+        "scope": list(dict.fromkeys([unit["identity"] for unit in units] + [row.scope for row in auxiliary])) if view else list(getattr(args, "scopes", ()) or ([args.binding] if getattr(args, "binding", None) else [])),
         "summary": {
             "sync_units": len(units),
             "selected_auxiliary": sum(row.included for row in auxiliary),
@@ -374,3 +379,19 @@ def primary_change_summary(proposal, path) -> dict | None:
         if isinstance(change, DirectoryChildPresent):
             summary["executable"] = change.executable
     return summary
+
+
+class PullDeckCommandRunner(SyncDeckCommandRunner):
+    """Pull has fixed initially approved work, not unattended Sync defaults."""
+
+    command_names = frozenset({"pull"})
+    operation = "pull"
+
+    def _open(self, engine, scope, args):
+        return engine.open_pull_session(scope, preview=args.dry_run,
+                                        run_noop=getattr(args, "run_noop", False))
+
+    def _select_defaults(self, session):
+        # Opening already materialized standing opt-out Approval. In particular,
+        # do not retry and silently reauthorize a failed initial Proposal.
+        pass

@@ -293,3 +293,5 @@ store handles or execution steps.
 
 References: [Python file locking](https://docs.python.org/3/library/fcntl.html#fcntl.flock)
 and [descriptor-relative file access](https://docs.python.org/3/library/os.html#os.open).
+
+- `pull_session.py` fixes live-to-repository orchestration over the shared `ProposalSession` workset. `sync_deck_command.py` adapts both Sync and Pull to the same Command Deck; Pull does not use the one-sided Push plan runner.
