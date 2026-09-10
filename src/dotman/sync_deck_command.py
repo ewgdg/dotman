@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import sys
 
 from dotman.cli_style import render_sync_term, render_package_label, style_text, MENU_REPO_STYLE
@@ -127,7 +128,10 @@ class SyncDeckCommandRunner:
                 "code": "interrupted", "message": f"{self.operation.title()} preflight interrupted",
             })
             return 130
-        with ui_config_scope(engine.config.ui):
+        ui = engine.config.ui
+        if getattr(args, 'full_path', None) is not None:
+            ui = replace(ui, full_paths=args.full_path)
+        with ui_config_scope(ui):
             opened = self._open(engine, scope, args)
             if isinstance(opened, SessionOpenFailed):
                 self._emit(args, None, None, diagnostic={
@@ -228,6 +232,14 @@ class SyncDeckCommandRunner:
                 print(f"      {render_sync_term(term, use_color=self._use_color)}")
                 for item in work["diagnostics"]:
                     print(f"      {item['message']}")
+        summary = payload["summary"]
+        print(
+            f":: {render_sync_term(payload['status'], use_color=self._use_color)} — "
+            f"{summary['approved_units']} approved units / "
+            f"{summary['repository_changes']} repository changes / "
+            f"{summary['live_writes']} live writes / "
+            f"{summary['live_deletions']} live deletions"
+        )
         for item in payload["summary"]["diagnostics"]:
             print(item["message"], file=sys.stderr)
 

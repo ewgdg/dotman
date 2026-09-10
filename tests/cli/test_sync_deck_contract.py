@@ -96,7 +96,7 @@ def test_single_resolution_is_static_and_blocked_rows_remain_visible(tmp_path, m
         asyncio.run(asyncio.wait_for(interact(), timeout=5))
 
 
-def test_real_confirmation_requires_valid_completed_approved_proposals(tmp_path, monkeypatch):
+def test_confirmation_requires_valid_completed_approved_proposals(tmp_path, monkeypatch):
     from dotman.sync_observation import Diagnostic
 
     engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
@@ -117,7 +117,7 @@ def test_real_confirmation_requires_valid_completed_approved_proposals(tmp_path,
                 reviewed = SimpleNamespace(view=view)
                 confirmation = CommandDeck(reviewed, use_color=False)
                 confirmation.confirm()
-                assert confirmation.confirming is preview
+                assert not confirmation.confirming
                 assert reviewed.view == view
                 if not preview:
                     assert "ready" in confirmation.notice

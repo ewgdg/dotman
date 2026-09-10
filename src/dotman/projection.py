@@ -1684,16 +1684,9 @@ def project_frozen_file(
         )
         raise_for_command_interruption(result)
         if result.exit_code:
-            # Provider diagnostics name managed endpoints, never the private
-            # staging paths used to keep comparison inputs frozen.
-            detail = (
-                result.stderr.decode(errors="replace")
-                .strip()
-                .replace(str(repo_copy), str(metadata.repo_path))
-                .replace(str(live_copy), str(metadata.live_path))
-                .replace(str(root), "<projection>")
-            )
+            # Provider output can contain payload bytes and private staging paths;
+            # public diagnostics retain only the operation and exit evidence.
             raise ValueError(
-                f"comparison projection failed with exit {result.exit_code}: {detail}"
+                f"comparison projection failed with exit {result.exit_code}"
             )
         return result.stdout

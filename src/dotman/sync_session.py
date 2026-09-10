@@ -820,17 +820,17 @@ class ProposalSession:
             return CommandAccepted(self.view,
                 ApprovalChanged(row.row_id, approved) if isinstance(command, SetApproval)
                 else ProposalReview(row.row_id, proposal, diagnostics))
-        if isinstance(command, Preview):
-            return CommandAccepted(view, self._result(preview=True))
         if isinstance(command, Execute) and view.preview:
             return CommandRejected(view, "preview")
-        if isinstance(command, Execute) and any(
+        if isinstance(command, (Preview, Execute)) and any(
             isinstance(row, SessionRow) and row.approved and row.included and row.proposal is None
             for row in view.rows
         ):
             return CommandRejected(view, "disallowed")
-        if isinstance(command, Execute) and self._structural_conflicts():
+        if isinstance(command, (Preview, Execute)) and self._structural_conflicts():
             return CommandRejected(view, "disallowed", self._structural_conflicts())
+        if isinstance(command, Preview):
+            return CommandAccepted(view, self._result(preview=True))
         result = self._finish(aborted=isinstance(command, Abort))
         return CommandAccepted(self.view, result)
 

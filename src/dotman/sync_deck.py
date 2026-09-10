@@ -18,6 +18,8 @@ from textual.binding import Binding
 from textual.errors import NoWidget
 from textual.widgets import DataTable, OptionList, RichLog, Static
 
+from dotman.diff_review import display_review_path
+from dotman.ui_context import current_ui_config
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
@@ -115,7 +117,7 @@ class CommandDeck:
         if view.topology_diagnostics:
             self.notice = view.topology_diagnostics[0].message
             return
-        if command not in view.allowed_commands or (not view.preview and invalid_approved):
+        if command not in view.allowed_commands or invalid_approved:
             self.notice = "Selected Proposals must be ready before confirmation."
             return
         self.confirming = True
@@ -200,14 +202,16 @@ class CommandDeck:
         intent = row.intent
         pull = self.session.view.operation == "pull" or intent in ("use-live", "merge")
         capture_required = pull and not (proposal and proposal.intent == "editor")
+        ui = current_ui_config()
+        display_path = lambda path: display_review_path(path, compact=not (ui and ui.full_paths))
         primary = primary_change_summary(proposal, row.observation.repository_path)
         lines = [f":: Proposal Review — {row.row_id}",
                  f"  Approval: {'approved' if row.approved else 'unapproved'}",
                  f"  Observation: {row.observation.state}",
                  f"  Policy: {row.observation.effective_policy}",
                  f"  Configured policy: {row.observation.configured_policy}",
-                 f"  Repository path: {row.observation.repository_path}",
-                 f"  Live path: {row.observation.live_path}",
+                 f"  Repository path: {display_path(row.observation.repository_path)}",
+                 f"  Live path: {display_path(row.observation.live_path)}",
                  f"  Resolution: {render_sync_term(row_resolution(row), use_color=self.use_color) if intent or self.session.view.operation == 'pull' else 'blocked'}",
                  f"  Sync Base: {row.observation.base.status}",
                  f"  Primary Source Change: {primary['kind'] if primary else 'none'}",
@@ -241,7 +245,7 @@ class CommandDeck:
                 description="Capture",
             ))
         if primary:
-            lines.append(f"    {primary['path']} (authorized by Proposal Approval)")
+            lines.append(f"    {display_path(primary['path'])} (authorized by Proposal Approval)")
         lines.extend(f"  {item.message}" for item in (*row.observation.diagnostics, *row.diagnostics))
         # Pull Views are frozen Observation evidence, independent of the chosen intent.
         if row.observation.effective_policy in ("both", "pull-only"):
@@ -262,7 +266,7 @@ class CommandDeck:
             lines += ["", "  Frozen Publication Effects:"]
             for effect in proposal.publication_effects:
                 summary = effect_summary(effect)
-                detail = f"    {effect.kind} {summary['path']}"
+                detail = f"    {effect.kind} {display_path(summary['path'])}"
                 if "bytes" in summary:
                     detail += f" ({summary['bytes']} bytes)"
                 if "mode" in summary:

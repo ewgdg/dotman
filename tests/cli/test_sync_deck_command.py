@@ -288,3 +288,64 @@ def test_json_failed_hook_identifies_exact_instance_target(tmp_path, monkeypatch
     assert failed_hook["scope"] == "target"
     assert payload["sync_units"][0]["identity"] == failed_hook["scope_identity"]
     assert payload["sync_units"][0]["result"] == "converged"
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_unattended_topology_blocker_fails_with_typed_diagnostic(tmp_path, monkeypatch, capsys, dry_run):
+    from tests.engine.test_sync_directory_observation import directory_engine, put
+
+    engine = directory_engine(tmp_path, monkeypatch, policy="push-only",
+                              extra='[targets.tree.ignore]\npatterns = ["node/private"]')
+    put(tmp_path / "repo/packages/app/tree", "node", b"new")
+    blocked = put(tmp_path / "live/tree", "node/private", b"private")
+    assert runner_for(engine).run(arguments(dry_run=dry_run)) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "failed"
+    assert payload["summary"]["diagnostics"][0]["code"] == "structural-conflict"
+    assert blocked.read_bytes() == b"private"
+
+
+def test_human_summary_reports_completion_counts_and_canonical_identity(tmp_path, monkeypatch, capsys):
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
+    assert runner_for(engine).run(arguments(json_output=False)) == 0
+    output = capsys.readouterr().out
+    assert "main:app.unit" in output
+    assert "completed" in output
+    assert "1 approved units" in output
+    assert "1 live writes" in output
+
+@pytest.mark.parametrize("projection", [
+    'render = "cat $DOTMAN_SOURCE >&2; printf \'%s\' $DOTMAN_SOURCE >&2; exit 7"',
+    'capture = "cat $DOTMAN_SOURCE >&2; printf \'%s\' $DOTMAN_SOURCE >&2; exit 7"\ncompare = { repo = "raw", live = "raw" }',
+    'compare = { repo = "cat $DOTMAN_SOURCE >&2; printf \'%s\' $DOTMAN_SOURCE >&2; exit 7", live = "raw" }',
+])
+def test_failed_projection_json_never_exposes_command_output_or_workspace(tmp_path, monkeypatch, capsys, projection):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo-private-content", b"live-private-content", projection),
+    ])
+    assert runner_for(engine).run(arguments()) == 1
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["status"] == "failed"
+    assert "private-content" not in output
+    assert "dotman-projection-" not in output
+    assert "dotman-comparison-" not in output
+
+@pytest.mark.parametrize("full_path", [False, True])
+def test_sync_review_honors_full_path_option(tmp_path, monkeypatch, capsys, full_path):
+    import sys
+    from dotman import sync_deck
+    from dotman.diff_review import display_review_path
+
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    def inspect(session, **kwargs):
+        deck = sync_deck.CommandDeck(session, use_color=False)
+        deck.open_review()
+        expected = display_review_path(tmp_path / "live/unit", compact=not full_path)
+        assert f"Live path: {expected}" in deck.review_text()
+        return True
+
+    monkeypatch.setattr(sync_deck, "run_command_deck", inspect)
+    assert runner_for(engine).run(arguments(unattended=False, json_output=False, full_path=full_path)) == 0
