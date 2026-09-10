@@ -574,8 +574,8 @@ class SyncDeckApp(App[bool]):
         row = self.deck.focused_row
         if row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming:
             help_text += " · L authorize link replacement"
-        if self.deck.session.view.operation == "sync" and not self.query_one(OptionList).display and not self.deck.confirming:
-            help_text += " · R Resolution"
+        if self.deck.session.view.operation == "sync" and not self.deck.reviewing and not self.query_one(OptionList).display and not self.deck.confirming:
+            help_text += " · R intent"
         self.query_one("#help", Static).update(help_text)
 
     def update_detail(self) -> None:

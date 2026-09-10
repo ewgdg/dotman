@@ -30,3 +30,11 @@ Additional input alignment and editing. Run affected suites after focused checks
   Apply, Patch Capture, explicit Editor recovery, and failure-honest post-hooks.
 - Focused combined session/editor/CLI suite: 119 passed; later Pull coverage: 11 passed.
 - Remaining: obsolete plan/execution cleanup, wider affected validation and final review.
+
+- Textual validation initially found four page-navigation failures caused by
+  wrapping the restored Sync help term. Shortened it to the existing "R intent".
+  Targeted Pull plus all page-up/down cases now pass: 20 passed, 31 deselected.
+- Moderator requested immediate partial handoff after current validation.
+  Issue remains incomplete: obsolete Pull engine/planning/execution and tests
+  have not been removed/ported, dedicated Pull directory/symlink regression
+  coverage and full affected-suite validation remain. Keep plan active.

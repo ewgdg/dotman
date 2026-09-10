@@ -370,13 +370,17 @@ def observe_scope(
     omit_no_route: bool = False,
 ) -> ObservedScope:
     inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(context, scope)
-    directional = {direction: candidates if direction in directions else [] for direction, candidates in directional.items()}
+    def participates(metadata):
+        policy = resolve_sync_policy(package=metadata.package, target=metadata.target)
+        return any(sync_policy_allows_operation(policy, operation=direction) for direction in directions)
+
+    directional = {
+        direction: candidates if direction in directions else []
+        for direction, candidates in directional.items()
+    }
     inputs = {
         identity: value for identity, value in inputs.items()
-        if value[1].target.target_type == "directory" or any(
-            sync_policy_allows_operation(resolve_sync_policy(package=value[1].package, target=value[1].target), operation=direction)
-            for direction in directions
-        )
+        if value[1].target.target_type == "directory" or participates(value[1])
     }
     probe_inputs = {identity: value for identity, value in inputs.items() if value[1].probe_command is not None}
     inputs = {identity: value for identity, value in inputs.items() if identity not in probe_inputs}
@@ -394,12 +398,13 @@ def observe_scope(
             metadata, follow_live_directories=context.config.dir_symlink_mode == "follow",
             selected_paths=tuple(sorted(path for path in selected_paths if path is not None)),
         )
-        children = {
-            relative: (replace(identity, child_path=relative or None), child_metadata(metadata, relative), failures)
-            for relative, failures in census.entries
-            if (None in selected_paths or relative in selected_paths)
-            and any(sync_policy_allows_operation(resolve_sync_policy(package=child_metadata(metadata, relative).package, target=child_metadata(metadata, relative).target), operation=direction) for direction in directions)
-        }
+        children = {}
+        for relative, failures in census.entries:
+            if None not in selected_paths and relative not in selected_paths:
+                continue
+            child = child_metadata(metadata, relative)
+            if participates(child):
+                children[relative] = (replace(identity, child_path=relative or None), child, failures)
         maintenance.update(_discard_ineligible_bases(context, {
             child_identity: (item, child) for child_identity, child, failures in children.values()
             if child_identity.child_path is not None and not failures
