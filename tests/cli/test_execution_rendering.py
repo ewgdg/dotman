@@ -31,7 +31,7 @@ def test_human_renderer_consumes_sync_events_without_running_execution(capsys) -
 
 
 def test_json_renderer_ignores_progress_and_emits_one_final_document(capsys) -> None:
-    session = ExecutionSession(operation="pull")
+    session = ExecutionSession(operation="push")
     result = ExecutionResult(session=session, status="ok", repos=())
     renderer = JsonExecutionRenderer()
 

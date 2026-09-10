@@ -1245,8 +1245,6 @@ def collect_pending_selection_items(plans: Sequence) -> list[PendingSelectionIte
 def selection_item_paths(*, operation: str, repo_path: Path | str, live_path: Path | str) -> tuple[str, str]:
     repo_text = str(repo_path)
     live_text = str(live_path)
-    if operation == "pull":
-        return live_text, repo_text
     return repo_text, live_text
 
 

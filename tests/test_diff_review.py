@@ -3,15 +3,12 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from dotman.command_runtime import (
-    ArgvCommand,
     CommandResult,
     MemoryCommandRuntime,
-    ShellCommand,
     command_runtime_session,
 )
 from dotman.diff_review import (
@@ -20,11 +17,9 @@ from dotman.diff_review import (
     _load_item_bytes,
     _load_item_mode,
     _review_display_path,
-    _review_item_bytes,
     _select_review_pager_command,
     build_review_items,
     display_review_path,
-    edit_status,
     run_review_item_diff,
     run_review_item_edit,
 )
@@ -83,84 +78,8 @@ def test_build_review_items_adds_probe_targets_with_related_hooks() -> None:
     assert review_items[0].hook_command_summaries == ("pre_push: echo target pre",)
 
 
-def test_build_review_items_for_pull_uses_compare_view_bytes(tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("raw repo\n", encoding="utf-8")
-    live_path.write_text("raw live\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="example",
-        package_id="git",
-        requested_profile="basic",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="git",
-                target_name="gitconfig",
-                repo_path=repo_path,
-                live_path=live_path,
-                action="update",
-                target_kind="file",
-                projection_kind="raw",
-                review_before_bytes=b"repo compare view\n",
-                review_after_bytes=b"live compare view\n",
-            )
-        ],
-    )
-
-    review_items = build_review_items([plan], operation="pull")
-
-    assert len(review_items) == 1
-    assert review_items[0].before_bytes == b"repo compare view\n"
-    assert review_items[0].after_bytes == b"live compare view\n"
-    assert review_items[0].source_path == str(live_path)
-    assert review_items[0].destination_path == str(repo_path)
 
 
-def test_build_review_items_for_pull_directory_uses_compare_view_bytes(tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("raw repo\n", encoding="utf-8")
-    live_path.write_text("raw live with secret\n", encoding="utf-8")
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="example",
-        package_id="config",
-        requested_profile="basic",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="config",
-                target_name="app",
-                repo_path=repo_path.parent,
-                live_path=live_path.parent,
-                action="update",
-                target_kind="directory",
-                projection_kind="directory",
-                directory_items=(
-                    DirectoryPlanItem(
-                        relative_path="data.json",
-                        action="update",
-                        repo_path=repo_path,
-                        live_path=live_path,
-                        review_before_bytes=b"repo compare view\n",
-                        review_after_bytes=b"live compare view without secret\n",
-                    ),
-                ),
-            )
-        ],
-    )
-
-    review_items = build_review_items([plan], operation="pull")
-
-    assert len(review_items) == 1
-    assert review_items[0].before_bytes == b"repo compare view\n"
-    assert review_items[0].after_bytes == b"live compare view without secret\n"
 
 
 
@@ -206,165 +125,10 @@ def test_build_review_items_for_push_directory_reuses_planned_desired_bytes(tmp_
     assert review_items[0].after_bytes == b"new rendered value\n"
 
 
-@pytest.mark.parametrize(
-    ("capture_command", "expected_bytes"),
-    [(None, b"raw live\n"), ("printf 'captured live\\n'", b"captured live\n")],
-)
-def test_build_review_items_for_pull_directory_create_lazily_loads_capture_view(
-    tmp_path: Path, capture_command: str | None, expected_bytes: bytes,
-) -> None:
-    live_path = tmp_path / "live-file"
-    live_path.write_text("raw live\n", encoding="utf-8")
-    repo_path = tmp_path / "repo-file"
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="example",
-        package_id="scripts",
-        requested_profile="basic",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="scripts",
-                target_name="bin",
-                repo_path=repo_path.parent,
-                live_path=live_path.parent,
-                action="update",
-                target_kind="directory",
-                projection_kind="raw",
-                command_cwd=tmp_path,
-                command_env={},
-                directory_items=(
-                    DirectoryPlanItem(
-                        relative_path="tool.sh",
-                        action="create",
-                        repo_path=repo_path,
-                        live_path=live_path,
-                        capture_command=capture_command,
-                        compare_live="capture",
-                    ),
-                ),
-            )
-        ],
-    )
-
-    review_item = build_review_items([plan], operation="pull")[0]
-
-    assert review_item.before_bytes == b""
-    assert review_item.after_bytes is None
-    assert review_item.after_bytes_loader is not None
-    assert _review_item_bytes(review_item, before=False) == expected_bytes
 
 
-def test_build_review_items_for_pull_directory_delete_lazily_loads_render_view(tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo-file"
-    repo_path.write_text("raw repo\n", encoding="utf-8")
-    live_path = tmp_path / "live-file"
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="example",
-        package_id="scripts",
-        requested_profile="basic",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="scripts",
-                target_name="bin",
-                repo_path=repo_path.parent,
-                live_path=live_path.parent,
-                action="update",
-                target_kind="directory",
-                projection_kind="raw",
-                command_cwd=tmp_path,
-                command_env={},
-                directory_items=(
-                    DirectoryPlanItem(
-                        relative_path="tool.sh",
-                        action="delete",
-                        repo_path=repo_path,
-                        live_path=live_path,
-                        render_command="printf 'rendered repo\\n'",
-                        compare_repo="render",
-                    ),
-                ),
-            )
-        ],
-    )
-
-    review_item = build_review_items([plan], operation="pull")[0]
-
-    assert review_item.before_bytes is None
-    assert review_item.before_bytes_loader is not None
-    assert review_item.after_bytes == b""
-    assert _review_item_bytes(review_item, before=True) == b"rendered repo\n"
 
 
-@pytest.mark.parametrize("capture_command", [None, "capture-cmd"])
-def test_pull_directory_lazy_capture_view_uses_sudo_when_live_read_needs_it(
-    monkeypatch, tmp_path: Path, capture_command: str | None,
-) -> None:
-    live_path = tmp_path / "live-file"
-    live_path.write_text("raw live\n", encoding="utf-8")
-    repo_path = tmp_path / "repo-file"
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="example",
-        package_id="scripts",
-        requested_profile="basic",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="scripts",
-                target_name="bin",
-                repo_path=repo_path.parent,
-                live_path=live_path.parent,
-                action="update",
-                target_kind="directory",
-                projection_kind="raw",
-                command_cwd=tmp_path,
-                command_env={},
-                directory_items=(
-                    DirectoryPlanItem(
-                        relative_path="tool.sh",
-                        action="create",
-                        repo_path=repo_path,
-                        live_path=live_path,
-                        capture_command=capture_command,
-                        compare_live="capture",
-                    ),
-                ),
-            )
-        ],
-    )
-    recorded: dict[str, object] = {}
-
-    monkeypatch.setattr("dotman.diff_review.needs_sudo_for_read", lambda path: path == live_path)
-
-    reads: list[Path] = []
-
-    def privileged_read(path: Path) -> bytes:
-        if path == repo_path:
-            raise FileNotFoundError(path)
-        reads.append(path)
-        return b"captured live\n"
-
-    monkeypatch.setattr("dotman.diff_review.read_bytes", privileged_read)
-    runtime = MemoryCommandRuntime(
-        [CommandResult(exit_code=0, stdout=b"captured live\n")]
-    )
-    review_item = build_review_items([plan], operation="pull")[0]
-
-    with command_runtime_session(runtime):
-        assert _review_item_bytes(review_item, before=False) == b"captured live\n"
-
-    if capture_command is None:
-        assert reads == [live_path]
-        assert runtime.requests == []
-    else:
-        assert runtime.requests[0].command == ShellCommand("capture-cmd")
-        assert runtime.requests[0].elevation == "root"
 
 
 def test_push_directory_raw_live_review_bytes_use_privileged_file_access(monkeypatch, tmp_path: Path) -> None:
@@ -508,49 +272,6 @@ def test_build_review_items_for_push_directory_includes_mode_metadata(tmp_path: 
     assert review_items[0].after_mode == 0o755
 
 
-def test_build_review_items_for_pull_directory_includes_mode_metadata(tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("same\n", encoding="utf-8")
-    live_path.write_text("same\n", encoding="utf-8")
-    repo_path.chmod(0o644)
-    live_path.chmod(0o755)
-
-    plan = make_package_plan(
-        operation="pull",
-        repo_name="example",
-        package_id="scripts",
-        requested_profile="basic",
-        variables={},
-        hooks={},
-        target_plans=[
-            TargetPlan(
-                package_id="scripts",
-                target_name="bin",
-                repo_path=repo_path.parent,
-                live_path=live_path.parent,
-                action="update",
-                target_kind="directory",
-                projection_kind="raw",
-                directory_items=(
-                    DirectoryPlanItem(
-                        relative_path="tool.sh",
-                        action="update",
-                        repo_path=repo_path,
-                        live_path=live_path,
-                    ),
-                ),
-            )
-        ],
-    )
-
-    review_items = build_review_items([plan], operation="pull")
-
-    assert len(review_items) == 1
-    assert review_items[0].before_bytes == b"same\n"
-    assert review_items[0].after_bytes == b"same\n"
-    assert review_items[0].before_mode == 0o644
-    assert review_items[0].after_mode == 0o755
 
 
 def test_run_review_item_diff_prints_probe_summary(capsys) -> None:
@@ -683,38 +404,6 @@ def test_run_review_item_diff_materializes_absolute_paths_under_temp_root(monkey
     assert recorded["request"].command.arguments[5:] == ("live/var/.../sddm.conf.d/kde_settings.conf", "repo/etc/sddm.conf.d/kde_settings.conf")
 
 
-def test_run_review_item_diff_uses_repo_and_live_labels_for_pull(monkeypatch) -> None:
-    repo_path = Path.home() / ".gitconfig"
-    live_path = Path.home() / ".config" / "git" / "config"
-    review_item = ReviewItem(
-        selection_label="example:git@basic",
-        package_id="git",
-        target_name="gitconfig",
-        action="update",
-        operation="pull",
-        repo_path=repo_path,
-        live_path=live_path,
-        source_path="/live-file",
-        destination_path="/repo-file",
-        before_bytes=b"repo\n",
-        after_bytes=b"live\n",
-    )
-    recorded: dict[str, object] = {}
-
-    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
-    monkeypatch.setattr("dotman.diff_review._select_review_pager_command", lambda: None)
-
-    def fake_run(request):
-        recorded["request"] = request
-        assert request.cwd is not None
-        assert Path(request.cwd, "repo", "~", ".gitconfig").read_text(encoding="utf-8") == "repo\n"
-        assert Path(request.cwd, "live", "~", "...", "git", "config").read_text(encoding="utf-8") == "live\n"
-        return CommandResult(exit_code=1)
-
-    with command_runtime_session(MemoryCommandRuntime([fake_run])):
-        run_review_item_diff(review_item)
-
-    assert recorded["request"].command.arguments[5:] == ("repo/~/.gitconfig", "live/~/.../git/config")
 
 
 def test_run_review_item_diff_uses_explicit_pager_when_stdout_is_tty(monkeypatch) -> None:
@@ -849,200 +538,13 @@ def test_select_review_pager_command_treats_git_pager_cat_as_disabled(monkeypatc
     assert _select_review_pager_command() is None
 
 
-def test_run_review_item_edit_prefers_pull_editor(monkeypatch, tmp_path: Path) -> None:
-    review_item = ReviewItem(
-        selection_label="example:nvim@basic",
-        package_id="nvim",
-        target_name="init_lua",
-        action="update",
-        operation="pull",
-        repo_path=tmp_path / "repo-file",
-        live_path=tmp_path / "live-file",
-        source_path="/live-file",
-        destination_path="/repo-file",
-        before_bytes=b"repo compare view\n",
-        after_bytes=b"live compare view\n",
-        editor=EditorSpec(type=None, run="sh hooks/editor.sh", io="tty"),
-        editor_explicit=True,
-        command_cwd=tmp_path,
-        command_env={
-            "DOTMAN_REPO_PATH": str(tmp_path / "repo-file"),
-            "DOTMAN_LIVE_PATH": str(tmp_path / "live-file"),
-            "DOTMAN_TARGET_NAME": "init_lua",
-        },
-    )
-    recorded: dict[str, object] = {}
-
-    def fake_run(request):
-        recorded["request"] = request
-        assert Path(request.env["DOTMAN_REVIEW_REPO_PATH"]).read_text(encoding="utf-8") == "repo compare view\n"
-        assert Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).read_text(encoding="utf-8") == "live compare view\n"
-        assert Path(request.env["DOTMAN_REVIEW_REPO_PATH"]).stat().st_mode & 0o222 == 0
-        assert Path(request.env["DOTMAN_REVIEW_LIVE_PATH"]).stat().st_mode & 0o222 == 0
-        return CommandResult(exit_code=0)
-
-    with command_runtime_session(MemoryCommandRuntime([fake_run])):
-        exit_code = run_review_item_edit(review_item)
-
-    assert exit_code == 0
-    request = recorded["request"]
-    assert request.command.arguments[:2] == ("sh", "hooks/editor.sh")
-    assert len(request.command.arguments) == 3
-    assert request.io == "tty"
-    assert request.cwd == tmp_path
-    assert request.env["DOTMAN_REPO_PATH"] == request.env["DOTMAN_EDITOR_PRIMARY_PATH"]
-    assert request.env["DOTMAN_LIVE_PATH"] == request.env["DOTMAN_REVIEW_LIVE_PATH"]
-    assert request.env["DOTMAN_TARGET_NAME"] == "init_lua"
-
-
-def test_run_review_item_edit_runs_builtin_jinja_editor(monkeypatch, tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("{% include 'shared.txt' %}\n", encoding="utf-8")
-    live_path.write_text("raw live\n", encoding="utf-8")
-    (tmp_path / "shared.txt").write_text("shared\n", encoding="utf-8")
-    review_item = ReviewItem(
-        selection_label="example:nvim@basic",
-        package_id="nvim",
-        target_name="init_lua",
-        action="update",
-        operation="pull",
-        repo_path=repo_path,
-        live_path=live_path,
-        source_path="/live-file",
-        destination_path="/repo-file",
-        before_bytes=b"repo compare view\n",
-        after_bytes=b"capture live compare view\n",
-        editor=EditorSpec(type="jinja", io="tty"),
-        editor_explicit=True,
-        command_env={
-            "DOTMAN_REPO_PATH": str(repo_path),
-            "DOTMAN_LIVE_PATH": str(live_path),
-        },
-    )
-    recorded: dict[str, object] = {}
-
-    def fake_run_jinja_reconcile(
-        *,
-        repo_path: str,
-        live_path: str,
-        review_repo_path: str | None = None,
-        review_live_path: str | None = None,
-        editor: str | None = None,
-    ) -> int:
-        recorded["repo_path"] = repo_path
-        recorded["live_path"] = live_path
-        recorded["review_repo_path"] = review_repo_path
-        recorded["review_live_path"] = review_live_path
-        recorded["editor"] = editor
-        assert review_repo_path is not None
-        assert review_live_path is not None
-        assert Path(review_repo_path).read_text(encoding="utf-8") == "repo compare view\n"
-        assert Path(review_live_path).read_text(encoding="utf-8") == "capture live compare view\n"
-        return 0
-
-    monkeypatch.setattr("dotman.diff_review.run_jinja_reconcile", fake_run_jinja_reconcile)
-
-    exit_code = run_review_item_edit(review_item)
-
-    assert exit_code == 0
-    assert recorded["repo_path"] == str(repo_path)
-    assert recorded["live_path"] == str(live_path)
-    assert recorded["editor"] is None
 
 
 
-def test_run_review_item_edit_uses_compare_views_for_plain_pull_editor(monkeypatch, tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("raw repo\n", encoding="utf-8")
-    live_path.write_text("raw live\n", encoding="utf-8")
-    review_item = ReviewItem(
-        selection_label="example:nvim@basic",
-        package_id="nvim",
-        target_name="init_lua",
-        action="update",
-        operation="pull",
-        repo_path=repo_path,
-        live_path=live_path,
-        source_path="/live-file",
-        destination_path="/repo-file",
-        before_bytes=b"repo compare view\n",
-        after_bytes=b"capture live compare view\n",
-        editor=EditorSpec(type="default"),
-        editor_explicit=True,
-    )
-    recorded: dict[str, object] = {}
-
-    def fake_run_basic_reconcile(
-        *,
-        repo_path: str,
-        live_path: str,
-        additional_sources: list[str],
-        review_repo_path: str | None = None,
-        review_live_path: str | None = None,
-        editor: str | None = None,
-        assume_yes: bool = False,
-        **kwargs,
-    ) -> int:
-        recorded["repo_path"] = repo_path
-        recorded["live_path"] = live_path
-        recorded["additional_sources"] = additional_sources
-        recorded["review_repo_path"] = review_repo_path
-        recorded["review_live_path"] = review_live_path
-        recorded["editor"] = editor
-        assert review_repo_path is not None
-        assert review_live_path is not None
-        assert Path(review_repo_path).read_text(encoding="utf-8") == "repo compare view\n"
-        assert Path(review_live_path).read_text(encoding="utf-8") == "capture live compare view\n"
-        return 0
-
-    monkeypatch.setattr("dotman.diff_review.run_basic_reconcile", fake_run_basic_reconcile)
-
-    exit_code = run_review_item_edit(review_item)
-
-    assert exit_code == 0
-    assert recorded["repo_path"] == str(repo_path)
-    assert recorded["live_path"] == str(live_path)
-    assert recorded["additional_sources"] == []
-    assert recorded["editor"] is None
 
 
-def test_edit_status_keeps_editor_pull_only(tmp_path: Path) -> None:
-    repo_path = tmp_path / "repo-file"
-    live_path = tmp_path / "live-file"
-    repo_path.write_text("repo\n", encoding="utf-8")
-    live_path.write_text("live\n", encoding="utf-8")
 
-    push_item = ReviewItem(
-        selection_label="example:nvim@basic",
-        package_id="nvim",
-        target_name="init_lua",
-        action="update",
-        operation="push",
-        repo_path=repo_path,
-        live_path=live_path,
-        source_path=str(repo_path),
-        destination_path=str(live_path),
-        editor=EditorSpec(type=None, run="sh hooks/editor.sh", io="tty"),
-        editor_explicit=True,
-    )
-    pull_item = ReviewItem(
-        selection_label="example:nvim@basic",
-        package_id="nvim",
-        target_name="init_lua",
-        action="update",
-        operation="pull",
-        repo_path=repo_path,
-        live_path=live_path,
-        source_path=str(live_path),
-        destination_path=str(repo_path),
-        editor=EditorSpec(type=None, run="sh hooks/editor.sh", io="tty"),
-        editor_explicit=True,
-    )
 
-    assert edit_status(push_item) == "editor"
-    assert edit_status(pull_item) == "editor"
 
 
 @pytest.mark.parametrize("directory", [False, True])
@@ -1088,10 +590,10 @@ def test_review_editor_preserves_effective_child_sources_and_declaring_roots(
         **({} if directory else policy),
     )
     plan = make_package_plan(
-        operation="pull", repo_name="example", package_id="app",
+        operation="push", repo_name="example", package_id="app",
         requested_profile="default", variables={}, hooks={}, target_plans=[target],
     )
-    item, = build_review_items([plan], operation="pull")
+    item, = build_review_items([plan], operation="push")
     assert item.editor == editor
     assert item.editor_explicit
 

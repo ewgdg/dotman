@@ -1,4 +1,4 @@
-"""Thin Sync CLI adapter; the session owns Approval and frozen execution."""
+"""Command Deck CLI adapters; sessions own Approval and frozen execution."""
 
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ class SyncDeckCommandRunner:
             return 1
         try:
             engine = self._engine_factory(args.config)
-            scope = engine.resolve_sync_scope(getattr(args, "scopes", None) or ([args.binding] if getattr(args, "binding", None) else []))
+            scope = engine.resolve_sync_scope(args.scopes)
         except ValueError as exc:
             self._emit(args, None, None, diagnostic={
                 "code": "invalid-input", "message": str(exc),

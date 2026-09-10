@@ -487,8 +487,6 @@ def build_package_plans(
         )
         _validate_preprojection_conflicts(selected_inputs, operation=operation)
         if maintain_sync_bases:
-            if operation != "push":
-                raise ValueError("selected-policy Base maintenance is only available for Push")
             from dotman.sync_base_maintenance import discard_push_ineligible_bases
 
             discard_push_ineligible_bases(planning_context, selected_inputs)
@@ -1079,8 +1077,7 @@ def build_operation_plan(
     guard_skips: tuple[GuardSkip, ...] = (),
     considered_repo_names: tuple[str, ...] = (),
 ) -> OperationPlan:
-    if operation in {"push", "pull"}:
-        _validate_direct_package_plan_conflicts(package_plans, repo_by_name=repo_by_name)
+    _validate_direct_package_plan_conflicts(package_plans, repo_by_name=repo_by_name)
     active_repo_names = set(considered_repo_names) | {plan.repo_name for plan in package_plans}
     repo_order = tuple(
         repo_name

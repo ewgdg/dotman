@@ -31,7 +31,6 @@ from dotman.models import (
     DirectoryPlanItem,
     EditorSpec,
     GuardSkip,
-    HookCommandSpec,
     ManagerConfig,
     PackageSpec,
     ResolvedPackageSelection,
@@ -375,7 +374,7 @@ def plan_targets(
             )
         render_command = metadata.render_command
         capture_command = metadata.capture_command
-        if operation == "push" and sync_policy_deletes_on_push(sync_policy):
+        if sync_policy_deletes_on_push(sync_policy):
             target_kind = resolve_push_only_delete_target_kind(
                 target_type=target.target_type,
                 repo_path=repo_path,
@@ -441,23 +440,7 @@ def plan_targets(
                 continue
 
             action = "delete" if target_kind == "file" and (live_path.exists() or live_path.is_symlink()) else "noop"
-            review_before_bytes, review_after_bytes = build_file_review_bytes(
-                projection_context.command_runtime,
-                repo=repo,
-                package=package,
-                target=target,
-                repo_path=repo_path,
-                live_path=live_path,
-                desired_bytes=b"",
-                render_command=render_command,
-                capture_command=capture_command,
-                context=context,
-                selection=selection,
-                operation=operation,
-                inferred_os=inferred_os,
-                compare_repo=metadata.compare_repo,
-                compare_live=metadata.compare_live,
-            )
+            review_before_bytes, review_after_bytes = build_file_review_bytes(live_path=live_path, desired_bytes=b"")
             plans.append(
                 TargetPlan(
                     package_id=package.id,
@@ -597,55 +580,31 @@ def plan_targets(
         desired_bytes: bytes | None = None
         projection_kind = projection_kind_for_render_command(render_command)
         try:
-            if operation == "push":
-                desired_bytes, projection_kind = project_repo_file(
-                    projection_context.command_runtime,
-                    repo=repo,
-                    package=package,
-                    target=target,
-                    repo_path=repo_path,
-                    live_path=live_path,
-                    render_command=render_command,
-                    context=context,
-                    selection=selection,
-                    operation=operation,
-                    inferred_os=inferred_os,
-                )
+            desired_bytes, projection_kind = project_repo_file(
+                projection_context.command_runtime,
+                repo=repo,
+                package=package,
+                target=target,
+                repo_path=repo_path,
+                live_path=live_path,
+                render_command=render_command,
+                context=context,
+                selection=selection,
+                operation=operation,
+                inferred_os=inferred_os,
+            )
         except ValueError as exc:
             if render_command == "jinja":
                 raise
-            if render_command is not None and operation == "push" and not live_path.exists():
+            if render_command is not None and not live_path.exists():
                 projection_error = str(exc)
                 projection_kind = "command"
             else:
                 raise
         compare_repo = metadata.compare_repo
         compare_live = metadata.compare_live
-        review_before_bytes, review_after_bytes = build_file_review_bytes(
-            projection_context.command_runtime,
-            repo=repo,
-            package=package,
-            target=target,
-            repo_path=repo_path,
-            live_path=live_path,
-            desired_bytes=desired_bytes,
-            render_command=render_command,
-            capture_command=capture_command,
-            context=context,
-            selection=selection,
-            operation=operation,
-            inferred_os=inferred_os,
-            compare_repo=compare_repo,
-            compare_live=compare_live,
-        )
-        action = plan_file_action_from_review_bytes(
-            repo_path=repo_path,
-            live_path=live_path,
-            desired_bytes=desired_bytes,
-            review_before_bytes=review_before_bytes,
-            review_after_bytes=review_after_bytes,
-            operation=operation,
-        )
+        review_before_bytes, review_after_bytes = build_file_review_bytes(live_path=live_path, desired_bytes=desired_bytes)
+        action = plan_file_action_from_review_bytes(live_path=live_path, desired_bytes=desired_bytes, review_before_bytes=review_before_bytes)
         desired_text = None
         if desired_bytes is not None:
             try:
@@ -1043,228 +1002,55 @@ def plan_directory_action(
     live_rel_paths = set(live_files)
     directory_items: list[DirectoryPlanItem] = []
 
-    if operation == "push":
-        # A path rule's push-only-delete policy applies to each matching child,
-        # so classify those children before constructing create/update actions.
-        child_delete_paths: set[str] = set()
-        for relative_path in sorted(desired_rel_paths | live_rel_paths):
-            child_policy = directory_child_policy(
-                relative_path,
-                path_rules,
-                default_render=render_command,
-                default_capture=capture_command,
-                default_editor=target.editor,
-                default_sync_policy=resolve_sync_policy(package=package, target=target),
-            )
-            if not sync_policy_deletes_on_push(child_policy[7] or ""):
-                continue
-            child_delete_paths.add(relative_path)
-            if relative_path not in live_rel_paths:
-                continue
-            child_compare_repo, child_compare_live = directory_child_pull_views(
-                target=target,
-                capture_command=child_policy[2],
-                target_compare_repo=compare_repo,
-                target_compare_live=compare_live,
-                rule_compare_repo=child_policy[3],
-                rule_compare_live=child_policy[4],
-            )
-            directory_items.append(
-                DirectoryPlanItem(
-                    relative_path=relative_path,
-                    action="delete",
-                    repo_path=repo_path / relative_path,
-                    live_path=live_files[relative_path],
-                    render_command=child_policy[1],
-                    capture_command=child_policy[2],
-                    compare_repo=child_compare_repo,
-                    compare_live=child_compare_live,
-                    editor=child_policy[5],
-                    editor_explicit=directory_child_editor_explicit(
-                        relative_path, path_rules, default_explicit=target.editor_explicit
-                    ),
-                    additional_sources=child_policy[6],
-                    additional_source_entries=child_policy[5].source_entries(),
-                    sync_policy=child_policy[7],
-                )
-            )
-        desired_rel_paths -= child_delete_paths
-        live_rel_paths -= child_delete_paths
-
-        for relative_path in sorted(desired_rel_paths - live_rel_paths):
-            source_path = desired_files[relative_path]
-            child_policy = directory_child_policy(
-                relative_path,
-                path_rules,
-                default_render=render_command,
-                default_capture=capture_command,
-                default_editor=target.editor,
-                default_sync_policy=resolve_sync_policy(package=package, target=target),
-            )
-            if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
-                continue
-            child_compare_repo, child_compare_live = directory_child_pull_views(
-                target=target,
-                capture_command=child_policy[2],
-                target_compare_repo=compare_repo,
-                target_compare_live=compare_live,
-                rule_compare_repo=child_policy[3],
-                rule_compare_live=child_policy[4],
-            )
-            validate_directory_child_patch_capture(
-                package=package,
-                target=target,
+    # A path rule's push-only-delete policy applies to each matching child,
+    # so classify those children before constructing create/update actions.
+    child_delete_paths: set[str] = set()
+    for relative_path in sorted(desired_rel_paths | live_rel_paths):
+        child_policy = directory_child_policy(
+            relative_path,
+            path_rules,
+            default_render=render_command,
+            default_capture=capture_command,
+            default_editor=target.editor,
+            default_sync_policy=resolve_sync_policy(package=package, target=target),
+        )
+        if not sync_policy_deletes_on_push(child_policy[7] or ""):
+            continue
+        child_delete_paths.add(relative_path)
+        if relative_path not in live_rel_paths:
+            continue
+        child_compare_repo, child_compare_live = directory_child_pull_views(
+            target=target,
+            capture_command=child_policy[2],
+            target_compare_repo=compare_repo,
+            target_compare_live=compare_live,
+            rule_compare_repo=child_policy[3],
+            rule_compare_live=child_policy[4],
+        )
+        directory_items.append(
+            DirectoryPlanItem(
                 relative_path=relative_path,
+                action="delete",
+                repo_path=repo_path / relative_path,
+                live_path=live_files[relative_path],
                 render_command=child_policy[1],
                 capture_command=child_policy[2],
                 compare_repo=child_compare_repo,
                 compare_live=child_compare_live,
-                repo_path=source_path,
+                editor=child_policy[5],
+                editor_explicit=directory_child_editor_explicit(
+                    relative_path, path_rules, default_explicit=target.editor_explicit
+                ),
+                additional_sources=child_policy[6],
+                additional_source_entries=child_policy[5].source_entries(),
+                sync_policy=child_policy[7],
             )
-            desired_bytes, _projection_kind = project_repo_file(
-                projection_context.command_runtime,
-                repo=repo,
-                package=package,
-                target=target,
-                repo_path=source_path,
-                live_path=live_path / relative_path,
-                render_command=child_policy[1],
-                context=context,
-                selection=selection,
-                operation=operation,
-                inferred_os=inferred_os,
-            )
-            directory_items.append(
-                DirectoryPlanItem(
-                    relative_path=relative_path,
-                    action="create",
-                    repo_path=source_path,
-                    live_path=live_path / relative_path,
-                    chmod=child_policy[0],
-                    render_command=child_policy[1],
-                    capture_command=child_policy[2],
-                    compare_repo=child_compare_repo,
-                    compare_live=child_compare_live,
-                    editor=child_policy[5],
-                    editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
-                    additional_sources=child_policy[6],
-                    additional_source_entries=child_policy[5].source_entries(),
-                    sync_policy=child_policy[7],
-                    desired_bytes=desired_bytes,
-                    review_before_bytes=b"",
-                    review_after_bytes=desired_bytes,
-                )
-            )
-        for relative_path in sorted(live_rel_paths - desired_rel_paths):
-            child_policy = directory_child_policy(
-                relative_path,
-                path_rules,
-                default_render=render_command,
-                default_capture=capture_command,
-                default_editor=target.editor,
-                default_sync_policy=resolve_sync_policy(package=package, target=target),
-            )
-            if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
-                continue
-            directory_items.append(
-                DirectoryPlanItem(
-                    relative_path=relative_path,
-                    action="delete",
-                    repo_path=repo_path / relative_path,
-                    live_path=live_files[relative_path],
-                    render_command=child_policy[1],
-                    capture_command=child_policy[2],
-                    editor=child_policy[5],
-                    editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
-                    additional_sources=child_policy[6],
-                    additional_source_entries=child_policy[5].source_entries(),
-                    sync_policy=child_policy[7],
-                )
-            )
-        for relative_path in sorted(desired_rel_paths & live_rel_paths):
-            source_path = desired_files[relative_path]
-            live_file = live_files[relative_path]
-            child_policy = directory_child_policy(
-                relative_path,
-                path_rules,
-                default_render=render_command,
-                default_capture=capture_command,
-                default_editor=target.editor,
-                default_sync_policy=resolve_sync_policy(package=package, target=target),
-            )
-            if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
-                continue
-            child_compare_repo, child_compare_live = directory_child_pull_views(
-                target=target,
-                capture_command=child_policy[2],
-                target_compare_repo=compare_repo,
-                target_compare_live=compare_live,
-                rule_compare_repo=child_policy[3],
-                rule_compare_live=child_policy[4],
-            )
-            validate_directory_child_patch_capture(
-                package=package,
-                target=target,
-                relative_path=relative_path,
-                render_command=child_policy[1],
-                capture_command=child_policy[2],
-                compare_repo=child_compare_repo,
-                compare_live=child_compare_live,
-                repo_path=source_path,
-            )
-            desired_bytes, _projection_kind = project_repo_file(
-                projection_context.command_runtime,
-                repo=repo,
-                package=package,
-                target=target,
-                repo_path=source_path,
-                live_path=live_file,
-                render_command=child_policy[1],
-                context=context,
-                selection=selection,
-                operation=operation,
-                inferred_os=inferred_os,
-            )
-            live_bytes = read_bytes(live_file)
-            desired_chmod = child_policy[0]
-            child_chmod_differs = directory_child_chmod_differs(live_file, desired_chmod)
-            executable_bit_differs = desired_chmod is None and directory_executable_bit_differs(source_path, live_file)
-            if desired_bytes != live_bytes or executable_bit_differs or child_chmod_differs:
-                action = (
-                    "chmod"
-                    if child_chmod_differs and desired_bytes == live_bytes and not executable_bit_differs
-                    else "update"
-                )
-                directory_items.append(
-                    DirectoryPlanItem(
-                        relative_path=relative_path,
-                        action=action,
-                        repo_path=source_path,
-                        live_path=live_file,
-                        chmod=desired_chmod,
-                        render_command=child_policy[1],
-                        capture_command=child_policy[2],
-                        compare_repo=child_compare_repo,
-                        compare_live=child_compare_live,
-                        editor=child_policy[5],
-                        editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
-                        additional_sources=child_policy[6],
-                        additional_source_entries=child_policy[5].source_entries(),
-                        sync_policy=child_policy[7],
-                        desired_bytes=desired_bytes,
-                        review_before_bytes=live_bytes,
-                        review_after_bytes=desired_bytes,
-                    )
-                )
-        if not directory_items:
-            return "noop", ()
-        ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))
-        if not desired_rel_paths:
-            # Push has no repo-side files to keep, so any tracked live files are being removed.
-            return "delete", ordered_items
-        return ("create" if not live_exists else "update"), ordered_items
+        )
+    desired_rel_paths -= child_delete_paths
+    live_rel_paths -= child_delete_paths
 
     for relative_path in sorted(desired_rel_paths - live_rel_paths):
+        source_path = desired_files[relative_path]
         child_policy = directory_child_policy(
             relative_path,
             path_rules,
@@ -1291,14 +1077,28 @@ def plan_directory_action(
             capture_command=child_policy[2],
             compare_repo=child_compare_repo,
             compare_live=child_compare_live,
-            repo_path=desired_files[relative_path],
+            repo_path=source_path,
+        )
+        desired_bytes, _projection_kind = project_repo_file(
+            projection_context.command_runtime,
+            repo=repo,
+            package=package,
+            target=target,
+            repo_path=source_path,
+            live_path=live_path / relative_path,
+            render_command=child_policy[1],
+            context=context,
+            selection=selection,
+            operation=operation,
+            inferred_os=inferred_os,
         )
         directory_items.append(
             DirectoryPlanItem(
                 relative_path=relative_path,
-                action="delete",
-                repo_path=desired_files[relative_path],
+                action="create",
+                repo_path=source_path,
                 live_path=live_path / relative_path,
+                chmod=child_policy[0],
                 render_command=child_policy[1],
                 capture_command=child_policy[2],
                 compare_repo=child_compare_repo,
@@ -1308,6 +1108,9 @@ def plan_directory_action(
                 additional_sources=child_policy[6],
                 additional_source_entries=child_policy[5].source_entries(),
                 sync_policy=child_policy[7],
+                desired_bytes=desired_bytes,
+                review_before_bytes=b"",
+                review_after_bytes=desired_bytes,
             )
         )
     for relative_path in sorted(live_rel_paths - desired_rel_paths):
@@ -1321,34 +1124,14 @@ def plan_directory_action(
         )
         if not sync_policy_allows_operation(child_policy[7] or "both", operation=operation):
             continue
-        child_compare_repo, child_compare_live = directory_child_pull_views(
-            target=target,
-            capture_command=child_policy[2],
-            target_compare_repo=compare_repo,
-            target_compare_live=compare_live,
-            rule_compare_repo=child_policy[3],
-            rule_compare_live=child_policy[4],
-        )
-        validate_directory_child_patch_capture(
-            package=package,
-            target=target,
-            relative_path=relative_path,
-            render_command=child_policy[1],
-            capture_command=child_policy[2],
-            compare_repo=child_compare_repo,
-            compare_live=child_compare_live,
-            repo_path=repo_path / relative_path,
-        )
         directory_items.append(
             DirectoryPlanItem(
                 relative_path=relative_path,
-                action="create",
+                action="delete",
                 repo_path=repo_path / relative_path,
                 live_path=live_files[relative_path],
                 render_command=child_policy[1],
                 capture_command=child_policy[2],
-                compare_repo=child_compare_repo,
-                compare_live=child_compare_live,
                 editor=child_policy[5],
                 editor_explicit=directory_child_editor_explicit(relative_path, path_rules, default_explicit=target.editor_explicit),
                 additional_sources=child_policy[6],
@@ -1387,45 +1170,36 @@ def plan_directory_action(
             compare_live=child_compare_live,
             repo_path=source_path,
         )
-        repo_bytes = pull_view_bytes(
+        desired_bytes, _projection_kind = project_repo_file(
             projection_context.command_runtime,
             repo=repo,
             package=package,
             target=target,
             repo_path=source_path,
             live_path=live_file,
-            view=child_compare_repo,
-            repo_side=True,
             render_command=child_policy[1],
-            capture_command=child_policy[2],
             context=context,
             selection=selection,
             operation=operation,
             inferred_os=inferred_os,
         )
-        live_bytes = pull_view_bytes(
-            projection_context.command_runtime,
-            repo=repo,
-            package=package,
-            target=target,
-            repo_path=source_path,
-            live_path=live_file,
-            view=child_compare_live,
-            repo_side=False,
-            render_command=child_policy[1],
-            capture_command=child_policy[2],
-            context=context,
-            selection=selection,
-            operation=operation,
-            inferred_os=inferred_os,
-        )
-        if repo_bytes != live_bytes or directory_executable_bit_differs(source_path, live_file):
+        live_bytes = read_bytes(live_file)
+        desired_chmod = child_policy[0]
+        child_chmod_differs = directory_child_chmod_differs(live_file, desired_chmod)
+        executable_bit_differs = desired_chmod is None and directory_executable_bit_differs(source_path, live_file)
+        if desired_bytes != live_bytes or executable_bit_differs or child_chmod_differs:
+            action = (
+                "chmod"
+                if child_chmod_differs and desired_bytes == live_bytes and not executable_bit_differs
+                else "update"
+            )
             directory_items.append(
                 DirectoryPlanItem(
                     relative_path=relative_path,
-                    action="update",
+                    action=action,
                     repo_path=source_path,
                     live_path=live_file,
+                    chmod=desired_chmod,
                     render_command=child_policy[1],
                     capture_command=child_policy[2],
                     compare_repo=child_compare_repo,
@@ -1435,15 +1209,18 @@ def plan_directory_action(
                     additional_sources=child_policy[6],
                     additional_source_entries=child_policy[5].source_entries(),
                     sync_policy=child_policy[7],
-                    review_before_bytes=repo_bytes,
-                    review_after_bytes=live_bytes,
+                    desired_bytes=desired_bytes,
+                    review_before_bytes=live_bytes,
+                    review_after_bytes=desired_bytes,
                 )
             )
-
     if not directory_items:
         return "noop", ()
     ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))
-    return ("delete" if not live_exists else "update"), ordered_items
+    if not desired_rel_paths:
+        # Push has no repo-side files to keep, so any tracked live files are being removed.
+        return "delete", ordered_items
+    return ("create" if not live_exists else "update"), ordered_items
 
 
 
@@ -1654,234 +1431,24 @@ def projection_kind_for_render_command(render_command: str | None) -> str:
     return "raw"
 
 
-def plan_file_action_from_review_bytes(
-    *,
-    repo_path: Path,
-    live_path: Path,
-    desired_bytes: bytes | None,
-    review_before_bytes: bytes | None,
-    review_after_bytes: bytes | None,
-    operation: str,
-) -> str:
-    if operation == "push":
-        if not live_path.exists():
-            return "create"
-        if desired_bytes is None:
-            return "unknown"
-        return "noop" if desired_bytes == review_before_bytes else "update"
-
-    repo_exists = repo_path.exists()
-    live_exists = live_path.exists()
-    if not repo_exists and not live_exists:
-        return "noop"
-    if not live_exists:
-        return "delete"
-    if not repo_exists:
-        return "create"
-    return "noop" if review_before_bytes == review_after_bytes else "update"
-
-
-def plan_file_action(
-    command_runtime: CommandRuntime,
-    *,
-    repo: Repository,
-    package: PackageSpec,
-    target: TargetSpec,
-    repo_path: Path,
-    live_path: Path,
-    desired_bytes: bytes | None,
-    render_command: str | None,
-    capture_command: str | None,
-    context: dict[str, Any],
-    selection: ResolvedPackageSelection,
-    operation: str,
-    inferred_os: str,
-    compare_repo: str,
-    compare_live: str,
-) -> str:
-    if operation == "push":
-        if not live_path.exists():
-            return "create"
-        if desired_bytes is None:
-            return "unknown"
-        return "noop" if desired_bytes == read_bytes(live_path) else "update"
-
-    repo_exists = repo_path.exists()
-    live_exists = live_path.exists()
-    if not repo_exists and not live_exists:
-        return "noop"
-    if not live_exists:
-        return "delete"
-    if not repo_exists:
-        return "create"
-    repo_bytes = pull_view_bytes(
-        command_runtime,
-        repo=repo,
-        package=package,
-        target=target,
-        repo_path=repo_path,
-        live_path=live_path,
-        view=compare_repo,
-        repo_side=True,
-        render_command=render_command,
-        capture_command=capture_command,
-        context=context,
-        selection=selection,
-        operation=operation,
-        inferred_os=inferred_os,
-    )
-    live_bytes = pull_view_bytes(
-        command_runtime,
-        repo=repo,
-        package=package,
-        target=target,
-        repo_path=repo_path,
-        live_path=live_path,
-        view=compare_live,
-        repo_side=False,
-        render_command=render_command,
-        capture_command=capture_command,
-        context=context,
-        selection=selection,
-        operation=operation,
-        inferred_os=inferred_os,
-    )
-    return "noop" if repo_bytes == live_bytes else "update"
-
-
-def build_file_review_bytes(
-    command_runtime: CommandRuntime,
-    *,
-    repo: Repository,
-    package: PackageSpec,
-    target: TargetSpec,
-    repo_path: Path,
-    live_path: Path,
-    desired_bytes: bytes | None,
-    render_command: str | None,
-    capture_command: str | None,
-    context: dict[str, Any],
-    selection: ResolvedPackageSelection,
-    operation: str,
-    inferred_os: str,
-    compare_repo: str,
-    compare_live: str,
-) -> tuple[bytes | None, bytes | None]:
-    if operation == "push":
-        try:
-            live_bytes = read_bytes(live_path)
-        except FileNotFoundError:
-            live_bytes = b""
-        return live_bytes, desired_bytes
-
-    repo_bytes = pull_view_bytes(
-        command_runtime,
-        repo=repo,
-        package=package,
-        target=target,
-        repo_path=repo_path,
-        live_path=live_path,
-        view=compare_repo,
-        repo_side=True,
-        render_command=render_command,
-        capture_command=capture_command,
-        context=context,
-        selection=selection,
-        operation=operation,
-        inferred_os=inferred_os,
-    )
+def plan_file_action_from_review_bytes(*, live_path: Path, desired_bytes: bytes | None, review_before_bytes: bytes | None) -> str:
     if not live_path.exists():
-        return repo_bytes, b""
-    live_bytes = pull_view_bytes(
-        command_runtime,
-        repo=repo,
-        package=package,
-        target=target,
-        repo_path=repo_path,
-        live_path=live_path,
-        view=compare_live,
-        repo_side=False,
-        render_command=render_command,
-        capture_command=capture_command,
-        context=context,
-        selection=selection,
-        operation=operation,
-        inferred_os=inferred_os,
-    )
-    return repo_bytes, live_bytes
+        return "create"
+    if desired_bytes is None:
+        return "unknown"
+    return "noop" if desired_bytes == review_before_bytes else "update"
 
 
-def pull_view_bytes(
-    command_runtime: CommandRuntime,
-    *,
-    repo: Repository,
-    package: PackageSpec,
-    target: TargetSpec,
-    repo_path: Path,
-    live_path: Path,
-    view: str,
-    repo_side: bool,
-    render_command: str | None,
-    capture_command: str | None,
-    context: dict[str, Any],
-    selection: ResolvedPackageSelection,
-    operation: str,
-    inferred_os: str,
-) -> bytes:
-    if view == "raw":
-        if repo_side and not repo_path.exists():
-            # Missing repo source during pull means "nothing captured yet", not an error.
-            return b""
-        return read_bytes(repo_path) if repo_side else read_bytes(live_path)
-    if view == "render":
-        desired_bytes, _projection = project_repo_file(
-            command_runtime,
-            repo=repo,
-            package=package,
-            target=target,
-            repo_path=repo_path,
-            live_path=live_path,
-            render_command=render_command,
-            context=context,
-            selection=selection,
-            operation=operation,
-            inferred_os=inferred_os,
-        )
-        return desired_bytes
-    if view == "capture":
-        if capture_command == BUILTIN_PATCH_CAPTURE:
-            raise ValueError(
-                f"target '{package.id}:{target.name}' reserves capture = 'patch' for reverse capture and does not expose a capture view"
-            )
-        if capture_command is None:
-            return read_bytes(live_path)
-        return run_command_projection(
-            command_runtime,
-            repo=repo,
-            package=package,
-            target=target,
-            repo_path=repo_path,
-            live_path=live_path,
-            command=_projection_command(capture_command),
-            selection=selection,
-            operation=operation,
-            inferred_os=inferred_os,
-            context=context,
-        )
-    command = render_template_string(_projection_command(view), context, base_dir=target.declared_in, source_path=target.declared_in)
-    return run_command_projection(
-        command_runtime,
-        repo=repo,
-        package=package,
-        target=target,
-        repo_path=repo_path,
-        live_path=live_path,
-        command=command,
-        selection=selection,
-        operation=operation,
-        inferred_os=inferred_os,
-        context=context,
-    )
+
+
+def build_file_review_bytes(*, live_path: Path, desired_bytes: bytes | None) -> tuple[bytes | None, bytes | None]:
+    try:
+        live_bytes = read_bytes(live_path)
+    except FileNotFoundError:
+        live_bytes = b""
+    return live_bytes, desired_bytes
+
+
 
 
 def run_probe_command(command_runtime: CommandRuntime, metadata: TargetMetadata) -> bool:

@@ -303,13 +303,6 @@ class DotmanEngine:
             maintain_sync_bases=maintain_sync_bases,
         )
 
-    def plan_pull_query(self, query_text: str, *, profile: str | None = None, run_noop: bool = False) -> OperationPlan:
-        return self._plan_query(
-            query_text,
-            operation="pull",
-            profile=profile,
-            run_noop=run_noop,
-        )
 
     def resolve_tracked_binding(
         self,
@@ -409,13 +402,6 @@ class DotmanEngine:
             maintain_sync_bases=maintain_sync_bases,
         )
 
-    def plan_pull(self, *, sink: "ProgressSink | None" = None, run_noop: bool = False) -> OperationPlan:
-        return planning.build_tracked_plans(
-            self._planning_context,
-            operation="pull",
-            sink=sink,
-            run_noop=run_noop,
-        )
 
     def list_tracked_state(self) -> TrackedStateSummary:
         return tracking.list_tracked_state(self._tracked_state_context)

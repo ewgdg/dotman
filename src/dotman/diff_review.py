@@ -11,25 +11,19 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from dotman import cli_style
-from dotman.capture import BUILTIN_PATCH_CAPTURE
-from dotman.manifest import FORCED_COMMAND_PREFIX
 from dotman.command_runtime import (
     ArgvCommand,
     CommandRequest,
-    ShellCommand,
     current_command_runtime,
     raise_for_command_interruption,
 )
-from dotman.file_access import needs_sudo_for_read, read_bytes
+from dotman.file_access import read_bytes
 from dotman.models import AdditionalSource, HookPlan, PackagePlan
 from dotman.reconcile import resolve_editor_additional_sources, run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
-from dotman.templates import build_template_context, render_template_file, render_template_string
 from dotman.ui_context import current_ui_config
 
 
-def _projection_command(value: str) -> str:
-    return value[len(FORCED_COMMAND_PREFIX):] if value.startswith(FORCED_COMMAND_PREFIX) else value
 
 
 DEFAULT_REVIEW_PAGER = "less -FRX"
@@ -220,8 +214,6 @@ def _hook_plan_matches_target(
 
 
 def edit_status(review_item: ReviewItem) -> str:
-    if review_item.operation == "pull" and review_item.editor is not None:
-        return "editor"
     if review_item.repo_path.exists() and review_item.live_path.exists():
         return "editor"
     return "edit unavailable"
@@ -252,14 +244,14 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
         left_path = _write_review_file(
             root=temp_root,
             side=left_side,
-            reference_path=review_item.repo_path if review_item.operation == "pull" else review_item.live_path,
+            reference_path=review_item.live_path,
             content=before_bytes,
             mode=before_mode or 0o644,
         )
         right_path = _write_review_file(
             root=temp_root,
             side=right_side,
-            reference_path=review_item.live_path if review_item.operation == "pull" else review_item.repo_path,
+            reference_path=review_item.repo_path,
             content=after_bytes,
             mode=after_mode or 0o644,
         )
@@ -354,15 +346,6 @@ def _directory_item_review_byte_source(
         return planned_bytes, None
     if operation == "push" and not before and item.desired_bytes is not None:
         return item.desired_bytes, None
-    loader = _directory_item_projected_pull_loader(
-        item,
-        target=target,
-        plan=plan,
-        operation=operation,
-        before=before,
-    )
-    if loader is not None:
-        return None, loader
     return (
         _load_item_bytes(
             repo_path=item.repo_path,
@@ -374,118 +357,14 @@ def _directory_item_review_byte_source(
     )
 
 
-def _directory_item_projected_pull_loader(
-    item,
-    *,
-    target,
-    plan: PackagePlan,
-    operation: str,
-    before: bool,
-) -> ReviewBytesLoader | None:
-    if operation != "pull":
-        return None
-    if before and not (item.action == "delete" and item.compare_repo != "raw"):
-        return None
-    if not before and not (item.action == "create" and item.compare_live != "raw"):
-        return None
-
-    view = item.compare_repo if before else item.compare_live
-    context = build_template_context(
-        plan.variables,
-        profile=plan.requested_profile,
-        inferred_os=plan.inferred_os or "unknown",
-    )
-
-    def load() -> bytes:
-        return _directory_item_pull_view_bytes(
-            item,
-            target=target,
-            view=view,
-            repo_side=before,
-            context=context,
-        )
-
-    return load
 
 
-def _directory_item_pull_view_bytes(
-    item,
-    *,
-    target,
-    view: str,
-    repo_side: bool,
-    context: dict,
-) -> bytes:
-    if view == "raw":
-        return _load_item_bytes(
-            repo_path=item.repo_path,
-            live_path=item.live_path,
-            operation="pull",
-            before=repo_side,
-        )
-    if view == "render":
-        return _directory_item_rendered_repo_bytes(item, target=target, context=context)
-    if view == "capture":
-        if item.capture_command == BUILTIN_PATCH_CAPTURE:
-            raise ValueError("capture = 'patch' does not expose a capture review view")
-        if item.capture_command is None:
-            # Without a capture transform, the capture view is the live file itself.
-            return read_bytes(item.live_path)
-        return _run_directory_item_view_command(item, target=target, command=item.capture_command)
-    command = render_template_string(
-        view,
-        context,
-        base_dir=target.command_cwd or item.repo_path.parent,
-        source_path=target.command_cwd,
-    )
-    return _run_directory_item_view_command(item, target=target, command=command)
 
 
-def _directory_item_rendered_repo_bytes(item, *, target, context: dict) -> bytes:
-    if item.render_command == "jinja":
-        rendered_bytes, _kind = render_template_file(item.repo_path, context)
-        return rendered_bytes
-    if item.render_command is None:
-        return _load_item_bytes(
-            repo_path=item.repo_path,
-            live_path=item.live_path,
-            operation="pull",
-            before=True,
-        )
-    return _run_directory_item_view_command(item, target=target, command=item.render_command)
 
 
-def _run_directory_item_view_command(item, *, target, command: str) -> bytes:
-    result = current_command_runtime().run(
-        CommandRequest(
-            command=ShellCommand(_projection_command(command)),
-            cwd=target.command_cwd,
-            env=_directory_item_command_env(item, target=target),
-            elevation="root" if needs_sudo_for_read(item.live_path) else "none",
-        )
-    )
-    raise_for_command_interruption(result)
-    if result.exit_code != 0:
-        stderr = result.stderr.decode("utf-8", errors="replace").strip()
-        raise ValueError(stderr or f"review projection command exited with status {result.exit_code}")
-    return result.stdout
 
 
-def _directory_item_command_env(item, *, target) -> dict[str, str]:
-    env = dict(target.command_env or {})
-    repo_path = str(item.repo_path)
-    live_path = str(item.live_path)
-    env.update(
-        {
-            "DOTMAN_TARGET_REPO_PATH": repo_path,
-            "DOTMAN_TARGET_LIVE_PATH": live_path,
-            "DOTMAN_REPO_PATH": repo_path,
-            "DOTMAN_SOURCE": repo_path,
-            "DOTMAN_LIVE_PATH": live_path,
-            "DOTMAN_TARGET_RELATIVE_PATH": item.relative_path,
-        }
-    )
-    return env
 
 
 
@@ -509,7 +388,7 @@ def _load_item_bytes(*, repo_path: Path, live_path: Path, operation: str, before
 
 
 def _load_item_mode(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> int | None:
-    if operation not in {"push", "pull"}:
+    if operation != "push":
         return None
     target_path = _review_item_side_path(repo_path=repo_path, live_path=live_path, operation=operation, before=before)
     try:
@@ -519,8 +398,6 @@ def _load_item_mode(*, repo_path: Path, live_path: Path, operation: str, before:
 
 
 def _review_item_side_path(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> Path:
-    if operation == "pull":
-        return repo_path if before else live_path
     return live_path if before else repo_path
 
 
@@ -554,16 +431,12 @@ def _review_diff_file_modes(review_item: ReviewItem) -> tuple[int | None, int | 
 def _selection_item_paths(*, operation: str, repo_path: Path | str, live_path: Path | str) -> tuple[str, str]:
     repo_text = str(repo_path)
     live_text = str(live_path)
-    if operation == "pull":
-        return live_text, repo_text
     if operation == "restore":
         return repo_text, live_text
     return repo_text, live_text
 
 
 def _review_diff_side_names(*, operation: str) -> tuple[str, str]:
-    if operation == "pull":
-        return "repo", "live"
     if operation == "restore":
         return "live", "snapshot"
     return "live", "repo"
@@ -602,8 +475,6 @@ def _review_item_has_byte_sources(review_item: ReviewItem) -> bool:
 def _review_edit_bytes(*, review_item: ReviewItem) -> tuple[bytes, bytes]:
     before_bytes = _review_item_bytes(review_item, before=True)
     after_bytes = _review_item_bytes(review_item, before=False)
-    if review_item.operation == "pull":
-        return before_bytes, after_bytes
     return after_bytes, before_bytes
 
 

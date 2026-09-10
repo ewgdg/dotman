@@ -159,3 +159,37 @@ def test_pull_post_hook_failure_keeps_completed_write_and_skips_later_units(tmp_
     assert (tmp_path / "repo/packages/app/a").read_bytes() == b"live"
     assert (tmp_path / "repo/packages/app/b").read_bytes() == b"repo"
     assert not (tmp_path / "state/dotman/snapshots").exists()
+
+
+@pytest.mark.parametrize("comparison", ["raw", "capture"])
+def test_pull_capture_is_reused_across_reviews_and_execution(tmp_path, monkeypatch, comparison):
+    from dotman.sync_session import PrepareProposalReview, SetApproval
+    from dotman.sync_base_store import FilePresent
+    from dotman.command_runtime import CommandResult
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live",
+         f'capture = "capture-frozen"\ncompare = {{repo = "raw", live = "{comparison}"}}'),
+    ])
+    runtime = engine._planning_context.projection.command_runtime
+    original = runtime.run
+    captures = []
+
+    def run(request):
+        if getattr(request.command, "source", None) == "capture-frozen":
+            captures.append(request)
+            return CommandResult(exit_code=0, stdout=b"captured")
+        return original(request)
+
+    monkeypatch.setattr(runtime, "run", run)
+    with engine.open_pull_session(engine.resolve_sync_scope()) as session:
+        row, = session.view.rows
+        assert row.proposal.repository == FilePresent(b"captured")
+        for kind, args in [(PrepareProposalReview, ()), (SetApproval, (False,)),
+                           (SetApproval, (True,)), (PrepareProposalReview, ())]:
+            dispatched = session.dispatch(kind(session.view.session_id, session.view.revision, row.row_id, *args))
+            if kind is PrepareProposalReview:
+                assert dispatched.result.proposal.repository == FilePresent(b"captured")
+        assert len(captures) == 1
+        assert session.execute().result.units[0].status == "applied"
+        assert len(captures) == 1
+    assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"captured"

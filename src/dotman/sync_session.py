@@ -349,7 +349,7 @@ class InclusionChanged:
 @dataclass(frozen=True)
 class SyncUnitResult:
     identity: str
-    status: Literal["directly-in-sync", "pending", "excluded", "observation-failed", "converged", "would-converge", "execution-failed", "interrupted", "skipped", "not-converged"]
+    status: Literal["directly-in-sync", "pending", "excluded", "observation-failed", "converged", "would-converge", "applied", "would-apply", "execution-failed", "interrupted", "skipped", "not-converged"]
     diagnostics: tuple[Diagnostic, ...] = ()
 
 

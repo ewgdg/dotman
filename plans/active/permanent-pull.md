@@ -43,3 +43,17 @@ Additional input alignment and editing. Run affected suites after focused checks
   ported its Pull lock checks to the permanent deck boundary (including structured
   failure and release after observation failure). Both command-runner modules:
   10 passed. Engine/projection/execution cleanup and acceptance remain outstanding.
+
+
+## Completion pass
+- Removed the obsolete engine Pull planning facades and directional projection,
+  execution, lazy review and selection branches. Shared metadata, Guards,
+  projections and hook execution remain available to the session workflows.
+- Added dedicated Pull directory coverage for independent opt-out child outcomes,
+  frozen executable state, repository topology closure/order, and file/directory
+  symlink policies. Added Capture-backed comparison reuse and lazy Capture reuse
+  across repeated reviews, Approval toggles and Apply.
+- Focused Pull session/directory validation: 21 passed.
+- Push review/selection/execution rendering validation: 89 passed.
+- Obsolete engine/CLI tests are being ported to current session/deck contracts;
+  final affected validation and acceptance review remain pending.

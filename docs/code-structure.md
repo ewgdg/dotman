@@ -71,9 +71,11 @@ Current responsibility split:
 - `planning_guards.py` — repo/package-instance/target/path-rule planning eligibility and guard diagnostics
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `sync_directory.py` — symmetric control-aware census and identity-derived child metadata; no aggregate payload or publication
-- `projection.py` — target projection and file/directory action planning through `ProjectionContext`
+- `projection.py` — shared frozen Render, Capture and comparison providers plus Push file/directory action planning through `ProjectionContext`
 - `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
-- `sync_session.py` — one-shot file and auxiliary session, immutable views, semantic commands, typed dispatch/results and lifecycle events
+- `sync_session.py` — shared Proposal workset, immutable views, semantic commands, transactional Approval and Sync convergence orchestration
+- `pull_session.py` — fixed live-to-repository Observation, opt-out Proposal/Additional Approval and repository-only completion over the shared workset
+- `execution.py` — Push execution and the shared command-hook execution boundary
 - `sync_editor.py` — isolated configured/default Editor invocation and permitted source staging
 - `sync_observation.py` — file endpoint evidence, policy comparisons, frozen Guards/Git/Base facts and opening-time Base lifecycle
 - `sync_auxiliary.py` — immutable Probe/hook rows, one-shot Probe activity and Guard-admitted directional hook retention
@@ -294,4 +296,6 @@ store handles or execution steps.
 References: [Python file locking](https://docs.python.org/3/library/fcntl.html#fcntl.flock)
 and [descriptor-relative file access](https://docs.python.org/3/library/os.html#os.open).
 
-- `pull_session.py` fixes live-to-repository orchestration over the shared `ProposalSession` workset. `sync_deck_command.py` adapts both Sync and Pull to the same Command Deck; Pull does not use the one-sided Push plan runner.
+`sync_deck_command.py` adapts Sync and Pull to the shared Command Deck.
+The engine opens Pull through `open_pull_session`; Push retains its own plan
+and execution runner.
