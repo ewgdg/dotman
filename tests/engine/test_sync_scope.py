@@ -315,7 +315,7 @@ def test_resolved_sync_scope_keeps_explicit_ownership_winner_over_dependency_los
         encoding="utf-8",
     )
     (repo_root / "packages" / "loser" / "package.toml").write_text(
-        'id = "loser"\nsync_policy = "push-only"\n\n[targets.shared]\nsource = "files/value.conf"\npath = "~/.config/shared.conf"\n',
+        'id = "loser"\nsync_policy = "push-only"\n\n[targets.shared]\nsource = "../winner/files/value.conf"\npath = "~/.config/shared.conf"\n',
         encoding="utf-8",
     )
     meta_root = repo_root / "packages" / "meta"
@@ -334,3 +334,51 @@ def test_resolved_sync_scope_keeps_explicit_ownership_winner_over_dependency_los
     scope = engine.resolve_sync_scope()
 
     assert [target.canonical for target in scope.targets] == ["main:winner.shared"]
+
+
+@pytest.mark.parametrize("other_policy", ["push-only", "push-only-delete", "pull-only", "both"])
+def test_resolved_sync_scope_rejects_shared_primary_source_across_policies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, other_policy: str,
+) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    manifest = repo_root / "packages/app/package.toml"
+    manifest.write_text(
+        'sync_policy = "push-only"\n' + manifest.read_text()
+        + '\n[targets.other]\nsource = "files/config.conf"\n'
+        + 'path = "~/.config/other.conf"\n'
+        + f'sync_policy = "{other_policy}"\n',
+    )
+    write_tracked_packages_state(
+        tmp_path / "state", repo_name="main", entries=[("app", "default")],
+    )
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    # Even a narrow selection cannot make conflicting tracked ownership valid.
+    with pytest.raises(ValueError, match="conflicting target ownership"):
+        engine.resolve_sync_scope(["main:app.config"])
+
+
+@pytest.mark.parametrize("excluded", [False, True])
+def test_resolved_sync_scope_checks_nested_push_only_primary_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, excluded: bool,
+) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    manifest = repo_root / "packages/app/package.toml"
+    manifest.write_text(
+        'sync_policy = "push-only"\n' + manifest.read_text()
+        + ('\nignore = { patterns = ["nested.conf"] }\n' if excluded else "")
+        + '\n[targets.other]\nsource = "files/settings/nested.conf"\n'
+        + 'path = "~/.config/other.conf"\n',
+    )
+    write_tracked_packages_state(
+        tmp_path / "state", repo_name="main", entries=[("app", "default")],
+    )
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    if excluded:
+        assert len(engine.resolve_sync_scope().targets) == 3
+    else:
+        with pytest.raises(ValueError, match="incompatible nested targets"):
+            engine.resolve_sync_scope()

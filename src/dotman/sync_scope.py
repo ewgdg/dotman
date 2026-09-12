@@ -245,6 +245,8 @@ def resolve_sync_scope(
     # Static ownership and collision resolution runs against the full tracked graph
     # before narrowing to the requested identities.
     winner_keys_by_operation: dict[str, set[tuple[str, str, str | None, str]]] = {}
+    primary_targets = {}
+    primary_gitignore = {}
     for operation in ("push", "pull"):
         candidates = planning.collect_tracked_ownership_candidates(context, operation=operation)
         winners = resolve_tracked_target_winners(candidates)
@@ -296,10 +298,19 @@ def resolve_sync_scope(
                         metadata.live_path_symlink_target,
                     )
                 )
+                primary_targets[metadata_key] = rendered_targets[-1]
+                primary_gitignore[(metadata.repo_path, metadata.live_path)] = metadata.gitignore
         validate_target_collisions(rendered_targets, operation=operation, gitignore_chains={
             (metadata.repo_path, metadata.live_path): metadata.gitignore
             for planning_input in planning_inputs for metadata in planning_input.target_metadata
         })
+
+    # Every surviving Sync target can edit its Primary Source, even when policy
+    # forbids automatic Pull. Validate their union after directional ownership
+    # has removed overridden targets, before narrowing to requested selectors.
+    validate_target_collisions(
+        list(primary_targets.values()), operation="pull", gitignore_chains=primary_gitignore,
+    )
 
     selected_targets: list[ResolvedSyncTarget] = []
     selected_target_keys: set[tuple[str, str, str | None, str, str | None]] = set()

@@ -7,6 +7,10 @@ for module orientation.
 
 A file target is one **Sync Unit**. Each regular-file child of a directory target
 is an independent Sync Unit; a directory root has no aggregate Base.
+After tracked ownership selects its winners, their Primary Sources must be
+exclusive across all Sync Policies, including push-only targets whose Proposal
+Editors can write repository sources. Duplicate or unexcluded nested source
+claims are configuration errors before Observation, even for a narrower scope.
 
 ## Frozen Observation
 
