@@ -1,10 +1,61 @@
 import json
+import os
+import pty
+import subprocess
+import sys
 
 import pytest
 
 from dotman.sync_deck_command import PullDeckCommandRunner
 from tests.cli.test_sync_deck_command import arguments
 from tests.engine.test_sync_session import make_engine
+
+
+@pytest.mark.parametrize("hook", ["pre_pull", "post_pull"])
+def test_unattended_pull_propagates_mode_to_hooks(tmp_path, monkeypatch, capsys, hook):
+    from dotman.cli import main
+
+    marker = tmp_path / "hook-mode"
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live",
+         f'[targets.unit.hooks]\n{hook} = '
+         + json.dumps(f'printf "$DOTMAN_UNATTENDED" > {marker}')),
+    ])
+    assert main([
+        "--config", str(engine.config.config_path), "--json", "--unattended", "pull",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "completed"
+    assert marker.read_text() == "1"
+
+
+def test_unattended_pull_rejects_tty_hook_even_with_a_terminal(tmp_path, monkeypatch):
+    marker = tmp_path / "tty-launched"
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live",
+         '[targets.unit.hooks]\npre_pull = { run = '
+         + json.dumps(f"touch {marker}") + ', io = "tty" }'),
+    ])
+    # A pipe-only probe would fail the terminal check even if unattended policy
+    # were lost. A real PTY proves that the operation policy prevents launch.
+    master, slave = pty.openpty()
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "dotman.cli", "--config",
+             str(engine.config.config_path), "--unattended", "pull"],
+            stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+        )
+        try:
+            exit_code = process.wait(timeout=5)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+        assert exit_code == 1
+        assert not marker.exists()
+        assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"repo"
+    finally:
+        os.close(master)
+        os.close(slave)
 
 
 @pytest.mark.parametrize("dry_run", [False, True])

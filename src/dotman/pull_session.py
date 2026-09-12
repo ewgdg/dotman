@@ -1,6 +1,7 @@
 """Permanent fixed live-to-repository orchestration over frozen Proposal work."""
 from dataclasses import replace
 
+from dotman.interaction_policy import unattended_enabled
 from dotman.sync_observation import observe_scope
 from dotman.sync_session import (
     ProposalSession, SessionRow, AdditionalRow, Proposal, AuxiliaryRow,
@@ -72,6 +73,7 @@ class PullSession(ProposalSession):
                                       requires_publication=False) for row in selected),
             command_runtime=self._context.projection.command_runtime,
             complete=lambda unit: None, auxiliary=auxiliary, run_noop=self._run_noop,
+            unattended=unattended_enabled(),
             check_cancelled=self.check_cancelled, blocked=bool(diagnostics),
         )
         units, failures, apply_steps = self._execution_outcome(result, "repository-apply")
