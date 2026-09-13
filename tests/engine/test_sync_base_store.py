@@ -44,6 +44,8 @@ def test_typed_payload_roundtrip(tmp_path, payload):
     root = tmp_path / "manager"
     with SyncBaseStore.open(root, "repo") as store:
         store.replace(record(payload=payload))
+        assert store.record_path(b"unit").is_file()
+        assert store.record_path(b"unit").parent == store.repo_state_directory
     with SyncBaseStore.open(root, "repo", read_only=True) as store:
         assert store.read(b"unit") == record(payload=payload)
         assert store.read(b"absent") is None

@@ -590,6 +590,13 @@ class SyncBaseStore:
         finally:
             os.close(descriptor)
 
+    def record_path(self, identity: bytes) -> Path:
+        """Locate one record for diagnostics without opening or creating storage."""
+        identity = _require_bytes(
+            identity, field_name="canonical identity", allow_empty=False
+        )
+        return self.repo_state_directory / _record_name(identity)
+
     def read(self, identity: bytes) -> SyncBaseRecord | None:
         identity = _require_bytes(
             identity, field_name="canonical identity", allow_empty=False
