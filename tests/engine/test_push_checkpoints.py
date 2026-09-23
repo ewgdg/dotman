@@ -77,6 +77,51 @@ def test_dirty_push_establishes_starting_point_for_revert_and_independent_edits(
     assert source.read_bytes() == destination.read_bytes() == expected
 
 
+@pytest.mark.parametrize('git_arguments', [
+    ('reset', '--hard', 'HEAD'),
+    ('checkout', 'HEAD', '--', 'packages/app/unit'),
+])
+def test_git_restore_after_dirty_push_retains_checkpoint_and_publishes_revert(
+    tmp_path, monkeypatch, git_arguments,
+):
+    from dotman.command_runtime import ArgvCommand, CommandRequest
+    from dotman.sync_base_store import FilePresent
+    from dotman.sync_session import PrepareProposalReview, SetApproval
+    from tests.engine.test_sync_convergence import command
+    from tests.engine.test_sync_session import make_engine, open_session
+
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'both', b'committed A', b'committed A', '')])
+    source = tmp_path / 'repo/packages/app/unit'
+    live = tmp_path / 'live/unit'
+    source.write_bytes(b'dirty B')
+    plans = engine.plan_push_query('main:app@default')
+    checkpoint = plans[0].target_plans[0].push_checkpoints[0]
+    assert execute_session(build_execution_session(plans, operation='push')).status == 'ok'
+    before = _record(checkpoint)
+    assert before.payload == FilePresent(b'dirty B')
+
+    restored = engine.command_runtime.run(CommandRequest(
+        ArgvCommand(('git', *git_arguments)), cwd=tmp_path / 'repo',
+    ))
+    assert restored.exit_code == 0, restored.stderr
+    assert source.read_bytes() == b'committed A'
+    assert live.read_bytes() == b'dirty B'
+    assert _record(checkpoint) == before
+    with open_session(engine, preview=False) as session:
+        observation = session.view.observations[0]
+        assert observation.base.status == 'usable'
+        assert observation.base.record == before
+        command(session, PrepareProposalReview, 'main:app.unit')
+        assert session.view.rows[0].intent == 'merge'
+        assert session.view.rows[0].proposal.repository == FilePresent(b'committed A')
+        command(session, SetApproval, 'main:app.unit', True)
+        result = session.execute().result
+        assert result.units[0].status == 'converged'
+        assert result.units[0].acknowledged
+    assert source.read_bytes() == live.read_bytes() == b'committed A'
+    assert _record(checkpoint).payload == FilePresent(b'committed A')
+
+
 def test_push_reuses_successful_required_render_during_execution(tmp_path, monkeypatch):
     from tests.engine.test_sync_session import make_engine
 

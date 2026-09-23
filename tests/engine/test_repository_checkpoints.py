@@ -104,6 +104,56 @@ def test_repository_editor_forward_qualification_uses_edited_bytes(tmp_path, mon
         assert session.execute().result.units[0].acknowledged
 
 
+@pytest.mark.parametrize('operation', ['sync', 'pull'])
+def test_identical_editor_save_reuses_frozen_successful_checkpoint_qualification(
+    tmp_path, monkeypatch, operation,
+):
+    import json
+    from dotman.sync_session import EditProposal
+
+    marker = tmp_path / 'renders'
+    # A second call fails, so retaining only the candidate while recomputing
+    # optional qualification would lose the already-established evidence.
+    render = f'echo render >> {marker}; test $(wc -l < {marker}) -eq 1 || exit 9; cat "$DOTMAN_SOURCE"'
+    config = (f'render = {json.dumps(render)}\n'
+              'compare = {repo = "raw", live = "raw"}\n'
+              'editor = {run = "true", io = "pipe"}')
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'repo', b'live', config)])
+    opened = (open_session(engine, preview=False) if operation == 'sync' else
+              engine.open_pull_session(engine.resolve_sync_scope(), preview=False))
+    with opened as session:
+        if operation == 'sync':
+            command(session, SetApproval, 'main:app.unit', True)
+        before = session.view.rows[0].proposal
+        assert before.repository == FilePresent(b'live')
+        assert before.checkpoint_qualified
+        assert marker.read_text().splitlines() == ['render']
+
+        edited = command(session, EditProposal, 'main:app.unit')
+        assert edited.result.status == 'saved'
+        row = session.view.rows[0]
+        assert row.approved
+        assert row.proposal.intent == 'editor'
+        assert row.proposal.repository == before.repository
+        assert row.proposal.checkpoint_qualified
+        assert not row.proposal.checkpoint_warnings
+        assert marker.read_text().splitlines() == ['render']
+
+        (tmp_path / 'repo/packages/app/unit').write_bytes(b'external repository edit')
+        (tmp_path / 'live/unit').write_bytes(b'external live edit')
+        result = session.execute().result
+        assert result.status == 'completed'
+        assert result.units[0].status == ('converged' if operation == 'sync' else 'applied')
+        assert result.units[0].acknowledged
+        assert not result.units[0].diagnostics
+        assert marker.read_text().splitlines() == ['render']
+    assert (tmp_path / 'repo/packages/app/unit').read_bytes() == b'live'
+    assert (tmp_path / 'live/unit').read_bytes() == b'external live edit'
+    with open_session(engine) as inspected:
+        assert inspected.view.observations[0].base.record.payload == FilePresent(b'live')
+    assert marker.read_text().splitlines() == ['render']
+
+
 def test_repository_only_qualification_tracks_approved_dependency_inputs(tmp_path, monkeypatch):
     import json
     from dotman.sync_session import EditProposal
