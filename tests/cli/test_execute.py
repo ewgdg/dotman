@@ -119,6 +119,10 @@ def _write_directory_execution_repo(
 def _write_tracked_binding(state_root: Path, *, repo_name: str = "fixture", selector: str = "app") -> None:
     state_dir = state_root / "dotman" / "repos" / repo_name
     state_dir.mkdir(parents=True, exist_ok=True)
+    # Match the private manager layout; these are healthy execution fixtures,
+    # not tests of rejected storage permissions.
+    for directory in (state_root / "dotman", state_root / "dotman" / "repos", state_dir):
+        directory.chmod(0o700)
     (state_dir / "tracked-packages.toml").write_text(
         "\n".join(
             [
@@ -153,7 +157,9 @@ def test_push_cli_executes_tracked_binding_and_emits_json_results(
     exit_code = main(["--unattended", "--config", str(config_path), "--json", "push"])
 
     assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    payload = json.loads(captured.out)
     live_path = home / ".config" / "app" / "config.txt"
     assert live_path.read_text(encoding="utf-8") == "repo value\n"
     assert stat.S_IMODE(live_path.stat().st_mode) == 0o600
@@ -164,8 +170,15 @@ def test_push_cli_executes_tracked_binding_and_emits_json_results(
         "pre_push",
         "create",
         "chmod",
+        "acknowledge",
         "post_push",
     ]
+    checkpoint = next(step for step in payload["packages"][0]["steps"] if step["kind"] == "checkpoint")
+    assert checkpoint["status"] == "ok"
+    assert checkpoint["converged"] is True
+    assert checkpoint["acknowledged"] is True
+    assert checkpoint["checkpoint_warning"] is None
+    assert checkpoint["checkpoint_warning_code"] is None
     assert payload["guard_skips"] == []
 
 
@@ -555,15 +568,19 @@ def test_push_cli_human_execution_emits_package_timeline_and_nested_logs(
     exit_code = main(["--unattended", "--config", str(config_path), "push"])
 
     assert exit_code == 0
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    output = captured.out
     assert "\n:: executing push\n" in output
     assert "packages: 1" in output
-    assert "steps: 4" in output
+    assert "steps: 5" in output
     assert ":: fixture:app@default" in output
-    assert "[1/4] pre_push" in output
-    assert "[3/4] chmod" in output
+    assert "[1/5] pre_push" in output
+    assert "[3/5] chmod" in output
     assert "600" in output
-    assert "[4/4] post_push" in output
+    assert "[4/5] acknowledge fixture:app.config" in output
+    assert "converged · Base advanced" in output
+    assert "[5/5] post_push" in output
     assert "guard push" not in output
     assert "post push" in output
     assert "\n    done\n" not in output
@@ -612,21 +629,26 @@ def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(
     live_path = home / ".config" / "app" / "config.txt"
     live_path.parent.mkdir(parents=True)
     live_path.write_text("repo value\n", encoding="utf-8")
+    live_path.chmod(0o600)
 
     exit_code = main(["--unattended", "--config", str(config_path), "push", "--run-noop"])
 
     assert exit_code == 0
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    output = captured.out
     assert ":: executing push" in output
     assert "packages: 1" in output
-    assert "steps: 2" in output
-    assert "[1/2] pre_push" in output
-    assert "[2/2] post_push" in output
+    assert "steps: 3" in output
+    assert "[1/3] pre_push" in output
+    assert "[2/3] acknowledge fixture:app.config" in output
+    assert "directly-in-sync · Base advanced" in output
+    assert "[3/3] post_push" in output
     assert "guard push" not in output
     assert "pre push" in output
     assert "post push" in output
     assert "noop" not in output
-    assert "[1/2] create" not in output
+    assert " create " not in output
 
 
 def test_push_cli_run_noop_dry_run_json_shows_hook_only_package(
