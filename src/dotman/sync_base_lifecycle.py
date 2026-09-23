@@ -4,32 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import stat
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from pathlib import Path, PurePosixPath
-from tempfile import TemporaryDirectory
+from pathlib import PurePosixPath
 from typing import Literal
 
-from dotman.command_runtime import (
-    ArgvCommand,
-    CommandRequest,
-    CommandResult,
-    CommandRuntime,
-    raise_for_command_interruption,
-)
 from dotman.models import ResolvedSyncTarget
 from dotman.sync_base_store import (
     DirectoryChildPresent,
     FilePresent,
-    Missing,
     SyncBaseEnvelope,
     SyncBasePayload,
     SyncBaseRecord,
     SyncBaseRecordCorruptionError,
     SyncBaseStore,
     SyncBaseStoreError,
+    SyncBaseStoreDurabilityError,
 )
 from dotman.sync_scope import sync_unit_identity_bytes
 
@@ -133,220 +123,18 @@ class BaseUnit:
 
 
 @dataclass(frozen=True)
-class FrozenGitHead:
-    commit_oid: str
-    object_format: str
-
-
-@dataclass(frozen=True)
 class FrozenBaseUnit:
-    unit: BaseUnit
-    head: FrozenGitHead
-    payload: SyncBasePayload | None
-    primary_clean: bool
-    failure: SyncBaseGitError | None = None
+    """The final repository outcome, frozen alongside its qualifying evidence."""
 
-    def record(self, *, primary_changed: bool = False) -> SyncBaseRecord:
-        if self.failure is not None:
-            raise self.failure
-        if self.payload is None:
-            raise AssertionError("a successful frozen Base must have a typed payload")
+    unit: BaseUnit
+    payload: SyncBasePayload
+
+    def record(self) -> SyncBaseRecord:
         return SyncBaseRecord(
             self.unit.identity_bytes,
             self.payload,
-            SyncBaseEnvelope(
-                self.head.commit_oid,
-                self.head.object_format,
-                self.unit.fingerprint,
-                "exact"
-                if self.primary_clean and not primary_changed
-                else "conservative",
-            ),
+            SyncBaseEnvelope(self.unit.fingerprint),
         )
-
-
-class SyncBaseGitError(RuntimeError):
-    """Git could not prove a required frozen Base fact."""
-
-
-class SyncBaseGit:
-    """Concrete Git facts through Command Runtime, without touching the real index."""
-
-    def __init__(self, repository: Path, runtime: CommandRuntime) -> None:
-        self.repository = repository
-        self.runtime = runtime
-
-    def _run(
-        self,
-        *arguments: str,
-        env: Mapping[str, str] | None = None,
-        input: bytes | None = None,
-        allowed: tuple[int, ...] = (0,),
-    ) -> CommandResult:
-        # Inspect local objects only, using committed parents rather than
-        # repository or ambient ancestry overrides. Optional-lock suppression
-        # alone does not prevent a promisor remote from writing fetched objects.
-        try:
-            result = self.runtime.run(
-                CommandRequest(
-                    ArgvCommand(
-                        (
-                            "git",
-                            "--no-optional-locks",
-                            "--no-lazy-fetch",
-                            "-c",
-                            "core.fsmonitor=false",
-                            *arguments,
-                        )
-                    ),
-                    cwd=self.repository,
-                    env={
-                        "GIT_NO_REPLACE_OBJECTS": "1",
-                        "GIT_GRAFT_FILE": os.devnull,
-                        "GIT_LITERAL_PATHSPECS": "1",
-                        **(env or {}),
-                    },
-                    excluded_env_keys=frozenset(
-                        key for key in os.environ if key.startswith("GIT_")
-                    ),
-                    input=input,
-                )
-            )
-        except OSError as exc:
-            raise SyncBaseGitError(f"cannot run Git: {exc}") from exc
-        raise_for_command_interruption(result)
-        if result.exit_code not in allowed:
-            raise SyncBaseGitError(
-                f"Git {' '.join(arguments)} failed: {result.stderr.decode(errors='replace').strip()}"
-            )
-        return result
-
-    def freeze_head(self) -> FrozenGitHead:
-        object_format = (
-            self._run("rev-parse", "--show-object-format").stdout.decode().strip()
-        )
-        oid = (
-            self._run("rev-parse", "--verify", "HEAD^{commit}").stdout.decode().strip()
-        )
-        return FrozenGitHead(oid, object_format)
-
-    def commit_available(self, commit_oid: str) -> bool:
-        # Batch lookup reports a missing object on stdout with success; fatal
-        # repository/I/O failures must remain errors, not stale-Base diagnoses.
-        result = self._run(
-            "cat-file",
-            "--batch-check=%(objecttype)",
-            input=commit_oid.encode("ascii") + b"\n",
-        )
-        return result.stdout == b"commit\n"
-
-    def is_ancestor(self, commit_oid: str, head: FrozenGitHead) -> bool:
-        return (
-            self._run(
-                "merge-base",
-                "--is-ancestor",
-                commit_oid,
-                head.commit_oid,
-                allowed=(0, 1),
-            ).exit_code
-            == 0
-        )
-
-    def freeze_units(
-        self,
-        head: FrozenGitHead,
-        units: tuple[BaseUnit, ...],
-    ) -> tuple[FrozenBaseUnit, ...]:
-        if not units:
-            return ()
-        paths = tuple(dict.fromkeys(unit.primary_source for unit in units))
-        # No rename inference: each identity's Primary path alone owns provenance.
-        status = self._run(
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--no-renames",
-            "--untracked-files=all",
-            "--ignored=matching",
-            "--",
-            *paths,
-        ).stdout
-        dirty = {os.fsdecode(entry[3:]) for entry in status.split(b"\x00") if entry}
-        entries = self._run("ls-tree", "-z", head.commit_oid, "--", *paths).stdout
-        modes: dict[str, bytes] = {}
-        failures: dict[str, SyncBaseGitError] = {}
-        for entry in entries.split(b"\x00"):
-            if not entry:
-                continue
-            metadata, path = entry.split(b"\t", 1)
-            mode, kind, _oid = metadata.split()
-            if kind != b"blob" or mode not in (b"100644", b"100755"):
-                failures[os.fsdecode(path)] = SyncBaseGitError(
-                    f"committed Primary Source is not a regular file: {os.fsdecode(path)}"
-                )
-            else:
-                modes[os.fsdecode(path)] = mode
-
-        with TemporaryDirectory(prefix="dotman-base-") as temporary:
-            root = Path(temporary)
-            checkout = root / "checkout"
-            checkout.mkdir()
-            environment = {
-                "GIT_INDEX_FILE": str(root / "index"),
-                "GIT_WORK_TREE": str(checkout),
-            }
-            self._run("read-tree", head.commit_oid, env=environment)
-            contents: dict[str, bytes] = {}
-            for source in modes:
-                try:
-                    # Checkout converts committed attributes in the alternate
-                    # index/worktree. Run per path so one filter failure cannot
-                    # discard successful peers or force a new status observation.
-                    self._run(
-                        "checkout-index",
-                        "--stdin",
-                        "-z",
-                        env=environment,
-                        input=os.fsencode(source) + b"\x00",
-                    )
-                    path = checkout / source
-                    if not stat.S_ISREG(path.lstat().st_mode):
-                        raise SyncBaseGitError(
-                            f"checkout is not a regular file: {source}"
-                        )
-                    contents[source] = path.read_bytes()
-                except (SyncBaseGitError, OSError) as exc:
-                    failures[source] = (
-                        exc
-                        if isinstance(exc, SyncBaseGitError)
-                        else SyncBaseGitError(
-                            f"cannot read isolated checkout for {source}: {exc}"
-                        )
-                    )
-            frozen: list[FrozenBaseUnit] = []
-            for unit in units:
-                source = unit.primary_source
-                payload: SyncBasePayload | None = Missing()
-                if source in failures:
-                    payload = None
-                elif source in contents:
-                    payload = (
-                        FilePresent(contents[source])
-                        if unit.identity.child_path is None
-                        else DirectoryChildPresent(
-                            contents[source], modes[source] == b"100755"
-                        )
-                    )
-                # Ignored untracked directories may be emitted as a directory,
-                # even with path-scoped status. Such a source is never clean.
-                clean = not any(
-                    source == path or source.startswith(path.rstrip("/") + "/")
-                    for path in dirty
-                )
-                frozen.append(
-                    FrozenBaseUnit(unit, head, payload, clean, failures.get(source))
-                )
-            return tuple(frozen)
 
 
 @dataclass(frozen=True)
@@ -354,6 +142,7 @@ class BaseInspection:
     status: Literal["usable", "unavailable", "not-applicable"]
     reason: str | None = None
     record: SyncBaseRecord | None = None
+    failure: SyncBaseStoreError | None = None
 
 
 EffectStatus = Literal["not-required", "pending", "succeeded", "failed"]
@@ -407,13 +196,20 @@ class BaseLifecycleResult:
     acknowledged: bool = False
     deleted: bool = False
     live_fact: str | None = None
-    failure: SyncBaseStoreError | SyncBaseGitError | None = None
+    failure: SyncBaseStoreError | None = None
+
+    @property
+    def warning_code(self) -> str | None:
+        if self.failure is None:
+            return None
+        return ("base-durability-uncertain" if isinstance(self.failure, SyncBaseStoreDurabilityError)
+                else "base-acknowledgment-failed")
 
 
 def record_matches_identity(
     record: SyncBaseRecord, identity: ResolvedSyncTarget
 ) -> bool:
-    """Validate non-Git record shape against its canonical Sync Unit identity."""
+    """Validate record shape against its canonical Sync Unit identity."""
     return (
         record.identity == sync_unit_identity_bytes(identity)
         and not (
@@ -433,7 +229,6 @@ class SyncBaseLifecycle:
     def __init__(
         self,
         store: SyncBaseStore,
-        git: SyncBaseGit,
         *,
         operation: Literal["push", "pull", "sync"],
         preview: bool = False,
@@ -441,46 +236,38 @@ class SyncBaseLifecycle:
         if operation not in ("push", "pull", "sync"):
             raise ValueError("invalid Base operation")
         self.store = store
-        self.git = git
         self.operation = operation
         self.preview = preview
 
-    def inspect(self, unit: BaseUnit, head: FrozenGitHead) -> BaseInspection:
-        """Read only; no checkout, projections, live reads or cleanup."""
+    def inspect(self, unit: BaseUnit) -> BaseInspection:
+        """Read only; no projections, live reads or cleanup."""
         if not unit.eligible:
             return BaseInspection("not-applicable", "ineligible")
         try:
             record = self.store.read(unit.identity_bytes)
         except SyncBaseRecordCorruptionError as exc:
-            return BaseInspection("unavailable", exc.reason)
+            return BaseInspection("unavailable", exc.reason, failure=exc)
+        except SyncBaseStoreError as exc:
+            return BaseInspection("unavailable", "storage_unavailable", failure=exc)
         if record is None:
             return BaseInspection("unavailable", "absent")
-        if (
-            not record_matches_identity(record, unit.identity)
-            or record.envelope.object_format != head.object_format
-        ):
-            return BaseInspection("unavailable", "record_corrupt")
+        if not record_matches_identity(record, unit.identity):
+            return BaseInspection(
+                "unavailable", "record_corrupt",
+                failure=SyncBaseStoreError("checkpoint does not match Sync Unit identity"),
+            )
         if record.envelope.fingerprint != unit.fingerprint:
             return BaseInspection("unavailable", "inputs_changed")
-        if not self.git.commit_available(record.envelope.commit_oid):
-            return BaseInspection("unavailable", "commit_missing")
-        if not self.git.is_ancestor(record.envelope.commit_oid, head):
-            return BaseInspection("unavailable", "history_changed")
         return BaseInspection("usable", record=record)
 
-    def maintain(self, unit: BaseUnit, head: FrozenGitHead) -> BaseInspection:
-        """Inspect selected applicability, reclaiming only proven unusable records."""
-        inspected = self.inspect(unit, head)
-        if self.preview or inspected.status != "unavailable":
-            return inspected
-        if inspected.reason in ("record_corrupt", "payload_corrupt"):
-            self.store.discard_corrupt(unit.identity_bytes)
-            # Envelope/unit mismatches can be valid store records but invalid
-            # for this resolved unit; discard only this identity in that case.
-            self.store.delete(unit.identity_bytes)
-            return BaseInspection("unavailable", "absent")
-        if inspected.reason in ("inputs_changed", "commit_missing", "history_changed"):
-            self.store.delete(unit.identity_bytes)
+    def maintain(self, unit: BaseUnit) -> BaseInspection:
+        """Reclaim interpretation-invalid records, never recreate rejected storage."""
+        inspected = self.inspect(unit)
+        if not self.preview and inspected.reason == "inputs_changed":
+            try:
+                self.store.delete(unit.identity_bytes)
+            except SyncBaseStoreError as exc:
+                return BaseInspection("unavailable", "inputs_changed", failure=exc)
             return BaseInspection("unavailable", "absent")
         return inspected
 
@@ -488,7 +275,10 @@ class SyncBaseLifecycle:
         """Real Push/Sync: immediately after selected static resolution, before Guards/review."""
         if self.preview or self.operation == "pull" or unit.eligible:
             return BaseLifecycleResult()
-        return BaseLifecycleResult(deleted=self.store.delete(unit.identity_bytes))
+        try:
+            return BaseLifecycleResult(deleted=self.store.delete(unit.identity_bytes))
+        except SyncBaseStoreError as exc:
+            return BaseLifecycleResult(failure=exc)
 
     def direct_agreement(
         self,
@@ -506,26 +296,27 @@ class SyncBaseLifecycle:
         ):
             return BaseLifecycleResult()
         return self._acknowledge(
-            frozen, primary_changed=False, live_fact="direct-agreement"
+            frozen, live_fact="direct-agreement"
         )
 
     def complete(
         self,
         frozen: FrozenBaseUnit,
         proposal: ProposalCompletion,
+        *,
+        qualified: bool = True,
     ) -> BaseLifecycleResult:
         """At the unit's earliest ordered completion point, before its target post-hook."""
-        if self.preview or not proposal.ready or self.operation == "pull":
+        if self.preview or not proposal.ready:
             return BaseLifecycleResult()
-        if not frozen.unit.eligible:
+        if not frozen.unit.eligible or not qualified:
             return BaseLifecycleResult(converged=True)
         result = self._acknowledge(
             frozen,
-            primary_changed=proposal.primary_effect != "not-required",
             live_fact=proposal.live_fact,
         )
         return BaseLifecycleResult(
-            converged=result.acknowledged,
+            converged=True,
             acknowledged=result.acknowledged,
             live_fact=result.live_fact,
             failure=result.failure,
@@ -535,15 +326,12 @@ class SyncBaseLifecycle:
         self,
         frozen: FrozenBaseUnit,
         *,
-        primary_changed: bool,
         live_fact: str,
     ) -> BaseLifecycleResult:
         try:
-            if not self.git.commit_available(
-                frozen.head.commit_oid
-            ) or not self.git.is_ancestor(frozen.head.commit_oid, frozen.head):
-                raise SyncBaseGitError("frozen acknowledgment commit is unavailable")
-            self.store.replace(frozen.record(primary_changed=primary_changed))
-        except (SyncBaseStoreError, SyncBaseGitError) as exc:
+            self.store.replace(frozen.record())
+        except SyncBaseStoreDurabilityError as exc:
+            return BaseLifecycleResult(acknowledged=True, live_fact=live_fact, failure=exc)
+        except SyncBaseStoreError as exc:
             return BaseLifecycleResult(failure=exc)
         return BaseLifecycleResult(acknowledged=True, live_fact=live_fact)

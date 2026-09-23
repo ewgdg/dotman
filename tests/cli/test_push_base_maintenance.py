@@ -67,8 +67,9 @@ def test_push_without_bases_does_not_create_base_store(tmp_path, monkeypatch, ca
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'push-only', b'same', b'same', '')])
     assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push']) == 0
     capsys.readouterr()
-    from dotman.sync_base_store import DATABASE_FILE_NAME
-    assert not list(engine._tracked_state_context.state_root.rglob(DATABASE_FILE_NAME + '*'))
+    from dotman.sync_base_store import RECORD_FILE_PREFIX, LOCK_FILE_NAME
+    assert not list(engine._tracked_state_context.state_root.rglob(RECORD_FILE_PREFIX + '*'))
+    assert not list(engine._tracked_state_context.state_root.rglob(LOCK_FILE_NAME))
 
 
 def test_push_child_policy_cleanup_retains_ignored_missing_and_eligible_children(tmp_path, monkeypatch, capsys):
@@ -99,6 +100,24 @@ guard_push = "exit 9"
         assert store.read(b'main:app.tree/selected') is None
         for child in ('ignored', 'eligible', 'missing'):
             assert store.read(f'main:app.tree/{child}'.encode()) is not None
+
+
+def test_push_ineligible_base_maintenance_failure_warns_without_blocking(tmp_path, monkeypatch, capsys):
+    from dotman.sync_base_store import LOCK_FILE_NAME
+
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'push-only', b'repo', b'live', '')])
+    record = store_record(engine)
+    lock = record.with_name(LOCK_FILE_NAME)
+    lock.chmod(0o644)
+    before = record.read_bytes()
+    assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push']) == 0
+    output = capsys.readouterr()
+    assert 'warning:' in output.err
+    assert 'main:app.unit' in output.err
+    assert 'Sync Base' in output.err
+    assert record.read_bytes() == before
+    assert lock.stat().st_mode & 0o777 == 0o644
+    assert (tmp_path / 'live/unit').read_bytes() == b'repo'
 
 
 def test_push_lock_contention_never_cleans_bases(tmp_path, monkeypatch, capsys):

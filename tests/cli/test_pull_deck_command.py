@@ -83,7 +83,7 @@ def test_unattended_pull_reports_applied_not_converged(tmp_path, monkeypatch, ca
     assert unit["result"] == "applied"
     assert unit["resolution_intent"] is None
     assert unit["allowed_intents"] == []
-    assert unit["base"]["acknowledged"] is False
+    assert unit["base"]["acknowledged"] is True
     assert all(step["stage"] == "repository-apply" for step in payload["stages"])
 
 

@@ -453,5 +453,8 @@ def test_pull_forced_builtin_commands_keep_command_identity(tmp_path, monkeypatc
         assert row.approved
         expected = DirectoryChildPresent(b"captured", False) if directory else FilePresent(b"captured")
         assert row.proposal.repository == expected
-        assert marker.read_text().splitlines() == ["render", "capture", "patch"]
+        # Capture materializes first; the optional checkpoint check then uses
+        # the forced command Render, not the built-in Jinja provider.
+        assert marker.read_text().splitlines() == ["render", "capture", "patch", "jinja"]
+        assert not row.proposal.checkpoint_qualified
     assert live.read_bytes() == b"live"

@@ -331,9 +331,7 @@ def test_base_facts_freeze_and_real_direct_agreement_acknowledges(
         assert before.base.status == "unavailable"
         assert before.base.reason == "absent"
         assert not before.base.acknowledged
-        assert before.git.primary_clean
-        assert before.git.committed == FilePresent(b"same")
-        assert len(before.git.head.commit_oid) == 40
+        assert before.repository == FilePresent(b"same")
     with open_session(engine, preview=False) as real:
         observation = real.view.observations[0]
         assert observation.base.acknowledged
@@ -344,10 +342,10 @@ def test_base_facts_freeze_and_real_direct_agreement_acknowledges(
         base = later.view.observations[0].base
         assert base.status == "usable"
         assert base.record.payload == FilePresent(b"same")
-        assert base.record.envelope.provenance == "exact"
+        assert later.view.observations[0].inputs == before.inputs
 
 
-def test_real_direct_dirty_agreement_uses_committed_conservative_base(
+def test_real_direct_dirty_agreement_checkpoints_repository_outcome(
     tmp_path, monkeypatch
 ):
     engine = make_engine(
@@ -358,11 +356,9 @@ def test_real_direct_dirty_agreement_uses_committed_conservative_base(
         unit = session.view.observations[0]
         assert unit.state == "directly-in-sync"
         assert unit.base.acknowledged
-        assert not unit.git.primary_clean
     with open_session(engine) as later:
         record = later.view.observations[0].base.record
-        assert record.payload == FilePresent(b"committed")
-        assert record.envelope.provenance == "conservative"
+        assert record.payload == FilePresent(b"dirty")
 
 
 def test_eligibility_cleanup_precedes_guards_but_preview_preserves_base(
@@ -459,16 +455,36 @@ def test_hard_guard_failure_and_interruption_are_typed_and_release_lock(
         pass
 
 
-def test_observation_git_failure_remains_visible_nonapprovable(tmp_path, monkeypatch):
+def test_observation_without_git_history_can_acknowledge(tmp_path, monkeypatch):
     engine = make_engine(
         tmp_path, monkeypatch, [("unit", "both", b"same", b"same", "")]
     )
-    # A repository without a current commit has no ancestry proof.
+    # Checkpoint evidence is independent of Git history.
     (tmp_path / "repo/.git/HEAD").write_text("ref: refs/heads/unborn\n")
+    with open_session(engine, preview=False) as session:
+        assert session.view.observations[0].state == "directly-in-sync"
+        assert session.view.observations[0].base.acknowledged
+
+
+def test_checkpoint_survives_removing_git_metadata(tmp_path, monkeypatch):
+    from dotman.sync_session import PrepareProposalReview, CommandAccepted
+    from tests.engine.test_sync_convergence import command
+
+    engine = make_engine(
+        tmp_path, monkeypatch, [("unit", "both", b"same", b"same", "")]
+    )
+    with open_session(engine, preview=False):
+        pass
+    (tmp_path / "repo/.git").rename(tmp_path / "git-metadata")
+    (tmp_path / "repo/packages/app/unit").write_bytes(b"changed")
     with open_session(engine) as session:
-        assert session.view.observations[0].state == "observation-failed"
-        assert session.view.rows[0].kind == "diagnostic"
-        assert session.view.rows[0].observation.diagnostics[0].code == "git-failed"
+        unit = session.view.observations[0]
+        assert unit.base.status == "usable"
+        assert unit.base.record.payload == FilePresent(b"same")
+        assert not unit.diagnostics
+        result = command(session, PrepareProposalReview, "main:app.unit")
+        assert isinstance(result, CommandAccepted)
+        assert session.view.rows[0].proposal.repository == FilePresent(b"changed")
 
 
 def test_preview_uses_frozen_endpoint_copies_for_command_views_and_events(
@@ -576,21 +592,14 @@ def test_open_callback_programming_error_escapes_and_releases_lock(
 
 
 def test_direct_agreement_acknowledgment_failure_stays_visible(tmp_path, monkeypatch):
-    from dotman.command_runtime import CommandResult, MemoryCommandRuntime
+    from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError
 
     engine = make_engine(
         tmp_path, monkeypatch, [("unit", "both", b"same", b"same", "")]
     )
-    actual = engine.command_runtime
-
-    def respond(request):
-        runtime.queue(respond)
-        if "cat-file" in request.command.arguments:
-            return CommandResult(1, stderr=b"object access failed")
-        return actual.run(request)
-
-    runtime = MemoryCommandRuntime([respond])
-    engine = DotmanEngine(engine.config, command_runtime=runtime)
+    def fail(*args):
+        raise SyncBaseStoreError("checkpoint unavailable")
+    monkeypatch.setattr(SyncBaseStore, "replace", fail)
     with open_session(engine, preview=False) as session:
         assert session.view.observations[0].state == "directly-in-sync"
         row = session.view.rows[0]
@@ -598,7 +607,8 @@ def test_direct_agreement_acknowledgment_failure_stays_visible(tmp_path, monkeyp
         assert row.allowed_commands == ()
         assert row.observation.diagnostics[0].code == "base-acknowledgment-failed"
         assert not row.observation.base.acknowledged
-        assert session.execute().result.status == "failed"
+        assert row.observation.diagnostics[0].severity == "warning"
+        assert session.execute().result.status == "completed"
 
 
 @pytest.mark.parametrize("shape", ["symlink", "fifo", "directory"])
@@ -643,17 +653,18 @@ def test_preview_rejects_unsafe_existing_store_instead_of_hiding_it(
     tmp_path, monkeypatch
 ):
     from dotman.sync_session import SessionOpenFailed
-    from dotman.sync_base_store import DATABASE_FILE_NAME
+    from dotman.sync_base_store import LOCK_FILE_NAME
 
     engine = make_engine(
         tmp_path, monkeypatch, [("unit", "both", b"same", b"same", "")]
     )
     directory = tmp_path / "state/dotman/repos/main"
-    (directory / DATABASE_FILE_NAME).symlink_to(tmp_path / "absent")
-    result = engine.open_sync_session(engine.resolve_sync_scope(), preview=True)
-    assert isinstance(result, SessionOpenFailed)
-    assert result.diagnostic.code == "base-failed"
-    assert (directory / DATABASE_FILE_NAME).is_symlink()
+    (directory / LOCK_FILE_NAME).symlink_to(tmp_path / "absent")
+    with open_session(engine) as session:
+        unit = session.view.observations[0]
+        assert unit.base.status == "unavailable"
+        assert unit.diagnostics[0].severity == "warning"
+    assert (directory / LOCK_FILE_NAME).is_symlink()
 
 
 def test_push_only_exact_live_outcome_includes_configured_file_mode(
@@ -672,11 +683,9 @@ def test_push_only_exact_live_outcome_includes_configured_file_mode(
         assert unit.chmod == "600"
 
 
-def test_unit_local_base_git_inspection_failure_preserves_unrelated_observation(
+def test_unit_local_base_read_failure_preserves_unrelated_observation(
     tmp_path, monkeypatch
 ):
-    from dotman.command_runtime import CommandResult, MemoryCommandRuntime
-
     engine = make_engine(
         tmp_path,
         monkeypatch,
@@ -687,23 +696,20 @@ def test_unit_local_base_git_inspection_failure_preserves_unrelated_observation(
     )
     with open_session(engine, preview=False):
         pass
-    actual = engine.command_runtime
-    fail_next_lookup = True
-
-    def respond(request):
-        nonlocal fail_next_lookup
-        runtime.queue(respond)
-        if "cat-file" in request.command.arguments and fail_next_lookup:
-            fail_next_lookup = False
-            return CommandResult(1, stderr=b"object access failed")
-        return actual.run(request)
-
-    runtime = MemoryCommandRuntime([respond])
-    with open_session(DotmanEngine(engine.config, command_runtime=runtime)) as session:
+    from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError
+    read = SyncBaseStore.read
+    def fail_first(store, identity):
+        if identity == b"main:app.first":
+            raise SyncBaseStoreError("checkpoint unreadable")
+        return read(store, identity)
+    monkeypatch.setattr(SyncBaseStore, "read", fail_first)
+    with open_session(engine) as session:
         assert [unit.state for unit in session.view.observations] == [
-            "observation-failed",
+            "directly-in-sync",
             "directly-in-sync",
         ]
+        assert session.view.observations[0].diagnostics[0].severity == "warning"
+        assert session.view.observations[1].base.status == "usable"
         assert [row.row_id for row in session.view.rows] == ["main:app.first"]
 
 
@@ -744,8 +750,11 @@ def test_preview_does_not_treat_unreadable_store_directory_as_absent(
     directory = tmp_path / "state/dotman/repos/main"
     directory.chmod(0)
     try:
-        result = engine.open_sync_session(scope, preview=True)
-        assert isinstance(result, SessionOpenFailed)
+        with engine.open_sync_session(scope, preview=True) as session:
+            unit = session.view.observations[0]
+            assert unit.base.status == "unavailable"
+            assert unit.diagnostics[0].severity == "warning"
+        assert directory.stat().st_mode & 0o777 == 0
     finally:
         directory.chmod(0o700)
 

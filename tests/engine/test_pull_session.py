@@ -63,7 +63,7 @@ def test_pull_guard_omits_work_before_observation(tmp_path, monkeypatch):
         assert session.execute().result.status == "completed"
 
 
-def test_pull_direct_agreement_establishes_base_changed_pull_preserves_it(tmp_path, monkeypatch):
+def test_pull_direct_agreement_and_changed_pull_advance_checkpoint(tmp_path, monkeypatch):
     from dotman.sync_base_store import SyncBaseStore
     from dotman.sync_scope import sync_unit_identity_bytes
     engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"repo", b"repo", "")])
@@ -75,10 +75,13 @@ def test_pull_direct_agreement_establishes_base_changed_pull_preserves_it(tmp_pa
         before = store.read(identity)
     (tmp_path / "live/unit").write_bytes(b"changed")
     with engine.open_pull_session(engine.resolve_sync_scope()) as session:
-        assert session.view.observations[0].base.record is None
-        assert session.execute().result.status == "completed"
+        assert session.view.observations[0].base.record == before
+        result = session.execute().result
+        assert result.status == "completed"
+        assert result.units[0].acknowledged
     with SyncBaseStore.open(state, "main", read_only=True) as store:
-        assert store.read(identity) == before
+        from dotman.sync_base_store import FilePresent
+        assert store.read(identity).payload == FilePresent(b"changed")
 
 def test_pull_additional_approval_rebuilds_frozen_capture_and_applies_independently(tmp_path, monkeypatch):
     from dotman.sync_session import AdditionalRow, EditProposal, SetApproval

@@ -110,7 +110,7 @@ class CommandDeck:
         # Command availability is not proof that the reviewed Approval set is ready.
         invalid_approved = any(
             row.included and row.approved
-            and (row.proposal is None or row_diagnostics(row))
+            and (row.proposal is None or any(item.severity == "error" for item in row_diagnostics(row)))
             for row in view.rows
             if not isinstance(row, (AuxiliaryRow, AdditionalRow))
         )
@@ -225,8 +225,7 @@ class CommandDeck:
             lines.append(f"  Base reason: {base.reason}")
         if base.record:
             lines += [
-                f"  Base provenance: {base.record.envelope.provenance}",
-                f"  Base commit: {base.record.envelope.commit_oid}",
+                f"  Base fingerprint: {base.record.envelope.fingerprint}",
                 f"  Base payload: {'missing' if isinstance(base.record.payload, Missing) else 'present'}",
                 "  Base vs frozen repository:",
             ]
@@ -246,7 +245,9 @@ class CommandDeck:
             ))
         if primary:
             lines.append(f"    {display_path(primary['path'])} (authorized by Proposal Approval)")
-        lines.extend(f"  {item.message}" for item in (*row.observation.diagnostics, *row.diagnostics))
+        if proposal and row.observation.configured_policy in ("pull-only", "both"):
+            lines.append(f"  Checkpoint qualified: {'yes' if proposal.checkpoint_qualified else 'no'}")
+        lines.extend(f"  {item.severity}: {item.message}" for item in row_diagnostics(row))
         # Pull Views are frozen Observation evidence, independent of the chosen intent.
         if row.observation.effective_policy in ("both", "pull-only"):
             observation = row.observation
@@ -309,7 +310,7 @@ def row_resolution(row) -> str:
         return auxiliary_resolution(row.kind)
     if isinstance(row, AdditionalRow):
         return "Additional Source Change"
-    if row.observation.diagnostics or row.observation.state == "observation-failed":
+    if any(item.severity == "error" for item in row.observation.diagnostics) or row.observation.state == "observation-failed":
         return "Observation failed"
     if row.diagnostics:
         return "Proposal failed"

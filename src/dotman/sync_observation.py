@@ -20,19 +20,19 @@ from dotman.sync_base_lifecycle import (
     BaseInputs,
     BaseProfileContext,
     BaseUnit,
-    FrozenGitHead,
-    SyncBaseGit,
-    SyncBaseGitError,
+    FrozenBaseUnit,
     SyncBaseLifecycle,
 )
 from dotman.sync_base_store import (
-    DATABASE_FILE_NAME,
+    RECORD_FILE_PREFIX,
+    LOCK_FILE_NAME,
     FilePresent,
     DirectoryChildPresent,
     SyncBasePayload,
     Missing,
     SyncBaseRecord,
     SyncBaseStore,
+    SyncBaseStoreError,
 )
 
 FileState = SyncBasePayload
@@ -43,13 +43,7 @@ ObservationState = Literal["directly-in-sync", "drifted", "observation-failed"]
 class Diagnostic:
     code: str
     message: str
-
-
-@dataclass(frozen=True)
-class GitEvidence:
-    head: FrozenGitHead | None = None
-    primary_clean: bool | None = None
-    committed: FileState | None = None
+    severity: Literal["error", "warning"] = "error"
 
 
 @dataclass(frozen=True)
@@ -70,7 +64,6 @@ class Observation:
     inputs: BaseInputs
     compare_repo: str
     compare_live: str
-    git: GitEvidence
     base: BaseEvidence
     repository: FileState | None = None
     live: FileState | None = None
@@ -225,7 +218,6 @@ def _observe_file(
     metadata: projection.TargetMetadata,
     unit: BaseUnit,
     effective: str,
-    git: GitEvidence,
     base: BaseEvidence,
 ) -> Observation:
     observation = Observation(
@@ -236,7 +228,6 @@ def _observe_file(
         unit.inputs,
         metadata.compare_repo,
         metadata.compare_live,
-        git,
         base,
         chmod=metadata.chmod,
         repository_path=metadata.repo_path,
@@ -316,7 +307,7 @@ def _observe_file(
             comparison_repository=compared_repo,
             comparison_live=compared_live,
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, SyncBaseStoreError) as exc:
         return replace(
             observation, diagnostics=(Diagnostic(exc.code if isinstance(exc, SyncPathError) else "observation-failed", str(exc)),)
         )
@@ -344,23 +335,26 @@ def _discard_ineligible_bases(
     inputs: _ResolvedInputs,
     *,
     preview: bool,
-) -> dict[ResolvedSyncTarget, bool]:
+) -> tuple[dict[ResolvedSyncTarget, bool], dict[ResolvedSyncTarget, Diagnostic]]:
     """Resolved configured policy is authoritative before volatile Guards."""
-    deleted = {}
+    deleted, warnings = {}, {}
     if preview:
-        return deleted
+        return deleted, warnings
     with ExitStack() as resources:
         stores = {}
         for identity, (item, metadata) in inputs.items():
             unit = _base_unit(context, identity, item, metadata)
             if unit.eligible:
                 continue
-            if identity.repo not in stores:
-                stores[identity.repo] = resources.enter_context(SyncBaseStore.open(
-                    context.tracked_state.state_root, item.repo.config.state_key,
-                ))
-            deleted[identity] = stores[identity.repo].delete(unit.identity_bytes)
-    return deleted
+            try:
+                if identity.repo not in stores:
+                    stores[identity.repo] = resources.enter_context(SyncBaseStore.open(
+                        context.tracked_state.state_root, item.repo.config.state_key,
+                    ))
+                deleted[identity] = stores[identity.repo].delete(unit.identity_bytes)
+            except (OSError, ValueError, SyncBaseStoreError) as exc:
+                warnings[identity] = Diagnostic("base-maintenance-failed", str(exc), "warning")
+    return deleted, warnings
 
 
 def observe_scope(
@@ -393,7 +387,7 @@ def observe_scope(
     directory_inputs = {identity: value for identity, value in inputs.items() if value[1].target.target_type == "directory"}
     ordered_inputs = inputs
     inputs = {identity: value for identity, value in inputs.items() if identity not in directory_inputs}
-    maintenance = _discard_ineligible_bases(context, inputs, preview=preview) if read_bases else {}
+    maintenance, checkpoint_warnings = _discard_ineligible_bases(context, inputs, preview=preview) if read_bases else ({}, {})
     # Resolve the control-aware child workset before volatile ancestor Guards;
     # configured ineligibility must survive a later Guard failure. Reuse this
     # census for Observation rather than discovering children a second time.
@@ -411,10 +405,12 @@ def observe_scope(
             child = child_metadata(metadata, relative)
             if participates(child):
                 children[relative] = (replace(identity, child_path=relative or None), child, failures)
-        maintenance.update(_discard_ineligible_bases(context, {
+        child_maintenance, child_warnings = _discard_ineligible_bases(context, {
             child_identity: (item, child) for child_identity, child, failures in children.values()
             if child_identity.child_path is not None and not failures
-        }, preview=preview) if read_bases else {})
+        }, preview=preview) if read_bases else ({}, {})
+        maintenance.update(child_maintenance)
+        checkpoint_warnings.update(child_warnings)
         resolved_directories[identity] = (selected_paths, census, children)
     configured_directional = directional
     eligibility = evaluate_directional_guards(
@@ -474,57 +470,30 @@ def observe_scope(
         for identity, (item, metadata) in inputs.items()
     }
     with ExitStack() as resources:
-        lifecycles, gits = {}, {}
+        lifecycles, store_warnings, attempted = {}, {}, set()
         for identity, (item, _metadata) in inputs.items():
-            if identity.repo not in gits:
-                git = SyncBaseGit(item.repo.root, context.projection.command_runtime)
-                gits[identity.repo] = git
-                # Absence is ordinary Base evidence, not permission to create
-                # storage during preview. Existing store artifacts go through
-                # the store's security validation rather than being hidden.
-                directory = (
-                    context.tracked_state.state_root
-                    / "repos"
-                    / item.repo.config.state_key
-                )
+            if not read_bases or identity.repo in attempted:
+                continue
+            attempted.add(identity.repo)
+            try:
+                # Even malformed existing storage must be validated, never
+                # mistaken for absence and automatically recreated.
+                directory = context.tracked_state.state_root / "repos" / item.repo.config.state_key
                 try:
-                    store_exists = any(
-                        name.startswith(DATABASE_FILE_NAME)
-                        for name in os.listdir(directory)
-                    )
+                    store_exists = any(name == LOCK_FILE_NAME or name.startswith(RECORD_FILE_PREFIX)
+                                       for name in os.listdir(directory))
                 except FileNotFoundError:
                     store_exists = False
                 if not preview or store_exists:
-                    store = resources.enter_context(
-                        SyncBaseStore.open(
-                            context.tracked_state.state_root,
-                            item.repo.config.state_key,
-                            read_only=preview,
-                        )
-                    )
+                    store = resources.enter_context(SyncBaseStore.open(
+                        context.tracked_state.state_root, item.repo.config.state_key,
+                        read_only=preview,
+                    ))
                     lifecycles[identity.repo] = SyncBaseLifecycle(
-                        store,
-                        git,
-                        operation=operation,
-                        preview=preview,
+                        store, operation=operation, preview=preview,
                     )
-            lifecycle = lifecycles.get(identity.repo)
-            if lifecycle is not None:
-                maintenance[identity] = lifecycle.selected_policy_resolved(
-                    units[identity]
-                ).deleted or maintenance.get(identity, False)
-
-        frozen, git_failures = {}, {}
-        for repo_name, git in gits.items():
-            repo_units = tuple(
-                unit for identity, unit in units.items() if identity.repo == repo_name
-            )
-            try:
-                head = git.freeze_head()
-                for fact in git.freeze_units(head, repo_units):
-                    frozen[fact.unit.identity] = fact
-            except SyncBaseGitError as exc:
-                git_failures[repo_name] = Diagnostic("git-failed", str(exc))
+            except (OSError, ValueError, SyncBaseStoreError) as exc:
+                store_warnings[identity.repo] = Diagnostic("base-unavailable", str(exc), "warning")
 
         observations = []
         for identity, (item, metadata) in inputs.items():
@@ -532,66 +501,46 @@ def observe_scope(
             push, pull = identity in admitted["push"], identity in admitted["pull"]
             effective = child_policies.get(identity, _effective_policy(unit.configured_policy, push, pull))
             lifecycle = lifecycles.get(identity.repo)
-            fact = frozen.get(identity)
-            git_evidence = (
-                GitEvidence()
-                if fact is None
-                else GitEvidence(
-                    fact.head,
-                    fact.primary_clean,
-                    fact.payload,
-                )
-            )
+            warning = checkpoint_warnings.get(identity) or store_warnings.get(identity.repo)
             base = BaseEvidence(
                 "unavailable" if unit.eligible else "not-applicable",
                 "absent" if unit.eligible else "ineligible",
                 deleted=maintenance.get(identity, False),
             )
-            git_failure = git_failures.get(identity.repo)
-            if read_bases and lifecycle is not None and fact is not None:
+            if lifecycle is not None:
                 try:
-                    inspection = lifecycle.maintain(unit, fact.head)
+                    inspection = lifecycle.maintain(unit)
                     base = replace(
-                        base,
-                        status=inspection.status,
-                        reason=inspection.reason,
+                        base, status=inspection.status, reason=inspection.reason,
                         record=inspection.record,
                     )
-                except SyncBaseGitError as exc:
-                    git_failure = Diagnostic("git-failed", str(exc))
+                    if inspection.failure is not None:
+                        warning = Diagnostic("base-unavailable", str(inspection.failure), "warning")
+                except (OSError, ValueError, SyncBaseStoreError) as exc:
+                    warning = Diagnostic("base-unavailable", str(exc), "warning")
             if child_failures.get(identity):
                 observation = Observation(
                     identity, "observation-failed", unit.configured_policy, effective,
-                    unit.inputs, metadata.compare_repo, metadata.compare_live, git_evidence, base,
+                    unit.inputs, metadata.compare_repo, metadata.compare_live, base,
                     chmod=metadata.chmod, repository_path=metadata.repo_path, live_path=metadata.live_path,
                     diagnostics=tuple(Diagnostic(failure.code, failure.message) for failure in child_failures[identity]),
                 )
             else:
                 observation = _observe_file(
-                    context, identity, item, metadata, unit, effective, git_evidence, base
+                    context, identity, item, metadata, unit, effective, base
                 )
-            if fact is not None and fact.failure is not None:
-                git_failure = Diagnostic("git-failed", str(fact.failure))
-            if git_failure is not None:
-                observation = replace(
-                    observation,
-                    state="observation-failed",
-                    diagnostics=(*observation.diagnostics, git_failure),
-                )
-            elif observation.state == "directly-in-sync" and lifecycle is not None:
-                result = lifecycle.direct_agreement(fact)
-                observation = replace(
-                    observation, base=replace(base, acknowledged=result.acknowledged)
-                )
-                if result.failure is not None:
+            if warning is None and observation.state == "directly-in-sync" and lifecycle is not None:
+                try:
+                    result = lifecycle.direct_agreement(FrozenBaseUnit(unit, observation.repository))
                     observation = replace(
-                        observation,
-                        diagnostics=(
-                            Diagnostic(
-                                "base-acknowledgment-failed", str(result.failure)
-                            ),
-                        ),
+                        observation, base=replace(base, acknowledged=result.acknowledged)
                     )
+                    if result.failure is not None:
+                        warning = Diagnostic(result.warning_code, str(result.failure), "warning")
+                except (OSError, ValueError, SyncBaseStoreError) as exc:
+                    warning = Diagnostic("base-acknowledgment-failed", str(exc), "warning")
+            if warning is not None:
+                observation = replace(observation, diagnostics=(*observation.diagnostics, warning))
             if identity in child_topology:
                 repository_blockers, live_blockers, managed_children = child_topology[identity]
                 observation = replace(observation, repository_blockers=repository_blockers, live_blockers=live_blockers, managed_children=managed_children)

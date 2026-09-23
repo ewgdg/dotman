@@ -10,11 +10,11 @@ import os
 from dotman.models import ResolvedSyncTarget
 from dotman.operation_lock import OperationLock
 from dotman.sync_base_lifecycle import (
-    BaseInspection, SyncBaseGit, SyncBaseLifecycle, record_matches_identity,
+    BaseInspection, SyncBaseLifecycle, record_matches_identity,
 )
 from dotman.sync_base_store import (
-    DATABASE_FILE_NAME, Missing, DirectoryChildPresent,
-    SyncBaseStore, SyncBaseStoreError, SyncBaseRecordCorruptionError,
+    RECORD_FILE_PREFIX, LOCK_FILE_NAME, Missing, DirectoryChildPresent,
+    SyncBaseStore, SyncBaseStoreError,
 )
 from dotman.sync_directory import census_directory, child_metadata
 from dotman.sync_observation import _base_unit, _resolve_inputs
@@ -53,11 +53,12 @@ def _unit(context, inputs, identity):
 def _store_exists(context, repo) -> bool:
     directory = context.tracked_state.state_root / "repos" / repo.config.state_key
     try:
-        return any(name.startswith(DATABASE_FILE_NAME) for name in os.listdir(directory))
+        return any(name == LOCK_FILE_NAME or name.startswith(RECORD_FILE_PREFIX)
+                   for name in os.listdir(directory))
     except FileNotFoundError:
         return False
     except OSError as exc:
-        raise SyncBaseStoreError(f"{repo.config.name}: {directory / DATABASE_FILE_NAME}: {exc}") from exc
+        raise SyncBaseStoreError(f"{repo.config.name}: {directory}: {exc}") from exc
 
 
 @contextmanager
@@ -70,7 +71,7 @@ def _open(context, repo, *, read_only=True):
         ) as store:
             yield store
     except SyncBaseStoreError as exc:
-        path = context.tracked_state.state_root / "repos" / repo.config.state_key / DATABASE_FILE_NAME
+        path = context.tracked_state.state_root / "repos" / repo.config.state_key
         raise SyncBaseStoreError(f"{repo.config.name}: {path}: {exc}") from exc
 
 
@@ -78,9 +79,8 @@ def _detail(unit, inspection):
     result = {
         "identity": unit.identity.canonical, "status": inspection.status,
         "reason": inspection.reason, "policy": unit.configured_policy,
-        "eligibility": unit.eligible, "commit": None, "provenance": None,
-        "payload": None,
-        "checks": {"integrity": None, "fingerprint_match": None, "commit_available": None, "ancestry": None},
+        "eligibility": unit.eligible, "payload": None,
+        "checks": {"integrity": None, "fingerprint_match": None},
     }
     # Do not reveal any authoritative-looking metadata from an unusable record.
     record = inspection.record
@@ -88,27 +88,22 @@ def _detail(unit, inspection):
         payload = record.payload
         missing = isinstance(payload, Missing)
         result.update(
-            commit=record.envelope.commit_oid, provenance=record.envelope.provenance,
             payload={
                 "kind": "missing" if missing else "present",
                 "size": 0 if missing else len(payload.content),
                 "digest": None if missing else hashlib.sha256(payload.content).hexdigest(),
                 "executable": payload.executable if isinstance(payload, DirectoryChildPresent) else None,
             },
-            checks={"integrity": True, "fingerprint_match": True, "commit_available": True, "ancestry": True},
+            checks={"integrity": True, "fingerprint_match": True},
         )
     else:
         reason = inspection.reason
         checks = result["checks"]
         if reason in ("record_corrupt", "payload_corrupt"):
             checks["integrity"] = False
-        elif reason in ("inputs_changed", "commit_missing", "history_changed"):
+        elif reason == "inputs_changed":
             checks["integrity"] = True
-            checks["fingerprint_match"] = reason != "inputs_changed"
-            if reason != "inputs_changed":
-                checks["commit_available"] = reason != "commit_missing"
-            if reason == "history_changed":
-                checks["ancestry"] = False
+            checks["fingerprint_match"] = False
     return result
 
 
@@ -124,12 +119,8 @@ def info_sync_base(context, text: str):
             "absent" if unit.eligible else "ineligible",
         ))
     with _open(context, repo) as store, store.read_transaction():
-        # An empty store needs no Git ancestry proof, including unborn repositories.
-        if unit.eligible and unit.identity_bytes not in store.identities():
-            return _detail(unit, BaseInspection("unavailable", "absent"))
-        git = SyncBaseGit(repo.root, context.command_runtime)
-        head = git.freeze_head() if unit.eligible else None
-        return _detail(unit, SyncBaseLifecycle(store, git, operation="sync", preview=True).inspect(unit, head))
+        # Exact inspection must not decode unrelated records.
+        return _detail(unit, SyncBaseLifecycle(store, operation="sync", preview=True).inspect(unit))
 
 
 def list_sync_bases(context):
@@ -141,9 +132,7 @@ def list_sync_bases(context):
         if not _store_exists(context, repo):
             continue
         with _open(context, repo) as store, store.read_transaction():
-            git = SyncBaseGit(repo.root, context.command_runtime)
-            head = None
-            lifecycle = SyncBaseLifecycle(store, git, operation="sync", preview=True)
+            lifecycle = SyncBaseLifecycle(store, operation="sync", preview=True)
             for key in store.identities():
                 try:
                     identity = _identity(key.decode("utf-8"))
@@ -154,9 +143,7 @@ def list_sync_bases(context):
                     continue
                 if not unit.eligible:
                     continue
-                if head is None:
-                    head = git.freeze_head()
-                inspected = lifecycle.inspect(unit, head)
+                inspected = lifecycle.inspect(unit)
                 if inspected.status == "usable":
                     entries.append(_detail(unit, inspected))
     return sorted(entries, key=lambda entry: entry["identity"])
@@ -189,28 +176,26 @@ def doctor_sync_bases(context):
     censuses = {}
     for repo_config in context.config.ordered_repos:
         repo = context.repositories[repo_config.name]
-        path = context.tracked_state.state_root / "repos" / repo.config.state_key / DATABASE_FILE_NAME
+        path = context.tracked_state.state_root / "repos" / repo.config.state_key
         try:
             if not _store_exists(context, repo):
                 continue
-            corrupt = set()
+            corrupt = 0
             orphaned = 0
             with _open(context, repo) as store, store.read_transaction():
-                for key in store.identities():
+                scanned = store.scan()
+                corrupt += scanned.corrupt_count
+                for record in scanned.records:
                     try:
-                        record = store.read(key)
-                        identity = _identity(key.decode("utf-8"))
+                        identity = _identity(record.identity.decode("utf-8"))
                         if (
                             identity.repo != repo.config.name
                             or not record_matches_identity(record, identity)
                         ):
-                            corrupt.add(key)
+                            corrupt += 1
                             continue
-                    except SyncBaseRecordCorruptionError as exc:
-                        corrupt.update(exc.affected_identities)
-                        continue
                     except (ValueError, UnicodeError):
-                        corrupt.add(key)
+                        corrupt += 1
                         continue
                     if inputs is not None:
                         try:
@@ -238,7 +223,7 @@ def doctor_sync_bases(context):
                             # Exclusions and failed discovery cannot prove absence.
                             if census.unrestricted and identity.child_path not in dict(census.entries):
                                 orphaned += 1
-            for category, count in (("corrupt", len(corrupt)), ("orphaned", orphaned)):
+            for category, count in (("corrupt", corrupt), ("orphaned", orphaned)):
                 checks.append(DoctorCheck(
                     key=f"sync_bases_{category}", status="warn" if count else "ok",
                     detail=f"{count} {category} Sync Bases", path=path, repo_name=repo.config.name, count=count,

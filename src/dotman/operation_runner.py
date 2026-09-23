@@ -129,7 +129,9 @@ def run_sync_operation(
 
     def emit_step_started(owner: ExecutionStepOwner, step: ExecutionStep, index: int, total: int) -> None:
         nonlocal snapshot, snapshot_attempted
-        if operation == "push" and snapshot_config is not None and not snapshot_attempted and step.kind != "hook":
+        # A direct-agreement checkpoint has no live effect and must not move
+        # snapshot capture ahead of the first actual publication boundary.
+        if operation == "push" and snapshot_config is not None and not snapshot_attempted and step.kind in {"target", "chmod"}:
             snapshot_attempted = True
             snapshot = create_push_snapshot(plans, snapshot_config)
         emit(SyncStepStarted(owner, step, index, total))

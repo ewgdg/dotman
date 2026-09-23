@@ -28,6 +28,20 @@ def open_directory(engine, selectors=None, *, preview=True):
     return opened
 
 
+def test_directory_direct_agreement_checkpoints_dirty_child_executable_state(tmp_path, monkeypatch):
+    engine = directory_engine(tmp_path, monkeypatch)
+    repo, live = tmp_path / 'repo/packages/app/tree', tmp_path / 'live/tree'
+    put(repo, 'child', b'dirty').chmod(0o755)
+    put(live, 'child', b'dirty').chmod(0o700)
+    with open_directory(engine, preview=False) as session:
+        child, = session.view.observations
+        assert child.state == 'directly-in-sync'
+        assert child.base.acknowledged
+    with open_directory(engine) as session:
+        child, = session.view.observations
+        assert child.base.record.payload == DirectoryChildPresent(b'dirty', True)
+
+
 def test_directory_census_unions_independent_children_without_aggregate(tmp_path, monkeypatch):
     engine = directory_engine(tmp_path, monkeypatch)
     repo, live = tmp_path / 'repo/packages/app/tree', tmp_path / 'live/tree'

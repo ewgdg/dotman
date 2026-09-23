@@ -6,7 +6,7 @@ import stat
 import sys
 from dataclasses import InitVar, dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from dotman.atomic_files import default_created_file_mode, write_bytes_atomic as atomic_write_bytes_atomic
 from dotman.atomic_files import write_symlink_atomic as atomic_write_symlink_atomic
@@ -25,12 +25,14 @@ from dotman.file_access import (
     delete_path_and_prune_empty_parents as sudo_delete_path_and_prune_empty_parents,
     needs_sudo_for_chmod,
     needs_sudo_for_write,
-    read_bytes,
     request_sudo,
     write_bytes_atomic as sudo_write_bytes_atomic,
 )
 from dotman.models import DirectoryPlanItem, ElevationMode, GuardSkip, HookPlan, OperationPlan, PackagePlan, TargetPlan, package_plans_for_operation_plan, repo_qualified_target_text
-from dotman.manifest import FORCED_COMMAND_PREFIX
+
+
+if TYPE_CHECKING:
+    from dotman.push_checkpoint import PushCheckpoint
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,7 @@ class ExecutionStep:
     target_plan: TargetPlan | None = None
     directory_item: DirectoryPlanItem | None = None
     privileged: bool = False
+    checkpoint: PushCheckpoint | None = None
 
     @property
     def command(self) -> str | None:
@@ -126,6 +129,10 @@ class ExecutionStepResult:
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
+    converged: bool = False
+    acknowledged: bool = False
+    checkpoint_warning: str | None = None
+    checkpoint_warning_code: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         step = self.step
@@ -145,6 +152,10 @@ class ExecutionStepResult:
             "stdout": self.stdout,
             "stderr": self.stderr,
             "error": self.error,
+            "converged": self.converged,
+            "acknowledged": self.acknowledged,
+            "checkpoint_warning": self.checkpoint_warning,
+            "checkpoint_warning_code": self.checkpoint_warning_code,
             "repo_path": str(repo_path) if repo_path is not None else None,
             "live_path": str(live_path) if live_path is not None else None,
             "command": step.command,
@@ -266,7 +277,7 @@ def build_execution_session(
             package_hooks = package_hooks_by_package.get(package_id, {})
             target_steps_by_owner = {
                 (target.package_id, target.target_name): (
-                    [] if target.action == "noop" else _build_target_steps(plan=plan, target_plan=target)
+                    [] if target.action == "noop" and not target.push_checkpoints else _build_target_steps(plan=plan, target_plan=target)
                 )
                 for target in package_targets
             }
@@ -741,8 +752,34 @@ def _step_hook_label(step: ExecutionStep) -> str:
 
 
 def _build_target_steps(*, plan: PackagePlan, target_plan: TargetPlan) -> list[ExecutionStep]:
+    required = _build_required_target_steps(plan=plan, target_plan=target_plan)
+    selected_children = {item.relative_path for item in target_plan.directory_items}
+    pending = [checkpoint for checkpoint in target_plan.push_checkpoints
+               if target_plan.target_kind != "directory"
+               or checkpoint.action == "noop"
+               or checkpoint.frozen.unit.identity.child_path in selected_children]
     steps: list[ExecutionStep] = []
-    if target_plan.target_kind == "probe":
+    for index, step in enumerate(required):
+        steps.append(step)
+        child = step.directory_item.relative_path if step.directory_item is not None else None
+        if any((later.directory_item.relative_path if later.directory_item is not None else None) == child for later in required[index + 1:]):
+            continue
+        for checkpoint in tuple(pending):
+            if checkpoint.frozen.unit.identity.child_path == child:
+                steps.append(ExecutionStep(repo_name=plan.repo_name, package_id=target_plan.package_id,
+                    package_plan=plan, kind="checkpoint", action="acknowledge", scope_kind="target",
+                    target_plan=target_plan, directory_item=step.directory_item, checkpoint=checkpoint))
+                pending.remove(checkpoint)
+    for checkpoint in pending:
+        steps.append(ExecutionStep(repo_name=plan.repo_name, package_id=target_plan.package_id,
+            package_plan=plan, kind="checkpoint", action="acknowledge", scope_kind="target",
+            target_plan=target_plan, checkpoint=checkpoint))
+    return steps
+
+
+def _build_required_target_steps(*, plan: PackagePlan, target_plan: TargetPlan) -> list[ExecutionStep]:
+    steps: list[ExecutionStep] = []
+    if target_plan.target_kind == "probe" or target_plan.action == "noop":
         return steps
     if target_plan.target_kind == "directory":
         steps.extend(
@@ -803,6 +840,15 @@ def _build_target_steps(*, plan: PackagePlan, target_plan: TargetPlan) -> list[E
 
 def _execute_step(step: ExecutionStep, *, stream_output: bool, unattended: bool) -> ExecutionStepResult:
     try:
+        if step.kind == "checkpoint":
+            result = step.checkpoint.acknowledge()
+            warning = str(result.failure) if result.failure is not None else None
+            if warning is not None:
+                acknowledgment = "advanced; durability uncertain" if result.acknowledged else "not advanced"
+                print(f"warning: Sync Base {acknowledgment} for {step.checkpoint.frozen.unit.identity.canonical}: {warning}", file=sys.stderr)
+            return ExecutionStepResult(step=step, status="ok", converged=result.converged,
+                acknowledged=result.acknowledged, checkpoint_warning=warning,
+                checkpoint_warning_code=result.warning_code)
         if step.kind == "hook":
             if step.hook_plan.io == "tty":
                 _require_interactive_terminal_for_hook()
@@ -899,29 +945,21 @@ def _execute_target_step(step: ExecutionStep) -> None:
     raise ValueError(f"unsupported execution action '{step.action}'")
 
 
-def _apply_directory_file_mode(*, source_path: Path, destination_path: Path) -> None:
-    # Git only stores a file executable bit, not full permissions like 600 vs
-    # 644. Directory targets mirror that: preserve live rw bits, sync only +x.
-    desired_mode = _directory_synced_file_mode(source_path=source_path, destination_path=destination_path)
-    if desired_mode is None:
-        return
-    destination_mode = stat.S_IMODE(destination_path.stat().st_mode)
-    if desired_mode == destination_mode:
-        return
-    if needs_sudo_for_chmod(destination_path):
-        sudo_chmod(destination_path, desired_mode)
-        return
-    os.chmod(destination_path, desired_mode)
-
-
 def _apply_directory_item_mode(directory_item: DirectoryPlanItem) -> None:
     if directory_item.chmod is not None:
         _apply_exact_file_mode(directory_item.live_path, int(directory_item.chmod, 8))
         return
-    _apply_directory_file_mode(
-        source_path=directory_item.repo_path,
-        destination_path=directory_item.live_path,
-    )
+    if directory_item.checkpoint_payload is not None:
+        from dotman.sync_base_store import DirectoryChildPresent
+        if isinstance(directory_item.checkpoint_payload, DirectoryChildPresent):
+            # Publish the executable state reviewed with the frozen source bytes.
+            desired = directory_synced_file_mode(
+                destination_mode=stat.S_IMODE(directory_item.live_path.stat().st_mode),
+                source_mode=0o111 if directory_item.checkpoint_payload.executable else 0,
+            )
+            _apply_exact_file_mode(directory_item.live_path, desired)
+            return
+    raise ValueError(f"missing frozen executable state for {directory_item.relative_path}")
 
 
 def _apply_exact_file_mode(path: Path, desired_mode: int) -> None:
@@ -941,76 +979,35 @@ def directory_synced_file_mode(*, destination_mode: int, source_mode: int) -> in
     return destination_mode & ~exec_bits
 
 
-def _directory_synced_file_mode(*, source_path: Path, destination_path: Path) -> int | None:
-    try:
-        source_mode = stat.S_IMODE(source_path.stat().st_mode)
-    except FileNotFoundError:
-        return None
-    try:
-        destination_mode = stat.S_IMODE(destination_path.stat().st_mode)
-    except FileNotFoundError:
-        destination_mode = default_created_file_mode()
-    return directory_synced_file_mode(destination_mode=destination_mode, source_mode=source_mode)
-
-
 def _execute_chmod_step(step: ExecutionStep) -> None:
     target_plan = _require_target_plan(step)
     if target_plan.chmod is None:
         return
     chmod_mode = int(target_plan.chmod, 8)
     chmod_path = _push_live_path(target_plan)
-    if chmod_path.exists():
-        if needs_sudo_for_chmod(chmod_path):
-            sudo_chmod(chmod_path, chmod_mode)
-        else:
-            os.chmod(chmod_path, chmod_mode)
+    # A disappeared endpoint is failed required work, not a successful mode
+    # effect that would authorize acknowledgment of the preceding content write.
+    if needs_sudo_for_chmod(chmod_path):
+        sudo_chmod(chmod_path, chmod_mode)
+    else:
+        os.chmod(chmod_path, chmod_mode)
 
 
 def _push_desired_bytes(target_plan: TargetPlan) -> bytes:
-    if target_plan.desired_bytes is not None:
-        return target_plan.desired_bytes
-    if target_plan.render_command is None:
+    if target_plan.desired_bytes is None:
         raise ValueError(
-            f"missing desired bytes for {target_plan.package_id}:{target_plan.target_name}"
+            f"missing frozen publication bytes for {target_plan.package_id}:{target_plan.target_name}"
         )
-    result = current_command_runtime().run(
-        CommandRequest(
-            command=ShellCommand(_projection_command(target_plan.render_command)),
-            cwd=target_plan.command_cwd,
-            env=_build_target_env(target_plan),
-        )
-    )
-    if result.exit_code != 0:
-        _raise_for_interrupt_exit_code(result.exit_code)
-        raise ValueError(
-            result.stderr_text.strip()
-            or f"render command exited with status {result.exit_code}"
-        )
-    return result.stdout
+    return target_plan.desired_bytes
 
 
 def _push_directory_item_bytes(step: ExecutionStep) -> bytes:
     directory_item = step.directory_item
     if directory_item is None:
         raise ValueError("missing directory item")
-    if directory_item.desired_bytes is not None:
-        return directory_item.desired_bytes
-    if directory_item.render_command is None:
-        return read_bytes(directory_item.repo_path)
-    result = current_command_runtime().run(
-        CommandRequest(
-            command=ShellCommand(_projection_command(directory_item.render_command)),
-            cwd=_require_target_plan(step).command_cwd,
-            env=_build_directory_item_env(step),
-        )
-    )
-    if result.exit_code != 0:
-        _raise_for_interrupt_exit_code(result.exit_code)
-        raise ValueError(
-            result.stderr_text.strip()
-            or f"render command exited with status {result.exit_code}"
-        )
-    return result.stdout
+    if directory_item.desired_bytes is None:
+        raise ValueError(f"missing frozen publication bytes for {directory_item.relative_path}")
+    return directory_item.desired_bytes
 
 
 def write_bytes_atomic(path: Path, content: bytes) -> None:
@@ -1044,11 +1041,6 @@ def _delete_file(path: Path, *, root: Path) -> None:
 
 def _is_interrupt_exit_code(exit_code: int) -> bool:
     return exit_code == INTERRUPTED_EXIT_CODE or exit_code == -signal.SIGINT
-
-
-def _raise_for_interrupt_exit_code(exit_code: int) -> None:
-    if _is_interrupt_exit_code(exit_code):
-        raise KeyboardInterrupt
 
 
 def _require_interactive_terminal_for_hook() -> None:
@@ -1085,35 +1077,6 @@ def _build_hook_env(step: ExecutionStep, *, unattended: bool) -> dict[str, str]:
             for key, value in plan.variables.items():
                 _flatten_vars(env, prefix=f"DOTMAN_VAR_{key}", value=value)
     env["DOTMAN_UNATTENDED"] = "1" if unattended else "0"
-    return env
-
-
-def _projection_command(value: str) -> str:
-    return value[len(FORCED_COMMAND_PREFIX):] if value.startswith(FORCED_COMMAND_PREFIX) else value
-
-
-def _build_target_env(target_plan: TargetPlan) -> dict[str, str]:
-    return target_plan.command_env or {}
-
-
-def _build_directory_item_env(step: ExecutionStep) -> dict[str, str]:
-    target_plan = _require_target_plan(step)
-    directory_item = step.directory_item
-    if directory_item is None:
-        raise ValueError("missing directory item")
-    env = dict(_build_target_env(target_plan))
-    repo_path = str(directory_item.repo_path)
-    live_path = str(directory_item.live_path)
-    env.update(
-        {
-            "DOTMAN_TARGET_REPO_PATH": repo_path,
-            "DOTMAN_TARGET_LIVE_PATH": live_path,
-            "DOTMAN_REPO_PATH": repo_path,
-            "DOTMAN_SOURCE": repo_path,
-            "DOTMAN_LIVE_PATH": live_path,
-            "DOTMAN_TARGET_RELATIVE_PATH": directory_item.relative_path,
-        }
-    )
     return env
 
 

@@ -81,7 +81,7 @@ def test_merge_reconciles_child_bytes_and_executable_independently(
     assert live.stat().st_mode & 0o666 == 0o600
     with open_directory(engine) as session:
         assert session.view.observations[0].base.record.payload == DirectoryChildPresent(
-            b"first\nmiddle\nlast\n", base_exec,
+            b"repository\nmiddle\nlive\n", expected_exec,
         )
 
 
@@ -106,7 +106,7 @@ chmod = "0700"
     assert repo.stat().st_mode & 0o111 == 0
     assert live.stat().st_mode & 0o777 == (0o700 if policy == "both" else 0o600)
     with open_directory(engine) as session:
-        assert session.view.observations[0].base.record.payload == DirectoryChildPresent(b"repo", False)
+        assert session.view.observations[0].base.record.payload == DirectoryChildPresent(b"live", False)
 
 
 def test_rename_has_independent_missing_and_present_proposals_and_ancestry(tmp_path, monkeypatch):
@@ -295,8 +295,8 @@ def test_later_child_chmod_failure_preserves_earlier_convergence_and_base(tmp_pa
         assert failed.scope_identity == "main:app.tree/b" and failed.kind == "chmod"
     with open_directory(engine) as session:
         after = [unit.base.record for unit in session.view.observations]
-        assert after[0].envelope.provenance == "conservative"
-        assert before[0].envelope.provenance == "exact"
+        assert after[0].payload == DirectoryChildPresent(b"bytes", True)
+        assert before[0].payload == DirectoryChildPresent(b"bytes", False)
         assert after[1] == before[1]
 
 

@@ -106,7 +106,7 @@ def test_sigint_with_sync_base_emits_clean_json_and_stops_execution(tmp_path, mo
         assert stderr == b""
         assert process.returncode == 130
         payload = json.loads(stdout)
-        assert payload["sync_units"][0]["base"]["provenance"] == "exact"
+        assert payload["sync_units"][0]["base"]["fingerprint"] is not None
         assert (source.read_bytes(), live.read_bytes()) == before
         assert not later.exists()
         with OperationLock.acquire(tmp_path / "state/dotman"):

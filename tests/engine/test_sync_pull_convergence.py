@@ -36,12 +36,11 @@ def test_pull_review_lazily_captures_frozen_live_and_execution_only_applies_repo
     assert (tmp_path / 'live/unit').read_bytes() == b'external'
     with open_session(engine) as later:
         record = later.view.observations[0].base.record
-        assert record.payload == FilePresent(b'repo')
-        assert record.envelope.provenance == 'conservative'
+        assert record.payload == FilePresent(b'live')
     assert not list((tmp_path / 'state').rglob('manifest.json'))
 
 
-def test_drifted_pull_no_write_requires_approval_and_acknowledgment(tmp_path, monkeypatch):
+def test_lossy_pull_no_write_requires_approval_without_acknowledgment(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
         ('unit', 'pull-only', b'repo', b'live',
          'capture = "printf repo"\ncompare = { repo = "raw", live = "raw" }'),
@@ -59,8 +58,7 @@ def test_drifted_pull_no_write_requires_approval_and_acknowledgment(tmp_path, mo
         assert result.steps == ()
     with open_session(engine) as later:
         record = later.view.observations[0].base.record
-        assert record.payload == FilePresent(b'repo')
-        assert record.envelope.provenance == 'exact'
+        assert record is None
 
 
 @pytest.mark.parametrize('source,live', [(b'repo', None), (None, b''), (b'repo', b'live')])
@@ -76,7 +74,7 @@ def test_pull_typed_outcomes_leave_live_untouched(source, live, tmp_path, monkey
 
 
 @pytest.mark.parametrize("no_write", [False, True])
-def test_acknowledgment_failure_prevents_convergence_after_repository_write(tmp_path, monkeypatch, no_write):
+def test_acknowledgment_failure_does_not_prevent_convergence(tmp_path, monkeypatch, no_write):
     from dotman.sync_base_store import SyncBaseStore
     extra = 'capture = "printf repo"\ncompare = { repo = "raw", live = "raw" }' if no_write else ''
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'repo', b'live', extra)])
@@ -86,10 +84,36 @@ def test_acknowledgment_failure_prevents_convergence_after_repository_write(tmp_
             raise SyncBaseStoreError('ack unavailable')
         monkeypatch.setattr(SyncBaseStore, 'replace', fail)
         result = session.execute().result
-        assert result.status == 'failed'
-        assert result.units[0].status == 'execution-failed'
-        assert result.units[0].diagnostics[0].code == 'base-acknowledgment-failed'
+        assert result.status == 'completed'
+        assert result.units[0].status == 'converged'
+        assert not result.units[0].acknowledged
+        if not no_write:
+            assert result.units[0].diagnostics[0].code == 'base-acknowledgment-failed'
+            assert result.units[0].diagnostics[0].severity == 'warning'
     assert (tmp_path / 'repo/packages/app/unit').read_bytes() == (b'repo' if no_write else b'live')
+
+
+@pytest.mark.parametrize("render", ["exit 9", "printf unequal"])
+def test_optional_forward_check_failure_does_not_block_repository_work(tmp_path, monkeypatch, render):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ('unit', 'pull-only', b'repo', b'live',
+         f'render = "{render}"\ncapture = "raw"\ncompare = {{ repo = "raw", live = "raw" }}'),
+    ])
+    with open_session(engine, preview=False) as session:
+        command(session, SetApproval, 'main:app.unit', True)
+        row = session.view.rows[0]
+        assert row.approved
+        result = session.execute().result
+        assert result.status == 'completed'
+        assert result.exit_code == 0
+        assert result.units[0].status == 'converged'
+        assert not result.units[0].acknowledged
+        if render == 'exit 9':
+            assert row.proposal.checkpoint_warnings
+            assert all(d.severity == 'warning' for d in result.units[0].diagnostics)
+    assert (tmp_path / 'repo/packages/app/unit').read_bytes() == b'live'
+    with open_session(engine) as later:
+        assert later.view.observations[0].base.record is None
 
 
 def test_capture_comparison_is_reused_and_configured_agreement_never_runs_capture(tmp_path, monkeypatch):
@@ -203,11 +227,13 @@ def test_failed_ack_preserves_previous_base_and_earlier_committed_completion(tmp
         with monkeypatch.context() as patch:
             patch.setattr(SyncBaseStore, 'replace', replace_record)
             result = session.execute().result
-        assert [unit.status for unit in result.units] == ['converged', 'execution-failed', 'skipped']
+        assert [unit.status for unit in result.units] == ['converged'] * 3
+        assert [unit.acknowledged for unit in result.units] == [True, False, True]
     with open_session(engine) as later:
-        assert later.view.observations[0].base.record.envelope.provenance == 'conservative'
+        assert later.view.observations[0].base.record.payload == FilePresent(b'changed')
         assert later.view.observations[1].base.record == prior
-    assert (tmp_path / 'repo/packages/app/third').read_bytes() == b'repo'
+        assert later.view.observations[2].base.record.payload == FilePresent(b'changed')
+    assert (tmp_path / 'repo/packages/app/third').read_bytes() == b'changed'
 
 
 def test_pull_convergence_and_base_survive_post_hook_failure(tmp_path, monkeypatch):
@@ -220,7 +246,7 @@ def test_pull_convergence_and_base_survive_post_hook_failure(tmp_path, monkeypat
         assert result.status == 'failed'
         assert result.units[0].status == 'converged'
     with open_session(engine) as later:
-        assert later.view.observations[0].base.record.envelope.provenance == 'conservative'
+        assert later.view.observations[0].base.record.payload == FilePresent(b'live')
 
 
 @pytest.mark.parametrize('interruption', [KeyboardInterrupt, InterruptedError])

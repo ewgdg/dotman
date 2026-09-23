@@ -35,7 +35,7 @@ def test_review_keeps_pull_and_base_evidence_when_using_repository(tmp_path, mon
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as opened:
         original = opened.view.rows[0]
         record = SyncBaseRecord(b"unit", FilePresent(b"ancestor"), SyncBaseEnvelope(
-            "a" * 40, "sha1", "b" * 64, "conservative",
+            "b" * 64,
         ))
         observation = replace(original.observation,
                               base=replace(original.observation.base, status="usable", record=record))
@@ -43,8 +43,7 @@ def test_review_keeps_pull_and_base_evidence_when_using_repository(tmp_path, mon
         session = SimpleNamespace(view=replace(opened.view, rows=(row,)))
         text = CommandDeck(session, use_color=False).review_text()
         assert "Frozen Pull Views:" in text
-        assert "Base provenance: conservative" in text
-        assert "Base commit: " + "a" * 40 in text
+        assert "Base fingerprint: " + "b" * 64 in text
         assert "Base vs frozen repository:" in text
         assert "-ancestor" in text and "+repo" in text
         assert "Capture: not required" in text

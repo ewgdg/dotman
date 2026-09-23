@@ -1,12 +1,11 @@
 import json
-import sqlite3
+
 
 import pytest
 
 from dotman.cli import main
 from dotman.operation_lock import OperationLock, OperationBusy
 from dotman.sync_base_inspection import _identity, _unit
-from dotman.sync_base_lifecycle import SyncBaseGit
 from dotman.sync_base_store import SyncBaseEnvelope, SyncBaseRecord, SyncBaseStore, FilePresent, Missing
 from dotman.sync_observation import _resolve_inputs
 from tests.engine.test_sync_session import make_engine
@@ -16,15 +15,14 @@ def fixture_engine(tmp_path, monkeypatch, policy="both", extra=""):
     return make_engine(tmp_path, monkeypatch, [("unit", policy, b"secret-base-payload", b"live", extra)])
 
 
-def store_record(engine, *, payload=None, fingerprint=None, oid=None, identity="main:app.unit"):
+def store_record(engine, *, payload=None, fingerprint=None, identity="main:app.unit"):
     context = engine._planning_context
     inputs, _ = _resolve_inputs(context, engine.resolve_sync_scope())
     unit = _unit(context, inputs, _identity(identity))
-    head = SyncBaseGit(context.repositories["main"].root, context.command_runtime).freeze_head()
-    envelope = SyncBaseEnvelope(oid or head.commit_oid, head.object_format, fingerprint or unit.fingerprint, "exact")
+    envelope = SyncBaseEnvelope(fingerprint or unit.fingerprint)
     with SyncBaseStore.open(engine._tracked_state_context.state_root, "main") as store:
         store.replace(SyncBaseRecord(identity=identity.encode(), envelope=envelope, payload=payload if payload is not None else FilePresent(b"secret-base-payload")))
-        return store.database_path
+        return store.record_path(identity.encode())
 
 
 def call(engine, capsys, *args):
@@ -43,8 +41,8 @@ def test_usable_details_list_and_reset_are_metadata_only(tmp_path, monkeypatch, 
     assert info["status"] == "usable"
     assert info["reason"] is None
     assert info["policy"] == "both" and info["eligibility"] is True
-    assert len(info["commit"]) == 40
-    assert info["provenance"] == "exact"
+    assert "commit" not in info and "provenance" not in info
+    assert set(info["checks"]) == {"integrity", "fingerprint_match"}
     assert all(info["checks"].values())
     assert "secret-base-payload" not in json.dumps(info)
     assert database.read_bytes() == before
@@ -54,8 +52,8 @@ def test_usable_details_list_and_reset_are_metadata_only(tmp_path, monkeypatch, 
     assert call(engine, capsys, "reset", "sync-base", "main:app.unit")[1]["status"] == "reset"
     assert call(engine, capsys, "reset", "sync-base", "main:app.unit")[1]["status"] == "already_absent"
     assert engine.info_sync_base("main:app.unit")["reason"] == "absent"
-    with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT count(*) FROM payloads").fetchone()[0] == 0
+    with SyncBaseStore.open(engine._tracked_state_context.state_root, "main", read_only=True) as store:
+        assert store.identities() == ()
 
 
 @pytest.mark.parametrize("policy,status,reason", [("both", "unavailable", "absent"), ("push-only", "not-applicable", "ineligible"), ("push-only-delete", "not-applicable", "ineligible")])
@@ -65,14 +63,13 @@ def test_absent_and_ineligible_succeed_without_creating_store(tmp_path, monkeypa
     before = sorted(str(path.relative_to(state)) for path in state.rglob("*"))
     info = engine.info_sync_base("main:app.unit")
     assert (info["status"], info["reason"]) == (status, reason)
-    assert info["commit"] is info["payload"] is None
+    assert info["payload"] is None
     assert engine.list_sync_bases() == []
     assert sorted(str(path.relative_to(state)) for path in state.rglob("*")) == before
 
 
 @pytest.mark.parametrize("reason,changes", [
     ("inputs_changed", {"fingerprint": "f" * 64}),
-    ("commit_missing", {"oid": "f" * 40}),
 ])
 def test_unavailable_never_exposes_stale_metadata(tmp_path, monkeypatch, reason, changes):
     engine = fixture_engine(tmp_path, monkeypatch)
@@ -80,20 +77,21 @@ def test_unavailable_never_exposes_stale_metadata(tmp_path, monkeypatch, reason,
     before = database.read_bytes()
     info = engine.info_sync_base("main:app.unit")
     assert info["status"] == "unavailable" and info["reason"] == reason
-    assert info["commit"] is info["provenance"] is info["payload"] is None
+    assert info["payload"] is None
     assert engine.list_sync_bases() == []
     assert database.read_bytes() == before
 
 
-@pytest.mark.parametrize("sql,reason", [
-    ("UPDATE base_records SET provenance = 'wrong'", "record_corrupt"),
-    ("UPDATE payloads SET content = X'626164'", "payload_corrupt"),
+@pytest.mark.parametrize("field,value,reason", [
+    ("fingerprint", "wrong", "record_corrupt"),
+    ("content", "YmFk", "payload_corrupt"),
 ])
-def test_corruption_is_distinguished_without_cleanup_and_doctor_is_aggregate(tmp_path, monkeypatch, sql, reason):
+def test_corruption_is_distinguished_without_cleanup_and_doctor_is_aggregate(tmp_path, monkeypatch, field, value, reason):
     engine = fixture_engine(tmp_path, monkeypatch)
     database = store_record(engine)
-    with sqlite3.connect(database) as connection:
-        connection.execute(sql)
+    encoded = json.loads(database.read_bytes())
+    encoded["record"][field] = value
+    database.write_text(json.dumps(encoded, sort_keys=True, separators=(",", ":")))
     before = database.read_bytes()
     assert engine.info_sync_base("main:app.unit")["reason"] == reason
     assert engine.list_sync_bases() == []
@@ -103,6 +101,28 @@ def test_corruption_is_distinguished_without_cleanup_and_doctor_is_aggregate(tmp
     assert warning.to_dict()["count"] == 1
     assert "main:app.unit" not in json.dumps([check.to_dict() for check in checks])
     assert database.read_bytes() == before
+
+
+def test_corrupt_records_do_not_hide_healthy_inspection_and_doctor_counts_all(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        (name, 'both', b'repo', b'live', '') for name in ('one', 'two', 'three')
+    ])
+    paths = [store_record(engine, identity=f'main:app.{name}') for name in ('one', 'two', 'three')]
+    paths[0].write_bytes(b'not JSON')
+    encoded = json.loads(paths[1].read_bytes())
+    encoded['record']['content'] = 'YmFk'
+    paths[1].write_text(json.dumps(encoded, sort_keys=True, separators=(',', ':')))
+    before = [path.read_bytes() for path in paths]
+    assert engine.info_sync_base('main:app.one')['reason'] == 'record_corrupt'
+    assert engine.info_sync_base('main:app.two')['reason'] == 'payload_corrupt'
+    assert engine.info_sync_base('main:app.three')['status'] == 'usable'
+    assert [entry['identity'] for entry in engine.list_sync_bases()] == ['main:app.three']
+    corrupt = next(check for check in engine.doctor().checks if check.key == 'sync_bases_corrupt')
+    assert corrupt.count == 2
+    assert corrupt.status == 'warn'
+    assert [path.read_bytes() for path in paths] == before
+    assert engine.reset_sync_base('main:app.one')['status'] == 'reset'
+    assert engine.info_sync_base('main:app.three')['status'] == 'usable'
 
 
 @pytest.mark.parametrize("selector", ["unit", "app.unit", "main:app", "main:", "*", "main:app.*", "main:app.unit/../bad", "main:app.unit/child"])
@@ -130,22 +150,20 @@ def test_inspection_never_executes_guards_projections_observation_or_verificatio
     def forbidden(*args, **kwargs):
         pytest.fail("inspection must not execute payload work")
     monkeypatch.setattr("dotman.sync_observation._observe_file", forbidden)
-    monkeypatch.setattr("dotman.sync_base_lifecycle.SyncBaseGit.freeze_units", forbidden)
     assert engine.info_sync_base("main:app.unit")["status"] == "usable"
     assert len(engine.list_sync_bases()) == 1
 
 
 def test_orphan_record_not_listed_but_counted(tmp_path, monkeypatch):
     engine = fixture_engine(tmp_path, monkeypatch)
-    database = store_record(engine)
-    with sqlite3.connect(database) as connection:
-        connection.execute("UPDATE base_records SET identity = ?", (b"main:app.gone",))
+    with SyncBaseStore.open(engine._tracked_state_context.state_root, "main") as store:
+        store.replace(SyncBaseRecord(b"main:app.gone", FilePresent(b"orphan"), SyncBaseEnvelope("f" * 64)))
     assert engine.list_sync_bases() == []
     check = next(check for check in engine.doctor().checks if check.key == "sync_bases_orphaned")
     assert check.detail == "1 orphaned Sync Bases" and check.status == "warn"
 
 
-def test_history_changed_is_unavailable(tmp_path, monkeypatch):
+def test_history_changed_does_not_invalidate_checkpoint(tmp_path, monkeypatch):
     from dotman.command_runtime import ArgvCommand, CommandRequest
     engine = fixture_engine(tmp_path, monkeypatch)
     store_record(engine)
@@ -158,9 +176,8 @@ def test_history_changed_is_unavailable(tmp_path, monkeypatch):
         result = runtime.run(CommandRequest(ArgvCommand(("git", *arguments)), cwd=repo))
         assert result.exit_code == 0
     info = engine.info_sync_base("main:app.unit")
-    assert info["reason"] == "history_changed"
-    assert info["checks"]["ancestry"] is False
-    assert info["commit"] is None
+    assert info["status"] == "usable"
+    assert info["reason"] is None
 
 
 def test_directory_child_metadata_policy_and_exact_reset(tmp_path, monkeypatch):
@@ -187,15 +204,14 @@ def test_store_failure_is_cli_error_and_doctor_failure_without_repair(tmp_path, 
     assert code == 2
     assert str(database) in error and "main" in error
     check = next(check for check in engine.doctor().checks if check.key == "sync_bases_store")
-    assert check.status == "failed" and check.path == database and check.repo_name == "main"
+    assert check.status == "failed" and check.path == database.parent and check.repo_name == "main"
     assert database.stat().st_mode & 0o777 == 0o644
     assert database.read_bytes() == before
 
 
 @pytest.mark.parametrize("reason,expected", [
     ("record_corrupt", "corrupt"), ("payload_corrupt", "corrupt"),
-    ("inputs_changed", "inputs changed"), ("commit_missing", "commit missing"),
-    ("history_changed", "history changed"), ("absent", "absent"), ("ineligible", "ineligible"),
+    ("inputs_changed", "inputs changed"), ("absent", "absent"), ("ineligible", "ineligible"),
 ])
 def test_human_reasons_and_styling(reason, expected, capsys):
     from dotman.cli_emit import emit_sync_base
@@ -257,7 +273,6 @@ def test_absent_record_does_not_require_git_history(tmp_path, monkeypatch):
     engine = fixture_engine(tmp_path, monkeypatch)
     with SyncBaseStore.open(engine._tracked_state_context.state_root, "main"):
         pass
-    monkeypatch.setattr(SyncBaseGit, "freeze_head", lambda *_: pytest.fail("absent ancestry needs no Git proof"))
     assert engine.info_sync_base("main:app.unit")["reason"] == "absent"
 
 
@@ -274,16 +289,12 @@ def test_doctor_child_orphan_proof_excludes_ancestor_guards(tmp_path, monkeypatc
     assert check.count == 0
 
 
-@pytest.mark.parametrize("missing", ["database", "lock"])
-def test_reset_rejects_incomplete_existing_store_without_repair(
-    tmp_path, monkeypatch, missing
-):
-    from dotman.sync_base_store import SyncBaseStoreError
+def test_reset_rejects_missing_lock_without_repair(tmp_path, monkeypatch):
+    from dotman.sync_base_store import SyncBaseStoreError, LOCK_FILE_NAME
 
     engine = fixture_engine(tmp_path, monkeypatch)
     database = store_record(engine)
-    path = database if missing == "database" else database.with_name(database.name + ".lock")
-    path.unlink()
+    database.with_name(LOCK_FILE_NAME).unlink()
     def artifacts():
         return {
             entry.name: (entry.stat().st_ino, entry.stat().st_mode, entry.read_bytes())
@@ -304,19 +315,12 @@ def test_doctor_counts_record_shape_identity_mismatch_without_git(
 
     engine = directory_engine(tmp_path, monkeypatch) if child else fixture_engine(tmp_path, monkeypatch)
     identity = "main:app.tree/nested/file" if child else "main:app.unit"
-    payload = DirectoryChildPresent(b"secret", True) if child else FilePresent(b"secret")
+    payload = FilePresent(b"secret") if child else DirectoryChildPresent(b"secret", True)
     database = store_record(engine, identity=identity, payload=payload)
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            "UPDATE base_records SET shape = ?, executable = ?",
-            ("file", None) if child else ("directory-child", 1),
-        )
     before = database.read_bytes()
     assert engine.info_sync_base(identity)["reason"] == "record_corrupt"
 
-    def forbidden(*args, **kwargs):
-        pytest.fail("doctor record consistency must not inspect Git ancestry")
-    monkeypatch.setattr(SyncBaseGit, "freeze_head", forbidden)
+    (tmp_path / "repo/.git").rename(tmp_path / "git-metadata")
     checks = [check for check in engine.doctor().checks if check.key.startswith("sync_bases")]
     corrupt = next(check for check in checks if check.key == "sync_bases_corrupt")
     assert corrupt.count == 1

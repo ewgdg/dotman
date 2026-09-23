@@ -37,8 +37,7 @@ def test_missing_and_empty_remain_distinct_through_approved_execution(
         base = later.view.observations[0].base
         if policy == "pull-only":
             assert base.status == "usable"
-            # Acknowledgment stores committed ancestry, not the Proposal.
-            assert base.record.payload == (Missing() if source is None else FilePresent(source))
+            assert base.record.payload == outcome
         else:
             assert base.record is None
 
@@ -109,12 +108,12 @@ def test_unsupported_endpoint_does_not_block_approved_interactive_peer(
 
 
 @pytest.mark.parametrize("fail_acknowledgment", [False, True])
-def test_eligible_no_write_requires_approval_and_successful_base_commit(
+def test_qualified_no_write_requires_approval_but_checkpoint_failure_only_warns(
     fail_acknowledgment, tmp_path, monkeypatch
 ):
     engine = make_engine(tmp_path, monkeypatch, [
         ("unit", "pull-only", b"repo", b"live",
-         'capture = "printf repo"\ncompare = { repo = "raw", live = "raw" }'),
+         'capture = "printf repo"\nrender = "printf live"\ncompare = { repo = "raw", live = "raw" }'),
     ])
     with open_session(engine, preview=False) as session:
         command(session, PrepareProposalReview, "main:app.unit")
@@ -132,7 +131,10 @@ def test_eligible_no_write_requires_approval_and_successful_base_commit(
                 patch.setattr(SyncBaseStore, "replace", fail)
             result = session.execute().result
         assert all(step.kind == "unit-completion" for step in result.steps)
-        assert result.units[0].status == ("execution-failed" if fail_acknowledgment else "converged")
+        assert result.units[0].status == "converged"
+        assert result.units[0].acknowledged is not fail_acknowledgment
+        assert result.status == "completed"
+        assert bool(result.units[0].diagnostics) is fail_acknowledgment
     assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"repo"
     assert (tmp_path / "live/unit").read_bytes() == b"live"
     with open_session(engine) as later:

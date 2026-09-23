@@ -1,5 +1,7 @@
 """Lazy reverse projection from a Sync unit's frozen endpoint evidence."""
 
+from collections.abc import Callable
+
 from dotman.capture import BUILTIN_PATCH_CAPTURE, CaptureError, apply_review_patch
 from dotman.command_runtime import CommandRuntime
 from dotman.projection import TargetMetadata, project_frozen_file
@@ -14,6 +16,7 @@ def capture_observation(
     context: dict,
     command_runtime: CommandRuntime,
     reuse_comparison: bool = True,
+    validated_render: Callable[[SyncBasePayload, SyncBasePayload], None] | None = None,
 ) -> SyncBasePayload:
     if isinstance(observation.live, Missing):
         return Missing()
@@ -50,8 +53,16 @@ def capture_observation(
         )
         if project(candidate, observation.compare_repo, repo_side=True) != observation.comparison_live.content:
             raise CaptureError(observation.repository_path, "captured bytes do not match the review live bytes")
-        return (DirectoryChildPresent(candidate, observation.live.executable)
-                if isinstance(observation.live, DirectoryChildPresent) else FilePresent(candidate))
+        payload = (DirectoryChildPresent(candidate, observation.live.executable)
+                   if isinstance(observation.live, DirectoryChildPresent) else FilePresent(candidate))
+        if observation.compare_repo == "render" and validated_render is not None:
+            # Patch validation is required work; retain its forward result so
+            # optional checkpoint qualification never reruns a volatile Render.
+            outcome = (DirectoryChildPresent(observation.comparison_live.content, payload.executable)
+                       if isinstance(payload, DirectoryChildPresent)
+                       else FilePresent(observation.comparison_live.content))
+            validated_render(payload, outcome)
+        return payload
     captured = project(repository, "capture", repo_side=False)
     return Missing() if captured is None else (
         DirectoryChildPresent(captured, observation.live.executable)

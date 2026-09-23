@@ -12,7 +12,7 @@ from dotman.sync_scope import _parse_scope_selector
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_session import (
     AdditionalRow, BatchSetApproval, PrepareSourceReview, AuxiliaryRow, CommandRejected, EditProposal, PrepareProposalReview, Preview, SessionOpenFailed,
-    SetApproval, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession,
+    SetApproval, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession, has_errors,
 )
 from dotman.ui_context import ui_config_scope
 
@@ -47,7 +47,10 @@ def additional_label(row, *, use_color: bool = False) -> str:
 def row_diagnostics(row):
     if isinstance(row, AdditionalRow):
         return ()
-    return row.diagnostics if isinstance(row, AuxiliaryRow) else (*row.observation.diagnostics, *row.diagnostics)
+    return row.diagnostics if isinstance(row, AuxiliaryRow) else (
+        *row.observation.diagnostics, *row.diagnostics,
+        *(row.proposal.checkpoint_warnings if row.proposal else ()),
+    )
 
 
 def auxiliary_resolution(kind: str) -> str:
@@ -162,7 +165,7 @@ class SyncDeckCommandRunner:
                 # Unattended failures must not permit a partially understood
                 # workset to mutate unrelated units.
                 blocked = any(
-                    row.kind == "diagnostic" or row.diagnostics
+                    has_errors(row_diagnostics(row))
                     for row in session.view.rows if not isinstance(row, AdditionalRow)
                 )
                 if not interactive and blocked:
@@ -220,6 +223,9 @@ class SyncDeckCommandRunner:
                 print(f"      {item['message']}")
             if unit["result"]:
                 print(f"      {render_sync_term(unit['result'], use_color=self._use_color)}")
+                if unit["base"]["status"] != "not-applicable":
+                    acknowledgment = "Base advanced" if unit["base"]["acknowledged"] else "Base not advanced"
+                    print(f"      {render_sync_term(acknowledgment, use_color=self._use_color)}")
         for change in payload["additional_source_changes"]:
             selection = "approved" if change["approved"] else "unapproved"
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {change['repo']}:{change['path']}")
@@ -269,10 +275,11 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
         proposal = row.proposal if row else None
         outcome = outcomes.get(identity)
         unit_diagnostics = outcome.diagnostics if outcome else (
-            *observation.diagnostics, *(row.diagnostics if row else ())
+            *observation.diagnostics, *(row.diagnostics if row else ()),
+            *(proposal.checkpoint_warnings if proposal else ()),
         )
         diagnostics = [
-            {"code": item.code, "message": item.message}
+            {"code": item.code, "message": item.message, "severity": item.severity}
             for item in unit_diagnostics
         ]
         intent = row.intent if row else None
@@ -304,13 +311,9 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "effects": [effect_summary(effect) for effect in proposal.publication_effects] if proposal else [],
             "base": {
                 "status": observation.base.status,
-                "provenance": observation.base.record.envelope.provenance if observation.base.record else None,
-                # Availability/provenance remain frozen opening evidence; eligible
-                # convergence additionally proves execution-time acknowledgment.
-                "acknowledged": observation.base.acknowledged or bool(
-                    not args.dry_run and outcome and outcome.status == "converged"
-                    and observation.configured_policy in ("pull-only", "both")
-                ),
+                "fingerprint": observation.base.record.envelope.fingerprint if observation.base.record else None,
+                "qualified": proposal.checkpoint_qualified if proposal else None,
+                "acknowledged": outcome.acknowledged if outcome else observation.base.acknowledged,
             },
             "result": outcome.status if outcome else None,
             "diagnostics": diagnostics,
@@ -329,7 +332,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "live_writes": sum(effect["kind"] == "write" for unit in units if unit["selected"] for effect in unit["effects"]),
             "live_deletions": sum(effect["kind"] == "delete" for unit in units if unit["selected"] for effect in unit["effects"]),
             "diagnostics": ([diagnostic] if diagnostic else []) + [
-                {"code": item.code, "message": item.message}
+                {"code": item.code, "message": item.message, "severity": item.severity}
                 for item in result.diagnostics
             ] if result else ([diagnostic] if diagnostic else []),
         },

@@ -2,9 +2,10 @@
 
 from dataclasses import replace
 import os
+import sys
 
 from dotman import planning
-from dotman.sync_base_store import DATABASE_FILE_NAME
+from dotman.sync_base_store import RECORD_FILE_PREFIX, LOCK_FILE_NAME
 from dotman.sync_directory import census_directory, child_metadata
 from dotman.sync_observation import _discard_ineligible_bases, _identity
 
@@ -18,9 +19,13 @@ def discard_push_ineligible_bases(
     for item in selected_inputs:
         directory = context.tracked_state.state_root / 'repos' / item.repo.config.state_key
         try:
-            exists = any(name.startswith(DATABASE_FILE_NAME) for name in os.listdir(directory))
+            exists = any(name == LOCK_FILE_NAME or name.startswith(RECORD_FILE_PREFIX)
+                         for name in os.listdir(directory))
         except FileNotFoundError:
             exists = False
+        except OSError as exc:
+            print(f"warning: Sync Base maintenance unavailable for {item.repo.config.name}: {exc}", file=sys.stderr)
+            continue
         if not exists:
             continue
         for metadata in item.target_metadata:
@@ -45,4 +50,6 @@ def discard_push_ineligible_bases(
                         )
             else:
                 inputs[identity] = (item, metadata)
-    _discard_ineligible_bases(context, inputs, preview=False)
+    _, warnings = _discard_ineligible_bases(context, inputs, preview=False)
+    for identity, warning in warnings.items():
+        print(f"warning: Sync Base maintenance failed for {identity.canonical}: {warning.message}", file=sys.stderr)

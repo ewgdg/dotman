@@ -526,6 +526,7 @@ def plan_targets(
             repo_path=repo_path,
         )
         if target_kind == "directory":
+            checkpoint_agreements: list[DirectoryPlanItem] = []
             action, directory_items = plan_directory_action(
                 projection_context,
                 repo=repo,
@@ -548,6 +549,7 @@ def plan_targets(
                 target_env=metadata.command_env,
                 path_rules=metadata.path_rules,
                 guard_skips=guard_skips,
+                checkpoint_agreements=checkpoint_agreements,
             )
             plans.append(
                 TargetPlan(
@@ -579,35 +581,28 @@ def plan_targets(
                     command_cwd=metadata.command_cwd,
                     command_env=metadata.command_env,
                     directory_items=directory_items,
+                    checkpoint_agreements=tuple(checkpoint_agreements),
                 )
             )
             continue
 
-        projection_error: str | None = None
-        desired_bytes: bytes | None = None
-        projection_kind = projection_kind_for_render_command(render_command)
-        try:
-            desired_bytes, projection_kind = project_repo_file(
-                projection_context.command_runtime,
-                repo=repo,
-                package=package,
-                target=target,
-                repo_path=repo_path,
-                live_path=live_path,
-                render_command=render_command,
-                context=context,
-                selection=selection,
-                operation=operation,
-                inferred_os=inferred_os,
-            )
-        except ValueError as exc:
-            if render_command == "jinja":
-                raise
-            if render_command is not None and not live_path.exists():
-                projection_error = str(exc)
-                projection_kind = "command"
-            else:
-                raise
+        from dotman.push_checkpoint import freeze_payload
+        checkpoint_payload = freeze_payload(repo_path) if operation == "push" else None
+        # Required publication evidence must exist before review; execution
+        # cannot retry a failed Render against different repository inputs.
+        desired_bytes, projection_kind = project_repo_file(
+            projection_context.command_runtime,
+            repo=repo,
+            package=package,
+            target=target,
+            repo_path=repo_path,
+            live_path=live_path,
+            render_command=render_command,
+            context=context,
+            selection=selection,
+            operation=operation,
+            inferred_os=inferred_os,
+        )
         compare_repo = metadata.compare_repo
         compare_live = metadata.compare_live
         review_before_bytes, review_after_bytes = build_file_review_bytes(live_path=live_path, desired_bytes=desired_bytes)
@@ -640,7 +635,6 @@ def plan_targets(
                 desired_text=desired_text,
                 render_command=render_command,
                 capture_command=capture_command,
-                projection_error=projection_error,
                 live_path_is_symlink=metadata.live_path_is_symlink,
                 live_path_symlink_target=metadata.live_path_symlink_target,
                 file_symlink_mode=projection_context.config.file_symlink_mode,
@@ -651,6 +645,7 @@ def plan_targets(
                 desired_bytes=desired_bytes,
                 review_before_bytes=review_before_bytes,
                 review_after_bytes=review_after_bytes,
+                checkpoint_payload=checkpoint_payload,
             )
         )
     return plans
@@ -968,6 +963,7 @@ def plan_directory_action(
     force_ignore_patterns: tuple[str, ...] = (),
     gitignore: GitIgnoreChain | None = None,
     guard_skips: list[GuardSkip] | None = None,
+    checkpoint_agreements: list[DirectoryPlanItem] | None = None,
 ) -> tuple[str, tuple[DirectoryPlanItem, ...]]:
     # Both endpoints use repository controls; live control files never set policy.
     operation_ignore = ignore_patterns
@@ -1058,8 +1054,11 @@ def plan_directory_action(
     desired_rel_paths -= child_delete_paths
     live_rel_paths -= child_delete_paths
 
+    from dotman.push_checkpoint import freeze_payload
+
     for relative_path in sorted(desired_rel_paths - live_rel_paths):
         source_path = desired_files[relative_path]
+        checkpoint_payload = freeze_payload(source_path, child=True) if operation == "push" else None
         child_policy = directory_child_policy(
             relative_path,
             path_rules,
@@ -1120,6 +1119,7 @@ def plan_directory_action(
                 desired_bytes=desired_bytes,
                 review_before_bytes=b"",
                 review_after_bytes=desired_bytes,
+                checkpoint_payload=checkpoint_payload,
             )
         )
     for relative_path in sorted(live_rel_paths - desired_rel_paths):
@@ -1146,10 +1146,12 @@ def plan_directory_action(
                 additional_sources=child_policy[6],
                 additional_source_entries=child_policy[5].source_entries(),
                 sync_policy=child_policy[7],
+                checkpoint_payload=freeze_payload(repo_path / relative_path, child=True) if operation == "push" else None,
             )
         )
     for relative_path in sorted(desired_rel_paths & live_rel_paths):
         source_path = desired_files[relative_path]
+        checkpoint_payload = freeze_payload(source_path, child=True) if operation == "push" else None
         live_file = live_files[relative_path]
         child_policy = directory_child_policy(
             relative_path,
@@ -1221,8 +1223,15 @@ def plan_directory_action(
                     desired_bytes=desired_bytes,
                     review_before_bytes=live_bytes,
                     review_after_bytes=desired_bytes,
+                    checkpoint_payload=checkpoint_payload,
                 )
             )
+        elif checkpoint_agreements is not None and checkpoint_payload is not None:
+            checkpoint_agreements.append(DirectoryPlanItem(
+                relative_path=relative_path, action="noop", repo_path=source_path,
+                live_path=live_file, render_command=child_policy[1], capture_command=child_policy[2],
+                sync_policy=child_policy[7], checkpoint_payload=checkpoint_payload,
+            ))
     if not directory_items:
         return "noop", ()
     ordered_items = tuple(sorted(directory_items, key=lambda item: item.relative_path))

@@ -3,7 +3,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, overload
+
+if TYPE_CHECKING:
+    from dotman.push_checkpoint import PushCheckpoint
+    from dotman.sync_base_store import SyncBasePayload
 
 
 def _serialized_projection(value: str) -> str | dict[str, str]:
@@ -809,7 +813,6 @@ class TargetPlan:
     additional_sources_root: Path | None = field(default=None, repr=False, compare=False)
     render_command: str | None = None
     capture_command: str | None = None
-    projection_error: str | None = None
     live_path_is_symlink: bool = field(default=False, repr=False)
     live_path_symlink_target: str | None = field(default=None, repr=False)
     allow_live_path_symlink_replace: bool = field(default=False, repr=False)
@@ -825,6 +828,9 @@ class TargetPlan:
     child_path: str | None = None
     directory_items: tuple["DirectoryPlanItem", ...] = ()
     probe_command: str | None = None
+    checkpoint_payload: SyncBasePayload | None = field(default=None, repr=False, compare=False)
+    checkpoint_agreements: tuple[DirectoryPlanItem, ...] = field(default=(), repr=False, compare=False)
+    push_checkpoints: tuple[PushCheckpoint, ...] = field(default=(), repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         is_probe = self.target_kind == "probe"
@@ -842,7 +848,6 @@ class TargetPlan:
             "additional_sources": list(self.additional_sources),
             "compare": {"repo": _serialized_projection(self.compare_repo), "live": _serialized_projection(self.compare_live)},
             "sync_policy": self.sync_policy,
-            "projection_error": self.projection_error,
             "chmod": self.chmod,
             "path_rules": [rule.to_dict() for rule in self.path_rules],
             "directory_items": [item.to_dict() for item in self.directory_items],
@@ -1092,6 +1097,7 @@ class DirectoryPlanItem:
     desired_bytes: bytes | None = field(default=None, repr=False)
     review_before_bytes: bytes | None = field(default=None, repr=False)
     review_after_bytes: bytes | None = field(default=None, repr=False)
+    checkpoint_payload: SyncBasePayload | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {

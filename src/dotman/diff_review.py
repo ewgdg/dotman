@@ -152,7 +152,7 @@ def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[
             )
             diff_unavailable_reason = None
             if target.review_after_bytes is None:
-                diff_unavailable_reason = target.projection_error or "diff preview is unavailable"
+                diff_unavailable_reason = "diff preview is unavailable"
             review_items.append(
                 ReviewItem(
                     selection_label=selection_label,

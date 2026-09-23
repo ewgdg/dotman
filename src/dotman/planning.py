@@ -379,6 +379,12 @@ def build_package_plan(
         metadata_targets=target_metadata,
         guard_skips=guard_skips,
     )
+    if operation == "push":
+        from dotman.push_checkpoint import checkpoints_for_target
+        target_plans = [replace(target, push_checkpoints=checkpoints_for_target(
+            target, repo=repo, selection=selection, context=package_context.context,
+            manager_root=planning_context.tracked_state.state_root,
+        )) for target in target_plans]
     hook_plans = plan_hooks(
         repo,
         package_context.resolved_packages,

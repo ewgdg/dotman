@@ -511,6 +511,8 @@ def emit_payload(
 
 
 def execution_step_display(step: Any, *, full_paths: bool) -> str:
+    if step.kind == "checkpoint":
+        return step.checkpoint.frozen.unit.identity.canonical
     if step.hook_plan is not None:
         return step.hook_plan.command
     target = step.target_plan
@@ -581,6 +583,12 @@ def _print_execution_step_start(
 
 def _print_execution_step_finish(_package: Any, step_result: Any, _index: int, _total: int, *, use_color: bool) -> None:
     if step_result.status == "ok":
+        if step_result.step.kind == "checkpoint":
+            completion = "converged" if step_result.converged else "directly-in-sync"
+            acknowledgment = "Base advanced" if step_result.acknowledged else "Base not advanced"
+            print(f"      {cli_style.render_sync_term(completion, use_color=use_color)} · "
+                  f"{cli_style.render_sync_term(acknowledgment, use_color=use_color)}")
+            return
         print(f"      {cli_style.render_execution_status('ok', use_color=use_color)}")
         return
     if step_result.status == "interrupted" and _step_uses_terminal_passthrough(step_result.step):
@@ -1706,7 +1714,6 @@ def emit_error(error: Exception, *, use_color: bool) -> None:
 
 _SYNC_BASE_REASONS = {
     "absent": "absent", "ineligible": "ineligible", "inputs_changed": "inputs changed",
-    "commit_missing": "commit missing", "history_changed": "history changed",
     "record_corrupt": "corrupt", "payload_corrupt": "corrupt",
 }
 
@@ -1722,16 +1729,14 @@ def emit_sync_base(*, detail, operation: str, json_output: bool, use_color: bool
     if "policy" in detail:
         print(f'  Policy: {detail["policy"]}')
         print(f'  Eligible: {"yes" if detail["eligibility"] else "no"}')
-    if detail.get("commit"):
-        print(f'  Commit: {detail["commit"]}')
-        print(f'  Provenance: {detail["provenance"]}')
+    if detail.get("payload"):
         payload = detail["payload"]
         print(f'  Payload: {payload["kind"]}, {payload["size"]} bytes')
         if payload["digest"]:
             print(f'  Digest: {payload["digest"]}')
         if payload["executable"] is not None:
             print(f'  Executable: {"yes" if payload["executable"] else "no"}')
-        print("  Integrity: valid; inputs: match; commit: available; ancestry: confirmed")
+        print("  Integrity: valid; inputs: match")
     return 0
 
 

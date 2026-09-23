@@ -46,7 +46,7 @@ def test_merge_default_is_lazy_and_executes_frozen_three_way_outcome(tmp_path, m
     assert (tmp_path / "repo/packages/app/unit").read_bytes() == MERGED
     assert (tmp_path / "live/unit").read_bytes() == MERGED
     with open_session(engine) as session:
-        assert session.view.observations[0].base.record.payload == FilePresent(BASE)
+        assert session.view.observations[0].base.record.payload == FilePresent(MERGED)
 
 
 def test_without_base_live_fallback_and_disallowed_merge_are_visible(tmp_path, monkeypatch):
@@ -106,14 +106,14 @@ def test_standing_approval_rematerializes_intent_without_recapture(tmp_path, mon
         assert marker.read_text().splitlines() == ["capture"]
 
 
-def test_use_live_publishes_rendered_capture_but_acknowledges_frozen_capture_input(tmp_path, monkeypatch):
+def test_use_live_checkpoints_final_repository_after_publication(tmp_path, monkeypatch):
     from dotman.sync_base_lifecycle import SyncBaseLifecycle
     extra = 'capture = "sed s/live/repository/ $DOTMAN_LIVE_PATH"\nrender = "sed s/repository/published/ $DOTMAN_SOURCE"\ncompare = { repo = "raw", live = "raw" }'
     engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"old", b"live", extra)])
-    facts = []
+    payloads = []
     complete = SyncBaseLifecycle.complete
     def record_fact(self, frozen, proposal):
-        facts.append(proposal.live_fact)
+        payloads.append(frozen.payload)
         assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"repository"
         assert (tmp_path / "live/unit").read_bytes() == b"published"
         return complete(self, frozen, proposal)
@@ -126,20 +126,17 @@ def test_use_live_publishes_rendered_capture_but_acknowledges_frozen_capture_inp
         result = session.execute().result
         assert result.units[0].status == "converged"
         assert [step.stage for step in result.steps] == ["repository-apply", "live-publication"]
-    assert facts == ["frozen-live-capture-input"]
+    assert payloads == [FilePresent(b"repository")]
 
 
-@pytest.mark.parametrize("intent,fact", [
-    ("merge", "frozen-merged-live-outcome"),
-    ("use-repository", "published-repository-outcome"),
-])
-def test_acknowledgment_occurs_after_own_effects_and_has_intent_fact(tmp_path, monkeypatch, intent, fact):
+@pytest.mark.parametrize("intent", ["merge", "use-repository"])
+def test_acknowledgment_occurs_after_own_effects_with_final_repository(tmp_path, monkeypatch, intent):
     from dotman.sync_base_lifecycle import SyncBaseLifecycle
     engine = established(tmp_path, monkeypatch)
-    facts = []
+    payloads = []
     complete = SyncBaseLifecycle.complete
     def record_fact(self, frozen, proposal):
-        facts.append(proposal.live_fact)
+        payloads.append(frozen.payload)
         expected = MERGED if intent == "merge" else REPO
         assert (tmp_path / "live/unit").read_bytes() == expected
         assert (tmp_path / "repo/packages/app/unit").read_bytes() == expected
@@ -149,7 +146,7 @@ def test_acknowledgment_occurs_after_own_effects_and_has_intent_fact(tmp_path, m
         command(session, SetResolutionIntent, "main:app.unit", intent)
         command(session, SetApproval, "main:app.unit", True)
         assert session.execute().result.units[0].status == "converged"
-    assert facts == [fact]
+    assert payloads == [FilePresent(MERGED if intent == "merge" else REPO)]
 
 
 def test_publication_failure_keeps_previous_base_after_repository_apply(tmp_path, monkeypatch):
@@ -253,9 +250,11 @@ def test_failed_acknowledgment_keeps_previous_base_after_both_effects(tmp_path, 
         with monkeypatch.context() as patch:
             patch.setattr(SyncBaseStore, "replace", fail)
             result = session.execute().result
-        assert result.status == "failed"
-        assert result.units[0].status == "execution-failed"
+        assert result.status == "completed"
+        assert result.units[0].status == "converged"
+        assert not result.units[0].acknowledged
         assert result.units[0].diagnostics[0].code == "base-acknowledgment-failed"
+        assert result.units[0].diagnostics[0].severity == "warning"
     assert (tmp_path / "repo/packages/app/unit").read_bytes() == MERGED
     assert (tmp_path / "live/unit").read_bytes() == MERGED
     with open_session(engine) as later:
@@ -286,6 +285,6 @@ def test_earlier_published_base_commits_before_later_publication_failure(tmp_pat
         assert [unit.status for unit in result.units] == ["converged", "execution-failed"]
     with open_session(engine) as later:
         after = [unit.base.record for unit in later.view.observations]
-        assert after[0].envelope.provenance == "conservative"
-        assert before[0].envelope.provenance == "exact"
+        assert after[0].payload == FilePresent(MERGED)
+        assert before[0].payload == FilePresent(BASE)
         assert after[1] == before[1]

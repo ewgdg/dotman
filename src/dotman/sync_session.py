@@ -25,7 +25,7 @@ from dotman.planning import PlanningContext
 from dotman.planning_guards import GuardPlanningError
 from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError, FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 from dotman.sync_base_lifecycle import (
-    FrozenBaseUnit, ProposalCompletion, SyncBaseGit, SyncBaseGitError, SyncBaseLifecycle,
+    FrozenBaseUnit, ProposalCompletion, SyncBaseLifecycle,
 )
 from dotman.operation_lock import OperationBusy, OperationLock, OperationLockError
 from dotman.sync_observation import Diagnostic, Observation, observe_scope, _resolve_inputs, _base_unit
@@ -64,6 +64,8 @@ class Proposal:
     reconciliation: str | None = None
     generation: int = 0
     additional_changes: tuple[AdditionalEdit, ...] = ()
+    checkpoint_qualified: bool = False
+    checkpoint_warnings: tuple[Diagnostic, ...] = ()
 
 
 def materialize(
@@ -106,7 +108,7 @@ def materialize(
     path = observation.live_path
     if isinstance(live, DirectoryChildPresent) and observation.chmod is not None:
         live = replace(live, executable=bool(int(observation.chmod, 8) & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)))
-    # A Git mode-only change is a chmod effect, not a redundant payload write.
+    # An executable-only change is a chmod effect, not a redundant payload write.
     content_changed = (
         isinstance(live, Missing) != isinstance(observation.live, Missing)
         or not isinstance(live, Missing) and live.content != observation.live.content
@@ -147,9 +149,13 @@ def materialize(
                     "captured repository outcome" if intent == "use-live" else "frozen repository outcome")
 
 
+def has_errors(diagnostics: tuple[Diagnostic, ...]) -> bool:
+    return any(item.severity == "error" for item in diagnostics)
+
+
 def supports_proposal(unit: Observation) -> bool:
     return (
-        unit.state == "drifted" and not unit.diagnostics
+        unit.state == "drifted" and not has_errors(unit.diagnostics)
         and unit.configured_policy in ("push-only", "push-only-delete", "pull-only", "both")
         and unit.effective_policy in ("push-only", "push-only-delete", "pull-only", "both")
     )
@@ -353,6 +359,7 @@ class SyncUnitResult:
     identity: str
     status: Literal["directly-in-sync", "pending", "excluded", "observation-failed", "converged", "would-converge", "applied", "would-apply", "execution-failed", "interrupted", "skipped", "not-converged"]
     diagnostics: tuple[Diagnostic, ...] = ()
+    acknowledged: bool = False
 
 
 @dataclass(frozen=True)
@@ -482,6 +489,8 @@ class ProposalSession:
         self._editor_preimages = {}
         self._editor_input_errors = {}
         self._captures = {}
+        self._acknowledged = set()
+        self._checkpoint_warnings = {}
         self._obsolete_bases = ()
         self._root_inputs = {}
         # A comparison Render is already a valid projection of these frozen
@@ -503,14 +512,14 @@ class ProposalSession:
                 SessionRow(
                     unit.identity.canonical,
                     "drift"
-                    if unit.state == "drifted" and not unit.diagnostics
+                    if unit.state == "drifted" and not has_errors(unit.diagnostics)
                     else "diagnostic",
-                    unit.state == "drifted" and not unit.diagnostics,
+                    unit.state == "drifted" and not has_errors(unit.diagnostics),
                     unit,
                     (("authorize-symlink-replacement",) if unit.live_is_symlink and unit.inputs.file_symlink_mode == "prompt" and unit.effective_policy in ("push-only", "both") else ()) + ("set-included", "set-approval", "prepare-proposal-review", "set-resolution-intent", "retry-materialization", "edit-proposal")
                     if supports_proposal(unit)
                     else ("set-included",)
-                    if unit.state == "drifted" and not unit.diagnostics
+                    if unit.state == "drifted" and not has_errors(unit.diagnostics)
                     else (),
                     allowed_intents=allowed_intents(unit),
                     intent=default_intent(unit),
@@ -575,12 +584,20 @@ class ProposalSession:
                     dir_symlink_mode=context.config.dir_symlink_mode,
                     command_runtime=context.projection.command_runtime, run_noop=run_noop,
                 )
-                obsolete_bases = cls._freeze_obsolete_bases(context, observed) if not preview else ()
+                try:
+                    obsolete_bases = cls._freeze_obsolete_bases(context, observed) if not preview else ()
+                except (KeyboardInterrupt, InterruptedError):
+                    raise
+                except (SyncBaseStoreError, OSError) as exc:
+                    obsolete_bases = ()
+                    observations = tuple(replace(unit, diagnostics=(*unit.diagnostics,
+                        Diagnostic("base-maintenance-failed", str(exc), severity="warning")))
+                        for unit in observations)
             except OperationBusy as exc:
                 return SessionOpenFailed(Diagnostic("operation-busy", str(exc)))
             except OperationLockError as exc:
                 return SessionOpenFailed(Diagnostic("operation-lock-failed", str(exc)))
-            except (SyncBaseStoreError, SyncBaseGitError) as exc:
+            except SyncBaseStoreError as exc:
                 return SessionOpenFailed(Diagnostic("base-failed", str(exc)))
             except GuardPlanningError as exc:
                 # Guard output may contain managed content; report typed command evidence only.
@@ -623,11 +640,10 @@ class ProposalSession:
             session._frozen_bases = {
                 observation.identity: FrozenBaseUnit(
                     _base_unit(context, observation.identity, *resolved_inputs[0][observation.identity]),
-                    observation.git.head, observation.git.committed,
-                    observation.git.primary_clean,
+                    observation.repository,
                 )
                 for observation in observations
-                if observation.configured_policy in ("pull-only", "both") and not observation.diagnostics
+                if observation.configured_policy in ("pull-only", "both") and observation.repository is not None
             }
             session._publication_metadata = freeze_child_metadata(publication_metadata, observations)
             session._repository_metadata = freeze_child_metadata(repository_metadata, observations)
@@ -960,7 +976,7 @@ class ProposalSession:
                 observation, intent=row.intent, capture=self._capture,
                 render=self._render, merge=self._merge, symlink_authorized=row.symlink_authorized,
             )
-            return replace(proposal, generation=self._next_generation(row.row_id), additional_changes=self._row_additional(row))
+            return self._qualify_checkpoint(observation, replace(proposal, generation=self._next_generation(row.row_id), additional_changes=self._row_additional(row)))
         repository, generation = self._edited_outcomes[row.row_id]
         observation = row.observation
         if observation.effective_policy in ("push-only", "both"):
@@ -973,11 +989,11 @@ class ProposalSession:
             replace(observation, repository=repository, comparison_repository=live),
             intent="use-repository", render=lambda *_: live, symlink_authorized=row.symlink_authorized,
         )
-        return replace(
+        return self._qualify_checkpoint(observation, replace(
             proposal, primary_source_change=repository if repository != observation.repository else None,
             intent="editor", generation=generation, reconciliation="edited repository outcome",
             additional_changes=self._row_additional(row),
-        )
+        ))
 
     def _edit_proposal(self, row: SessionRow) -> CommandAccepted:
         # The idle operation also holds cancellation admitted before dispatch.
@@ -1098,13 +1114,17 @@ class ProposalSession:
                     else:
                         status, failures = published[identity]
                         diagnostics += failures
-            units.append(SyncUnitResult(identity, status, diagnostics))
+            if observation.state == "drifted" and rows[identity].proposal is not None:
+                diagnostics += rows[identity].proposal.checkpoint_warnings
+            diagnostics += self._checkpoint_warnings.get(identity, ())
+            units.append(SyncUnitResult(identity, status, diagnostics,
+                                       observation.base.acknowledged or identity in self._acknowledged))
         status = (
             "aborted" if aborted or any(d.code == "interrupted" for d in operation_diagnostics) or any(
                 unit.status == "interrupted" or any(d.code == "interrupted" for d in unit.diagnostics)
                 for unit in units
             )
-            else "failed" if operation_diagnostics or any(unit.diagnostics or unit.status in ("observation-failed", "execution-failed") for unit in units)
+            else "failed" if has_errors(operation_diagnostics) or any(has_errors(unit.diagnostics) or unit.status in ("observation-failed", "execution-failed") for unit in units)
             else "incomplete" if any(
                 unit.status == "pending" and not supports_proposal(rows[unit.identity].observation)
                 for unit in units
@@ -1135,6 +1155,8 @@ class ProposalSession:
                         observation, metadata=metadata, context=item.package_context.context,
                         command_runtime=self._context.projection.command_runtime,
                         reuse_comparison=preimages == self._editor_preimages.get(observation.identity, {}),
+                        validated_render=lambda candidate, outcome: self._renders.__setitem__(
+                            (observation.identity, candidate), outcome),
                     )
             except (KeyboardInterrupt, InterruptedError, CaptureError):
                 raise
@@ -1175,28 +1197,50 @@ class ProposalSession:
             command_runtime=self._context.projection.command_runtime,
         )
 
+    def _qualify_checkpoint(self, observation: Observation, proposal: Proposal) -> Proposal:
+        if observation.configured_policy not in ("pull-only", "both"):
+            return proposal
+        # Publication already freezes the required forward projection. A no-write
+        # publication outcome carries the same proof without inventing an effect.
+        if self.operation == "sync" and observation.effective_policy in ("push-only", "both"):
+            return replace(proposal, checkpoint_qualified=True)
+        try:
+            rendered = self._render(observation, proposal.repository)
+        except (KeyboardInterrupt, InterruptedError):
+            raise
+        except (ValueError, OSError) as exc:
+            return replace(proposal, checkpoint_warnings=(Diagnostic(
+                "base-validation-failed", str(exc), severity="warning"),))
+        return replace(proposal, checkpoint_qualified=rendered == observation.live)
+
     def _acknowledge(self, row: SessionRow) -> None:
         observation = row.observation
+        if not row.proposal.checkpoint_qualified:
+            return
         item, _metadata = self._resolved_inputs[observation.identity]
-        with SyncBaseStore.open(
-            self._context.tracked_state.state_root, item.repo.config.state_key,
-        ) as store:
-            lifecycle = SyncBaseLifecycle(
-                store, SyncBaseGit(item.repo.root, self._context.projection.command_runtime),
-                operation="sync", preview=False,
-            )
-            completion = lifecycle.complete(
-                self._frozen_bases[observation.identity],
-                ProposalCompletion(
-                    intent=row.proposal.intent, approved=True,
-                    publication_effects="succeeded" if row.proposal.publication_effects else "not-required",
-                    primary_effect="succeeded" if row.proposal.primary_source_change is not None else "not-required",
-                ),
-            )
-            if completion.failure is not None:
-                raise completion.failure
-            if not completion.converged:
-                raise AssertionError("Approved repository outcome did not reach Base completion")
+        try:
+            with SyncBaseStore.open(
+                self._context.tracked_state.state_root, item.repo.config.state_key,
+            ) as store:
+                lifecycle = SyncBaseLifecycle(store, operation=self.operation, preview=False)
+                completion = lifecycle.complete(
+                    replace(self._frozen_bases[observation.identity], payload=row.proposal.repository),
+                    ProposalCompletion(
+                        intent=row.proposal.intent or "use-live", approved=True,
+                        publication_effects="succeeded" if row.proposal.publication_effects else "not-required",
+                        primary_effect="succeeded" if row.proposal.primary_source_change is not None else "not-required",
+                    ),
+                )
+                if completion.acknowledged:
+                    self._acknowledged.add(row.row_id)
+                if completion.failure is not None:
+                    self._checkpoint_warnings[row.row_id] = (Diagnostic(
+                        completion.warning_code, str(completion.failure), severity="warning"),)
+        except (KeyboardInterrupt, InterruptedError):
+            raise
+        except (SyncBaseStoreError, OSError) as exc:
+            self._checkpoint_warnings[row.row_id] = (Diagnostic(
+                "base-acknowledgment-failed", str(exc), severity="warning"),)
 
     def _publish(self) -> tuple[
         dict[str, tuple[str, tuple[Diagnostic, ...]]],
@@ -1222,18 +1266,8 @@ class ProposalSession:
                 additional_diagnostics = self._reclaim_obsolete_bases()
             return {}, additional_diagnostics, additional_steps
         by_id = {row.row_id: row for row in selected}
-        acknowledgment_failures = {}
-
         def complete(unit: RepositoryApplyUnit) -> None:
-            row = by_id[unit.row_id]
-            if row.observation.configured_policy in ("pull-only", "both"):
-                try:
-                    self._acknowledge(row)
-                except InterruptedError:
-                    raise
-                except (SyncBaseStoreError, SyncBaseGitError, OSError) as exc:
-                    acknowledgment_failures[row.row_id] = Diagnostic("base-acknowledgment-failed", str(exc))
-                    raise
+            self._acknowledge(by_id[unit.row_id])
 
         # Even an ineligible no-write Proposal has an ordered completion boundary.
         result = execute_repository_apply(
@@ -1251,9 +1285,7 @@ class ProposalSession:
         steps = additional_steps + repository_steps
         diagnostics = additional_diagnostics + diagnostics
         for row in selected:
-            if row.row_id in acknowledgment_failures:
-                units[row.row_id] = ("execution-failed", (acknowledgment_failures[row.row_id],))
-            elif row.proposal.publication_effects and units[row.row_id][0] == "converged":
+            if row.proposal.publication_effects and units[row.row_id][0] == "converged":
                 units[row.row_id] = ("not-converged", ())
         publication = tuple(row for row in selected if row.proposal.publication_effects)
         if publication or auxiliary["push"]:
@@ -1287,7 +1319,7 @@ class ProposalSession:
         except (KeyboardInterrupt, InterruptedError):
             return (Diagnostic("interrupted", "Directory Base maintenance interrupted"),)
         except (SyncBaseStoreError, OSError) as exc:
-            return (Diagnostic("base-maintenance-failed", str(exc)),)
+            return (Diagnostic("base-maintenance-failed", str(exc), severity="warning"),)
         return ()
 
     def _apply_additional(self, rows: tuple[AdditionalRow, ...]):
@@ -1347,18 +1379,8 @@ class ProposalSession:
         tuple[SyncStepOutcome, ...],
     ]:
         by_id = {row.row_id: row for row in selected}
-        acknowledgment_failures = {}
-
         def complete(unit: PublicationUnit) -> None:
-            row = by_id[unit.row_id]
-            if row.observation.configured_policy in ("pull-only", "both"):
-                try:
-                    self._acknowledge(row)
-                except InterruptedError:
-                    raise
-                except (SyncBaseStoreError, SyncBaseGitError, OSError) as exc:
-                    acknowledgment_failures[row.row_id] = Diagnostic("base-acknowledgment-failed", str(exc))
-                    raise
+            self._acknowledge(by_id[unit.row_id])
 
         result = execute_publication(
             self._publication_metadata,
@@ -1375,8 +1397,6 @@ class ProposalSession:
         )
         units, diagnostics, steps = self._execution_outcome(result, "live-publication")
         units = {row_id: outcome for row_id, outcome in units.items() if row_id in by_id}
-        for row_id, failure in acknowledgment_failures.items():
-            units[row_id] = ("execution-failed", (failure,))
         return units, diagnostics, steps
 
     @staticmethod
