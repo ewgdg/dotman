@@ -23,7 +23,6 @@ from dotman.templates import (
     JinjaRenderError,
     build_template_context,
     render_template_file,
-    render_template_string,
 )
 
 
@@ -187,12 +186,8 @@ def _build_cli_patch_capture_projector(
         )
 
         def project(candidate_bytes: bytes) -> bytes:
-            return render_template_string(
-                candidate_bytes.decode("utf-8"),
-                context,
-                base_dir=repo_path.parent,
-                source_path=repo_path,
-            ).encode("utf-8")
+            rendered, _projection_kind = render_template_file(repo_path, context, source_bytes=candidate_bytes)
+            return rendered
 
         return project
 

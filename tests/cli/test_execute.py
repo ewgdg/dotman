@@ -829,6 +829,42 @@ def test_capture_patch_cli_emits_patched_repo_bytes(
     assert capsys.readouterr().out == "greeting = {{ vars.greeting }}\nkeep\nmode = fast\n"
 
 
+def test_capture_patch_cli_jinja_renders_like_file_targets(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    # File targets trim standalone block-tag lines; the CLI must project the
+    # candidate the same way or it checks against a render Sync never produces.
+    repo_path = tmp_path / "config.txt"
+    review_repo_path = tmp_path / "review-repo.txt"
+    review_live_path = tmp_path / "review-live.txt"
+
+    repo_source = "keep\n{% if vars.feature %}\nfeature = on\n{% endif %}\nmiddle\nmode = safe\n"
+    repo_path.write_text(repo_source, encoding="utf-8")
+    review_repo_path.write_text("keep\nfeature = on\nmiddle\nmode = safe\n", encoding="utf-8")
+    review_live_path.write_text("keep\nfeature = on\nmiddle\nmode = fast\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "capture",
+            "patch",
+            "--repo-path",
+            str(repo_path),
+            "--render",
+            "jinja",
+            "--review-repo-path",
+            str(review_repo_path),
+            "--review-live-path",
+            str(review_live_path),
+            "--var",
+            "feature=true",
+        ]
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == repo_source.replace("mode = safe", "mode = fast")
+
+
 
 def test_capture_patch_cli_accepts_command_renderers(
     tmp_path: Path,
