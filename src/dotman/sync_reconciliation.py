@@ -1,12 +1,8 @@
 """Three-way reconciliation of frozen repository representations."""
 
-from pathlib import Path
-from tempfile import TemporaryDirectory
-
-from dotman.command_runtime import (
-    ArgvCommand, CommandRequest, CommandRuntime, raise_for_command_interruption,
-)
-from dotman.sync_base_store import FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
+from dotman.command_runtime import CommandRuntime
+from dotman.sync_base_store import FilePresent, DirectoryChildPresent, SyncBasePayload
+from dotman.text_merge import TextMergeFailed, merge_text
 
 
 class ReconciliationConflict(ValueError):
@@ -45,27 +41,15 @@ def reconcile(
                       else captured.executable if repository.executable == base.executable
                       else repository.executable)
         return DirectoryChildPresent(content, executable)
-    with TemporaryDirectory(prefix="dotman-merge-") as directory:
-        root = Path(directory)
-        for name, value in (("base", base), ("repository", repository), ("capture", captured)):
-            (root / name).write_bytes(value.content)
-        try:
-            result = command_runtime.run(CommandRequest(
-                ArgvCommand(("git", "merge-file", "--stdout",
-                             "-L", "repository", "-L", "Sync Base", "-L", "Capture",
-                             "repository", "base", "capture")),
-                cwd=root,
-            ))
-        except OSError as exc:
-            raise ReconciliationFailed(str(exc)) from exc
-        raise_for_command_interruption(result)
-        # Git returns a conflict count (capped at 127); errors return negative
-        # status, represented as 255 by a normal process exit.
-        if 1 <= result.exit_code <= 127:
-            raise ReconciliationConflict("Repository and Capture contain conflicting changes")
-        if result.exit_code:
-            raise ReconciliationFailed(
-                f"Reconciliation failed with exit {result.exit_code}: "
-                + result.stderr.decode(errors="replace").strip().replace(str(root), "<reconciliation>")
-            )
-        return FilePresent(result.stdout)
+    try:
+        merged = merge_text(
+            repository.content, base.content, captured.content,
+            labels=("repository", "Sync Base", "Capture"), command_runtime=command_runtime,
+        )
+    except TextMergeFailed as exc:
+        raise ReconciliationFailed(f"Reconciliation failed with {exc}") from exc
+    except OSError as exc:
+        raise ReconciliationFailed(str(exc)) from exc
+    if merged is None:
+        raise ReconciliationConflict("Repository and Capture contain conflicting changes")
+    return FilePresent(merged)

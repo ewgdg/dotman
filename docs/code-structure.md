@@ -76,6 +76,7 @@ Current responsibility split:
 - `projection.py` — shared frozen Render, Capture and comparison providers plus Push file/directory action planning through `ProjectionContext`
 - `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
 - `sync_reconciliation.py` — typed three-way repository reconciliation from frozen Base, repository, and Capture evidence
+- `text_merge.py` — shared `git merge-file` three-way text merge used by Reconciliation and patch Capture
 - `sync_path_policy.py` — endpoint traversal, live-link interpretation, and execution-time path safety
 - `sync_session.py` — shared Proposal workset, immutable views, semantic commands, transactional Approval and Sync convergence orchestration
 - `pull_session.py` — fixed live-to-repository Observation, opt-out Proposal/Additional Approval and repository-only completion over the shared workset
