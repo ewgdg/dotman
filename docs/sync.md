@@ -30,8 +30,13 @@ Base evidence independently of Git history.
 | Effective policy | Direct comparison |
 | --- | --- |
 | `push-only` | Repository-derived live bytes and configured file mode against live |
-| `pull-only`, `both` | Configured repository and live comparison projections |
+| `pull-only` | Configured repository and live comparison projections |
+| `both` | Configured repository and live comparison projections, plus configured exact live file mode |
 | `push-only-delete` | Desired `Missing` against live presence |
+
+Exact file mode participates only while push capability survives. Equal content
+with a different configured live mode is drift requiring Approval, not direct
+agreement; pull-only capability never enforces live chmod.
 
 `Missing` differs from a present empty file. Missing endpoints remain typed
 absence rather than passing invented empty bytes through a projection. Under

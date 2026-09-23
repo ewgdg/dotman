@@ -292,7 +292,7 @@ def _observe_file(
             )
         if effective == "push-only" and metadata.chmod is not None and isinstance(compared_repo, DirectoryChildPresent):
             compared_repo = replace(compared_repo, executable=projection.file_is_executable(int(metadata.chmod, 8)))
-        exact_mode_active = effective == "push-only" or (identity.child_path is not None and effective == "both")
+        exact_mode_active = effective in ("push-only", "both")
         mode_agrees = (
             not exact_mode_active
             or isinstance(compared_repo, Missing)
