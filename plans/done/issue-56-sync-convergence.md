@@ -1,5 +1,13 @@
 # Two-sided Sync convergence
 
+## Current handoff
+
+The progress notes below preserve the initial implementation history, not the
+current backlog. All implementation subissues #57–#78 are now closed. Checkpoint
+semantics and storage were replaced by completed #83. Final gap fixes and closure
+validation are tracked in `issue-56-final-gaps.md`; do not restart completed slices
+or implement the superseded Git/SQLite protocol described in historical notes.
+
 ## Goal
 
 Implement GitHub issue #56 and its subissues #57–#78 as one dependency-ordered feature branch while keeping every checkpoint executable and reviewable.
