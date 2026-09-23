@@ -119,14 +119,14 @@ def test_pull_additional_approval_rebuilds_frozen_capture_and_applies_independen
 def test_pull_patch_capture_uses_frozen_views(tmp_path, monkeypatch):
     from dotman.sync_base_store import FilePresent
     engine = make_engine(tmp_path, monkeypatch, [
-        ("unit", "both", b"template\nold\n", b"rendered\nnew\n",
+        ("unit", "both", b"template\nkeep\nold\n", b"rendered\nkeep\nnew\n",
          'render = "sed s/template/rendered/ $DOTMAN_SOURCE"\ncapture = "patch"\ncompare = {repo = "render", live = "raw"}'),
     ])
     with engine.open_pull_session(engine.resolve_sync_scope()) as session:
-        assert session.view.rows[0].proposal.repository == FilePresent(b"template\nnew\n")
+        assert session.view.rows[0].proposal.repository == FilePresent(b"template\nkeep\nnew\n")
         (tmp_path / "live/unit").write_bytes(b"external")
         assert session.execute().result.units[0].status == "applied"
-    assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"template\nnew\n"
+    assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"template\nkeep\nnew\n"
 
 
 def test_pull_editor_recovers_capture_failure_without_automatic_fallback(tmp_path, monkeypatch):

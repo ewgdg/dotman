@@ -187,7 +187,7 @@ def test_pull_preview_and_execution_never_snapshot_or_publish(tmp_path, monkeypa
 
 def test_patch_capture_uses_frozen_comparison_and_repository(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
-        ('unit', 'pull-only', b'template\nold\n', b'rendered\nnew\n',
+        ('unit', 'pull-only', b'template\nkeep\nold\n', b'rendered\nkeep\nnew\n',
          'render = "sed s/template/rendered/ $DOTMAN_SOURCE"\ncapture = "patch"\ncompare = { repo = "render", live = "raw" }'),
     ])
     with open_session(engine, preview=False) as session:
@@ -195,9 +195,9 @@ def test_patch_capture_uses_frozen_comparison_and_repository(tmp_path, monkeypat
         (tmp_path / 'repo/packages/app/unit').write_bytes(b'external')
         (tmp_path / 'live/unit').write_bytes(b'external')
         command(session, SetApproval, 'main:app.unit', True)
-        assert session.view.rows[0].proposal.repository == FilePresent(b'template\nnew\n')
+        assert session.view.rows[0].proposal.repository == FilePresent(b'template\nkeep\nnew\n')
         assert session.execute().result.units[0].status == 'converged'
-    assert (tmp_path / 'repo/packages/app/unit').read_bytes() == b'template\nnew\n'
+    assert (tmp_path / 'repo/packages/app/unit').read_bytes() == b'template\nkeep\nnew\n'
     assert (tmp_path / 'live/unit').read_bytes() == b'external'
 
 

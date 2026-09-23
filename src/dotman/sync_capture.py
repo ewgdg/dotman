@@ -49,6 +49,8 @@ def capture_observation(
         candidate = apply_review_patch(
             repository, observation.comparison_repository.content,
             observation.comparison_live.content,
+            command_runtime=command_runtime,
+            protect_template_syntax=metadata.render_command == "jinja",
             repo_path=observation.repository_path,
         )
         if project(candidate, observation.compare_repo, repo_side=True) != observation.comparison_live.content:

@@ -26,8 +26,8 @@ def test_pull_presets_compare_rendered_repository_without_capturing_agreement(tm
     ('capture = "tr a-z A-Z < \\\"$DOTMAN_LIVE_PATH\\\""\ncompare = {repo = "raw", live = "raw"}',
      b"repo", b"live", b"LIVE"),
     ('render = "sed s/template/rendered/ \\\"$DOTMAN_SOURCE\\\""\ncapture = "patch"\ncompare = {repo = "render", live = "raw"}',
-     b"template\nold\n", b"rendered\nnew\n", b"template\nnew\n"),
-    ('preset = "jinja-patch"', b"{{ profile }}\nold\n", b"default\nnew\n", b"{{ profile }}\nnew\n"),
+     b"template\nkeep\nold\n", b"rendered\nkeep\nnew\n", b"template\nkeep\nnew\n"),
+    ('preset = "jinja-patch"', b"{{ profile }}\nkeep\nold\n", b"default\nkeep\nnew\n", b"{{ profile }}\nkeep\nnew\n"),
 ])
 def test_pull_capture_outcome_matches_review_and_repository_apply(tmp_path, monkeypatch, extra, source, live, expected):
     engine = make_engine(tmp_path, monkeypatch, [("unit", "both", source, live, extra)])

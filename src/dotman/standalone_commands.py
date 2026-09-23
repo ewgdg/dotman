@@ -264,6 +264,8 @@ def run_patch_capture(
             profile=resolved_profile,
             inferred_os=resolved_os,
         ),
+        command_runtime=current_command_runtime(),
+        protect_template_syntax=render_command == "jinja",
     )
     sys.stdout.buffer.write(captured)
     return 0

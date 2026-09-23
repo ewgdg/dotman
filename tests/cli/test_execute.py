@@ -804,9 +804,9 @@ def test_capture_patch_cli_emits_patched_repo_bytes(
     review_repo_path = tmp_path / "review-repo.txt"
     review_live_path = tmp_path / "review-live.txt"
 
-    repo_path.write_text("greeting = {{ vars.greeting }}\n", encoding="utf-8")
-    review_repo_path.write_text("greeting = hello\n", encoding="utf-8")
-    review_live_path.write_text("greeting = world\n", encoding="utf-8")
+    repo_path.write_text("greeting = {{ vars.greeting }}\nkeep\nmode = safe\n", encoding="utf-8")
+    review_repo_path.write_text("greeting = hello\nkeep\nmode = safe\n", encoding="utf-8")
+    review_live_path.write_text("greeting = hello\nkeep\nmode = fast\n", encoding="utf-8")
 
     exit_code = main(
         [
@@ -826,7 +826,7 @@ def test_capture_patch_cli_emits_patched_repo_bytes(
     )
 
     assert exit_code == 0
-    assert capsys.readouterr().out == "greeting = world\n"
+    assert capsys.readouterr().out == "greeting = {{ vars.greeting }}\nkeep\nmode = fast\n"
 
 
 
@@ -838,9 +838,9 @@ def test_capture_patch_cli_accepts_command_renderers(
     review_repo_path = tmp_path / "review-repo.txt"
     review_live_path = tmp_path / "review-live.txt"
 
-    repo_path.write_text("greeting = @@greeting@@\n", encoding="utf-8")
-    review_repo_path.write_text("greeting = hello\n", encoding="utf-8")
-    review_live_path.write_text("greeting = world\n", encoding="utf-8")
+    repo_path.write_text("greeting = @@greeting@@\nkeep\nmode = safe\n", encoding="utf-8")
+    review_repo_path.write_text("greeting = hello\nkeep\nmode = safe\n", encoding="utf-8")
+    review_live_path.write_text("greeting = hello\nkeep\nmode = fast\n", encoding="utf-8")
 
     exit_code = main(
         [
@@ -860,7 +860,7 @@ def test_capture_patch_cli_accepts_command_renderers(
     )
 
     assert exit_code == 0
-    assert capsys.readouterr().out == "greeting = world\n"
+    assert capsys.readouterr().out == "greeting = @@greeting@@\nkeep\nmode = fast\n"
 
 
 @pytest.mark.parametrize(

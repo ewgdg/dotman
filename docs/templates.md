@@ -82,9 +82,16 @@ Current built-in presets and CLI examples pair it with file targets that already
 - `compare.repo = "render"`
 - `compare.live = "raw"`
 
-The helper reads the reviewed repo/live projections, patches the raw repo source, reprojects the patched source through the forward render path, and fails unless that projection matches the review live bytes exactly.
+The helper three-way merges the reviewed live edits onto the raw repo source, using the reviewed rendered repo view as the common ancestor. It then reprojects the candidate through the forward render path and fails unless that projection matches the review live bytes exactly.
 
-Keep this for simple, deterministic template cases where live edits map cleanly back onto one canonical source file. If reverse mapping needs human judgment, use `editor`.
+What transfers and what fails:
+
+- Edits to literal lines are applied to the source, including inserts, deletions, and several separate edits, even when block tags make source and rendered line counts differ.
+- Edits that overlap or directly adjoin template-generated output fail: changed expression values, a literal edit on a line that also contains an expression, edits inside loop bodies or included templates, and edits to a line right next to a tag or expression line. No partial result is kept.
+- With `render = "jinja"`, Capture also fails if the candidate would change any Jinja tag, expression, or comment, even when the render still matches.
+- Line endings follow the source: a CRLF source stays CRLF even though Jinja renders LF. A source that mixes line endings fails when they differ from the render.
+
+A failed patch Capture is an ordinary Capture failure: the Proposal stays unapproved, nothing is written, and the Editor opens the unchanged repository source beside the live file. Use `editor` when reverse mapping needs human judgment.
 
 Use the explicit CLI helper when you want to debug the algorithm directly. Pass the same forward render you configured on the target, plus any template context flags that renderer needs:
 

@@ -68,6 +68,15 @@ def _file_environment(base_dir: Path) -> Environment:
     )
 
 
+def template_syntax_tokens(source: str) -> tuple[tuple[str, str], ...]:
+    """Return the Jinja tokens of `source` other than literal text and tag whitespace."""
+    return tuple(
+        (token_type, value)
+        for _line, token_type, value in _file_environment(Path(".")).lex(source)
+        if token_type not in {"data", "whitespace"}
+    )
+
+
 def _resolve_node(value: Any, context: dict[str, Any]) -> Any:
     """Recursively resolve Jinja2 references in a var value using the given context."""
     if isinstance(value, str) and ("{{" in value or "{%" in value):

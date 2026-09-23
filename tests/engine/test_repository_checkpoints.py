@@ -68,7 +68,7 @@ def test_permanent_pull_freezes_forward_check_before_apply(tmp_path, monkeypatch
 
 def test_patch_capture_reuses_required_forward_validation(tmp_path, monkeypatch):
     marker = tmp_path / 'renders'
-    engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'template\nold\n', b'rendered\nnew\n',
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'template\nkeep\nold\n', b'rendered\nkeep\nnew\n',
         f'render = "echo render >> {marker}; sed s/template/rendered/ $DOTMAN_SOURCE"\ncapture = "patch"\ncompare = {{repo = "render", live = "raw"}}')])
     with engine.open_pull_session(engine.resolve_sync_scope()) as session:
         assert session.view.rows[0].proposal.checkpoint_qualified
