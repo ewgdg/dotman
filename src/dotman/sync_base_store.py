@@ -136,6 +136,14 @@ class SyncBaseRecord:
             DirectoryChildPresent(self.payload.content, self.payload.executable)
 
 
+@dataclass(frozen=True)
+class SyncBaseScan:
+    """Validated records and isolated corruption, without exposing unusable metadata."""
+
+    records: tuple[SyncBaseRecord, ...]
+    corrupt_count: int
+
+
 def _identity(status: os.stat_result) -> tuple[int, int]:
     return status.st_dev, status.st_ino
 
@@ -354,6 +362,13 @@ def _record_name(identity: bytes) -> str:
     return f"{RECORD_FILE_PREFIX}{hashlib.sha256(identity).hexdigest()}.json"
 
 
+def _metadata_digest(body: dict[str, object]) -> str:
+    # Authenticate the expected payload digest, not its encoded bytes, so intact
+    # metadata can distinguish damaged payload from damaged record structure.
+    metadata = {key: value for key, value in body.items() if key != "content"}
+    return hashlib.sha256(_canonical_json(metadata)).hexdigest()
+
+
 def _encode(record: SyncBaseRecord) -> bytes:
     payload = record.payload
     body = {
@@ -371,10 +386,12 @@ def _encode(record: SyncBaseRecord) -> bytes:
         "executable": payload.executable
         if isinstance(payload, DirectoryChildPresent)
         else None,
+        "content_digest": None
+        if isinstance(payload, Missing)
+        else hashlib.sha256(payload.content).hexdigest(),
+        "content_size": None if isinstance(payload, Missing) else len(payload.content),
     }
-    return _canonical_json(
-        {"record": body, "digest": hashlib.sha256(_canonical_json(body)).hexdigest()}
-    )
+    return _canonical_json({"record": body, "digest": _metadata_digest(body)})
 
 
 def _decode(
@@ -392,9 +409,11 @@ def _decode(
             "shape",
             "content",
             "executable",
+            "content_digest",
+            "content_size",
         }:
             raise ValueError("invalid record fields")
-        if container["digest"] != hashlib.sha256(_canonical_json(body)).hexdigest():
+        if container["digest"] != _metadata_digest(body):
             raise ValueError("record digest mismatch")
         if type(body["epoch"]) is not int or body["epoch"] != STORE_EPOCH:
             raise SyncBaseStoreEpochError(
@@ -407,22 +426,48 @@ def _decode(
             or (expected_identity is not None and identity != expected_identity)
         ):
             raise ValueError("record identity mismatch")
+        envelope = SyncBaseEnvelope(body["fingerprint"])
         shape = body["shape"]
         if shape == "missing":
-            if body["content"] is not None or body["executable"] is not None:
+            if any(
+                body[field] is not None
+                for field in ("content", "executable", "content_digest", "content_size")
+            ):
                 raise ValueError("Missing record contains payload")
             payload: SyncBasePayload = Missing()
         else:
-            raw = base64.b64decode(body["content"], validate=True)
-            if shape == "file" and body["executable"] is None:
-                payload = FilePresent(raw)
-            elif shape == "directory-child":
-                payload = DirectoryChildPresent(raw, body["executable"])
-            else:
+            if not (
+                (shape == "file" and body["executable"] is None)
+                or (shape == "directory-child" and type(body["executable"]) is bool)
+            ):
                 raise ValueError("invalid payload shape")
-        result = SyncBaseRecord(
-            identity, payload, SyncBaseEnvelope(body["fingerprint"])
-        )
+            if (
+                type(body["content_size"]) is not int
+                or body["content_size"] < 0
+                or type(body["content_digest"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", body["content_digest"]) is None
+            ):
+                raise ValueError("invalid payload metadata")
+            try:
+                raw = base64.b64decode(body["content"], validate=True)
+                if (
+                    len(raw) != body["content_size"]
+                    or hashlib.sha256(raw).hexdigest() != body["content_digest"]
+                    or base64.b64encode(raw).decode("ascii") != body["content"]
+                ):
+                    raise ValueError("payload integrity mismatch")
+            except (ValueError, TypeError, binascii.Error) as exc:
+                raise SyncBaseRecordCorruptionError(
+                    f"invalid Sync Base payload {name}: {exc}",
+                    affected_identities=(identity,),
+                    reason="payload_corrupt",
+                ) from exc
+            payload = (
+                FilePresent(raw)
+                if shape == "file"
+                else DirectoryChildPresent(raw, body["executable"])
+            )
+        result = SyncBaseRecord(identity, payload, envelope)
         # A single canonical representation rejects duplicate fields and ambiguous encodings.
         if _encode(result) != content:
             raise ValueError("noncanonical record encoding")
@@ -608,22 +653,38 @@ class SyncBaseStore:
         with _store_errors():
             return self._read_name(_record_name(identity), identity)
 
-    def identities(self) -> tuple[bytes, ...]:
+    def scan(self) -> SyncBaseScan:
+        """Read a coherent inventory; record corruption never hides healthy units."""
         self._require_open()
         if not self._reading:
             with self.read_transaction():
-                return self.identities()
+                return self.scan()
         with _store_errors():
             records = []
+            corrupt_count = 0
             for name in sorted(self._layout.check()):
-                if name.startswith(RECORD_FILE_PREFIX):
+                if not name.startswith(RECORD_FILE_PREFIX):
+                    continue
+                try:
                     record = self._read_name(name)
-                    if record is None:
-                        raise SyncBaseStoreSecurityError(
-                            "Sync Base record disappeared during enumeration"
-                        )
-                    records.append(record.identity)
-            return tuple(sorted(records))
+                except SyncBaseRecordCorruptionError:
+                    # A broken envelope may have no recoverable identity. Count the
+                    # self-contained file rather than trusting corrupted metadata.
+                    corrupt_count += 1
+                    continue
+                if record is None:
+                    raise SyncBaseStoreSecurityError(
+                        "Sync Base record disappeared during enumeration"
+                    )
+                records.append(record)
+            return SyncBaseScan(
+                tuple(sorted(records, key=lambda record: record.identity)),
+                corrupt_count,
+            )
+
+    def identities(self) -> tuple[bytes, ...]:
+        """Return only identities whose records passed integrity validation."""
+        return tuple(record.identity for record in self.scan().records)
 
     def replace(self, record: SyncBaseRecord) -> None:
         if type(record) is not SyncBaseRecord:

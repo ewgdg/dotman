@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -79,6 +80,24 @@ def test_corruption_is_per_unit_and_explicitly_discardable(tmp_path):
         assert store.read(b"unit") is None
 
 
+def test_scan_isolates_corruption_without_cleanup(tmp_path):
+    with SyncBaseStore.open(tmp_path / "manager", "repo") as store:
+        store.replace(record(b"healthy"))
+        store.replace(record(b"broken"))
+        broken_path = store.record_path(b"broken")
+        broken_path.write_bytes(b"broken")
+        before = broken_path.read_bytes()
+        with store.read_transaction():
+            scanned = store.scan()
+            assert scanned.records == (record(b"healthy"),)
+            assert scanned.corrupt_count == 1
+            assert store.identities() == (b"healthy",)
+            assert store.read(b"healthy") == record(b"healthy")
+            with pytest.raises(SyncBaseRecordCorruptionError):
+                store.read(b"broken")
+        assert broken_path.read_bytes() == before
+
+
 def test_failed_replacement_preserves_previous_record(tmp_path, monkeypatch):
     with SyncBaseStore.open(tmp_path / "manager", "repo") as store:
         store.replace(record())
@@ -120,6 +139,8 @@ def test_rejects_nonprivate_record_without_repair(tmp_path, mode):
         path.chmod(mode)
         with pytest.raises(SyncBaseStoreSecurityError):
             store.read(b"unit")
+        with pytest.raises(SyncBaseStoreSecurityError):
+            store.scan()
         with pytest.raises(SyncBaseStoreSecurityError):
             store.replace(record(payload=Missing()))
         assert path.stat().st_mode & 0o777 == mode
@@ -182,6 +203,35 @@ def test_identity_binding_and_integrity(tmp_path):
         first.write_bytes(original.replace(b'"fingerprint":"a', b'"fingerprint":"b'))
         with pytest.raises(SyncBaseRecordCorruptionError):
             store.read(b"unit")
+
+
+@pytest.mark.parametrize(
+    "field,value,reason",
+    [
+        ("content", "YmFk", "payload_corrupt"),
+        ("content", "YmFkIQ==", "payload_corrupt"),
+        ("content", "!invalid-base64!", "payload_corrupt"),
+        ("content", None, "payload_corrupt"),
+        ("fingerprint", "b" * 64, "record_corrupt"),
+    ],
+)
+def test_payload_corruption_is_distinct_from_record_corruption(
+    tmp_path, field, value, reason
+):
+    with SyncBaseStore.open(tmp_path / "manager", "repo") as store:
+        store.replace(record())
+        path = store.record_path(b"unit")
+        encoded = json.loads(path.read_bytes())
+        encoded["record"][field] = value
+        path.write_text(json.dumps(encoded, sort_keys=True, separators=(",", ":")))
+        before = path.read_bytes()
+        with pytest.raises(SyncBaseRecordCorruptionError) as error:
+            store.read(b"unit")
+        assert error.value.reason == reason
+        assert error.value.affected_identities == (b"unit",)
+        assert store.scan().corrupt_count == 1
+        assert path.read_bytes() == before
+        assert store.discard_corrupt(b"unit")
 
 
 def test_delete_contract(tmp_path):
