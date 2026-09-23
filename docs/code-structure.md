@@ -189,6 +189,16 @@ That structure keeps repo/package/target hook ordering explicit instead of hidin
 
 Planning passes the engine's runtime explicitly while evaluating guards, probes, and projections, and binds that same runtime for shared privileged file helpers. Execution binds one runtime for the complete session. Editor, review, and privileged-helper commands use the same active runtime.
 
+Each broker/intercept command owns its elevation broker for the complete runtime
+call. The broker copies that command's runtime and cancellation context into its
+serving threads; a later Editor attempt never reuses a cancelled attempt's broker.
+Before returning terminal control, the runtime stops broker admission, unblocks
+pending request reads, and drains authentication handlers and their terminal
+restoration. Interrupted authentication is reported as interruption (130), not
+ordinary authentication failure; requesters that disconnect during cancellation
+need no reply. The broker remains threaded: worker-owned commands and TTY Editors
+still require context propagation and main-thread-only signal installation.
+
 ## Operation runner
 
 `src/dotman/operation_runner.py` is the operation-level mutation boundary.

@@ -11,7 +11,6 @@ import stat
 
 from dotman.interaction_policy import unattended_enabled
 from dotman.command_runtime import CommandOperation, command_operation, command_runtime_session
-from dotman.elevation import elevation_broker_session
 from dotman.execution import ExecutionStep, directory_synced_file_mode
 from dotman.atomic_files import default_created_file_mode
 from dotman.capture import CaptureError
@@ -1328,7 +1327,7 @@ class ProposalSession:
         repo_order = {name: index for index, (name, _) in enumerate(self._repository_metadata.repo_hooks)}
         rows = tuple(sorted(rows, key=lambda row: (repo_order[row.repo], row.path.as_posix())))
         results, steps, diagnostics = [], [], ()
-        with elevation_broker_session(), command_runtime_session(self._context.projection.command_runtime):
+        with command_runtime_session(self._context.projection.command_runtime):
             for row in rows:
                 status, failures = "pending", ()
                 if row.approved:

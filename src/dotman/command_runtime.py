@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from collections import deque
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -211,23 +211,35 @@ class ProductionCommandRuntime(_CancellationLatch):
 
         if request.io == "tty" and unattended_enabled():
             raise ValueError("TTY commands are unavailable in unattended mode")
-        command, request_env = self.elevation.prepare(
-            request.command,
-            request.env,
-            request.elevation,
-            request.elevation_reason,
-        )
-        environment = {
-            **{
-                key: value
-                for key, value in os.environ.items()
-                if key not in request.excluded_env_keys
-            },
-            **request_env,
-        }
-        if request.io == "tty":
-            return self._run_with_terminal(request=request, command=command, environment=environment)
-        return self._run_with_pipes(request=request, command=command, environment=environment)
+        with ExitStack() as elevation_scope:
+            if request.elevation in {"broker", "intercept"}:
+                from dotman.elevation import elevation_broker_session
+
+                elevation_scope.enter_context(elevation_broker_session())
+            try:
+                command, request_env = self.elevation.prepare(
+                    request.command,
+                    request.env,
+                    request.elevation,
+                    request.elevation_reason,
+                )
+                environment = {
+                    **{
+                        key: value
+                        for key, value in os.environ.items()
+                        if key not in request.excluded_env_keys
+                    },
+                    **request_env,
+                }
+                if request.io == "tty":
+                    return self._run_with_terminal(request=request, command=command, environment=environment)
+                return self._run_with_pipes(request=request, command=command, environment=environment)
+            finally:
+                # Prompt handlers may still be restoring the terminal after
+                # their requesting command exits. Drain them before the caller
+                # resumes its UI, even if another Ctrl-C arrives during cleanup.
+                with _defer_repeated_interrupts():
+                    elevation_scope.close()
 
     def _run_with_pipes(
         self,

@@ -500,11 +500,10 @@ def build_package_plans(
         considered_repo_names = tuple(
             dict.fromkeys(planning_input.selection.identity.repo for planning_input in selected_inputs)
         )
-        from dotman.elevation import elevation_broker_session
 
         # Privileged file helpers and the elevation broker still read the active runtime;
         # bind the same explicit dependency that guards and projections receive directly.
-        with command_runtime_session(planning_context.command_runtime), elevation_broker_session():
+        with command_runtime_session(planning_context.command_runtime):
             admitted_inputs, hierarchical_guard_skips = evaluate_hierarchical_guards(
                 selected_inputs,
                 command_runtime=planning_context.command_runtime,

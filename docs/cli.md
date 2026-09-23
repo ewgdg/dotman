@@ -122,7 +122,9 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   **L** explicitly authorizes prompt-mode live-link replacement for the focused
   Proposal; it does not select or approve it. Review shows authorization in the
   shared warning/success colors. Unattended Sync cannot supply this decision.
-  During editing, **Ctrl-C** cancels only the Editor attempt.
+  During editing, **Ctrl-C** or OS SIGINT cancels only the Editor attempt,
+  including a broker-triggered sudo password prompt. Prompt cleanup and terminal
+  restoration finish before the deck resumes; **E** can start a fresh attempt.
   Terminal Editors take terminal ownership temporarily and return to the same
   focused deck. No Editor runs automatically or under `--unattended`.
 - **Observation failed** and **Proposal failed** retain their diagnostic details

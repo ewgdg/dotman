@@ -18,7 +18,6 @@ from dotman.command_runtime import (
     command_runtime_session,
     current_command_runtime,
 )
-from dotman.elevation import elevation_broker_session
 from dotman.interaction_policy import interaction_scope
 from dotman.file_access import (
     chmod as sudo_chmod,
@@ -465,7 +464,7 @@ def execute_session(
     on_package_finish=None,
 ) -> ExecutionResult:
     runtime = command_runtime or current_command_runtime()
-    with interaction_scope(unattended=unattended), elevation_broker_session(), command_runtime_session(runtime):
+    with interaction_scope(unattended=unattended), command_runtime_session(runtime):
         return _execute_session_inner(
             session,
             stream_output=stream_output,
