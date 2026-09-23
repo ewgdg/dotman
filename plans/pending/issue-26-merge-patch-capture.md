@@ -50,7 +50,7 @@ Test-first for each step; assert observable candidate bytes, error reasons, and 
 
 ## Validation
 
-- Focused: `uv run pytest -q tests/test_capture.py tests/engine/test_pull_projection.py tests/engine/test_pull_session.py tests/engine/test_sync_pull_convergence.py tests/engine/test_repository_checkpoints.py tests/cli/test_execute.py tests/engine/test_sync_reconciliation*.py` (bounded timeout).
+- Focused: `uv run pytest -q tests/test_capture.py tests/engine/test_pull_projection.py tests/engine/test_pull_session.py tests/engine/test_sync_pull_convergence.py tests/engine/test_repository_checkpoints.py tests/cli/test_execute.py tests/engine/test_sync_both_convergence.py tests/engine/test_sync_directory_convergence.py` (bounded timeout).
 - Once at the end: `timeout 300 uv run pytest -q` (change crosses Capture, Pull, Sync, CLI).
 - `git diff --check`.
 
