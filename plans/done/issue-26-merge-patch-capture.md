@@ -58,12 +58,19 @@ Test-first for each step; assert observable candidate bytes, error reasons, and 
 
 - [x] Assessment and probe corpus (2026-09-23).
 - [x] Design decisions confirmed by user: custom renderers keep patch; failures reuse existing Capture failure path; line-ending normalization.
-- [ ] Implementation not started; awaiting go-ahead.
+- [x] Extracted `src/dotman/text_merge.py` from Reconciliation; Reconciliation suites unchanged and green (41).
+- [x] Test-first: rewrote `tests/test_capture.py` for the merge contract (15 tests; red on the new API, green after).
+- [x] Merge-based `apply_review_patch`, line-ending normalization, Jinja syntax check; wired Sync Capture and CLI.
+- [x] Updated positional-era fixtures: edited literal now separated from the template line by one literal line (adjacent edits conflict by design). CLI tests now assert expression preservation instead of flattening.
+- [x] Docs: `docs/templates.md` patch section, `docs/code-structure.md`.
+- [x] Focused suites 186 passed; full suite `timeout 300 uv run pytest -q` — 1813 passed in 72s; `git diff --check` clean.
 
 ## Surprises & Discoveries
 
 - File templates render with `trim_blocks`/`lstrip_blocks`, so block-tag lines vanish from Render; positional transfer rejects such templates even with no live edit when the identity shortcut is not taken.
 - Jinja normalizes template newlines to LF in output.
+- The CLI `capture patch --render jinja` projector renders with the string environment (no `trim_blocks`/`lstrip_blocks`), while Sync file Render uses the file environment. Pre-existing and out of scope; follow-up candidate.
+- `git merge-file` is fast enough (~3 ms per merge) that no caching is warranted.
 - No existing "draft"/needs-review state exists; making uncertainty a `CaptureError` avoids adding one.
 
 ## Decisions
@@ -74,4 +81,6 @@ Test-first for each step; assert observable candidate bytes, error reasons, and 
 
 ## Outcomes & Retrospective
 
-(pending)
+- Patch Capture now preserves template syntax: every probe case that flattened an expression now fails as a Capture error instead.
+- No new approval state was needed; uncertainty reuses the existing Capture failure path.
+- Follow-up: align the CLI Jinja projector with the file-template environment.
