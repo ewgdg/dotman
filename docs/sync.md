@@ -22,9 +22,10 @@ then name, once per rule and directional family.
 Exit 0 retains capability, 100 removes that direction within the Guard's scope,
 and other non-zero exits abort planning. Review and execution never rerun Guards.
 Configured Sync Policy remains the upper bound; narrowing never changes Base
-eligibility (configured `pull-only` or `both`). It retains the resolved scope order, effective projections, typed
-endpoint bytes and live mode/link evidence. Each unit also retains Git facts
-and applicable Base evidence.
+eligibility (configured `pull-only` or `both`). Observation retains the resolved
+scope order, effective projections, typed endpoint bytes and live mode/link
+evidence. Each unit also retains applicable
+Base evidence independently of Git history.
 
 | Effective policy | Direct comparison |
 | --- | --- |
@@ -39,8 +40,10 @@ push-only-delete, live deletion retains the repository source and does not
 invoke Render, Capture, or comparison commands. Directories at file endpoints,
 FIFOs, sockets, and other unsupported nodes are Observation failures, not absence. Each unit is exactly **Directly
 InSync**, **Drifted**, or **Observation Failed**. Direct agreement has no drift
-row; drift has one stable canonical row, initially unapproved. Failed
-Observation and Base acknowledgment diagnostics stay visible and non-approvable.
+row; drift has one stable canonical row, initially unapproved.
+Observation failures stay visible and non-approvable. Base read or acknowledgment
+failures are warnings, not failed Observations. An unavailable Base uses the
+normal no-Base resolution rules; explicit Merge remains blocked without a usable Base.
 A Guard-removed route is a visible diagnostic, not permission to use the opposite
 direction. A unit-local failure does not discard unrelated evidence.
 
@@ -97,15 +100,15 @@ A conflict remains blocked without changing intent.
 
 Exact Path Rule chmod derives only the approved live outcome with surviving push
 capability. Equal bytes and `Use live` can therefore produce chmod-only
-Publication Effects. It never changes the repository outcome or the committed
-executable state stored as ancestry. Other permission bits remain outside Merge.
+Publication Effects. It never changes the repository outcome or the repository
+executable state stored in the checkpoint. Other permission bits remain outside Merge.
 
 Each child path is its exclusive Primary Source. Transform and Editor dependencies
 use canonical independently approved Additional Sources, including shared
 dependencies across children. There is no directory source bundle. A rename is a
 deletion and an addition with separate Approval and Base identities.
 
-Child Git facts are batched with file targets. Direct eligible agreement can
+Children use the same checkpoint lifecycle as file targets. Direct eligible agreement can
 acknowledge immediately in a real session; drifted eligible children acknowledge
 independently after their own required effects. Ineligible children complete
 without a Base. Both stages keep one enclosing target hook scope and report each
@@ -124,8 +127,8 @@ Confirmation is unavailable until this structural closure holds; unattended
 execution rejects it before mutation. An ignored, control, or otherwise unmanaged
 blocker produces a typed structural conflict instead. Ready child work uses
 normalized relative-path ordering, with prerequisite deletions before dependent
-writers. A completed deletion remains Converged, with its Base committed, if a
-later writer fails.
+writers. A completed deletion remains Converged if a later writer fails; any
+checkpoint already saved for that deletion remains intact.
 
 Obsolete child Bases are considered only from a later complete unrestricted
 target census. Reclamation occurs after successful real execution, not while
@@ -206,10 +209,11 @@ live effects. Structured output keeps repository changes separate from Publicati
 
 Real execution applies approved repository outcomes through pull hooks before
 publishing approved live outcomes through push hooks. Pull-only work creates no
-live snapshot and cannot mutate live. A pull-only unit becomes **Converged** only
-after its required repository effect and Base acknowledgment succeed. Even a
-drifted Capture result needing no repository write requires Approval and Base
-acknowledgment; it is not **Directly InSync**. A drifted push-only unit
+live snapshot and cannot mutate live. A pull-only unit becomes **Converged**
+after its required repository effect succeeds. A qualifying final candidate may
+also establish a Base; acknowledgment is independent of completion. Even a
+drifted Capture result needing no repository write requires Approval and a
+completion boundary; it is not **Directly InSync**. A drifted push-only unit
 becomes **Converged** when its required effects succeed, without creating a Base. An approved drifted Proposal with no writes still needs
 this completion boundary; it is not **Directly InSync**. Failed publication
 does not claim convergence or roll back earlier successful units.
@@ -266,8 +270,9 @@ eagerly regenerating them.
 
 Repository Apply writes approved Additional changes once, in stable normalized
 path order before Primary changes. Additional-only work activates no directional
-hooks. Additional results are reported independently and are not requirements
-of a referencing Proposal's Converged result or Base acknowledgment.
+hooks. Additional results are reported independently. A failed Additional write
+stops execution before Primary writes and publication; no separate per-Proposal
+acknowledgment dependency is needed.
 
 Successful rematerialization preserves standing Approval. Failed materialization
 clears only the affected Approval and leaves a typed diagnostic with local retry.
@@ -291,15 +296,19 @@ surviving directional families.
 
 Every approved no-write Proposal has its normal Repository Apply completion
 position, even when Base-ineligible. Repository-only units complete there;
-units requiring live effects wait for their own publication. Eligible completion
-commits the unit's Base before target post-hooks. Post-hook success is not a
+units requiring live effects wait for their own publication. Qualifying eligible
+completion saves the unit's Base before target post-hooks. Post-hook success is not a
 condition of convergence.
 
-The first failed write, safety check, hook, acknowledgment or interruption stops
+The first failed required write, safety check, hook or interruption stops
 later work. Cancellation is checked at each effect, hook and completion boundary.
 Atomic replacement protects each file, not the whole operation: earlier writes,
 Converged units and committed Bases remain in place. A write followed by failed
 chmod retains the bytes but does not acknowledge or converge that unit.
+Checkpoint-save failures before atomic replacement warn, retain the previous
+Base, and allow later work. A flush failure after replacement warns that the
+new Base is already advanced but its crash durability is uncertain. Neither
+warning undoes effects or changes a completed unit into a failed one.
 
 Results retain the exact failed step and ordered successful and unattempted
 steps, including required completion boundaries that were never reached. A unit
@@ -328,9 +337,12 @@ frozen inputs.
 Use repository never Captures. Use live and Merge derive live publication by
 Rendering their repository outcome under policy, so Use live can require live
 writes or mode changes as well as a Primary Source Change. Both stages consume
-only approved frozen effects. An eligible unit acknowledges after its own last
-required effect, before later units or enclosing post-hooks; failure preserves
-the prior Base and does not undo earlier committed acknowledgments.
+only approved frozen effects. An eligible unit acknowledges its final repository
+outcome after its own last required effect, before later units or enclosing
+post-hooks. Publication itself supplies the evidence: no intermediate checkpoint
+after Repository Apply and no duplicate Render are needed. Acknowledgment warnings
+do not undo convergence or earlier checkpoints; failed replacement preserves the
+prior Base, while a post-replacement flush warning reports uncertain durability.
 
 ## Session lifetime
 
@@ -377,8 +389,8 @@ abandoned session; session state is neither persisted nor resumable.
 
 Preview cannot execute and does not take or create the manager lock, write
 managed repository/live/Git/state files, acknowledge or clean up Bases, run
-hooks, or create snapshots. Cleaned-up private scratch for projections and
-isolated Git checkout is permitted. Configured projection providers remain
+hooks, or create snapshots. Cleaned-up private scratch for projections is
+permitted. Configured projection providers remain
 trusted side-effect-free stdout producers, not sandboxed arbitrary programs.
 Comparison-owned Capture views may run during Observation. Pull-only Proposal
 materialization reuses that frozen Capture result when the configured live
@@ -388,9 +400,11 @@ needs no Capture or three-way reconciliation.
 
 ## Sync Bases
 
-A Sync Base is committed repository ancestry, not the latest working-tree,
-Capture, Editor, Render, or live output. File payloads are `Missing` or
-`Present(bytes)`; directory children additionally preserve Git executable state.
+A Sync Base records the repository-space outcome established by a qualifying
+synchronization. It is independent of Git commits and may contain working-tree,
+Capture, or Editor output; raw live bytes qualify only under the unit's
+interpretation. File payloads are `Missing` or `Present(bytes)`; directory
+children additionally preserve repository executable state.
 Exact live permission policy is not a Base payload.
 
 | Configured Sync Policy | Base-Eligible |
@@ -399,66 +413,76 @@ Exact live permission policy is not a Base payload.
 | `push-only`, `push-only-delete` | No |
 
 Guards narrow the available route for an operation, not Base eligibility.
-Changing between eligible policies preserves ancestry.
+Changing between eligible policies preserves the checkpoint.
 
 Base inspection reports metadata and applicability without Observation,
 projections, or Verification Records. Exact reset discards one Base under the
 manager lock; doctor reports aggregate corrupt/orphaned counts without repair.
 See [public workflows](sync-base-storage.md#public-inspection-and-reset).
 
-### Applicability and provenance
+### Applicability
 
 A usable Base has a valid identity and envelope, intact payload, matching
-effective interpretation inputs, and an available real commit provably ancestral
-to the operation's frozen current HEAD using actual committed parents, not
-repository ancestry overrides. Inspection never fetches missing objects from a
-promisor remote: availability means locally available. `Missing` is a valid
-usable payload.
+effective interpretation inputs, and a currently Base-Eligible unit. `Missing`
+is a valid usable payload. Git reset, checkout, branch changes, rewritten or
+unavailable history, and non-Git repositories do not by themselves invalidate or
+prevent checkpoints. A commit alone never advances one.
 
 Interpretation includes the Primary Source, effective Render and Capture,
 profile context, applicable Path Rules, and symlink interpretation modes.
 Configured policy, Guard outcomes, Pull Views, exact chmod, and the live link
 chain or resolved referent are not fingerprint inputs.
 
-The recorded representation comes from an isolated checkout of the frozen real
-commit, including checkout conversion. Provenance is **exact** only when the
-frozen path-scoped Git status says the Primary Source is clean and the final
-Proposal has no Primary Source Change. Otherwise it is **conservative**.
-Direct agreement has no Proposal, so only frozen status determines provenance.
-Additional Sources and byte comparisons never sharpen that classification.
+Ordinary source edits are changes to reconcile, not interpretation invalidation.
+Additional Source contents and external command dependencies are not recursively
+hashed. A stored checkpoint remains the starting point for independent edits on
+either side, including repository changes made by switching or resetting Git.
 
 ### Acknowledgment and completion
 
 | Boundary | Base behavior |
 | --- | --- |
 | Fresh direct agreement in real Push, Pull, or Sync | Eligible participating units may acknowledge immediately, before review or hooks |
-| Approved drift resolution in Sync | Acknowledge only after every unit-owned Primary and live effect succeeds |
-| Successful eligible Push publication | Acknowledge at the unit's completion boundary |
-| Drifted Pull replacement | Never acknowledge or claim Sync convergence |
-| Approved no-write resolution | Still needs Approval; eligible units also need acknowledgment |
+| Successful eligible Push or Sync publication | Save the final repository outcome after every required unit effect succeeds; no extra Render |
+| Permanent Pull or repository-only Sync | Reuse agreement evidence or freeze forward validation before Apply; save a qualifying candidate after required effects succeed |
+| Approved no-write resolution | Still needs Approval and the same agreement evidence; no write alone proves nothing |
 | Ineligible completion, including no-write | Complete without a Base or substitute receipt |
 
 Direct agreement is **Directly InSync**, not an approved drift resolution.
-A drifted unit is **Converged** only after its required effects and, when eligible,
-its independent acknowledgment transaction commit. Completion occurs at the
+A drifted unit is **Converged** after its required effects succeed, independently
+of checkpoint qualification or persistence. Completion occurs at the
 unit's earliest ordered position, before its enclosing target post-hook.
-Independently approved Additional Source Changes and hook success do not gate
-that unit's convergence.
+Later hook failure does not undo convergence. Independently approved Additional
+Source Changes run in the earlier prelude; their Approval alone is not checkpoint
+evidence.
 
-An acknowledgment describes the policy-authorized live fact, not unconditional
-raw-byte equality:
+Repository-only qualification compares Render of the final repository candidate
+with frozen live, including executable agreement where required. Effective raw
+Render can reuse identity evidence; raw Capture alone does not prove agreement
+under a non-raw Render. Patch Capture can reuse its existing successful forward
+validation for unchanged final inputs. Arbitrary Capture, lossy transforms, and
+Editor outcomes use the same qualification rule, not success of a write alone.
 
-- **Use repository**: the successfully published repository-derived outcome.
-- **Use live**: the frozen live state used by Capture.
-- **Merge**: the frozen merged live outcome.
-- **Editor**: the rematerialized policy-derived outcome.
-- **No-write**: the frozen approved policy-authorized outcome.
+Qualification uses final approved dependency inputs and freezes before Apply.
+Changing those inputs invalidates the evidence; execution never rerenders or
+recaptures after writes. A successful comparison that differs means the Base is
+not advanced, not that the operation failed. A checkpoint-only Render failure
+warns and leaves otherwise valid work executable. Render needed for publication
+and patch Capture's required validation still fail materialization normally.
+
+The payload remains repository-space state. Exact chmod may intentionally make
+live permissions differ; successful required permission effects establish the
+policy outcome, not equality of every repository and live permission bit.
 
 Preview, reused Verification Records, excluded or unselected units, and units
 removed by Guards never acknowledge. Failed materialization, pending or failed
-required effects, and failed acknowledgment preserve an eligible unit's prior
-authoritative Base. Failed acknowledgment leaves it not Converged; earlier
-committed unit acknowledgments remain durable.
+required effects, and save failures before atomic replacement preserve an eligible
+unit's prior authoritative Base. A checkpoint-save failure warns without stopping
+remaining units or changing successful completion. If atomic replacement succeeds
+but its directory flush fails, acknowledgment is true and a distinct warning
+reports uncertain crash durability; the old record is not claimed to survive.
+Corrupt or inaccessible Bases warn and use normal no-Base resolution rules,
+without bypassing storage safety checks or automatically recreating rejected storage.
 
 ### Policy maintenance
 
@@ -469,7 +493,7 @@ does not undo or prevent that maintenance. Pull, preview, read-only inspection,
 incomplete resolution, and unrelated partial selection do not perform it.
 Returning a deleted identity to an eligible policy requires fresh establishment.
 
-Storage security, transactions, and inspection locking are documented in
+Storage security, atomic replacement, and inspection locking are documented in
 [Sync Base storage](sync-base-storage.md).
 
 ## Permanent Pull
@@ -482,10 +506,11 @@ Active Probe and retained hook work also start selected and may be excluded.
 Unapproval changes provider inputs to their frozen originals and rematerializes
 approved dependants; unapproved dependants stay lazy.
 
-Pull executes only repository effects and pull hooks, without live snapshots or
-Base acknowledgment. Direct agreement may establish an eligible Base during
-Observation, but changed Pull does not inspect Base records for reconciliation.
-This differs from Sync's pull-only policy, which acknowledges completed units.
+Pull executes only repository effects and pull hooks, without live snapshots.
+Direct agreement may establish an eligible Base during Observation; changed Pull
+may establish one after qualifying repository effects. It does not use a Base for
+reconciliation. Permanent Pull and repository-only Sync share checkpoint evidence
+rules while retaining their distinct direction and Approval behavior.
 Push remains an independent one-sided operation.
 
 Interactive Pull permits a healthy approved subset after materialization failure.

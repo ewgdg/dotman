@@ -98,7 +98,7 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   referencing Proposals and independent Approval; Proposal Review lists source
   references without a duplicate Additional Approval control. Proposal Review
   separates configured/effective policy, repository/live paths, frozen Pull Views,
-  Base availability/provenance, Capture and Reconciliation, Primary Source Change
+  Base availability and evidence, Capture and Reconciliation, Primary Source Change
   authorization and exact Publication Effects.
   `X` opens one compact confirmation with selected units, repository changes,
   live writes, and live deletions; cancelling returns without
@@ -149,7 +149,8 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
 - Pull-only review lazily Captures frozen live evidence, shows the repository
   outcome and leaves live unchanged. Confirmation counts repository changes
   separately from live effects. Even a no-write drift resolution requires Approval
-  and successful Base acknowledgment to become Converged.
+  and completion at its normal ordered position to become Converged. Checkpoint
+  qualification and persistence are separate from successful completion.
 - JSON emits one clean final document with `operation`, `mode`, `status`,
   `scope`, `summary`, `sync_units`, `additional_source_changes`, `probe_work`,
   `directory_root_work`, `hook_work`, and `stages`. Hook output is captured
@@ -175,16 +176,25 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   `summary.approved_additional_sources` counts independently approved sources.
   Each unit's `primary_source_change` describes its repository write/deletion
   (or is null); `effects` contains only live Publication Effects. Summary
-  `repository_changes` counts selected Primary and Additional Source Changes. Base status and
-  provenance remain frozen opening evidence; `base.acknowledged` also reports
-  successful real-operation acknowledgment of a Converged Base-Eligible unit.
+  `repository_changes` counts selected Primary and Additional Source Changes. Base
+  `status` and `fingerprint` remain frozen opening evidence. `base.qualified`
+  reports the materialized Proposal's checkpoint evidence (null without a Proposal);
+  `base.acknowledged` reports successful real-operation persistence independently
+  of the unit's completion result. Diagnostics include `code`, `message`, and
+  `severity` (`warning` or `error`). Checkpoint-only warnings do not turn completed
+  required effects into execution failures.
   Execution outcomes identify their repository, package instance or target scope
   canonically, including failed hooks whose units already converged.
 - Human output distinguishes direct agreement, convergence, deliberately pending
   work, and failures; summaries count repository changes, live writes and deletions,
-  and selected auxiliary work separately.
+  and selected auxiliary work separately. Checkpoint warnings remain visible even
+  when synchronization succeeds and the Base is not advanced. Eligible unit
+  results show `Base advanced` or `Base not advanced` separately from completion.
+  A `base-durability-uncertain` warning means replacement committed but its final
+  flush failed: acknowledgment remains true, without a crash-durability guarantee.
 - Exit `0` means healthy completion, including deliberately unselected healthy
-  interactive rows. Exit `1` covers Observation, materialization, blocking,
+  interactive rows and completed work with checkpoint-only warnings. Exit `1`
+  covers Observation, materialization, blocking,
   unattended-decision, execution, or incomplete-convergence failure. Partial
   convergence with any failure exits `1`. Exit `2` means invalid syntax;
   exit `130` means interruption or explicit abort.
@@ -330,6 +340,15 @@ Restore and unrelated state commands are outside this lock.
 - `push` should fail before target planning if expanded tracked state contains ambiguous implicit singleton dependency profile contexts. Explicit singleton dependency entries suppress other implicit profile contexts for that package identity.
 - If group membership or package `depends` change in the repo, `push` should pick up newly introduced managed packages and files.
 - `push` should only touch files within the current managed selection.
+- Fresh direct agreement and successful eligible publication may save the frozen
+  repository-space outcome as a Sync Base, including uncommitted content and
+  content outside Git repositories. Publication acknowledgment waits for all
+  required unit effects, including chmod, without an extra Render. Required Push
+  Render succeeds during planning; it is not deferred or retried after hooks.
+  Checkpoint-only failures warn without stopping later work; preview never saves
+  a Base. Structured step results report `converged`, `acknowledged`,
+  `checkpoint_warning`, and `checkpoint_warning_code` separately. Human output
+  distinguishes direct agreement or convergence from Base advancement.
 - In interactive mode, `push` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
 - An explicit package entry that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
@@ -338,7 +357,9 @@ Restore and unrelated state commands are outside this lock.
 - After diff review accepts, `push` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
 - Before the first live mutation of a real `push`, dotman should create one manager-level snapshot for the finalized selected plan.
 - That snapshot should record enough state to restore the mutated paths later.
-- If the finalized `push` work is hook-only, dotman should not create a snapshot.
+- If the finalized `push` work is hook-only or only acknowledges direct agreement,
+  dotman does not create a snapshot. A checkpoint step cannot start a snapshot
+  ahead of a later live mutation.
 - If planning guards skip work before the first live mutation, dotman keeps going and creates the snapshot only when the first real mutation is about to begin.
 - `file_symlink_mode = prompt` means interactive replace is allowed; `follow` means dotman writes through to the resolved target.
 - `dir_symlink_mode = fail` rejects symlinked directory roots; `follow` means dotman manages the resolved tree.
@@ -391,7 +412,12 @@ Merge choice and never publishes to live paths.
   Apply is fail-fast and nontransactional: completed writes survive later failure,
   and remaining work is reported skipped. Pull creates no live snapshot.
 - Directly agreeing eligible observations may establish a Base. Changed Pull does
-  not read a Base for reconciliation or acknowledge one after repository Apply.
+  not use a Base for reconciliation, but may save its final repository outcome
+  after successful Apply when frozen evidence proves agreement with live.
+  Qualification reuses existing proof or checks Render before Apply; a mismatch
+  does not fail Pull. Checkpoint-only validation and storage failures warn without
+  stopping otherwise valid work. Required Capture and patch validation still block
+  failed materialization.
 - Symlink and directory safety use the same declared identities and frozen
   Observation constraints as Sync.
 

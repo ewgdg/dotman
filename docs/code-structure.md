@@ -80,19 +80,20 @@ Current responsibility split:
 - `sync_session.py` — shared Proposal workset, immutable views, semantic commands, transactional Approval and Sync convergence orchestration
 - `pull_session.py` — fixed live-to-repository Observation, opt-out Proposal/Additional Approval and repository-only completion over the shared workset
 - `execution.py` — Push execution and the shared command-hook execution boundary
+- `push_checkpoint.py` — frozen repository-space Push evidence and optional per-unit acknowledgment through the shared lifecycle
 - `sync_editor.py` — isolated configured/default Editor invocation and permitted source staging
-- `sync_observation.py` — file endpoint evidence, policy comparisons, frozen Guards/Git/Base facts and opening-time Base lifecycle
+- `sync_observation.py` — file endpoint evidence, policy comparisons, frozen Guards/Base facts and opening-time Base lifecycle
 - `sync_auxiliary.py` — immutable Probe/hook rows, one-shot Probe activity and Guard-admitted directional hook retention
 - `operation_lock.py` — manager-wide non-blocking real-operation ownership shared by sessions and Push/Pull command workflows
-- `sync_base_lifecycle.py` — configured-policy Base eligibility, frozen Git facts, input fingerprints, applicability inspection, and per-unit acknowledgment/deletion decisions
-- `sync_base_maintenance.py` — real Push selected-policy cleanup after static ownership/conflict resolution and before Guards; preserves excluded or unresolved children and never acknowledges ancestry
+- `sync_base_lifecycle.py` — configured-policy Base eligibility, input fingerprints, applicability inspection, and per-unit checkpoint acknowledgment/deletion decisions
+- `sync_base_maintenance.py` — real Push selected-policy cleanup after static ownership/conflict resolution and before Guards; preserves excluded or unresolved children
 - `sync_base_inspection.py` — metadata-only list/info, exact manager-locked reset, and aggregate doctor diagnostics using shared static resolution and Base applicability
-- `sync_base_store.py` — secure fixed-epoch, per-repository SQLite storage for exact Sync Base records and content-addressed payloads
+- `sync_base_store.py` — secure per-repository file storage with self-contained Sync Base records and atomic per-unit replacement
 
 Interactive Sync materialization uses one dedicated thread in `sync_deck.py`.
 Its awaitable dispatch copies ContextVars, rejects competing deck input while busy,
 and drains the actual thread before session abort or operation-lock release.
-Observation-time SQLite stores are already closed; only frozen evidence and static
+Observation-time Base stores are already closed; only frozen evidence and static
 metadata cross into materialization. Apply and Publication remain synchronous.
 `command_runtime.py` owns operation-scoped cancellation and child process handles.
 `command_operation()` establishes the CLI operation; nested commands share its
@@ -122,29 +123,31 @@ its result is independent of Proposal completion.
 
 The Base foundation exposes explicit boundaries rather than running a session.
 `BaseUnit` carries successfully resolved selected configuration, never a
-Guard-narrowed policy. `SyncBaseGit` freezes real HEAD/object format, one batched
-Primary-path status observation, and isolated-checkout payloads through
-Command Runtime. It uses an alternate index/worktree, disables replace refs,
-repository graft input and ambient Git selectors, and never updates the
-repository's real index. All Base Git operations require Git's `--no-lazy-fetch`
-control: a commit available only from a promisor remote is missing locally,
-not permission to fetch or modify the object store. Status is
-batched once; checkout is path-local so unsupported committed shapes or a failed
-conversion produce unit-local frozen failures without discarding successful
-peers or re-observing status. Repository-wide Git failures still abort freezing.
+Guard-narrowed policy. Checkpoint payloads come from frozen repository-space
+outcomes and require no Git status, checkout, commit, or ancestry operations.
 `BaseInputs` accepts effective projection strings, named Path Rule identities,
 profile context (including type-preserving frozen JSON variable inputs), and
 symlink modes; it deliberately cannot accept policy, Guards,
 Pull Views, chmod, or live referent paths.
 
-`SyncBaseLifecycle.inspect` is read-only and needs no checkout or live access.
-Unavailable results omit stored metadata. Git infrastructure errors and
-store-level failures remain errors rather than being reclassified as missing
-ancestry. `selected_policy_resolved` is the pre-Guard/pre-review maintenance
-boundary; `direct_agreement` is the fresh-Observation boundary; `complete`
-consumes explicit Approval and final unit-owned effect results at the earliest
-ordered completion boundary. Acknowledgment failures are typed results with
-`converged = false`; the store transaction preserves the old record.
+Base inspection is metadata-only and needs no live access or projections.
+Unavailable results omit stored payload metadata. Operation adapters report
+unreadable Bases as warnings and use the existing no-Base resolution rules,
+without allowing explicit Merge or weakening storage safety. Inspection commands
+continue to report store failures as errors.
+
+The lifecycle distinguishes pre-Guard policy maintenance, direct Observation,
+and completion of approved unit effects. Publication supplies checkpoint evidence
+without a second Render. Repository-only materialization freezes forward
+qualification for the final candidate and approved inputs, reusing existing
+proof where available. Qualification never changes the reviewed effect set.
+Acknowledgment follows required effects at the earliest ordered completion
+boundary; a pre-commit storage failure warns while preserving successful
+completion and the previous record. A typed post-rename durability error instead
+reports acknowledgment plus a warning, since the new record is already visible.
+Storage owns atomic replacement, not operation orchestration. Coherent inventory
+separates valid records from aggregate corruption so one damaged record cannot
+block healthy inspection.
 
 The Sync Observation adapter expands selected directory scopes into canonical
 children after target Guards. It reuses `IgnoreMatcher`, Path Rule composition,
@@ -163,13 +166,6 @@ final effect execution, and invoking these boundaries in order. Base inspection
 CLI behavior is separate from these foundation seams. Aggregate
 directory discovery and orphan reclamation are not responsibilities of the
 per-unit lifecycle.
-
-Git plumbing references: [status porcelain](https://git-scm.com/docs/git-status),
-[alternate-index read-tree](https://git-scm.com/docs/git-read-tree),
-[checkout-index](https://git-scm.com/docs/git-checkout-index), and
-[batch object lookup](https://git-scm.com/docs/git-cat-file),
-[local-only object access](https://git-scm.com/docs/git#Documentation/git.txt---no-lazy-fetch),
-and Git's [ancestry input environment control](https://github.com/git/git/blob/master/environment.h).
 
 The engine composes those immutable contexts once. Internal modules receive configuration, repositories, tracked state, and command execution directly; they do not receive `DotmanEngine` or call back through private facade methods.
 
@@ -272,8 +268,9 @@ is reused rather than run again. `sync_repository_apply.py` applies independentl
 Changes before exclusive Proposal-owned Primary Source outcomes through pull hooks without accessing live state or
 snapshots. Units without required live effects complete at their ordered position
 before the enclosing post-hook; the session uses
-the shared Base lifecycle with frozen committed Git facts to acknowledge eligible
-outcomes. A failed repository stage prevents all Live Publication.
+the shared Base lifecycle with frozen qualification evidence to acknowledge
+eligible repository outcomes. A failed required repository stage prevents all
+Live Publication; a checkpoint-only failure does not.
 
 `sync_publication.py` freezes hook and target execution metadata at opening and
 publishes approved file effects through the existing file-access, snapshot and
@@ -283,8 +280,8 @@ hooks. Child execution paths are frozen separately from their enclosing target,
 so hooks run once per target while each child retains its own effects and result.
 That frozen sequence drives execution and explicit unattempted-tail
 reporting; it is not reconstructed from filesystem outcomes. Cancellation checks
-precede hooks, effects and completion. Publication acknowledgment failures have
-their own failed completion step, distinct from successful content or chmod.
+precede hooks, effects and completion. Publication acknowledgment warnings remain
+distinct from successful content, chmod, and unit completion.
 The session preserves repository partial success as not-converged when later
 publication is skipped. Public results retain immutable semantic step outcomes and
 operation-level diagnostics separately from unit completion, so an enclosing

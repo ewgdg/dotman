@@ -1,167 +1,118 @@
 # Sync Base storage
 
 Dotman stores Sync Bases separately from tracked-package state and snapshots.
-Each configured repository has one fixed-epoch SQLite database:
+Each configured repository has private file storage under its manager XDG state
+directory. Each Sync Unit owns one self-contained record; payloads are not shared.
+
+The layout under `${XDG_STATE_HOME:-$HOME/.local/state}/dotman/` is:
 
 ```text
-$XDG_STATE_HOME/dotman/repos/<state_key>/sync-bases.sqlite3
+repos/<state_key>/
+  sync-bases.lock
+  sync-base-<sha256-of-canonical-identity-bytes>.json
 ```
 
-An unsupported epoch, unsafe filesystem layout, recovery sidecar, or corrupt
-container fails closed. Dotman does not repair, recreate, downgrade, quarantine,
-or delete rejected evidence.
+`state_key` is the configured repository storage key, not its filesystem path.
+Record names are hashes, but the record also retains and validates the complete
+identity. These files share the repository state directory with tracked-package
+state; resetting a Base does not change tracked packages or snapshots.
 
 ## Records and atomic acknowledgment
 
-A record uses the exact canonical Sync Unit identity bytes supplied by
-resolution. Its value is `Missing`, a present file with exact bytes, or a present
-directory child with exact bytes and boolean executable state. Inputs are
-recursively validated before starting a mutation. Every record also requires an
-envelope containing the full real commit OID, Git object format (SHA-1 or
-SHA-256), effective-input SHA-256 fingerprint, and exact/conservative provenance.
-The envelope and payload are replaced together in the same transaction.
+A record contains its canonical Sync Unit identity, interpretation fingerprint,
+and typed repository-space payload: `Missing`, `Present(bytes)`, or a directory
+child's `Present(bytes, executable)`. Missing is a stored value, not the absence
+of a checkpoint. File targets do not store executable state; exact live chmod
+is never a Base payload.
 
-The shared [Base lifecycle](sync.md) owns applicability, provenance construction,
-and acknowledgment/deletion timing; the store does not infer any of them.
+Records use canonical compact ASCII JSON, format epoch `1`, with a `record`
+object and metadata `digest`. The record stores base64 identity and content,
+interpretation fingerprint, payload shape, executable state, and content SHA-256
+and byte count. The metadata digest covers every record field except content;
+content is checked against its separately protected digest and size. Missing has
+null content, content digest, size, and executable fields. Exact canonical
+encoding, identity binding, record shape, and both integrity checks are validated
+before use.
 
-Present content is shared only when SHA-256, byte length, **and exact bytes**
-match. Digest and length narrow the lookup; they are not a unique identity.
-Unequal bytes remain distinct even when a digest collision occurs.
+Metadata and payload are replaced together using a private temporary file and
+atomic replacement in the same directory. A failure before replacement leaves
+the previous authoritative record intact. Rename is the logical commit boundary:
+if the subsequent directory flush fails, the new record is already visible.
+Dotman reports acknowledgment with a durability-uncertain warning, not a failed
+save or an assertion that the old record survived. It does not attempt another
+fallible mutation to roll back that committed record. Unit acknowledgments are
+independent; an operation is not a multi-unit transaction. Exact deletion affects one record,
+without shared-payload garbage collection.
 
-Each replacement is an independent SQLite `BEGIN IMMEDIATE` transaction:
-verify or insert the payload, replace one record, then remove only its prior
-payload if no record references it. Exact deletion has the same ownership rule.
-Filesystem validation happens before commit; a validation or SQL failure before
-commit rolls back the record and payload together. There is no post-commit
-security check that could misreport an acknowledged mutation as rejected.
-
-The on-disk store uses SQLite's `DELETE` rollback-journal mode. A journal created
-by the current transaction is private and is consumed by SQLite when that
-transaction commits or rolls back. No pre-existing journal is opened for recovery.
+The shared [Base lifecycle](sync.md#sync-bases) owns eligibility, applicability,
+checkpoint evidence, and acknowledgment timing. Storage does not infer whether
+successful repository writes constituted synchronization.
 
 ## Read-only inspection and locking
 
-`SyncBaseStore.open(root, state_key, read_only=True)` never creates directories,
-a database, or a missing lock, and rejects replacement/deletion.
-Store handles hold **no lifetime transaction or exclusive lock**.
+Read-only opening never creates directories, records, or missing lock artifacts,
+and cannot replace or delete records. Handles do not retain an exclusive lock
+throughout their lifetime.
 
-- `read(identity)` uses a fresh SQLite read transaction.
-- `with store.read_transaction(): ...` groups reads into one committed snapshot.
-- Multiple readers share the repository storage lock.
-- Mutations acquire an exclusive repository storage lock only for their
-  transaction. Contention fails immediately rather than waiting.
-- These locks are separate from the manager operation lock. Real SyncSession
-  opening takes the manager lock first; inspection never takes it. Direct
-  infrastructure mutation callers must provide their own operation lifetime.
+- Each read sees current committed records, not an earlier handle-level cache.
+- Grouped reads hold a shared repository storage lock for a coherent view.
+- Replacement and deletion use the exclusive repository storage lock.
+- Contention fails immediately rather than waiting.
+- These locks are separate from the manager operation lock. Real operations
+  acquire the manager lock first; list, info, and doctor never acquire it.
 
-Keep an explicit read transaction short: collect inspection data, exit the
-transaction, then render it or wait for user review. Holding it across review
-would unnecessarily prevent mutation.
+Collect inspection data under a short read transaction, then release it before
+rendering output or waiting for review. Holding a read lock during review would
+unnecessarily block checkpoint writes.
 
-A reader copies the current validated database inode into an in-memory,
-query-only SQLite database under the shared storage lock and begins its read
-transaction there. The shared lock remains held for that transaction, so
-cooperating writers cannot change the source mid-snapshot. Each subsequent
-transaction copies fresh committed bytes; a handle never reuses an old snapshot
-for a later acknowledgment.
+## Filesystem trust and failures
 
-## Filesystem trust and rejection
+The manager state directory and managed storage directories are current-user-owned
+with mode `0700`. Records, temporary files, and locks are current-user-owned
+regular files with mode `0600`. Storage rejects symlinks, hard-linked or nonregular
+files, unsafe ownership or modes, and invalid directory/file bindings. Opening
+storage does not silently change permissions or request root access.
 
-The manager state directory, `repos`, and repository state directory must be
-current-user-owned directories with exact mode `0700`. The database, lock, and
-SQLite sidecars must be current-user-owned regular files with exact mode `0600`.
-Symlinks, hard-linked files, unexpected store filenames, nonregular files,
-and wrong owners are rejected. Opening a store never changes permissions. Insecure modes are a
-store-level security failure, including during read-only inspection. No root
-access is requested; the XDG parent and unrelated files are not changed.
-Unexpected sidecars remain rejected with contents and inode bindings preserved.
+Descriptor-relative operations, no-follow opens, and binding validation protect
+the managed private tree. The caller trusts the XDG parent outside that tree.
+Advisory locks coordinate cooperating Dotman processes, not hostile same-user or
+root processes bypassing locks or modifying open inodes.
 
-Managed directories, the database, and the lock are pinned by file descriptors.
-Opens use no-follow flags and compare `fstat` device/inode identities against
-the validated directory entries. Directory-relative I/O and repeated binding
-checks detect observed directory/file substitution before SQLite mutation.
-Each directory scan opens a fresh stream relative to its pinned directory to
-avoid stale enumeration state after creating store files.
+Record/envelope corruption is distinct from payload-integrity corruption.
+One corrupt record does not hide healthy records: coherent inventory returns
+validated records and an aggregate corruption count, including damaged records
+whose identity cannot be recovered. Exact info reads only the requested record.
+Read-only inspection performs no cleanup. Real operations may perform normal
+record-level applicability maintenance only inside safely accessible storage;
+unsafe or unreadable storage is never automatically recreated or repaired.
 
-Before any writable SQLite open, Dotman reads through the validated database
-descriptor and validates a memory-only copy. Checks include:
+During Push, Pull, or Sync, unavailable/corrupt Base reads and checkpoint-save
+failures are warnings. They do not turn successful required effects into failure
+or stop later units. A failed read uses normal no-Base resolution; explicit Merge
+remains blocked without a usable Base. A save rejected before atomic replacement
+leaves the previous authoritative checkpoint rather than rolling back repository
+or live changes. A post-replacement flush warning instead reports the new Base
+as advanced, with crash durability unconfirmed.
+Required operation safety and effect failures still stop execution.
 
-- the rollback-format SQLite header and application ID;
-- both epoch declarations and the exact metadata row;
-- the complete fixed schema, with only its one genuine SQLite autoindex excluded;
-- full `integrity_check`, including index/table consistency;
-- `foreign_key_check`.
+Inspection and explicit reset retain their own error reporting: unsafe or
+unreadable storage is not reported as a successful empty inspection. No repair,
+quarantine, or bulk-reset command is provided.
 
-SQLite never receives an untrusted on-disk pathname for preflight. Any existing
-`-journal`, `-wal`, or `-shm` is rejected, including orphan sidecars without a
-main database and apparently stale or empty sidecars. This intentionally
-preserves interrupted-transaction evidence rather than letting SQLite recover
-or delete it. A live cooperating writer is reported as lock contention instead.
-
-Envelope validation failures report `record_corrupt` for the affected record.
-Payload digest/length failures report `payload_corrupt` and every referencing
-record identity. Both remain distinct from container corruption. Read-only applicability performs no cleanup. During real selected Base handling,
-individually corrupt records can be deleted; a corrupt shared payload removes
-every referencing Base in one transaction. Proven stale applicability may also
-be removed. Store-level failures are never repaired or deleted automatically.
-
-SQLite temporary tables and indexes stay in memory. A SQLite build that forces
-disk temporary storage is rejected; preflight makes no disk copy.
-
-## Supported boundary and costs
-
-Supported platforms are Linux and macOS with:
-
-- POSIX descriptor-relative I/O, descriptor directory listing, no-follow opens,
-  `pread`, and `flock`;
-- Python 3.11 or newer with `sqlite3.Connection.deserialize` available (the
-  Python version alone does not guarantee this optional build capability);
-- SQLite 3.37 or newer for the fixed STRICT schema, with memory temporary storage.
-
-Runtime capabilities are checked using an in-memory connection and platform
-capability registries **before creating any directory, database, or lock**.
-Missing capabilities raise `SyncBaseStoreUnsupportedRuntimeError`; a build
-forcing disk temporary storage raises `SyncBaseStoreSecurityError`.
-
-Writable connections use the validated database's ordinary file URI with
-`mode=rw`, so SQLite cannot create a missing database. No descriptor filesystem
-is required. Inode, owner, mode, directory binding, and sidecar checks surround
-the native SQLite open under the transaction lock.
-
-Portability regression tests inject unavailable descriptor-filesystem paths
-and missing runtime capabilities while using real SQLite and filesystem
-resources on Linux. **Native macOS execution has not been verified.**
-
-Preflight and each read transaction require **O(database size) memory and a full
-integrity scan**. Inspection should batch related reads into one short read
-transaction.
-
-The caller trusts the XDG parent outside the managed private tree. The security
-boundary protects against unsafe stored state and detects observed substitution;
-it does **not** isolate Dotman from a hostile process running as the same user
-or root. SQLite's native VFS resolves pathnames internally. A process bypassing
-the storage lock can race those internal database/sidecar accesses or overwrite
-a pinned inode directly.
-Such processes require external isolation, not stronger pathname claims here.
-Only cooperating Dotman processes may mutate an active store.
-
-References: [SQLite integrity checks](https://www.sqlite.org/pragma.html#pragma_integrity_check),
-[rollback journaling](https://www.sqlite.org/pragma.html#pragma_journal_mode),
-[temporary storage](https://www.sqlite.org/pragma.html#pragma_temp_store),
-[file URI modes](https://www.sqlite.org/uri.html),
-[Python deserialization availability](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.deserialize), and
-[deserialization](https://www.sqlite.org/c3ref/deserialize.html).
-
+Atomic replacement depends on the host filesystem's rename and durability
+semantics. Storage uses POSIX descriptor-relative filesystem operations and
+`flock`; native platform support must include those facilities.
+See Python's [filesystem operations](https://docs.python.org/3/library/os.html)
+and [advisory locking](https://docs.python.org/3/library/fcntl.html#fcntl.flock).
 
 ## Obsolete directory-child identities
 
-A child deletion commits its acknowledgment independently. Only a later
+A child deletion may save its `Missing` checkpoint independently. Only a later
 successful real Sync with complete unrestricted target census proof may reclaim
 the absent identity. Candidate keys are frozen before review, so the operation
 cannot reclaim a deletion it just acknowledged. Partial selectors, exclusions,
-ignores, markers, Guard restrictions and discovery failures cannot provide that
+ignores, markers, Guard restrictions, and discovery failures cannot provide that
 proof; preview and aborted sessions do no reclamation.
-
 
 ## Public inspection and reset
 
@@ -171,55 +122,41 @@ proof; preview and aborted sessions do no reclamation.
   Unit. A directory child uses `main:app.tree/nested/file`; package instances use
   `main:app<work>.tree/nested/file`.
 - `dotman reset sync-base main:app.settings` immediately discards exactly that
-  record and payloads made unreferenced. Already absent succeeds. There is no
-  confirmation, preview, wildcard, fuzzy selector, package scope, directory-target
-  scope, or all-units form. Reset takes the manager non-blocking operation lock
-  before resolution and fails while a real Push, Pull, or Sync owns it.
+  record. Already absent succeeds. There is no confirmation, preview, wildcard,
+  fuzzy selector, package scope, directory-target scope, or all-units form.
+  Reset takes the manager non-blocking operation lock before resolution and fails
+  while a real Push, Pull, or Sync owns it.
 - `dotman doctor` warns with aggregate corrupt and proven orphaned record counts
   per repository, without identities or repair plans. A complete unrestricted
-  directory census can prove absent children; excluded, guarded, or failed discovery cannot.
-  Unsafe/unreadable stores are failures carrying repository, database path, and
-  cause. Nothing is repaired.
+  directory census can prove absent children; excluded, guarded, or failed
+  discovery cannot. Unsafe/unreadable stores report repository, path, and cause.
 
 Info reports `usable`, `unavailable`, or human `not applicable` (structured
-`not-applicable`). Successful unavailable/ineligible inspection exits successfully;
-invalid identities and store failures are errors. Human reasons are exactly
-`absent`, `ineligible`, `inputs changed`, `commit missing`, `history changed`,
-or `corrupt`. JSON reason codes are respectively `absent`, `ineligible`,
-`inputs_changed`, `commit_missing`, `history_changed`, and
-`record_corrupt`/`payload_corrupt`.
+`not-applicable`). Unavailable/ineligible inspection succeeds; invalid identities
+and store failures are errors. Unavailability reasons are `absent`, `ineligible`,
+`inputs changed`, or `corrupt`. Structured reason codes distinguish
+`inputs_changed`, `record_corrupt`, and `payload_corrupt`.
 
-Structured list entries and info carry canonical identity, policy, eligibility,
-status, reason, full commit OID, provenance, payload kind/size/full digest and
-directory-child executable state, plus integrity, fingerprint match, commit
-availability, and ancestry checks. Unknown/not-performed checks are null.
-Unavailable output has null commit, provenance, and payload rather than stale
-record metadata. Payload bytes are never output. Reset returns identity and
-`reset` or `already_absent`.
+List and info expose canonical identity, policy, eligibility, status/reason,
+payload kind, size, digest, and child executable state, with integrity and
+fingerprint checks. Unknown/not-performed checks are null. Unavailable output
+does not disclose stale payload metadata; payload bytes are never output.
+Reset reports identity and `reset` or `already_absent`.
 
-List, info, and doctor use short read transactions, never take the manager
-operation lock, and never perform cleanup. They never inspect or mutate
-Verification Records or run Guards, Render, Capture, Pull View, live comparison,
-or drift Observation. Static identity resolution and doctor directory-control
-census do not establish ancestry. A stored Missing directory-child Base remains
-inspectable until a real operation safely reclaims it.
+List, info, and doctor never inspect Verification Records or run Guards, Render,
+Capture, Pull View, live comparison, or drift Observation. Static resolution and
+doctor directory-control census do not establish a checkpoint. A stored Missing
+directory-child Base remains inspectable until a real operation safely reclaims it.
 
 ### Real Push maintenance boundary
 
-The real Push command opts into configured-ineligibility cleanup while holding
-the manager operation lock. Cleanup follows successful static package, target,
-ownership, and conflict resolution and precedes Guards and review. Only selected
-configured `push-only` or `push-only-delete` file units and successfully discovered,
-unexcluded directory children lose existing Bases. Eligible units and unrelated
-package selections remain untouched; missing or failed child discovery never
-proves a stored identity obsolete. Cleanup does not create a missing Base store.
+Real Push performs configured-ineligibility cleanup while holding the manager
+operation lock, after successful static ownership/conflict resolution and before
+Guards and review. Only selected configured `push-only` or `push-only-delete`
+file units and successfully discovered, unexcluded children lose existing Bases.
+Eligible and unrelated units remain untouched; missing or failed child discovery
+does not prove obsolescence. Cleanup does not create missing storage.
 
-Dry-run and ordinary engine planning remain read-only. Cleanup never
-acknowledges ancestry. Successful eligible Push publication and fresh direct
-agreement use the shared [Base lifecycle](sync.md#acknowledgment-and-completion);
-changed Pull does not acknowledge convergence.
-
-Exact reset opens an existing store without creation: missing database or lock
-artifacts are failures, not permission to reconstruct storage. Doctor and info
-share record-shape validation against canonical file/child identities; a mismatch
-is record corruption even when SQLite and the payload digest remain valid.
+Dry-run and ordinary engine planning remain read-only. Cleanup is separate from
+successful eligible publication and direct-agreement acknowledgment, which use
+the shared [Base lifecycle](sync.md#acknowledgment-and-completion).
