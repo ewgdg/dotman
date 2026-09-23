@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 
 import pytest
 
@@ -13,6 +14,7 @@ from dotman.sync_base_store import (
     SyncBaseRecord,
     SyncBaseRecordCorruptionError,
     SyncBaseStore,
+    SyncBaseStoreDurabilityError,
     SyncBaseStoreError,
     SyncBaseStoreLockedError,
     SyncBaseStoreSecurityError,
@@ -255,6 +257,34 @@ def test_failed_file_flush_preserves_previous_record(tmp_path, monkeypatch):
             store.replace(record(payload=Missing()))
         assert store.read(b"unit") == record()
         assert not list(store.repo_state_directory.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("has_previous", [False, True])
+def test_post_commit_flush_failure_reports_committed_but_uncertain_durability(
+    tmp_path, monkeypatch, has_previous
+):
+    root = tmp_path / "manager"
+    with SyncBaseStore.open(root, "repo") as store:
+        if has_previous:
+            store.replace(record())
+        original_fsync = os.fsync
+
+        def fail_directory_flush(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError("injected post-rename directory flush failure")
+            original_fsync(descriptor)
+
+        with monkeypatch.context() as injected:
+            injected.setattr(os, "fsync", fail_directory_flush)
+            with pytest.raises(SyncBaseStoreDurabilityError) as error:
+                store.replace(record(payload=Missing()))
+        assert error.value.committed is True
+        assert error.value.durability_uncertain is True
+        assert store.read(b"unit") == record(payload=Missing())
+        store.replace(record(b"other"))
+        assert store.read(b"other") == record(b"other")
+    with SyncBaseStore.open(root, "repo", read_only=True) as store:
+        assert store.read(b"unit") == record(payload=Missing())
 
 
 def test_rejects_hardlinked_record(tmp_path):

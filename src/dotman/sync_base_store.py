@@ -30,6 +30,13 @@ class SyncBaseStoreError(RuntimeError):
     """A failure that prevents a Sync Base store operation from being trusted."""
 
 
+class SyncBaseStoreDurabilityError(SyncBaseStoreError):
+    """The new record committed, but its survival across a crash is uncertain."""
+
+    committed: Final = True
+    durability_uncertain: Final = True
+
+
 class SyncBaseStoreUnsupportedRuntimeError(SyncBaseStoreError):
     """The runtime lacks required secure filesystem capabilities."""
 
@@ -719,7 +726,15 @@ class SyncBaseStore:
                     src_dir_fd=self._layout.descriptor,
                     dst_dir_fd=self._layout.descriptor,
                 )
-                os.fsync(self._layout.descriptor)
+                try:
+                    os.fsync(self._layout.descriptor)
+                except OSError as exc:
+                    # Rename is the logical commit: rollback would be another
+                    # fallible mutation, not restoration of the pre-commit guarantee.
+                    raise SyncBaseStoreDurabilityError(
+                        f"Sync Base checkpoint committed at {self.record_path(record.identity)}; "
+                        f"crash durability is uncertain: {exc}"
+                    ) from exc
             finally:
                 os.close(descriptor)
                 try:
