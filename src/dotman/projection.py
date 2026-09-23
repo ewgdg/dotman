@@ -40,6 +40,7 @@ from dotman.models import (
     target_path_rule_matches,
 )
 from dotman.repository import Repository
+from dotman.sync_base_store import Missing
 from dotman.templates import render_template_file, render_template_string
 
 
@@ -523,7 +524,9 @@ def plan_targets(
             capture_command=capture_command,
             compare_repo=metadata.compare_repo,
             compare_live=metadata.compare_live,
-            repo_path=repo_path,
+            # Push does not Capture; typed Missing must not fail a source
+            # precondition that applies only when a Patch Capture runs.
+            repo_path=None if operation == "push" else repo_path,
         )
         if target_kind == "directory":
             checkpoint_agreements: list[DirectoryPlanItem] = []
@@ -590,19 +593,24 @@ def plan_targets(
         checkpoint_payload = freeze_payload(repo_path) if operation == "push" else None
         # Required publication evidence must exist before review; execution
         # cannot retry a failed Render against different repository inputs.
-        desired_bytes, projection_kind = project_repo_file(
-            projection_context.command_runtime,
-            repo=repo,
-            package=package,
-            target=target,
-            repo_path=repo_path,
-            live_path=live_path,
-            render_command=render_command,
-            context=context,
-            selection=selection,
-            operation=operation,
-            inferred_os=inferred_os,
-        )
+        if operation == "push" and isinstance(checkpoint_payload, Missing) and not repo_path.is_symlink():
+            # Missing is an endpoint, not empty Render input. A dangling source
+            # symlink still follows the existing source-path failure behavior.
+            desired_bytes, projection_kind = None, projection_kind_for_render_command(render_command)
+        else:
+            desired_bytes, projection_kind = project_repo_file(
+                projection_context.command_runtime,
+                repo=repo,
+                package=package,
+                target=target,
+                repo_path=repo_path,
+                live_path=live_path,
+                render_command=render_command,
+                context=context,
+                selection=selection,
+                operation=operation,
+                inferred_os=inferred_os,
+            )
         compare_repo = metadata.compare_repo
         compare_live = metadata.compare_live
         review_before_bytes, review_after_bytes = build_file_review_bytes(live_path=live_path, desired_bytes=desired_bytes)
@@ -1452,10 +1460,10 @@ def projection_kind_for_render_command(render_command: str | None) -> str:
 
 
 def plan_file_action_from_review_bytes(*, live_path: Path, desired_bytes: bytes | None, review_before_bytes: bytes | None) -> str:
+    if desired_bytes is None:
+        return "delete" if live_path.exists() or live_path.is_symlink() else "noop"
     if not live_path.exists():
         return "create"
-    if desired_bytes is None:
-        return "unknown"
     return "noop" if desired_bytes == review_before_bytes else "update"
 
 
@@ -1466,7 +1474,7 @@ def build_file_review_bytes(*, live_path: Path, desired_bytes: bytes | None) -> 
         live_bytes = read_bytes(live_path)
     except FileNotFoundError:
         live_bytes = b""
-    return live_bytes, desired_bytes
+    return live_bytes, b"" if desired_bytes is None else desired_bytes
 
 
 

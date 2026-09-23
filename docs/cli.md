@@ -340,6 +340,13 @@ Restore and unrelated state commands are outside this lock.
 - `push` should fail before target planning if expanded tracked state contains ambiguous implicit singleton dependency profile contexts. Explicit singleton dependency entries suppress other implicit profile contexts for that package identity.
 - If group membership or package `depends` change in the repo, `push` should pick up newly introduced managed packages and files.
 - `push` should only touch files within the current managed selection.
+- A file target's missing repository source is a typed Missing outcome: Push
+  deletes the selected live file, or plans no content change if live is also
+  missing. Render does not run on an absent source, even when configured; Missing
+  is not an empty file or input to a generator. Use explicit `type = "file"` when
+  both paths are absent and file-kind inference is otherwise impossible.
+  Deletion retains normal review, symlink safety, snapshot, and checkpoint rules;
+  preview reports it without mutating live files or saving a Base.
 - Fresh direct agreement and successful eligible publication may save the frozen
   repository-space outcome as a Sync Base, including uncommitted content and
   content outside Git repositories. Publication acknowledgment waits for all

@@ -2176,9 +2176,10 @@ def test_push_plan_uses_explicit_file_type_when_custom_render_source_is_missing(
 
     target = plan.target_plans[0]
     assert target.target_kind == "file"
-    assert target.action == "create"
+    assert target.action == "noop"
     assert target.projection_kind == "command"
-    assert target.desired_text == "generated\n"
+    assert target.desired_bytes is None
+    assert target.desired_text is None
 
 
 def test_push_plan_uses_explicit_directory_type_when_paths_are_missing(
