@@ -48,3 +48,33 @@ async def guard_skip_deck(engine):
             await pilot.press("space")
             assert not session.view.rows[0].included
             assert "guard_pull exited 100 (offline)" in str(app.query_one("#detail").render())
+
+
+def test_guard_skip_deck_row_is_dimmed(tmp_path, monkeypatch):
+    engine = guarded_engine(tmp_path, monkeypatch)
+
+    async def interact():
+        with engine.open_pull_session(engine.resolve_sync_scope(), preview=True) as session:
+            app = SyncDeckApp(CommandDeck(session, use_color=True))
+            async with app.run_test():
+                target = app.query_one(WorksetTable).get_row_at(0)[1]
+                assert target.plain == "main:app.unit (guard_pull)"
+                # The whole label is dimmed, not just the Resolution cell.
+                assert all(span.style.dim for span in target.spans) and target.spans
+    asyncio.run(asyncio.wait_for(interact(), timeout=5))
+
+
+def test_interactive_execution_log_leaves_guard_skips_to_the_deck(tmp_path, monkeypatch, capsys):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live", ""),
+        ("other", "both", b"repo", b"live", '[targets.other.hooks]\nguard_pull = "echo offline >&2; exit 100"'),
+    ])
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr("dotman.sync_deck.run_command_deck", lambda session, *, use_color: True)
+    args = SimpleNamespace(config=engine.config.config_path, scopes=[], dry_run=False,
+                           unattended=False, json_output=False, run_noop=False, command="pull")
+    assert PullDeckCommandRunner(engine_factory=lambda _: engine, use_color=False).run(args) == 0
+    output = capsys.readouterr().out
+    assert "[1/1] update" in output
+    assert "guard_pull" not in output

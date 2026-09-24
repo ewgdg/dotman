@@ -233,6 +233,11 @@ class SyncDeckCommandRunner:
                 else:
                     if timeline is not None:
                         self._print_header(args)
+                        # Guard skips are planning results shown where work is reviewed:
+                        # the Deck when interactive, otherwise above the timeline.
+                        if not interactive:
+                            self._print_guard_skips(guard_skip_summaries(
+                                row for row in session.view.rows if isinstance(row, AuxiliaryRow)))
                     dispatched = session.execute()
                 if isinstance(dispatched, CommandRejected):
                     self._emit(args, session, None, diagnostic={
@@ -242,6 +247,13 @@ class SyncDeckCommandRunner:
                     return 1
                 self._emit(args, session, dispatched.result, timeline=timeline)
                 return dispatched.result.exit_code
+
+    def _print_guard_skips(self, guard_skips) -> None:
+        for skip in guard_skips:
+            label = guard_skip_label(skip["identity"], skip["direction"], skip["path_rule_pattern"], use_color=False)
+            reason = f": {skip['reason']}" if skip["reason"] else ""
+            print(f"  {dim_when(f'[skipped] {label}', use_color=self._use_color)}")
+            print(f"      {dim_when(f'Guard skipped{reason}', use_color=self._use_color)}")
 
     def _print_header(self, args) -> None:
         print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""), flush=True)
@@ -257,13 +269,20 @@ class SyncDeckCommandRunner:
         term = lambda text: render_sync_term(text, use_color=self._use_color)
         # After a timeline the log is a recap: only what the timeline could not show.
         timeline_errors = timeline.shown_errors if timeline else set()
+        # Work stopped by an earlier failure is counted, not listed, so the failure
+        # stays next to the summary line.
+        skipped_count = 0
 
         def entry_lines(selected, outcome, diagnostics) -> list[str] | None:
             """Diagnostic lines to print under a visible entry, or None to hide it."""
             # Unselected entries only matter when they explain a problem.
             if not (selected or diagnostics):
                 return None
+            nonlocal skipped_count
             messages = [item["message"] for item in diagnostics if item["message"] not in timeline_errors]
+            if timeline and not messages and outcome == "skipped":
+                skipped_count += 1
+                return None
             if timeline and not messages and outcome in ("ok", "failed", "interrupted"):
                 return None
             return messages
@@ -310,17 +329,14 @@ class SyncDeckCommandRunner:
         # Execution diagnostics copy their failed step's error; print each failure once.
         shown = timeline_errors | {item["message"] for entry in (*payload["sync_units"], *payload["additional_source_changes"])
                                    for item in entry["diagnostics"]}
-        for skip in payload["guard_skips"]:
-            label = auxiliary_label(skip["identity"], "guard-skip", (skip["direction"],),
-                                    path_rule_pattern=skip["path_rule_pattern"], use_color=self._use_color)
-            reason = f": {skip['reason']}" if skip["reason"] else ""
-            print(f"  [{render_sync_term('skipped', use_color=self._use_color)}] {label}")
-            print(f"      {render_sync_term('Guard skipped', use_color=self._use_color)}{reason}")
+        if timeline is None:
+            self._print_guard_skips(payload["guard_skips"])
         summary = payload["summary"]
         stats = summary_stats(
             (("approved", summary["approved_units"]), ("repos", summary["repository_changes"])),
             writes=summary["live_writes"], deletions=summary["live_deletions"],
-            trailing=(("in-sync", summary["in_sync_units"]),), use_color=self._use_color,
+            trailing=(("in-sync", summary["in_sync_units"]),) + ((("skipped", skipped_count),) if skipped_count else ()),
+            use_color=self._use_color,
         )
         print(f":: {render_sync_term(payload['status'], use_color=self._use_color)} — {stats}")
         for item in payload["summary"]["diagnostics"]:
@@ -367,6 +383,24 @@ def auxiliary_outcome(identity: str, stages, *, preview: bool, diagnostics) -> s
     if statuses:
         return "skipped"
     return entry_outcome("would-apply" if preview else None, diagnostics)
+
+
+def dim_when(text: str, *, use_color: bool) -> str:
+    return style_text(text, "2") if use_color else text
+
+
+def guard_skip_label(scope: str, direction: str, path_rule_pattern: str | None, *, use_color: bool) -> str:
+    """Guard-skipped work is recessive everywhere: omitted, never actionable."""
+    label = auxiliary_label(scope, "guard-skip", (direction,), path_rule_pattern=path_rule_pattern)
+    return dim_when(label, use_color=use_color)
+
+
+def guard_skip_summaries(auxiliary) -> list[dict]:
+    return [
+        {"identity": row.scope, "direction": row.directions[0], "scope_kind": row.guard_skip.scope_kind,
+         "path_rule_pattern": row.guard_skip.path_rule_pattern, "reason": row.guard_skip.reason}
+        for row in auxiliary if row.kind == "guard-skip"
+    ]
 
 
 def summary_stats(leading, *, writes, deletions, trailing=(), use_color) -> str:
@@ -484,11 +518,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             }
             for row in additional
         ],
-        "guard_skips": [
-            {"identity": row.scope, "direction": row.directions[0], "scope_kind": row.guard_skip.scope_kind,
-             "path_rule_pattern": row.guard_skip.path_rule_pattern, "reason": row.guard_skip.reason}
-            for row in auxiliary if row.kind == "guard-skip"
-        ],
+        "guard_skips": guard_skip_summaries(auxiliary),
         "probe_work": auxiliary_work("probe"),
         "directory_root_work": auxiliary_work("directory-root"),
         "hook_work": auxiliary_work("hook"),

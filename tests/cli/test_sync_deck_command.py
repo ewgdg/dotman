@@ -497,7 +497,10 @@ def test_execution_streams_step_timeline_with_live_hook_output(tmp_path, monkeyp
 
 def test_failed_hook_is_reported_once_in_timeline(tmp_path, monkeypatch, capsys):
     out, err = _human_execution(tmp_path, monkeypatch, capsys, suffix=FAILING_PRE_PUSH)
-    assert _in_order(out, "[1/2] pre_push", "exit 3", "failed", "[skipped] main:app.unit", ":: failed")
+    # Skipped units are counted, not listed, so the failure stays next to the summary.
+    assert _in_order(out, "[1/2] pre_push", "exit 3", "failed", ":: failed")
+    assert "[skipped]" not in out
+    assert out.rstrip().endswith("skipped: 1")
     # Streamed hook stderr is the only stderr: no repeated operation diagnostic.
     assert err.strip() == "refusing to replace directory"
     assert "[2/2] write" not in out
@@ -521,3 +524,22 @@ def test_step_failure_without_start_is_attributed_in_timeline(tmp_path, monkeypa
                                 patch=lambda: monkeypatch.setattr(sync_publication, "mark_snapshot_status", fail))
     assert _in_order(out, "[1/1] write", "ok", "finalize", "snapshot store unavailable", ":: failed")
     assert (out + err).count("snapshot store unavailable") == 1
+
+
+def test_successful_execution_has_no_skipped_stat(tmp_path, monkeypatch, capsys):
+    out, _ = _human_execution(tmp_path, monkeypatch, capsys, exit_code=0)
+    assert "skipped" not in out
+
+
+def test_guard_skips_print_before_the_timeline(tmp_path, monkeypatch, capsys):
+    from dotman.sync_deck_command import PullDeckCommandRunner
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live", ""),
+        ("other", "both", b"repo", b"live", '[targets.other.hooks]\nguard_pull = "echo host mismatch >&2; exit 100"'),
+    ])
+    runner = PullDeckCommandRunner(engine_factory=lambda _: engine, use_color=False)
+    assert runner.run(arguments(dry_run=False, json_output=False, command="pull")) == 0
+    out = capsys.readouterr().out
+    assert _in_order(out, ":: Pull", "[skipped] main:app.other (guard_pull)", "Guard skipped: host mismatch",
+                     "[1/1] update", ":: completed")
+    assert out.count("main:app.other") == 1

@@ -23,7 +23,7 @@ from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
 from dotman.cli_style import render_key_hints, render_payload_section_label, render_sync_term, render_package_label
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
-from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
+from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
 
 
@@ -314,8 +314,9 @@ class CommandDeck:
 
 
 def auxiliary_row_label(row: AuxiliaryRow, *, use_color: bool) -> str:
-    pattern = row.guard_skip.path_rule_pattern if row.guard_skip is not None else None
-    return auxiliary_label(row.scope, row.kind, row.directions, path_rule_pattern=pattern, use_color=use_color)
+    if row.guard_skip is not None:
+        return guard_skip_label(row.scope, row.directions[0], row.guard_skip.path_rule_pattern, use_color=use_color)
+    return auxiliary_label(row.scope, row.kind, row.directions, use_color=use_color)
 
 
 def unit_label(row, *, use_color: bool) -> str:

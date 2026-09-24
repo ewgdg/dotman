@@ -361,9 +361,15 @@ already shown; other failures print their error. A failure outside the plan
 (snapshot finalize) is reported without a number.
 
 After the timeline, the log recaps only what the timeline could not show:
-entries that are not `ok` (e.g. `[skipped]` units stopped by an earlier
-failure), unshown diagnostics such as checkpoint warnings, Additional Source
-Changes, and Guard skips. Stderr diagnostics already shown are not repeated.
+entries with unshown diagnostics (such as checkpoint warnings), Additional
+Source Changes, and failed entries the timeline did not attribute. Work stopped
+by an earlier failure is counted as `skipped: N` in the summary line rather than
+listed, so the failure stays next to the summary. Stderr diagnostics already
+shown are not repeated.
+
+Guard skips are planning results, not execution steps, so they appear where work
+is reviewed and are always dimmed: as unselectable rows in the Command Deck, or,
+without a Deck (unattended), above the timeline.
 
 Preview, abort and pre-execution failures print the entry log instead: each
 entry leads with its outcome (`ok`, `failed`, `interrupted`, `skipped`,
