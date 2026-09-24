@@ -70,8 +70,8 @@ def auxiliary_label(scope: str, kind: str, directions, *, path_rule_pattern: str
             scope = style_text(scope, *MENU_REPO_STYLE)
     if kind == "hook":
         annotations = " ".join(f"({direction}-hooks)" for direction in directions)
-    elif kind == "hook-step":
-        # A single executed hook, annotated with its action (e.g. pre_push).
+    elif kind == "step":
+        # A single execution step, annotated with its action (e.g. pre_push, finalize).
         annotations = " ".join(f"({action})" for action in directions)
     elif kind == "guard-skip":
         annotations = " ".join(f"(guard_{direction})" for direction in directions)
@@ -276,16 +276,21 @@ class SyncDeckCommandRunner:
                 print(f"      {term(auxiliary_resolution(kind))}")
                 for item in work["diagnostics"]:
                     print(f"      {item['message']}")
-        # Hooks run inside units, so their failures would otherwise surface only as skipped units.
-        for step in result.steps if result else ():
-            if step.kind != "hook" or step.status not in ("failed", "interrupted"):
+        entry_messages = {item["message"] for entry in (*payload["sync_units"], *payload["additional_source_changes"])
+                          for item in entry["diagnostics"]}
+        failed_steps = [step for step in (result.steps if result else ()) if step.status in ("failed", "interrupted")]
+        for step in failed_steps:
+            # Hooks never own an entry (their units report only skipped); other
+            # steps need one only when no unit entry already shows the failure.
+            if step.kind != "hook" and step.error in entry_messages:
                 continue
-            label = auxiliary_label(step.scope_identity or step.repo, "hook-step", (step.action,),
+            label = auxiliary_label(step.scope_identity or step.repo or step.kind, "step", (step.action,),
                                     use_color=self._use_color)
             print(f"  [{term(step.status)}] {label}")
             if step.status == "failed":
-                reason = f": {step.output_line}" if step.output_line else ""
-                print(f"      exit {step.exit_code}{reason}")
+                print(f"      {failed_step_detail(step)}")
+        # Execution diagnostics copy their failed step's error; print each failure once.
+        shown = entry_messages | {step.error for step in failed_steps}
         for skip in payload["guard_skips"]:
             label = auxiliary_label(skip["identity"], "guard-skip", (skip["direction"],),
                                     path_rule_pattern=skip["path_rule_pattern"], use_color=self._use_color)
@@ -300,6 +305,8 @@ class SyncDeckCommandRunner:
         )
         print(f":: {render_sync_term(payload['status'], use_color=self._use_color)} — {stats}")
         for item in payload["summary"]["diagnostics"]:
+            if item is not diagnostic and item["message"] in shown:
+                continue
             # Command output belongs to the session-open diagnostic and stays out of JSON.
             reason = f": {output_line}" if output_line and item is diagnostic else ""
             print(f"{item['message']}{reason}", file=sys.stderr)
@@ -321,6 +328,12 @@ ENTRY_OUTCOME_BY_STATUS = {
     "pending": "pending",
     "excluded": "pending",
 }
+
+
+def failed_step_detail(step) -> str:
+    if step.kind == "hook" and step.exit_code is not None:
+        return f"exit {step.exit_code}" + (f": {step.output_line}" if step.output_line else "")
+    return step.error
 
 
 def entry_outcome(status: str | None, diagnostics) -> str:

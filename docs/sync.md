@@ -345,7 +345,10 @@ The human result leads each entry with its outcome: `ok`, `failed`,
 execution never started. Unselected entries are omitted unless they carry
 diagnostics. A failed hook step gets its own entry, named by canonical scope and
 hook action, e.g. `[failed] main:app.unit (pre_push)`, since the units it stops
-report only `skipped`.
+report only `skipped`. Any other failed step gets an entry only when no unit
+entry shows its error, e.g. `[failed] snapshot (finalize)`. Operation diagnostics
+repeat their failed step's error, so human output prints on stderr only those no
+entry already shows; JSON keeps them all.
 
 A failed user command (Guard, Probe or hook) is summarized by the first
 non-empty line of its stderr, else stdout. Command output is untrusted and may

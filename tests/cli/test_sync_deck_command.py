@@ -475,3 +475,38 @@ def test_failed_planning_commands_show_reason_in_human_output(tmp_path, monkeypa
     engine = DotmanEngine.from_config_path(engine.config.config_path)
     assert runner_for(engine).run(arguments(json_output=False)) == 1
     assert " 7: guard reason" in capsys.readouterr().err
+
+
+def _human_failure(tmp_path, monkeypatch, capsys, *, suffix="", patch=None):
+    engine = _engine_with_manifest_suffix(tmp_path, monkeypatch, suffix)
+    if patch:
+        patch()
+    assert runner_for(engine).run(arguments(dry_run=False, json_output=False)) == 1
+    captured = capsys.readouterr()
+    return captured.out + captured.err
+
+
+def test_failed_hook_is_reported_once(tmp_path, monkeypatch, capsys):
+    output = _human_failure(tmp_path, monkeypatch, capsys, suffix=FAILING_PRE_PUSH)
+    assert "[failed] main:app.unit (pre_push)" in output
+    assert "command exited with status 3" not in output
+
+
+def test_failed_write_is_reported_once(tmp_path, monkeypatch, capsys):
+    from dotman import file_access
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+    output = _human_failure(tmp_path, monkeypatch, capsys,
+                            patch=lambda: monkeypatch.setattr(file_access, "write_bytes_atomic", fail))
+    assert "[failed] main:app.unit" in output
+    assert output.count("disk full") == 1
+
+
+def test_failed_step_without_owning_entry_gets_its_own_entry(tmp_path, monkeypatch, capsys):
+    from dotman import sync_publication
+    def fail(*args, **kwargs):
+        raise OSError("snapshot store unavailable")
+    output = _human_failure(tmp_path, monkeypatch, capsys,
+                            patch=lambda: monkeypatch.setattr(sync_publication, "mark_snapshot_status", fail))
+    assert "[failed] snapshot (finalize)" in output
+    assert output.count("snapshot store unavailable") == 1
