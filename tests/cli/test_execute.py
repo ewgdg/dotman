@@ -316,6 +316,38 @@ def test_push_directory_target_path_rule_repairs_child_chmod_drift(
     assert stat.S_IMODE(live_path.stat().st_mode) == 0o600
 
 
+def test_push_file_target_repairs_chmod_drift_without_content_change(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo value\n", encoding="utf-8")
+    live_path.chmod(0o644)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    exit_code = main(["--unattended", "--config", str(config_path), "--json", "push"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
+        "pre_push",
+        "chmod",
+        "acknowledge",
+        "post_push",
+    ]
+    assert live_path.read_text(encoding="utf-8") == "repo value\n"
+    assert stat.S_IMODE(live_path.stat().st_mode) == 0o600
+
+
 def test_push_directory_target_uses_render_for_child_files(
     tmp_path: Path,
     monkeypatch,
@@ -671,6 +703,7 @@ def test_push_cli_run_noop_dry_run_json_shows_hook_only_package(
     live_path = home / ".config" / "app" / "config.txt"
     live_path.parent.mkdir(parents=True)
     live_path.write_text("repo value\n", encoding="utf-8")
+    live_path.chmod(0o600)
 
     exit_code = main(["--unattended", "--config", str(config_path), "--json", "push", "--dry-run", "--run-noop"])
 

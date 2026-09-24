@@ -615,6 +615,8 @@ def plan_targets(
         compare_live = metadata.compare_live
         review_before_bytes, review_after_bytes = build_file_review_bytes(live_path=live_path, desired_bytes=desired_bytes)
         action = plan_file_action_from_review_bytes(live_path=live_path, desired_bytes=desired_bytes, review_before_bytes=review_before_bytes)
+        if action == "noop" and desired_bytes is not None and live_chmod_differs(live_path, metadata.chmod):
+            action = "chmod"
         desired_text = None
         if desired_bytes is not None:
             try:
@@ -1204,7 +1206,7 @@ def plan_directory_action(
         )
         live_bytes = read_bytes(live_file)
         desired_chmod = child_policy[0]
-        child_chmod_differs = directory_child_chmod_differs(live_file, desired_chmod)
+        child_chmod_differs = live_chmod_differs(live_file, desired_chmod)
         executable_bit_differs = desired_chmod is None and directory_executable_bit_differs(source_path, live_file)
         if desired_bytes != live_bytes or executable_bit_differs or child_chmod_differs:
             action = (
@@ -1345,7 +1347,7 @@ def directory_child_editor_explicit(
     )
 
 
-def directory_child_chmod_differs(live_file: Path, desired_chmod: str | None) -> bool:
+def live_chmod_differs(live_file: Path, desired_chmod: str | None) -> bool:
     if desired_chmod is None:
         return False
     live_mode = file_permission_mode(live_file)

@@ -809,19 +809,21 @@ def _build_required_target_steps(*, plan: PackagePlan, target_plan: TargetPlan) 
                 )
             )
         return steps
-    steps.append(
-        ExecutionStep(
-            repo_name=plan.repo_name,
-            package_id=target_plan.package_id,
-            package_plan=plan,
-            kind="target",
-            action=target_plan.action,
-            scope_kind="target",
-            target_plan=target_plan,
-            privileged=_target_step_needs_sudo(target_plan=target_plan, action=target_plan.action),
+    # A chmod-only file action has no content write; the chmod step below is the whole action.
+    if target_plan.action != "chmod":
+        steps.append(
+            ExecutionStep(
+                repo_name=plan.repo_name,
+                package_id=target_plan.package_id,
+                package_plan=plan,
+                kind="target",
+                action=target_plan.action,
+                scope_kind="target",
+                target_plan=target_plan,
+                privileged=_target_step_needs_sudo(target_plan=target_plan, action=target_plan.action),
+            )
         )
-    )
-    if target_plan.action in {"create", "update"} and target_plan.chmod is not None:
+    if target_plan.action in {"create", "update", "chmod"} and target_plan.chmod is not None:
         steps.append(
             ExecutionStep(
                 repo_name=plan.repo_name,
