@@ -181,10 +181,25 @@ def _validate_status(path: Path, status: os.stat_result, *, directory: bool) -> 
         )
 
 
+def _repair_mode(path: Path, descriptor: int, *, directory: bool) -> None:
+    """Tighten only mode bits of a pinned inode; every other defect still fails."""
+    status = os.fstat(descriptor)
+    _validate_inode(path, status, directory=directory)
+    expected_mode = _PRIVATE_DIRECTORY_MODE if directory else _PRIVATE_FILE_MODE
+    if stat.S_IMODE(status.st_mode) != expected_mode:
+        os.fchmod(descriptor, expected_mode)
+
+
+def _is_store_file(name: str) -> bool:
+    return name.startswith(RECORD_FILE_PREFIX) or name == LOCK_FILE_NAME
+
+
 class _PrivateLayout:
     """Pin the private tree; never follow a replaced directory during Python I/O."""
 
-    def __init__(self, manager_root: Path, state_key: str, *, create: bool) -> None:
+    def __init__(
+        self, manager_root: Path, state_key: str, *, create: bool, repair: bool
+    ) -> None:
         self.directory = manager_root / "repos" / state_key
         self._directories: list[tuple[Path, int]] = []
         self._files: dict[str, int] = {}
@@ -221,9 +236,13 @@ class _PrivateLayout:
                     raise SyncBaseStoreSecurityError(
                         f"Sync Base directory changed while opening: {path}"
                     )
+                if repair:
+                    _repair_mode(path, descriptor, directory=True)
                 _validate_status(path, os.fstat(descriptor), directory=True)
                 self.check_directories()
                 parent_descriptor = descriptor
+            if repair:
+                self._repair_file_modes()
         except BaseException:
             self.close()
             raise
@@ -294,13 +313,22 @@ class _PrivateLayout:
         finally:
             os.close(descriptor)
 
+    def _repair_file_modes(self) -> None:
+        for name in filter(_is_store_file, self.file_names()):
+            # O_NONBLOCK keeps a planted FIFO from hanging before type validation.
+            descriptor = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                dir_fd=self.descriptor,
+            )
+            try:
+                _repair_mode(self.directory / name, descriptor, directory=False)
+            finally:
+                os.close(descriptor)
+
     def check(self) -> set[str]:
         self.check_directories()
-        names = {
-            name
-            for name in self.file_names()
-            if name.startswith(RECORD_FILE_PREFIX) or name == LOCK_FILE_NAME
-        }
+        names = set(filter(_is_store_file, self.file_names()))
         for name in names:
             path = self.directory / name
             current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
@@ -521,7 +549,11 @@ class SyncBaseStore:
         read_only: bool = False,
         create: bool = True,
     ) -> SyncBaseStore:
-        """Open private storage without changing rejected or read-only layouts."""
+        """Open private storage; writable opens tighten modes of owned store paths.
+
+        Read-only opens never change storage. Wrong owner, type, symlinks, and
+        hard links are always rejected rather than repaired.
+        """
         manager_root = Path(manager_state_root)
         if not manager_root.is_absolute():
             raise ValueError("manager state root must be absolute")
@@ -529,7 +561,9 @@ class SyncBaseStore:
         create = create and not read_only
         with _store_errors():
             cls._check_runtime()
-            layout = _PrivateLayout(manager_root, state_key, create=create)
+            layout = _PrivateLayout(
+                manager_root, state_key, create=create, repair=not read_only
+            )
             try:
                 names = layout.check()
                 if LOCK_FILE_NAME in names:

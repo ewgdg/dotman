@@ -70,8 +70,10 @@ unnecessarily block checkpoint writes.
 The manager state directory and managed storage directories are current-user-owned
 with mode `0700`. Records, temporary files, and locks are current-user-owned
 regular files with mode `0600`. Storage rejects symlinks, hard-linked or nonregular
-files, unsafe ownership or modes, and invalid directory/file bindings. Opening
-storage does not silently change permissions or request root access.
+files, unsafe ownership, and invalid directory/file bindings. Writable opens
+tighten the modes of current-user-owned managed directories and store files
+through their pinned descriptors, then re-validate. Read-only opens reject
+nonprivate modes without changing them. Storage never requests root access.
 
 Descriptor-relative operations, no-follow opens, and binding validation protect
 the managed private tree. The caller trusts the XDG parent outside that tree.
@@ -84,7 +86,8 @@ validated records and an aggregate corruption count, including damaged records
 whose identity cannot be recovered. Exact info reads only the requested record.
 Read-only inspection performs no cleanup. Real operations may perform normal
 record-level applicability maintenance only inside safely accessible storage;
-unsafe or unreadable storage is never automatically recreated or repaired.
+unsafe or unreadable storage is never automatically recreated or repaired beyond
+the mode tightening above.
 
 During Push, Pull, or Sync, unavailable/corrupt Base reads and checkpoint-save
 failures are warnings. They do not turn successful required effects into failure

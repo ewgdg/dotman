@@ -133,8 +133,53 @@ def test_read_transaction_excludes_writer_and_refreshes(tmp_path):
         assert first.read(b"unit") == record(payload=Missing())
 
 
+def _loosen_modes(root):
+    for path in [root, *root.rglob("*")]:
+        path.chmod(0o755 if path.is_dir() else 0o644)
+
+
+def _modes(root):
+    return {path: path.stat().st_mode & 0o777 for path in [root, *root.rglob("*")]}
+
+
+def test_writable_open_repairs_owned_nonprivate_modes(tmp_path):
+    root = tmp_path / "manager"
+    with SyncBaseStore.open(root, "repo") as store:
+        store.replace(record())
+    _loosen_modes(root)
+    with SyncBaseStore.open(root, "repo") as store:
+        assert store.read(b"unit") == record()
+    assert all(
+        mode == (0o700 if path.is_dir() else 0o600)
+        for path, mode in _modes(root).items()
+    )
+
+
+def test_read_only_open_rejects_nonprivate_modes_without_repair(tmp_path):
+    root = tmp_path / "manager"
+    with SyncBaseStore.open(root, "repo") as store:
+        store.replace(record())
+    _loosen_modes(root)
+    before = _modes(root)
+    with pytest.raises(SyncBaseStoreSecurityError):
+        SyncBaseStore.open(root, "repo", read_only=True)
+    assert _modes(root) == before
+
+
+def test_writable_open_still_rejects_hardlinked_record(tmp_path):
+    root = tmp_path / "manager"
+    with SyncBaseStore.open(root, "repo") as store:
+        store.replace(record())
+        path = record_path(store)
+    path.chmod(0o644)
+    os.link(path, tmp_path / "alias")
+    with pytest.raises(SyncBaseStoreSecurityError):
+        SyncBaseStore.open(root, "repo")
+    assert path.stat().st_mode & 0o777 == 0o644
+
+
 @pytest.mark.parametrize("mode", [0o644, 0o666])
-def test_rejects_nonprivate_record_without_repair(tmp_path, mode):
+def test_rejects_record_mode_changed_while_open(tmp_path, mode):
     with SyncBaseStore.open(tmp_path / "manager", "repo") as store:
         store.replace(record())
         path = record_path(store)

@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -110,7 +111,8 @@ def test_push_ineligible_base_maintenance_failure_warns_without_blocking(tmp_pat
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'push-only', b'repo', b'live', '')])
     record = store_record(engine)
     lock = record.with_name(LOCK_FILE_NAME)
-    lock.chmod(0o644)
+    # A hard link is unrepairable; loose modes would self-heal on writable open.
+    os.link(lock, tmp_path / 'lock-alias')
     before = record.read_bytes()
     assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push']) == 0
     unit = json.loads(capsys.readouterr().out)['sync_units'][0]
@@ -119,7 +121,7 @@ def test_push_ineligible_base_maintenance_failure_warns_without_blocking(tmp_pat
     assert {'code': 'base-maintenance-failed', 'severity': 'warning'}.items() <= unit['diagnostics'][0].items()
     assert 'Sync Base' in unit['diagnostics'][0]['message']
     assert record.read_bytes() == before
-    assert lock.stat().st_mode & 0o777 == 0o644
+    assert lock.stat().st_nlink == 2
     assert (tmp_path / 'live/unit').read_bytes() == b'repo'
 
 
