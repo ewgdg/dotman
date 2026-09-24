@@ -196,10 +196,6 @@ def open_editor_path(path: Path, *, missing_editor_label: str = "path") -> int:
     return result.exit_code
 
 
-def edit_package_directory(package_root: Path) -> int:
-    return open_editor_path(package_root, missing_editor_label="package path")
-
-
 def _resolve_editor_command() -> list[str]:
     editor_value = os.environ.get("VISUAL") or os.environ.get("EDITOR")
     if not editor_value:
@@ -216,23 +212,6 @@ def render_tracked_reason(reason: str) -> str:
 
 def render_tracked_state(state: str) -> str:
     return cli_style.render_tracked_state(state, use_color=colors_enabled())
-
-
-def render_tracked_issue_label(engine: DotmanEngine, issue) -> str:
-    bound_profile: str | None = None
-    try:
-        repo = engine.get_repo(issue.repo)
-    except ValueError:
-        repo = None
-    if repo is not None and issue.selector in repo.packages:
-        package = repo.resolve_package(issue.selector)
-        if package.binding_mode == "multi_instance":
-            bound_profile = issue.profile
-    return render_package_label(
-        repo_name=issue.repo,
-        package_id=issue.selector,
-        bound_profile=bound_profile,
-    )
 
 
 def render_info_section_header(label: str) -> str:
@@ -962,7 +941,6 @@ def run_diff_review_menu(
             except ValueError as exc:
                 print(f"review unavailable: {exc}", file=sys.stderr)
             continue
-    return True
 
 
 def emit_interrupt_notice() -> None:

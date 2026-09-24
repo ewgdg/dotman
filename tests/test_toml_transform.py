@@ -2,12 +2,76 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
+from tomlkit.toml_document import TOMLDocument
+
 from dotman.transforms import toml as MODULE
+from dotman.transforms.framework import SelectorAction, emit_transform_output
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+# File-level drivers: compose the engine's output builders with the shared
+# emitter so tests can pass parsed selectors without going through argv.
+def write_document_if_changed(
+    path: Path | None,
+    doc: TOMLDocument,
+    mode_reference_path: Path,
+    compare_path: Path | None = None,
+    stdout: bool = False,
+) -> None:
+    emit_transform_output(
+        path,
+        MODULE.build_document_output(doc, mode_reference_path=mode_reference_path, compare_path=compare_path),
+        stdout=stdout,
+    )
+
+
+def strip_keys(
+    base_path: Path,
+    output_path: Path | None,
+    stripped_key_paths: list[tuple[str, ...]],
+    stripped_table_regexes: list[re.Pattern[str]],
+    compare_path: Path | None = None,
+    stdout: bool = False,
+) -> None:
+    emit_transform_output(
+        output_path,
+        MODULE.build_stripped_document_output(
+            base_path, stripped_key_paths, stripped_table_regexes, compare_path=compare_path
+        ),
+        stdout=stdout,
+    )
+
+
+def merge_with_selector_action(
+    selector_action: SelectorAction,
+    base_path: Path,
+    output_path: Path | None,
+    overlay_path: Path,
+    key_paths,
+    table_regexes: list[re.Pattern[str]],
+    compare_path: Path | None = None,
+    stdout: bool = False,
+) -> None:
+    emit_transform_output(
+        output_path,
+        MODULE.build_merged_document_output(
+            base_path, overlay_path, selector_action, list(key_paths), table_regexes, compare_path=compare_path
+        ),
+        stdout=stdout,
+    )
+
+
+def merge_keys(*args, **kwargs) -> None:
+    merge_with_selector_action(SelectorAction.RETAIN, *args, **kwargs)
+
+
+def merge_keys_except_stripped(*args, **kwargs) -> None:
+    merge_with_selector_action(SelectorAction.REMOVE, *args, **kwargs)
 
 
 def test_toml_engine_declares_typed_selectors() -> None:
@@ -323,7 +387,7 @@ trust_level = "trusted"
         {("model",)},
         [MODULE.re.compile(r"^projects\.")],
     )
-    MODULE.write_document_if_changed(output_path, retained_doc, mode_reference_path=repo_path)
+    write_document_if_changed(output_path, retained_doc, mode_reference_path=repo_path)
 
     output = output_path.read_text(encoding="utf-8")
     assert 'model = "gpt-5.4"' in output
@@ -353,7 +417,7 @@ format = "HH:mm"
         [],
         [MODULE.re.compile(r"^widget\.[^.]+\.enabled$")],
     )
-    MODULE.write_document_if_changed(
+    write_document_if_changed(
         output_path,
         stripped_doc,
         mode_reference_path=source_path,
@@ -419,7 +483,7 @@ hooks = true
         encoding="utf-8",
     )
 
-    MODULE.strip_keys(
+    strip_keys(
         live_path,
         output_path,
         [("mcp_servers", "node_repl")],
@@ -454,7 +518,7 @@ hooks = true
         encoding="utf-8",
     )
 
-    MODULE.strip_keys(
+    strip_keys(
         live_path,
         output_path,
         [("mcp_servers",)],
@@ -482,7 +546,7 @@ hooks = true
         encoding="utf-8",
     )
 
-    MODULE.strip_keys(
+    strip_keys(
         live_path,
         output_path,
         [("mcp_servers", "node_repl")],
@@ -505,7 +569,7 @@ def test_write_document_with_compare_file_skips_rewrite_for_matching_output(
     output_path.write_text(retained_doc.as_string(), encoding="utf-8")
     os.utime(output_path, ns=(1, 1))
 
-    MODULE.write_document_if_changed(
+    write_document_if_changed(
         output_path,
         retained_doc,
         mode_reference_path=repo_path,
@@ -533,7 +597,7 @@ def test_write_document_with_compare_file_skips_rewrite_for_semantic_match(
     merged_doc = MODULE.load_document(repo_path)
     merged_doc["model"] = "gpt-5.4"
 
-    MODULE.write_document_if_changed(
+    write_document_if_changed(
         output_path,
         merged_doc,
         mode_reference_path=repo_path,
@@ -563,7 +627,7 @@ def test_write_document_with_compare_file_reuses_existing_text_in_stdout_mode(
     merged_doc = MODULE.load_document(repo_path)
     merged_doc["model"] = "gpt-5.4"
 
-    MODULE.write_document_if_changed(
+    write_document_if_changed(
         None,
         merged_doc,
         mode_reference_path=repo_path,
@@ -585,7 +649,7 @@ def test_write_document_without_compare_file_rewrites_matching_output(
     output_path.write_text(retained_doc.as_string(), encoding="utf-8")
     os.utime(output_path, ns=(1, 1))
 
-    MODULE.write_document_if_changed(
+    write_document_if_changed(
         output_path,
         retained_doc,
         mode_reference_path=repo_path,
@@ -627,7 +691,7 @@ command = "npx"
         encoding="utf-8",
     )
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -675,7 +739,7 @@ hooks = true
         encoding="utf-8",
     )
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -718,7 +782,7 @@ command = "npx"
         encoding="utf-8",
     )
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -774,7 +838,7 @@ name = "OpenAI HTTP only"
         encoding="utf-8",
     )
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -826,7 +890,7 @@ name = "OpenAI HTTP only"
     )
     live_path.write_text(live_text, encoding="utf-8")
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -870,7 +934,7 @@ name = "OpenAI HTTP only"
         encoding="utf-8",
     )
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -919,7 +983,7 @@ network_access = true
         encoding="utf-8",
     )
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -977,7 +1041,7 @@ hooks = true
         encoding="utf-8",
     )
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -1023,7 +1087,7 @@ enabled = true
         encoding="utf-8",
     )
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -1064,7 +1128,7 @@ def test_merge_skips_missing_preserved_paths(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    MODULE.merge_keys(
+    merge_keys(
         live_path,
         output_path,
         repo_path,
@@ -1114,7 +1178,7 @@ trust_level = "repo"
         encoding="utf-8",
     )
 
-    MODULE.merge_keys_except_stripped(
+    merge_keys_except_stripped(
         live_path,
         output_path,
         repo_path,
@@ -1157,18 +1221,22 @@ import sys
 from pathlib import Path
 
 from dotman.transforms import toml as module
+from dotman.transforms.framework import SelectorAction, emit_transform_output
 
 repo_path = Path(sys.argv[1])
 live_path = Path(sys.argv[1])
 repo_path = Path(sys.argv[2])
 output_path = Path(sys.argv[3])
 
-module.merge_keys(
-    live_path,
+emit_transform_output(
     output_path,
-    repo_path,
-    {("model",), ("model_reasoning_effort",)},
-    [],
+    module.build_merged_document_output(
+        live_path,
+        repo_path,
+        SelectorAction.RETAIN,
+        list({("model",), ("model_reasoning_effort",)}),
+        [],
+    ),
 )
 print(output_path.read_text(encoding="utf-8"))
 """,

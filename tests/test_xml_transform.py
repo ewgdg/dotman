@@ -4,6 +4,16 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from dotman.transforms import xml as MODULE
+from dotman.transforms.framework import emit_transform_output
+
+
+def transform_xml(base_path: str | Path, output_path: str | Path | None, *, stdout: bool = False, **options) -> None:
+    # File-level driver: the engine's XML output builder plus the shared emitter.
+    emit_transform_output(
+        Path(output_path) if output_path is not None else None,
+        MODULE.render_xml_output(base_path, **options),
+        stdout=stdout,
+    )
 
 
 def parse_xml(path: Path) -> ET.Element:
@@ -186,7 +196,7 @@ def test_strip_nodes_removes_selected_live_only_xml_paths(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    MODULE.transform_xml(
+    transform_xml(
         str(input_path),
         str(output_path),
         node_matchers=[
@@ -230,7 +240,7 @@ def test_merge_mode_retain_preserves_selected_live_paths_and_reapplies_repo_tree
         encoding="utf-8",
     )
 
-    MODULE.transform_xml(
+    transform_xml(
         str(live_path),
         str(output_path),
         overlay_path=str(repo_path),
@@ -268,7 +278,7 @@ def test_retain_node_matchers_in_strip_mode_keeps_only_selected_paths(tmp_path: 
         encoding="utf-8",
     )
 
-    MODULE.transform_xml(
+    transform_xml(
         input_path,
         output_path,
         node_matchers=["config/WindowGeometry", "config/Section/RetainNested"],
@@ -308,7 +318,7 @@ def test_merge_mode_remove_preserves_unselected_live_paths_and_reapplies_repo_tr
         encoding="utf-8",
     )
 
-    MODULE.transform_xml(
+    transform_xml(
         live_path,
         output_path,
         overlay_path=repo_path,
@@ -349,7 +359,7 @@ def test_merge_mode_remove_reflects_nested_deletions_from_repo(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    MODULE.transform_xml(
+    transform_xml(
         live_path,
         output_path,
         overlay_path=repo_path,
@@ -373,7 +383,7 @@ def test_merge_with_compare_file_preserves_live_order_and_bytes_when_semanticall
 
     live_text = write_semantically_equal_overlay_xml(repo_path, live_path)
 
-    MODULE.transform_xml(
+    transform_xml(
         str(live_path),
         str(output_path),
         overlay_path=str(repo_path),
@@ -393,7 +403,7 @@ def test_merge_without_compare_file_reserializes_semantically_equal_output(
 
     live_text = write_semantically_equal_overlay_xml(repo_path, live_path)
 
-    MODULE.transform_xml(
+    transform_xml(
         str(live_path),
         str(output_path),
         overlay_path=str(repo_path),
@@ -428,7 +438,7 @@ def test_sort_children_canonicalizes_only_selected_parent_paths(tmp_path: Path) 
         encoding="utf-8",
     )
 
-    MODULE.transform_xml(
+    transform_xml(
         input_path,
         output_path,
         node_matchers=["config/WindowGeometry"],
@@ -472,7 +482,7 @@ def test_cleanup_with_compare_file_treats_selected_child_lists_as_semantically_e
         encoding="utf-8",
     )
 
-    MODULE.transform_xml(
+    transform_xml(
         live_path,
         output_path,
         node_matchers=["config/WindowGeometry"],

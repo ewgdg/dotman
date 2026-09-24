@@ -17,7 +17,6 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
-    emit_transform_output,
 )
 
 
@@ -109,98 +108,6 @@ def overlay_with_base_slots(
     merged_children.extend(overlay_children)
     result[:] = merged_children
     return result
-
-
-def overlay_retained_nodes(
-    base_root: ET.Element,
-    overlay_root: ET.Element,
-    node_matchers: list[str] | None = None,
-    node_regexes: tuple[NodeRegex, ...] = (),
-) -> None:
-    if node_matchers is None:
-        base_root.attrib.clear()
-        base_root.attrib.update(copy.deepcopy(overlay_root.attrib))
-        base_root.text = overlay_root.text
-        base_root.tail = overlay_root.tail
-
-    def overlay_retained_nodes_recursion(
-        base_node: ET.Element,
-        overlay_node: ET.Element,
-        cur_path: str,
-        node_matchers: list[str] | None = None,
-    ) -> None:
-        original_base_children = list(base_node)
-        children_by_tag: dict[str, list[tuple[int, ET.Element]]] = {}
-        children_by_identity: dict[
-            tuple[str, tuple[tuple[str, str], ...]], list[tuple[int, ET.Element]]
-        ] = {}
-
-        for index, child in enumerate(original_base_children):
-            children_by_tag.setdefault(child.tag, []).append((index, child))
-            identity_key = element_identity_key(child)
-            if identity_key is not None:
-                children_by_identity.setdefault((child.tag, identity_key), []).append(
-                    (index, child)
-                )
-
-        used_indices: set[int] = set()
-        merged_children: list[ET.Element] = []
-
-        def find_matching_child(
-            target: ET.Element,
-        ) -> tuple[int, ET.Element] | None:
-            identity_key = element_identity_key(target)
-            if identity_key is not None:
-                for index, child in children_by_identity.get(
-                    (target.tag, identity_key), []
-                ):
-                    if index not in used_indices:
-                        return (index, child)
-                return None
-
-            for index, child in children_by_tag.get(target.tag, []):
-                if index not in used_indices:
-                    return (index, child)
-
-            return None
-
-        for overlay_child in overlay_node:
-            child_path = f"{cur_path}/{overlay_child.tag}"
-            match = find_matching_child(overlay_child)
-            should_overlay = False
-            if node_matchers or node_regexes:
-                should_overlay = matches_node_path(
-                    child_path,
-                    node_matchers or [],
-                    node_regexes,
-                )
-            else:
-                should_overlay = len(overlay_child) == 0 or match is None
-
-            if match is not None:
-                base_child_index, base_child = match
-                used_indices.add(base_child_index)
-                if should_overlay:
-                    merged_children.append(copy.deepcopy(overlay_child))
-                else:
-                    overlay_retained_nodes_recursion(
-                        base_child,
-                        overlay_child,
-                        child_path,
-                        node_matchers,
-                    )
-                    merged_children.append(base_child)
-            elif should_overlay:
-                merged_children.append(copy.deepcopy(overlay_child))
-
-        for index, child in enumerate(original_base_children):
-            if index in used_indices:
-                continue
-            merged_children.append(child)
-
-        base_node[:] = merged_children
-
-    overlay_retained_nodes_recursion(base_root, overlay_root, base_root.tag, node_matchers)
 
 
 def build_tree_with_retained_nodes(
@@ -451,34 +358,6 @@ def render_xml_output(
         mode_reference_path=None if base_path == Path("-") else base_path,
     )
 
-
-
-def transform_xml(
-    base_path: str | Path,
-    output_path: str | Path | None,
-    node_matchers: list[str] | None = None,
-    node_regexes: tuple[NodeRegex, ...] = (),
-    sort_attributes: bool = False,
-    overlay_path: str | Path | None = None,
-    selector_action: SelectorAction | None = None,
-    compare_path: str | Path | None = None,
-    child_sort_parent_matchers: list[str] | None = None,
-    stdout: bool = False,
- ) -> None:
-    emit_transform_output(
-        Path(output_path) if output_path is not None else None,
-        render_xml_output(
-            base_path,
-            node_matchers=node_matchers,
-            node_regexes=node_regexes,
-            sort_attributes=sort_attributes,
-            overlay_path=overlay_path,
-            selector_action=selector_action,
-            compare_path=compare_path,
-            child_sort_parent_matchers=child_sort_parent_matchers,
-        ),
-        stdout=stdout,
-    )
 
 
 class XmlTransformEngine(BaseTransformEngine):

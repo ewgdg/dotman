@@ -77,8 +77,8 @@ def test_corruption_is_per_unit_and_explicitly_discardable(tmp_path):
             store.read(b"unit")
         assert error.value.affected_identities == (b"unit",)
         assert store.read(b"healthy") == record(b"healthy")
-        assert store.discard_corrupt(b"unit")
-        assert not store.discard_corrupt(b"healthy")
+        assert store.delete(b"unit")
+        assert store.read(b"healthy") == record(b"healthy")
         assert store.read(b"unit") is None
 
 
@@ -233,7 +233,7 @@ def test_payload_corruption_is_distinct_from_record_corruption(
         assert error.value.affected_identities == (b"unit",)
         assert store.scan().corrupt_count == 1
         assert path.read_bytes() == before
-        assert store.discard_corrupt(b"unit")
+        assert store.delete(b"unit")
 
 
 def test_delete_contract(tmp_path):
@@ -294,7 +294,7 @@ def test_rejects_hardlinked_record(tmp_path):
         with pytest.raises(SyncBaseStoreSecurityError):
             store.read(b"unit")
         with pytest.raises(SyncBaseStoreSecurityError):
-            store.discard_corrupt(b"unit")
+            store.delete(b"unit")
 
 
 def test_missing_lock_is_not_recreated_over_existing_records(tmp_path):

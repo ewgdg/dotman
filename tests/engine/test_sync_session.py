@@ -780,7 +780,11 @@ def test_projection_diagnostics_do_not_expose_private_staging_paths(
 
 
 def test_cancelled_session_does_not_poison_next_operation_on_same_engine(tmp_path, monkeypatch):
-    from dotman.sync_deck_command import approve
+    from dotman.sync_session import SetApproval
+
+    def approve(session, row_id, approved):
+        view = session.view
+        return session.dispatch(SetApproval(view.session_id, view.revision, row_id, approved))
 
     marker = tmp_path / "captures"
     engine = make_engine(tmp_path, monkeypatch, [

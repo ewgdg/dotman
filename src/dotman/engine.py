@@ -11,7 +11,6 @@ from dotman.models import (
     FullSpecSelector,
     ResolvedPackageSelection,
     ResolvedSyncScope,
-    ResolvedSelector,
     SearchMatch,
     SelectorKind,
     TrackableCatalogEntry,
@@ -169,16 +168,6 @@ class DotmanEngine:
             candidates = ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches)
             raise ValueError(f"selector '{selector}' is ambiguous: {candidates}")
         raise ValueError(f"selector '{selector}' did not match any package or group")
-
-    def resolve_selector_text(self, query_text: str) -> tuple[Repository, ResolvedSelector]:
-        explicit_repo, selector, selector_profile = parse_full_spec_selector_text(query_text)
-        del selector_profile
-        repo, resolved_selector, selector_kind = self.resolve_selector(selector, explicit_repo)
-        return repo, ResolvedSelector(
-            repo=repo.config.name,
-            selector=resolved_selector,
-            selector_kind=selector_kind,
-        )
 
     def resolve_full_spec_selector_text(self, query_text: str, *, profile: str | None = None) -> tuple[Repository, FullSpecSelector]:
         explicit_repo, selector, selector_profile = parse_full_spec_selector_text(query_text)

@@ -170,10 +170,6 @@ def build_profile_field_kinds() -> tuple[str, ...]:
     return normalize_field_kinds("profile")
 
 
-def build_fzf_search_fields(*, match_fields: Sequence[str]) -> tuple[str, ...]:
-    return tuple(match_fields)
-
-
 def parse_slash_qualified_query(
     *,
     repo_names: Sequence[str],

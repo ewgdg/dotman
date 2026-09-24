@@ -93,16 +93,6 @@ class TransformOutput:
     mode_reference_path: Path | None
     reused_compare_path: Path | None = None
 
-    @property
-    def is_binary(self) -> bool:
-        return isinstance(self.content, bytes)
-
-    def as_text(self, encoding: str = "utf-8") -> str:
-        if isinstance(self.content, str):
-            return self.content
-        return self.content.decode(encoding, errors="surrogateescape")
-
-
 def sync_output_mode(reference_path: Path | None, output_path: Path) -> None:
     if reference_path is None or not reference_path.exists() or not output_path.exists():
         return

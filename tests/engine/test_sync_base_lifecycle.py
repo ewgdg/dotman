@@ -117,7 +117,6 @@ def test_preview_never_mutates(tmp_path, operation):
         assert not lifecycle.direct_agreement(FrozenBaseUnit(unit(), FilePresent(b"new"))).acknowledged
         assert not lifecycle.complete(FrozenBaseUnit(unit(), FilePresent(b"new")), ProposalCompletion("use-live", True)).converged
         lifecycle.maintain(unit(render="changed"))
-        lifecycle.selected_policy_resolved(unit("push-only"))
         assert store.read(unit().identity_bytes).payload == Missing()
 
 
@@ -137,16 +136,6 @@ def test_cached_or_excluded_agreement_does_not_acknowledge(tmp_path, fresh, part
             FrozenBaseUnit(unit(), Missing()), fresh_observation=fresh, participating=participating)
         assert not result.acknowledged
         assert store.read(unit().identity_bytes) is None
-
-
-@pytest.mark.parametrize("operation,deleted", [("push", True), ("sync", True), ("pull", False)])
-def test_selected_eligibility_loss_maintenance(tmp_path, operation, deleted):
-    with SyncBaseStore.open(tmp_path / "state" / "dotman", "main") as store:
-        lifecycle = SyncBaseLifecycle(store, operation=operation)
-        lifecycle.direct_agreement(FrozenBaseUnit(unit(), Missing()))
-        result = lifecycle.selected_policy_resolved(unit("push-only"))
-        assert result.deleted is deleted
-        assert (store.read(unit().identity_bytes) is None) is deleted
 
 
 def test_corruption_is_unavailable_without_automatic_deletion():

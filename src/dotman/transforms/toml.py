@@ -21,7 +21,6 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
-    emit_transform_output,
 )
 
 
@@ -95,24 +94,6 @@ def build_document_output(
 
 
 
-def write_document_if_changed(
-    path: Path | None,
-    doc: TOMLDocument,
-    mode_reference_path: Path,
-    compare_path: Path | None = None,
-    stdout: bool = False,
-) -> None:
-    emit_transform_output(
-        path,
-        build_document_output(
-            doc,
-            mode_reference_path=mode_reference_path,
-            compare_path=compare_path,
-        ),
-        stdout=stdout,
-    )
-
-
 def parse_key_path(raw_key: str) -> tuple[str, ...]:
     key_path = tuple(split_toml_key(raw_key))
     if not key_path:
@@ -177,12 +158,6 @@ def get_container(root: TomlContainer, table_path: tuple[str, ...]) -> TomlConta
         if not isinstance(current, Table):
             return None
     return current
-
-
-def path_exists(root: TomlContainer, key_path: tuple[str, ...]) -> bool:
-    table_path, key_name = split_key_path(key_path)
-    container = get_container(root, table_path)
-    return container is not None and key_name in container
 
 
 def get_key_path_value(root: TomlContainer, key_path: tuple[str, ...]) -> Any | None:
@@ -728,26 +703,6 @@ def build_stripped_document_output(
 
 
 
-def strip_keys(
-    base_path: Path,
-    output_path: Path | None,
-    stripped_key_paths: list[tuple[str, ...]],
-    stripped_table_regexes: list[re.Pattern[str]],
-    compare_path: Path | None = None,
-    stdout: bool = False,
- ) -> None:
-    emit_transform_output(
-        output_path,
-        build_stripped_document_output(
-            base_path,
-            stripped_key_paths,
-            stripped_table_regexes,
-            compare_path=compare_path,
-        ),
-        stdout=stdout,
-    )
-
-
 def overlay_preserved_keys(
     overlay_doc: TomlContainer,
     base_doc: TomlContainer,
@@ -893,72 +848,6 @@ def build_merged_document_output(
         compare_path=compare_path,
     )
 
-
-
-def merge_with_selector_action(
-    base_path: Path,
-    output_path: Path | None,
-    overlay_path: Path,
-    selector_action: SelectorAction,
-    key_paths: list[tuple[str, ...]],
-    table_regexes: list[re.Pattern[str]],
-    compare_path: Path | None = None,
-    stdout: bool = False,
-) -> None:
-    emit_transform_output(
-        output_path,
-        build_merged_document_output(
-            base_path,
-            overlay_path,
-            selector_action,
-            key_paths,
-            table_regexes,
-            compare_path=compare_path,
-        ),
-        stdout=stdout,
-    )
-
-
-def merge_keys(
-    base_path: Path,
-    output_path: Path | None,
-    overlay_path: Path,
-    retained_key_paths: Iterable[tuple[str, ...]],
-    retained_table_regexes: list[re.Pattern[str]],
-    compare_path: Path | None = None,
-    stdout: bool = False,
-) -> None:
-    merge_with_selector_action(
-        base_path,
-        output_path,
-        overlay_path,
-        SelectorAction.RETAIN,
-        list(retained_key_paths),
-        retained_table_regexes,
-        compare_path=compare_path,
-        stdout=stdout,
-    )
-
-
-def merge_keys_except_stripped(
-    base_path: Path,
-    output_path: Path | None,
-    overlay_path: Path,
-    stripped_key_paths: list[tuple[str, ...]],
-    stripped_table_regexes: list[re.Pattern[str]],
-    compare_path: Path | None = None,
-    stdout: bool = False,
- ) -> None:
-    merge_with_selector_action(
-        base_path,
-        output_path,
-        overlay_path,
-        SelectorAction.REMOVE,
-        stripped_key_paths,
-        stripped_table_regexes,
-        compare_path=compare_path,
-        stdout=stdout,
-    )
 
 
 class TomlTransformEngine(BaseTransformEngine):

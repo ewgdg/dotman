@@ -117,9 +117,3 @@ class IgnoreMatcher:
 
 
 
-def matches_ignore_pattern(relative_path: str, pattern: str) -> bool:
-    return IgnoreMatcher.from_patterns((pattern,)).matches(relative_path)
-
-
-
-

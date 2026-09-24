@@ -353,13 +353,6 @@ def render_payload_section_label(label: str, *, use_color: bool) -> str:
     return style_text(label, *MENU_HINT_STYLE)
 
 
-def render_payload_hook_label(hook_name: str, *, use_color: bool) -> str:
-    hook_label = hook_name.replace("_", " ")
-    if not use_color:
-        return hook_label
-    return style_text(hook_label, *MENU_HINT_STYLE)
-
-
 def render_payload_action(action: str, *, use_color: bool) -> str:
     if not use_color:
         return action

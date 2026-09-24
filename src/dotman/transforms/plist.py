@@ -8,7 +8,6 @@ import plistlib
 import re
 from typing import Any
 
-from dotman.atomic_files import write_bytes_atomic
 from dotman.transforms.cli import run_engine_cli
 from dotman.transforms.framework import (
     BaseTransformEngine,
@@ -18,7 +17,6 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
-    emit_transform_output,
 )
 
 
@@ -328,10 +326,6 @@ def plist_format_from_name(format_name: str) -> int:
     return plistlib.FMT_XML if format_name == "xml" else plistlib.FMT_BINARY
 
 
-def write_plist(path: Path, data: PlistDict, fmt: str) -> None:
-    write_bytes_atomic(path, plist_bytes(data, fmt))
-
-
 def plist_bytes(data: PlistDict, fmt: str) -> bytes:
     return plistlib.dumps(data, fmt=plist_format_from_name(fmt), sort_keys=True)
 
@@ -390,26 +384,6 @@ def build_plist_output(
     return TransformOutput(
         content=plist_bytes(data, output_format),
         mode_reference_path=mode_reference_path,
-    )
-
-
-def write_plist_if_changed(
-    output_path: Path | None,
-    data: PlistDict,
-    output_format: str,
-    mode_reference_path: Path,
-    compare_path: Path | None,
-    stdout: bool = False,
-) -> None:
-    emit_transform_output(
-        output_path,
-        build_plist_output(
-            data,
-            output_format,
-            mode_reference_path=mode_reference_path,
-            compare_path=compare_path,
-        ),
-        stdout=stdout,
     )
 
 

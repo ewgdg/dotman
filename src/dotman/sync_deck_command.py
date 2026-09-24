@@ -20,11 +20,6 @@ from dotman.sync_session import (
 from dotman.ui_context import ui_config_scope
 
 
-def approve(session: SyncSession, row_id: str, approved: bool):
-    view = session.view
-    return session.dispatch(SetApproval(view.session_id, view.revision, row_id, approved))
-
-
 def selection_uses_inclusion(row) -> bool:
     # Directory children are ordinary Proposal rows; only auxiliary work uses
     # inclusion because it has no independent Proposal/Approval.

@@ -17,8 +17,6 @@ from dotman.command_runtime import (
     raise_for_command_interruption,
 )
 from dotman.models import AdditionalSource
-from dotman.reconcile import resolve_editor_additional_sources, run_basic_reconcile
-from dotman.reconcile_helpers import run_jinja_reconcile
 from dotman.ui_context import current_ui_config
 
 
@@ -57,12 +55,6 @@ class ReviewItem:
     is_probe: bool = False
     probe_command: str | None = field(default=None, repr=False)
     hook_command_summaries: tuple[str, ...] = ()
-
-
-def edit_status(review_item: ReviewItem) -> str:
-    if review_item.repo_path.exists() and review_item.live_path.exists():
-        return "editor"
-    return "edit unavailable"
 
 
 def _render_hook_command_summary(summary: str) -> str:
@@ -127,58 +119,6 @@ def run_review_item_diff(review_item: ReviewItem) -> None:
         raise ValueError("git diff failed during review")
 
 
-def run_review_item_edit(review_item: ReviewItem) -> int:
-    if (not review_item.repo_path.exists() and review_item.before_bytes is None) or (
-        not review_item.live_path.exists() and review_item.after_bytes is None
-    ):
-        raise ValueError("edit requires both repo and live paths to exist")
-
-    with tempfile.TemporaryDirectory(prefix="dotman-editor-review-") as temp_dir:
-        review_paths = _materialize_review_edit_paths(review_item=review_item, root=Path(temp_dir))
-        review_repo_path = None
-        review_live_path = None
-        if review_paths is not None:
-            review_repo_path, review_live_path = review_paths
-
-        try:
-            editor = review_item.editor
-            if editor is not None and editor.type == "jinja":
-                return run_jinja_reconcile(
-                    repo_path=str(review_item.repo_path),
-                    live_path=str(review_item.live_path),
-                    review_repo_path=str(review_repo_path) if review_repo_path is not None else None,
-                    review_live_path=str(review_live_path) if review_live_path is not None else None,
-                )
-            result = run_basic_reconcile(
-                repo_path=str(review_item.repo_path),
-                live_path=str(review_item.live_path),
-                additional_sources=[
-                    str(path) for path in resolve_editor_additional_sources(
-                        editor=editor,
-                        additional_sources=review_item.additional_sources,
-                        additional_source_entries=review_item.additional_source_entries,
-                        additional_sources_root=review_item.additional_sources_root,
-                        package_root=Path(review_item.command_env["DOTMAN_PACKAGE_ROOT"])
-                        if review_item.command_env and review_item.command_env.get("DOTMAN_PACKAGE_ROOT")
-                        else review_item.repo_path.parent,
-                    )
-                ],
-                review_repo_path=str(review_repo_path) if review_repo_path is not None else None,
-                review_live_path=str(review_live_path) if review_live_path is not None else None,
-                editor=editor.run if editor is not None and editor.type is None else None,
-                source_bytes={review_item.repo_path: review_item.before_bytes} if review_item.before_bytes is not None else None,
-                review_repo_bytes=review_item.before_bytes,
-                review_live_bytes=review_item.after_bytes,
-                editor_env=review_item.command_env,
-                editor_cwd=review_item.command_cwd,
-                editor_io=editor.io if editor is not None else "tty",
-                editor_elevation=editor.elevation if editor is not None else "none",
-            )
-            return result if isinstance(result, int) else result.exit_code
-        except FileNotFoundError as exc:
-            raise ValueError("editor command was not found") from exc
-
-
 def _review_item_bytes(review_item: ReviewItem, *, before: bool) -> bytes:
     bytes_value = review_item.before_bytes if before else review_item.after_bytes
     if bytes_value is not None:
@@ -201,46 +141,6 @@ def _review_diff_side_names(*, operation: str) -> tuple[str, str]:
     if operation == "restore":
         return "live", "snapshot"
     return "live", "repo"
-
-
-def _review_edit_side_names(*, operation: str) -> tuple[str, str]:
-    return "review-repo", "review-live"
-
-
-def _materialize_review_edit_paths(*, review_item: ReviewItem, root: Path) -> tuple[Path, Path] | None:
-    if not _review_item_has_byte_sources(review_item):
-        return None
-    review_repo_bytes, review_live_bytes = _review_edit_bytes(review_item=review_item)
-    repo_path, live_path = _review_edit_reference_paths(review_item=review_item)
-    review_repo_path = _write_review_file(
-        root=root,
-        side=_review_edit_side_names(operation=review_item.operation)[0],
-        reference_path=repo_path,
-        content=review_repo_bytes,
-    )
-    review_live_path = _write_review_file(
-        root=root,
-        side=_review_edit_side_names(operation=review_item.operation)[1],
-        reference_path=live_path,
-        content=review_live_bytes,
-    )
-    return review_repo_path, review_live_path
-
-
-def _review_item_has_byte_sources(review_item: ReviewItem) -> bool:
-    return (review_item.before_bytes is not None or review_item.before_bytes_loader is not None) and (
-        review_item.after_bytes is not None or review_item.after_bytes_loader is not None
-    )
-
-
-def _review_edit_bytes(*, review_item: ReviewItem) -> tuple[bytes, bytes]:
-    before_bytes = _review_item_bytes(review_item, before=True)
-    after_bytes = _review_item_bytes(review_item, before=False)
-    return after_bytes, before_bytes
-
-
-def _review_edit_reference_paths(*, review_item: ReviewItem) -> tuple[Path, Path]:
-    return review_item.repo_path, review_item.live_path
 
 
 def _write_review_file(*, root: Path, side: str, reference_path: Path, content: bytes, mode: int = 0o444) -> Path:

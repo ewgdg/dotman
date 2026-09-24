@@ -271,15 +271,6 @@ class SyncBaseLifecycle:
             return BaseInspection("unavailable", "absent")
         return inspected
 
-    def selected_policy_resolved(self, unit: BaseUnit) -> BaseLifecycleResult:
-        """Real Push/Sync: immediately after selected static resolution, before Guards/review."""
-        if self.preview or self.operation == "pull" or unit.eligible:
-            return BaseLifecycleResult()
-        try:
-            return BaseLifecycleResult(deleted=self.store.delete(unit.identity_bytes))
-        except SyncBaseStoreError as exc:
-            return BaseLifecycleResult(failure=exc)
-
     def direct_agreement(
         self,
         frozen: FrozenBaseUnit,

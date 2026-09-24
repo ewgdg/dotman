@@ -53,10 +53,6 @@ class SyncBaseStoreEpochError(SyncBaseStoreError):
     """A record uses an unsupported format epoch."""
 
 
-class SyncBaseStoreCorruptionError(SyncBaseStoreError):
-    """The store cannot be interpreted safely."""
-
-
 class SyncBaseRecordCorruptionError(SyncBaseStoreError):
     """One self-contained record failed integrity validation."""
 
@@ -760,18 +756,6 @@ class SyncBaseStore:
         )
         with self._write_transaction():
             return self._delete(identity)
-
-    def discard_corrupt(self, identity: bytes) -> bool:
-        """Revalidate corruption under the write lock before explicitly deleting it."""
-        identity = _require_bytes(
-            identity, field_name="canonical identity", allow_empty=False
-        )
-        with self._write_transaction():
-            try:
-                self._read_name(_record_name(identity), identity)
-            except SyncBaseRecordCorruptionError:
-                return self._delete(identity)
-            return False
 
     def close(self) -> None:
         if self._reading:

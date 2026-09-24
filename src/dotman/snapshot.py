@@ -260,19 +260,6 @@ def find_snapshot_matches(snapshot_root: Path, reference: str | None) -> list[Sn
     return [snapshot for snapshot in snapshots if snapshot.snapshot_id.startswith(reference)]
 
 
-def resolve_snapshot(snapshot_root: Path, reference: str | None = None) -> SnapshotRecord:
-    matches = find_snapshot_matches(snapshot_root, reference)
-    if not matches:
-        if reference is None or reference == "latest":
-            raise ValueError("no snapshots are available")
-        raise ValueError(f"snapshot '{reference}' did not match any available snapshot")
-    if len(matches) > 1:
-        raise ValueError(
-            f"snapshot '{reference}' is ambiguous: " + ", ".join(snapshot.snapshot_id for snapshot in matches)
-        )
-    return matches[0]
-
-
 def load_snapshot(snapshot_root: Path) -> SnapshotRecord:
     manifest_path = snapshot_root / "manifest.toml"
     payload = load_toml_file(manifest_path, context="snapshot manifest")

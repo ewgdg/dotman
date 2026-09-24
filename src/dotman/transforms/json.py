@@ -17,7 +17,6 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
-    emit_transform_output,
 )
 
 
@@ -435,25 +434,6 @@ def build_json_output(
         mode_reference_path=mode_reference_path,
     )
 
-
-
-def write_json_if_changed(
-    output_path: Path | None,
-    data: JsonDict,
-    mode_reference_path: Path | None,
-    compare_path: Path | None,
-    stdout: bool = False,
-) -> None:
-    emit_transform_output(
-        output_path,
-        build_json_output(
-            data,
-            mode_reference_path=mode_reference_path,
-            compare_path=compare_path,
-            indent_reference_paths=(mode_reference_path,),
-        ),
-        stdout=stdout,
-    )
 
 
 class JsonTransformEngine(BaseTransformEngine):

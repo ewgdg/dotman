@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.ignore import IgnoreMatcher, matches_ignore_pattern
+from dotman.ignore import IgnoreMatcher
 from tests.engine.test_sync_directory_observation import put
 from tests.helpers import initialize_git_repository, write_single_repo_config, write_tracked_packages_state
 
@@ -23,13 +23,15 @@ def test_gitignore_style_recursive_directory_patterns_ignore_nested_pycache_dire
 
 
 def test_gitignore_style_root_anchored_patterns_only_match_from_target_root() -> None:
-    assert matches_ignore_pattern("foo", "/foo")
-    assert not matches_ignore_pattern("nested/foo", "/foo")
+    matcher = IgnoreMatcher.from_patterns(("/foo",))
+
+    assert matcher.matches("foo")
+    assert not matcher.matches("nested/foo")
 
 
 def test_basename_only_ignore_patterns_still_match_nested_files() -> None:
-    assert matches_ignore_pattern("foo/bookmarks", "bookmarks")
-    assert matches_ignore_pattern("gtk-3.0/settings.ini", "settings.ini")
+    assert IgnoreMatcher.from_patterns(("bookmarks",)).matches("foo/bookmarks")
+    assert IgnoreMatcher.from_patterns(("settings.ini",)).matches("gtk-3.0/settings.ini")
 
 
 def test_negated_ignore_patterns_can_reinclude_specific_files() -> None:

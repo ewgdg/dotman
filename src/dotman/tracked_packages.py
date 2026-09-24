@@ -477,30 +477,3 @@ def describe_tracked_package_target_ownership(
     )
 
 
-def describe_owned_package_targets(
-    context: "PlanningContext",
-    repo_name: str,
-    package_id: str,
-    bound_profile: str | None,
-) -> list[TrackedOwnedTargetDetail]:
-    return describe_tracked_package_target_ownership(
-        context,
-        repo_name,
-        package_id,
-        bound_profile,
-    ).owned_targets
-
-
-
-def effective_tracked_package_entry_keys(
-    context: "PlanningContext",
-    repo_name: str,
-    package_id: str,
-    bound_profile: str | None,
-) -> set[tuple[str, str, str]]:
-    return describe_tracked_package_target_ownership(
-        context,
-        repo_name,
-        package_id,
-        bound_profile,
-    ).effective_binding_keys
