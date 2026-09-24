@@ -16,14 +16,14 @@ class ProgressSink(Protocol):
     def close(self) -> None: ...
 
 
-def make_planning_sink(*, json_output: bool) -> ProgressSink | None:
+def make_planning_sink(*, json_output: bool, unit: str = "pkg") -> ProgressSink | None:
     """Return a ProgressSink for the planning phase, or None when skipped.
 
     Returns None in JSON mode or when stderr is not a TTY.
     """
     if json_output or not sys.stderr.isatty():
         return None
-    return _TqdmSink()
+    return _TqdmSink(unit=unit)
 
 
 class _TqdmSink:
@@ -33,8 +33,10 @@ class _TqdmSink:
         self,
         *,
         refresh_interval: float = DEFAULT_REDRAW_INTERVAL_SECONDS,
+        unit: str = "pkg",
     ) -> None:
         self._pbar: Any | None = None  # deferred until start()
+        self._unit = unit
         self._refresh_interval = refresh_interval
         self._pbar_lock = Lock()
         self._refresh_stop: Event | None = None
@@ -47,7 +49,7 @@ class _TqdmSink:
             total=total,
             file=sys.stderr,
             desc="Planning",
-            unit="pkg",
+            unit=self._unit,
             leave=False,
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]",
         )

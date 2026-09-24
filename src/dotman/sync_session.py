@@ -22,6 +22,7 @@ from dotman.projection import project_frozen_file
 from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
 from dotman.planning_guards import GuardPlanningError
+from dotman.progress import ProgressSink
 from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError, FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 from dotman.sync_base_lifecycle import (
     FrozenBaseUnit, ProposalCompletion, SyncBaseLifecycle,
@@ -541,6 +542,7 @@ class ProposalSession:
         preview: bool = False,
         run_noop: bool = False,
         event_sink: SessionEventSink | None = None,
+        sink: ProgressSink | None = None,
     ) -> SyncSession | SessionOpenFailed:
         with command_operation() as operation, ExitStack() as resources:
             lock = None
@@ -552,7 +554,7 @@ class ProposalSession:
                 resolved_inputs = _resolve_inputs(context, scope, operation=cls.operation)
                 observed = cls._observe(
                     context, scope, preview=preview, run_noop=run_noop, resolved_inputs=resolved_inputs,
-                    operation=cls.operation,
+                    operation=cls.operation, sink=sink,
                 )
                 observations = observed.observations
 
@@ -581,7 +583,7 @@ class ProposalSession:
                     {"pull": retain_directional_hooks(repository_metadata, observed.hook_scopes["pull"]),
                      "push": publication_metadata},
                     dir_symlink_mode=context.config.dir_symlink_mode,
-                    command_runtime=context.projection.command_runtime, run_noop=run_noop,
+                    command_runtime=context.projection.command_runtime, run_noop=run_noop, sink=sink,
                 )
                 try:
                     obsolete_bases = cls._freeze_obsolete_bases(context, observed) if not preview else ()
@@ -611,6 +613,10 @@ class ProposalSession:
                 )
             except OSError as exc:
                 return SessionOpenFailed(Diagnostic("observation-failed", str(exc)))
+            finally:
+                # Observation starts the bar once its unit count is known.
+                if sink is not None:
+                    sink.close()
             resolved_inputs = (observed.inputs, resolved_inputs[1])
             session = cls(observations, preview=preview, auxiliary=auxiliary, event_sink=event_sink)
             session._obsolete_bases = obsolete_bases

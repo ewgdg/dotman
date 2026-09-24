@@ -70,7 +70,7 @@ def test_unattended_selects_auxiliary_and_forwards_run_noop(capsys):
     from dotman.sync_deck_command import SyncDeckCommandRunner
     session = auxiliary_session()
     opened = []
-    def open_session(scope, *, preview, run_noop):
+    def open_session(scope, *, preview, run_noop, sink):
         opened.append((scope, preview, run_noop))
         return session
     engine = SimpleNamespace(

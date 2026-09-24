@@ -165,3 +165,22 @@ def test_engine_planning_closes_progress_on_failure(
         engine.plan_push(sink=sink)
 
     assert sink.events == [("start", 1), ("close", None)]
+
+
+def test_sync_session_open_reports_progress_per_observed_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    engine = DotmanEngine.from_config_path(_write_progress_fixture(tmp_path))
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("live\n", encoding="utf-8")
+    sink = FakeSink()
+
+    session = engine.open_sync_session(engine.resolve_sync_scope(), preview=True, sink=sink)
+
+    with session:
+        assert sink.events == [("start", 1), ("update", 1), ("close", None)]

@@ -15,6 +15,7 @@ from dotman.file_access import read_bytes
 from dotman.manifest import resolve_sync_policy, sync_policy_allows_operation
 from dotman.models import ResolvedSyncScope, ResolvedSyncTarget, target_path_rule_matches
 from dotman.planning_guards import evaluate_directional_guards, evaluate_directory_path_rule_guards
+from dotman.progress import ProgressSink
 from dotman.sync_directory import census_directory, child_metadata
 from dotman.sync_base_lifecycle import (
     BaseInputs,
@@ -368,8 +369,12 @@ def observe_scope(
     read_bases: bool = True,
     operation: str = "sync",
     omit_no_route: bool = False,
+    sink: ProgressSink | None = None,
 ) -> ObservedScope:
     inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(context, scope, operation=operation)
+    # Auxiliary planning visits every resolved probe target, even ones this
+    # direction filter drops, so progress counts them from the same set.
+    probe_target_count = sum(1 for _item, metadata in inputs.values() if metadata.probe_command is not None)
     def participates(metadata):
         policy = resolve_sync_policy(package=metadata.package, target=metadata.target)
         return any(sync_policy_allows_operation(policy, operation=direction) for direction in directions)
@@ -469,6 +474,9 @@ def observe_scope(
         identity: _base_unit(context, identity, item, metadata)
         for identity, (item, metadata) in inputs.items()
     }
+    if sink is not None:
+        # Probe targets are not observed here; auxiliary planning ticks them.
+        sink.start(len(inputs) + probe_target_count)
     with ExitStack() as resources:
         lifecycles, store_warnings, attempted = {}, {}, set()
         for identity, (item, _metadata) in inputs.items():
@@ -545,6 +553,8 @@ def observe_scope(
                 repository_blockers, live_blockers, managed_children = child_topology[identity]
                 observation = replace(observation, repository_blockers=repository_blockers, live_blockers=live_blockers, managed_children=managed_children)
             observations.append(observation)
+            if sink is not None:
+                sink.update(1)
         order = {identity: index for index, identity in enumerate(ordered_inputs)}
         observations.sort(key=lambda unit: (order[replace(unit.identity, child_path=None)], unit.identity.child_path or ""))
         return ObservedScope(tuple(observations), directional, {

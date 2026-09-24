@@ -10,6 +10,7 @@ from dotman.command_runtime import CommandRuntime
 from dotman.models import ResolvedSyncTarget, package_ref_text
 from dotman.planning import PackagePlanningInput
 from dotman.projection import run_probe_command
+from dotman.progress import ProgressSink
 from dotman.sync_observation import Diagnostic, _ResolvedInputs, _identity
 from dotman.sync_publication import PublicationMetadata
 
@@ -60,6 +61,7 @@ def plan_auxiliary(
     command_runtime: CommandRuntime,
     run_noop: bool,
     dir_symlink_mode: str = "fail",
+    sink: ProgressSink | None = None,
 ) -> tuple[AuxiliaryRow, ...]:
     admitted = {
         direction: {_identity(target) for item in survivors for target in item.target_metadata}
@@ -72,8 +74,12 @@ def plan_auxiliary(
                 and target.live_path.is_dir() and (not target.live_path.is_symlink() or dir_symlink_mode == "follow")
                 and stat.S_IMODE(target.live_path.stat().st_mode) != int(target.chmod, 8)):
             rows.append(AuxiliaryRow(identity.canonical, "directory-root", False, identity.canonical, ("push",)))
-        if target.probe_command is not None and directions and run_probe_command(command_runtime, target):
+        if target.probe_command is None:
+            continue
+        if directions and run_probe_command(command_runtime, target):
             rows.append(AuxiliaryRow(identity.canonical, "probe", False, identity.canonical, directions))
+        if sink is not None:
+            sink.update(1)
 
     for direction, frozen in metadata.items():
         scopes = {}

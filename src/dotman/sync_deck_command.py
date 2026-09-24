@@ -9,6 +9,7 @@ import sys
 from dotman.edit_resolution import EditResolver
 from dotman.interaction import Interaction
 from dotman.interaction_policy import interaction_scope
+from dotman.progress import make_planning_sink
 from dotman.cli_style import render_sync_term, render_package_label, style_text, MENU_REPO_STYLE
 from dotman.sync_scope import _parse_scope_selector, split_scope_child_path
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
@@ -101,7 +102,8 @@ class SyncDeckCommandRunner:
     operation = "sync"
 
     def _open(self, engine, scope, args):
-        return engine.open_sync_session(scope, preview=args.dry_run, run_noop=getattr(args, "run_noop", False))
+        return engine.open_sync_session(scope, preview=args.dry_run, run_noop=getattr(args, "run_noop", False),
+                                        sink=make_planning_sink(json_output=args.json_output, unit="target"))
 
     def _select_defaults(self, session):
         set_all_selected(session, True)
@@ -427,7 +429,8 @@ class PullDeckCommandRunner(SyncDeckCommandRunner):
 
     def _open(self, engine, scope, args):
         return engine.open_pull_session(scope, preview=args.dry_run,
-                                        run_noop=getattr(args, "run_noop", False))
+                                        run_noop=getattr(args, "run_noop", False),
+                                        sink=make_planning_sink(json_output=args.json_output, unit="target"))
 
     def _select_defaults(self, session):
         # Opening already materialized standing opt-out Approval. In particular,
