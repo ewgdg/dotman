@@ -22,7 +22,7 @@ def test_optional_checkpoint_failure_reports_completion_separately(tmp_path, mon
         assert not unit['base']['acknowledged']
         assert unit['diagnostics'][0]['severity'] == 'warning'
     else:
-        assert 'converged' in output
+        assert '[ok] main:app.unit' in output
         # Base state is reported only through diagnostics, never as a result line.
         assert 'Base' not in output
         assert 'checkpoint unavailable' in output
@@ -63,7 +63,7 @@ def test_push_human_reports_base_only_through_warnings(tmp_path, monkeypatch, ca
         monkeypatch.setattr(SyncBaseStore, 'replace', fail)
     assert main(['--config', str(engine.config.config_path), '--unattended', 'push']) == 0
     output = capsys.readouterr().out
-    assert 'converged' in output
+    assert '[ok] main:app.unit' in output
     # Base state is reported only through unit diagnostics, never as a result line.
     assert 'Base' not in output
     assert ('checkpoint unavailable' in output) == fails

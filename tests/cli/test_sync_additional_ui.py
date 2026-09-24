@@ -93,9 +93,8 @@ def test_plain_output_reports_source_approval_and_result(capsys):
     runner = SyncDeckCommandRunner(engine_factory=None, use_color=False)
     runner._emit(SimpleNamespace(dry_run=True, scopes=[], json_output=False), session, result)
     output = capsys.readouterr().out
-    assert "[approved] r:shared" in output
+    assert "[would-apply] r:shared" in output
     assert "Additional Source Change: write" in output
-    assert "would-apply" in output
     assert "before" not in output and "after" not in output
 
 

@@ -239,37 +239,38 @@ class SyncDeckCommandRunner:
             print(json.dumps(payload))
             return
         print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""))
+        term = lambda text: render_sync_term(text, use_color=self._use_color)
+        # Unselected entries only matter when they explain a problem.
         for unit in payload["sync_units"]:
-            selection = "approved" if unit["approved"] else "unapproved"
-            print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {unit['identity']}")
+            if not (unit["selected"] or unit["diagnostics"]):
+                continue
+            print(f"  [{term(entry_outcome(unit['result'], unit['diagnostics']))}] {unit['identity']}")
             if unit["resolution"]:
-                print(f"      {render_sync_term(resolution_label(unit['resolution']), use_color=self._use_color)}")
+                print(f"      {term(resolution_label(unit['resolution']))}")
             if unit["fallback_reason"]:
-                print(f"      {render_sync_term('Fallback', use_color=self._use_color)}: {unit['fallback_reason']}")
+                print(f"      {term('Fallback')}: {unit['fallback_reason']}")
             if unit["primary_source_change"]:
                 print(f"      repository {unit['primary_source_change']['kind']}")
             for effect in unit["effects"]:
                 print(f"      {effect['kind']}")
             for item in unit["diagnostics"]:
                 print(f"      {item['message']}")
-            if unit["result"]:
-                # Base saves are bookkeeping; problems surface through unit diagnostics.
-                print(f"      {render_sync_term(unit['result'], use_color=self._use_color)}")
         for change in payload["additional_source_changes"]:
-            selection = "approved" if change["approved"] else "unapproved"
-            print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {change['repo']}:{change['path']}")
-            print(f"      {render_sync_term('Additional Source Change', use_color=self._use_color)}: {change['kind']}")
-            if change["result"]:
-                print(f"      {render_sync_term(change['result'], use_color=self._use_color)}")
+            if not (change["approved"] or change["diagnostics"]):
+                continue
+            print(f"  [{term(entry_outcome(change['result'], change['diagnostics']))}] {change['repo']}:{change['path']}")
+            print(f"      {term('Additional Source Change')}: {change['kind']}")
             for item in change["diagnostics"]:
                 print(f"      {item['message']}")
         for kind, key in (("probe", "probe_work"), ("directory-root", "directory_root_work"), ("hook", "hook_work")):
             for work in payload[key]:
-                selection = "selected" if work["selected"] else "unselected"
+                if not (work["selected"] or work["diagnostics"]):
+                    continue
                 label = auxiliary_label(work["identity"], kind, work["directions"], use_color=self._use_color)
-                term = auxiliary_resolution(kind)
-                print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {label}")
-                print(f"      {render_sync_term(term, use_color=self._use_color)}")
+                outcome = auxiliary_outcome(work["identity"], payload["stages"], preview=args.dry_run,
+                                            diagnostics=work["diagnostics"])
+                print(f"  [{term(outcome)}] {label}")
+                print(f"      {term(auxiliary_resolution(kind))}")
                 for item in work["diagnostics"]:
                     print(f"      {item['message']}")
         for skip in payload["guard_skips"]:
@@ -287,6 +288,44 @@ class SyncDeckCommandRunner:
         print(f":: {render_sync_term(payload['status'], use_color=self._use_color)} — {stats}")
         for item in payload["summary"]["diagnostics"]:
             print(item["message"], file=sys.stderr)
+
+
+# Collapse detailed Sync statuses into the execution log vocabulary
+# (ok/failed/interrupted/skipped), plus preview and not-yet-run states.
+ENTRY_OUTCOME_BY_STATUS = {
+    "applied": "ok",
+    "converged": "ok",
+    "directly-in-sync": "ok",
+    "would-apply": "would-apply",
+    "would-converge": "would-apply",
+    "execution-failed": "failed",
+    "observation-failed": "failed",
+    "not-converged": "failed",
+    "interrupted": "interrupted",
+    "skipped": "skipped",
+    "pending": "pending",
+    "excluded": "pending",
+}
+
+
+def entry_outcome(status: str | None, diagnostics) -> str:
+    if status is None:
+        # No execution result: blocked before execution, or the session failed early.
+        return "failed" if any(item.get("severity", "error") == "error" for item in diagnostics) else "pending"
+    return ENTRY_OUTCOME_BY_STATUS[status]
+
+
+def auxiliary_outcome(identity: str, stages, *, preview: bool, diagnostics) -> str:
+    """Auxiliary Work has no unit result; derive its outcome from the steps run at its scope."""
+    statuses = {stage["status"] for stage in stages if stage["scope_identity"] == identity}
+    for status in ("failed", "interrupted"):
+        if status in statuses:
+            return status
+    if "ok" in statuses:
+        return "ok"
+    if statuses:
+        return "skipped"
+    return entry_outcome("would-apply" if preview else None, diagnostics)
 
 
 def summary_stats(leading, *, writes, deletions, trailing=(), use_color) -> str:

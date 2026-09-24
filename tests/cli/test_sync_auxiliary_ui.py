@@ -84,7 +84,7 @@ def test_unattended_selects_auxiliary_and_forwards_run_noop(capsys):
     assert runner.run(args) == 0
     assert opened == [([], True, True)]
     output = capsys.readouterr().out
-    assert "[selected] r:p.check" in output
+    assert "[would-apply] r:p.check" in output
     assert "Probe Work" in output
-    assert "[selected] r:p (pull-hooks)" in output
+    assert "[would-apply] r:p (pull-hooks)" in output
     assert "Hook Work" in output

@@ -135,7 +135,7 @@ def test_review_shows_newline_only_publication_and_exact_mode(tmp_path, monkeypa
         assert "5 bytes" in text
 
 
-def test_interactive_preview_leaves_unselected_healthy_work_pending(tmp_path, monkeypatch, capsys):
+def test_interactive_preview_hides_unselected_healthy_work(tmp_path, monkeypatch, capsys):
     from dotman import sync_deck
     import sys
 
@@ -149,7 +149,7 @@ def test_interactive_preview_leaves_unselected_healthy_work_pending(tmp_path, mo
 
     monkeypatch.setattr(sync_deck, "run_command_deck", leave_unselected)
     assert runner_for(engine).run(arguments(unattended=False, json_output=False)) == 0
-    assert "pending" in capsys.readouterr().out
+    assert "main:app.unit" not in capsys.readouterr().out
     assert (tmp_path / "live/unit").read_bytes() == b"live"
 
 

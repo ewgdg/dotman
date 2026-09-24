@@ -466,7 +466,7 @@ def test_push_cli_fails_fast_for_symlinked_live_target_in_non_interactive_mode(
 
     assert exit_code == 1
     output = capsys.readouterr().out
-    assert "[unapproved] fixture:app.config" in output
+    assert "[failed] fixture:app.config" in output
     assert "Live symlink replacement requires explicit authorization" in output
     assert ":: failed" in output
     assert (live_root / "config.txt").is_symlink()
@@ -956,8 +956,7 @@ def test_pull_cli_editor_is_explicit_deck_action_with_approval(
     assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"edited"
     assert (tmp_path / "live/unit").read_bytes() == b"live"
     output = capsys.readouterr().out
-    assert "[approved] main:app.unit" in output
-    assert "applied" in output
+    assert "[ok] main:app.unit" in output
 
 
 def test_pull_cli_run_noop_executes_only_pull_hooks(tmp_path, monkeypatch, capsys):

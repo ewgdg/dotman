@@ -475,6 +475,7 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "would-converge": ("36",),
     "would-apply": ("36",),
     "applied": ("1", "32"),
+    "ok": ("1", "32"),
     "skipped": ("2",),
     "execution-failed": ("1", "31"),
     "not-converged": ("1", "33"),

@@ -81,8 +81,8 @@ def test_push_cli_human_preview_names_leaf_targets_not_root_package(tmp_path, mo
 
     output = capsys.readouterr().out
     assert ":: Push preview" in output
-    assert "[approved] example:git.gitconfig" in output
-    assert "[approved] example:nvim.init_lua" in output
+    assert "[would-apply] example:git.gitconfig" in output
+    assert "[would-apply] example:nvim.init_lua" in output
     assert "Use repository" in output
     assert "core-cli-meta" not in output
     assert not (tmp_path / "home/.gitconfig").exists()

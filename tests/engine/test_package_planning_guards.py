@@ -300,7 +300,7 @@ def test_all_guard_skipped_cli_reports_before_ui_and_returns_without_execution(
     output = capsys.readouterr().out
     assert "[skipped] fixture:app (guard_push)" in output
     assert "Guard skipped: host mismatch" in output
-    assert "[approved]" not in output
+    assert "[ok]" not in output
     assert not (home / ".config/app/config.txt").exists()
 
 

@@ -64,7 +64,7 @@ def test_pull_cli_human_preview_uses_canonical_target_identity(pull_repo, capsys
 
     output = capsys.readouterr().out
     assert ":: Pull preview" in output
-    assert "[approved] main:app.first" in output
+    assert "[would-apply] main:app.first" in output
     assert "repository write" in output
     assert "main:app.second" not in output
 
@@ -89,8 +89,9 @@ def test_pull_cli_command_deck_can_opt_out_before_execution(
     assert (pull_repo / "repo/packages/app/first").read_bytes() == b"live first"
     assert (pull_repo / "repo/packages/app/second").read_bytes() == b"repository second"
     output = capsys.readouterr().out
-    assert "[approved] main:app.first" in output
-    assert "[unapproved] main:app.second" in output
+    assert "[ok] main:app.first" in output
+    # Opted-out entries without diagnostics are noise in the final log.
+    assert "main:app.second" not in output
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
