@@ -242,10 +242,8 @@ class SyncDeckCommandRunner:
             for item in unit["diagnostics"]:
                 print(f"      {item['message']}")
             if unit["result"]:
+                # Base saves are bookkeeping; problems surface through unit diagnostics.
                 print(f"      {render_sync_term(unit['result'], use_color=self._use_color)}")
-                if unit["base"]["status"] != "not-applicable":
-                    acknowledgment = "Base advanced" if unit["base"]["acknowledged"] else "Base not advanced"
-                    print(f"      {render_sync_term(acknowledgment, use_color=self._use_color)}")
         for change in payload["additional_source_changes"]:
             selection = "approved" if change["approved"] else "unapproved"
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {change['repo']}:{change['path']}")

@@ -23,7 +23,8 @@ def test_optional_checkpoint_failure_reports_completion_separately(tmp_path, mon
         assert unit['diagnostics'][0]['severity'] == 'warning'
     else:
         assert 'converged' in output
-        assert 'Base not advanced' in output
+        # Base state is reported only through diagnostics, never as a result line.
+        assert 'Base' not in output
         assert 'checkpoint unavailable' in output
     assert (tmp_path / 'repo/packages/app/unit').read_bytes() == b'live'
 

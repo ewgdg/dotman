@@ -199,8 +199,9 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
 - Human output distinguishes direct agreement, convergence, deliberately pending
   work, and failures; summaries count repository changes, live writes and deletions,
   and selected auxiliary work separately. Checkpoint warnings remain visible even
-  when synchronization succeeds and the Base is not advanced. Eligible unit
-  results show `Base advanced` or `Base not advanced` separately from completion.
+  when synchronization succeeds and the Base is not advanced. Base saves are
+  bookkeeping: the final report never prints a Base line of its own, so Base
+  problems appear only as unit diagnostics.
   A `base-durability-uncertain` warning means replacement committed but its final
   flush failed: acknowledgment remains true, without a crash-durability guarantee.
 - Exit `0` means healthy completion, including deliberately unselected healthy

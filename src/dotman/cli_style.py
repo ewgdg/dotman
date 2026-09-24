@@ -462,8 +462,6 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "incomplete": ("1", "33"),
     "aborted": ("1", "31"),
     "converged": ("1", "32"),
-    "Base advanced": ("2", "32"),
-    "Base not advanced": ("2", "33"),
     "directly-in-sync": ("2", "32"),
     "diagnostic": ("1", "31"),
     "blocked": ("1", "31"),
