@@ -89,7 +89,9 @@ def test_unsupported_endpoint_does_not_block_approved_interactive_peer(
         os.mkfifo(endpoint)
     else:
         sock = socket.socket(socket.AF_UNIX)
-        sock.bind(str(endpoint))
+        # AF_UNIX paths cap near 104 bytes on macOS; bind relative to stay short.
+        monkeypatch.chdir(endpoint.parent)
+        sock.bind(endpoint.name)
     try:
         with open_session(engine, preview=False) as session:
             bad = session.view.rows[0]

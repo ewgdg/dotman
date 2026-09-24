@@ -74,6 +74,11 @@ def test_editor_key_saves_in_place_and_is_disabled_after_confirmation(tmp_path, 
                 await pilot.press("space", "enter")
                 assert session.view.rows[0].approved
                 await pilot.press("e")
+                # The Editor runs off the UI thread; wait for it, then for the redraw.
+                for _ in range(100):
+                    if not app.busy:
+                        break
+                    await pilot.pause(.01)
                 await pilot.pause()
                 row = session.view.rows[0]
                 assert row.proposal.repository == FilePresent(b"edited")
