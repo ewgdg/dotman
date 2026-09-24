@@ -7,7 +7,9 @@ from textual import events
 
 from textual.widgets import DataTable, RichLog, Static
 
-from dotman.sync_deck import CommandDeck, SyncDeckApp
+from dotman.sync_deck import CommandDeck, SyncDeckApp, WorksetTable
+
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 from tests.engine.test_sync_session import make_engine
 
 
@@ -456,19 +458,24 @@ def test_materialization_keeps_deck_responsive_and_gates_actions(tmp_path, monke
         async def interact():
             async with app.run_test() as pilot:
                 try:
+                    table = app.query_one(WorksetTable)
+                    help_widget = app.query_one("#help", Static)
+                    spinning = lambda: any(frame in str(table.get_cell_at((0, 0))) for frame in SPINNER_FRAMES)
                     app.action_approve()
-                    # Quick work must not flash the busy line; it appears only once work lingers.
-                    assert not app.query_one("#busy").display
+                    # Quick work must not flash progress; it appears only once work lingers,
+                    # in the row's Selection cell rather than on an extra line.
+                    assert not spinning()
                     for _ in range(100):
                         if ready.is_set():
                             break
                         await asyncio.sleep(.01)
                     assert ready.is_set()
                     for _ in range(100):
-                        if app.query_one("#busy").display:
+                        if spinning():
                             break
                         await asyncio.sleep(.01)
-                    assert app.query_one("#busy").display
+                    assert spinning()
+                    assert "Ctrl+C abort" in str(help_widget.render())
                     revision = session.view.revision
                     app.action_clear_all()
                     app.action_approve_all()
@@ -490,7 +497,8 @@ def test_materialization_keeps_deck_responsive_and_gates_actions(tmp_path, monke
                 await pilot.pause()
                 assert session.view.rows[0].approved
                 assert seen == ["copied"]
-                assert not app.query_one("#busy").display
+                assert str(table.get_cell_at((0, 0))) == "[x]"
+                assert "Ctrl+C abort" not in str(help_widget.render())
         run(interact())
 
 

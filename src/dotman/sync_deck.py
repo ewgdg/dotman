@@ -8,6 +8,7 @@ from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor
 from difflib import unified_diff
 import signal
+import time
 
 from rich.spinner import Spinner
 
@@ -379,7 +380,8 @@ class WorksetTable(DataTable):
             event.stop()
 
 
-BUSY_REVEAL_DELAY_SECONDS = 0.3
+PROGRESS_REVEAL_DELAY_SECONDS = 0.3
+PROGRESS_FRAME_SECONDS = 0.1
 
 
 class SyncDeckApp(App[bool]):
@@ -395,7 +397,6 @@ class SyncDeckApp(App[bool]):
     #review { height: 1fr; }
     #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
     #notice { height: auto; padding: 0 1; color: $warning; }
-    #busy { height: auto; padding: 0 1; color: $accent; text-style: bold; }
     #help { dock: bottom; height: auto; max-height: 2; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
@@ -447,24 +448,42 @@ class SyncDeckApp(App[bool]):
             self._materialization is not None and not self._materialization.done()
         )
 
-    def materialize(self, action, *, editor_io: str | None = None) -> None:
+    def materialize(self, action, *, editor_io: str | None = None, row_ids: tuple[str, ...] | None = None) -> None:
         """Admit one mutation; all further input is rejected until actual work drains."""
         if self.busy:
             return
         self._editing = editor_io is not None
-        self.query_one("#busy", Static).update(Spinner(
-            "dots", text="Editing Proposal · Ctrl+C cancel Editor" if self._editing
-            else "Materializing Proposal · Ctrl+C abort",
-        ))
-        # Most dispatches finish within a frame or two; revealing the busy line
-        # immediately makes every Enter/Space flash it and shift the layout.
-        self._busy_reveal = self.set_timer(BUSY_REVEAL_DELAY_SECONDS, self._reveal_busy)
+        self._progress_label = (
+            "Editing Proposal · Ctrl+C cancel Editor" if self._editing
+            else "Materializing Proposal · Ctrl+C abort"
+        )
+        focused = self.deck.focused_row
+        self._progress_rows = row_ids if row_ids is not None else ((focused.row_id,) if focused else ())
+        self._progress_spinner = Spinner("dots")
+        self._progress_started = time.monotonic()
+        # A terminal Editor owns the screen, so deck progress would never be seen.
+        self._progress = None if editor_io == "tty" else self.set_interval(PROGRESS_FRAME_SECONDS, self._render_progress)
         self._materialization = asyncio.create_task(self._materialize(action, editor_io=editor_io))
         self._materialization.add_done_callback(self._materialization_finished)
 
-    def _reveal_busy(self) -> None:
-        if self.busy:
-            self.query_one("#busy").display = True
+    def _render_progress(self) -> None:
+        """Spin in the affected rows' Selection cells, so progress takes no extra line."""
+        now = time.monotonic()
+        # Most dispatches finish within a frame or two; showing progress
+        # immediately makes every Enter/Space flash it.
+        if not self.busy or now - self._progress_started < PROGRESS_REVEAL_DELAY_SECONDS:
+            return
+        frame = self._progress_spinner.render(now).plain
+        table = self.query_one(WorksetTable)
+        help_text = self._progress_label
+        if table.display:
+            for row_id in self._progress_rows:
+                # Pad to the "[ ]" marker width so the column does not jitter.
+                table.update_cell(row_id, table.ordered_columns[0].key, Text(f" {frame} ", style="bold"))
+        else:
+            # Review has no Selection cells on screen; spin in the help line instead.
+            help_text = f"{frame} {help_text}"
+        self.query_one("#help", Static).update(help_text)
 
     def _materialization_finished(self, task: asyncio.Task) -> None:
         if self._materialization is task:
@@ -518,8 +537,8 @@ class SyncDeckApp(App[bool]):
         finally:
             self._materialization = None
             self._editing = False
-            self._busy_reveal.stop()
-            self.query_one("#busy").display = False
+            if self._progress is not None:
+                self._progress.stop()
         if self._aborting or any(d.code == "interrupted" for row in self.deck.session.view.rows for d in row.diagnostics):
             self.exit(False)
             return
@@ -581,12 +600,9 @@ class SyncDeckApp(App[bool]):
         yield RichLog(id="review", wrap=False, auto_scroll=False, min_width=1)
         yield Static(id="confirmation", markup=False)
         yield Static(id="notice", markup=False)
-        yield Static(Spinner("dots", text="Materializing Proposal · Ctrl+C abort"), id="busy")
         yield Static(id="help", markup=False)
 
     def on_mount(self) -> None:
-        self.query_one("#busy").display = False
-        self.query_one("#busy").auto_refresh = 1 / 10
         self.query_one(OptionList).display = False
         table = self.query_one(WorksetTable)
         # The Selection header matches its narrow "[ ]" markers, leaving width for targets.
@@ -722,14 +738,17 @@ class SyncDeckApp(App[bool]):
             return
         if self.query_one(OptionList).display:
             return
-        self.materialize(lambda: self.deck.select_all(True))
+        self.materialize(lambda: self.deck.select_all(True), row_ids=self.all_row_ids())
 
     def action_clear_all(self) -> None:
         if self.busy:
             return
         if self.query_one(OptionList).display:
             return
-        self.materialize(lambda: self.deck.select_all(False))
+        self.materialize(lambda: self.deck.select_all(False), row_ids=self.all_row_ids())
+
+    def all_row_ids(self) -> tuple[str, ...]:
+        return tuple(row.row_id for row in self.deck.session.view.rows)
 
     def show_review(self) -> None:
         log = self.query_one("#review", RichLog)
