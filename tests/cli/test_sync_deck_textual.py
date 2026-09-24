@@ -201,6 +201,10 @@ def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monke
                 detail = app.query_one("#detail", Static).render()
                 styled = {detail.plain[span.start:span.end] for span in detail.spans}
                 assert {"main", "bad", "error"} <= styled
+                hints = app.query_one("#help", Static).render()
+                assert hints.plain.startswith("Esc abort · X confirm")
+                bold = {hints.plain[span.start:span.end] for span in hints.spans if "bold" in str(span.style)}
+                assert {"Esc", "X", "Space"} <= bold and "confirm" not in bold
         run(interact())
 
 

@@ -21,7 +21,7 @@ from textual.widgets import DataTable, OptionList, RichLog, Static
 
 from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
-from dotman.cli_style import render_payload_section_label, render_sync_term, render_package_label
+from dotman.cli_style import render_key_hints, render_payload_section_label, render_sync_term, render_package_label
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
@@ -186,7 +186,8 @@ class CommandDeck:
              ("auxiliary", auxiliary_count), ("repos", repository_changes)),
             writes=writes, deletions=deletions, trailing=(("modes", modes),), use_color=self.use_color,
         )
-        return f":: {verb}? — {stats}\n\n  Enter confirm  Esc return"
+        hints = render_key_hints((("Enter", "confirm"), ("Esc", "return")), use_color=self.use_color)
+        return f":: {verb}? — {stats}\n\n  {hints}"
 
     def review_text(self) -> str:
         row = self.focused_row
@@ -202,7 +203,8 @@ class CommandDeck:
                 after_label="candidate Additional Source",
                 description="Additional Source",
             ))
-            lines += ["", "  ↑/↓ scroll  Space Approval  Esc return to workset"]
+            hints = (("↑/↓", "scroll"), ("Space", "Approval"), ("Esc", "return to workset"))
+            lines += ["", f"  {render_key_hints(hints, use_color=self.use_color)}"]
             return "\n".join(lines)
         proposal = row.proposal
         intent = row.intent
@@ -306,7 +308,8 @@ class CommandDeck:
         if additional:
             lines += ["", "  Additional Source Changes (independent Approval and Review):"]
             lines.extend(f"    {additional_label(item, use_color=self.use_color)}" for item in additional)
-        lines += ["", "  ↑/↓ scroll  Space Approval  E edit  T retry  Esc return to workset"]
+        hints = (("↑/↓", "scroll"), ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("Esc", "return to workset"))
+        lines += ["", f"  {render_key_hints(hints, use_color=self.use_color)}"]
         return "\n".join(lines)
 
 
@@ -661,22 +664,24 @@ class SyncDeckApp(App[bool]):
         table.fit_targets()
         self.update_detail()
         self.query_one("#notice", Static).update(self.deck.notice)
+        review_scroll = ("↑/↓/j/k/PgUp/PgDn", "scroll")
         if self.query_one(OptionList).display:
-            help_text = "↑/↓/j/k choose Resolution · Enter select · Esc dismiss"
+            hints = [("↑/↓/j/k", "choose Resolution"), ("Enter", "select"), ("Esc", "dismiss")]
         elif self.deck.confirming:
-            help_text = "Enter confirm · Esc return · Ctrl+C abort"
+            hints = [("Enter", "confirm"), ("Esc", "return"), ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            help_text = "Esc return · Space Approval · Y copy · ↑/↓/j/k/PgUp/PgDn scroll · Ctrl+C abort"
+            hints = [("Esc", "return"), ("Space", "Approval"), ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.deck.reviewing:
-            help_text = "Esc return · Space Approval · E edit · T retry · Y copy · ↑/↓/j/k/PgUp/PgDn scroll · Ctrl+C abort"
+            hints = [("Esc", "return"), ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("Y", "copy"),
+                     review_scroll, ("Ctrl+C", "abort")]
         else:
-            help_text = "Esc abort · X confirm · Space mark · Enter view · E edit · T retry"
+            hints = [("Esc", "abort"), ("X", "confirm"), ("Space", "mark"), ("Enter", "view"), ("E", "edit"), ("T", "retry")]
         row = self.deck.focused_row
         if row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming:
-            help_text += " · Shift+L authorize link replacement"
+            hints.append(("Shift+L", "authorize link replacement"))
         if self.deck.session.view.operation == "sync" and not self.deck.reviewing and not self.query_one(OptionList).display and not self.deck.confirming:
-            help_text += " · R intent"
-        self.query_one("#help", Static).update(help_text)
+            hints.append(("R", "intent"))
+        self.query_one("#help", Static).update(Text.from_ansi(render_key_hints(hints, use_color=self.deck.use_color)))
 
     def update_detail(self) -> None:
         row = self.deck.focused_row

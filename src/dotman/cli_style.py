@@ -427,6 +427,15 @@ def render_summary_stat(*, label: str, value: int, use_color: bool) -> str:
     return f"{style_text(f'{label}:', *MENU_HINT_STYLE)} {style_text(str(value), '1')}"
 
 
+def render_key_hints(hints: Sequence[tuple[str, str]], *, use_color: bool) -> str:
+    """Render `key action` pairs with bold keys and dimmed actions and separators."""
+    if not use_color:
+        return " · ".join(f"{key} {action}" for key, action in hints)
+    return style_text(" · ", *MENU_HINT_STYLE).join(
+        f"{style_text(key, *MENU_PROMPT_STYLE)} {style_text(action, *MENU_HINT_STYLE)}" for key, action in hints
+    )
+
+
 def render_execution_action(action: str, *, use_color: bool) -> str:
     display_action = action.replace("_repo", " repo") if action.endswith("_repo") else action
     if not use_color:
