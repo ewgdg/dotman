@@ -55,6 +55,35 @@ def test_rendered_columns_align_across_variable_identities_and_resize(tmp_path, 
         run(interact())
 
 
+def test_long_target_identities_shrink_so_all_columns_fit_the_terminal(tmp_path, monkeypatch):
+    long_name = "very_long_target_name_that_would_push_policy_and_resolution_off_screen"
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("a", "push-only", b"r", b"l", ""),
+        (long_name, "push-only", b"r", b"l", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                table = app.query_one(DataTable)
+                assert table.max_scroll_x == 0
+                header, short_row, long_row = (table.render_line(y).text for y in range(3))
+                assert "Resolution" in header
+                assert "main:app.a " in short_row
+                # Middle elision keeps both the repo prefix and the target name tail.
+                assert "main:app.very" in long_row and "…" in long_row and "off_screen" in long_row
+                assert "Use repository" in long_row
+                # The focused detail still names the full canonical identity.
+                await pilot.press("down")
+                assert f"main:app.{long_name}" in str(app.query_one("#detail", Static).render())
+                await pilot.resize_terminal(200, 24)
+                await pilot.pause()
+                assert f"main:app.{long_name}" in table.render_line(2).text
+        run(interact())
+
+
 def test_keyboard_review_scroll_return_approval_and_confirmation(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
         ("one", "push-only", b"repo", b"live", ""),

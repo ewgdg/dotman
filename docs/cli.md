@@ -91,8 +91,10 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   A single click in the Selection column toggles that row; other cells only focus it.
   The bottom help text lists keyboard shortcuts; it is not clickable. It adapts
   to workset, review, and confirmation, wrapping to two lines on narrow terminals.
-  Arrow keys navigate; narrow terminals scroll horizontally and long worksets
-  scroll vertically without losing column alignment.
+  Long Target identities are shortened in the middle (`…`) so every column fits
+  the terminal width; the focused detail line shows the full identity. Arrow keys
+  navigate; terminals too narrow even for shortened targets scroll horizontally,
+  and long worksets scroll vertically without losing column alignment.
 - `Enter` opens focused Proposal Review or canonical Source Change Review;
   `Esc` returns to the same workset. Source Change Review shows the preimage diff,
   referencing Proposals and independent Approval; Proposal Review lists source

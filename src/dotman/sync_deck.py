@@ -319,8 +319,57 @@ def row_resolution(row) -> str:
     return resolution_label(row.proposal.intent if row.proposal else row.intent)
 
 
+def elide_middle(label: Text, width: int) -> Text:
+    """Keep both the repo prefix and the target-name tail of long identities."""
+    if label.cell_len <= width:
+        return label
+    # Identities are canonical ASCII in practice; character slicing may leave
+    # wide glyphs slightly over width, which DataTable then crops.
+    kept = max(width - 1, 0)
+    head = kept // 2
+    return Text.assemble(label[:head], "…", label[len(label) - (kept - head):])
+
+
 class WorksetTable(DataTable):
     """Render native cells; the app input boundary owns row actions."""
+
+    # Narrower targets hide too much identity; horizontal scrolling takes over.
+    MIN_TARGET_WIDTH = 16
+    TARGET_COLUMN = 1
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.full_targets: dict[str, Text] = {}
+        self._fitted_target_width: int | None = None
+
+    def add_workset_row(self, row_id: str, target: Text, policy: str) -> None:
+        self.full_targets[row_id] = target
+        self._fitted_target_width = None
+        self.add_row("", target, policy, "", key=row_id)
+
+    def clear(self, columns: bool = False):
+        self.full_targets.clear()
+        self._fitted_target_width = None
+        return super().clear(columns)
+
+    def fit_targets(self) -> None:
+        """Shrink the Target column so Selection, Policy and Resolution stay on screen."""
+        if not self.full_targets or not self.size.width:
+            return
+        target_key = self.ordered_columns[self.TARGET_COLUMN].key
+        other_columns = sum(
+            column.get_render_width(self) for column in self.ordered_columns if column.key != target_key
+        )
+        available = self.scrollable_content_region.width - other_columns - 2 * self.cell_padding
+        width = max(self.MIN_TARGET_WIDTH, available)
+        if width == self._fitted_target_width:
+            return
+        self._fitted_target_width = width
+        for row_id, target in self.full_targets.items():
+            self.update_cell(row_id, target_key, elide_middle(target, width), update_width=True)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.fit_targets()
 
     def on_click(self, event: events.Click) -> None:
         if event.style.meta.get("row", -1) >= 0:
@@ -532,10 +581,10 @@ class SyncDeckApp(App[bool]):
         self.deck.focus = max(0, min(self.deck.focus, len(self.deck.session.view.rows) - 1))
         for row in self.deck.session.view.rows:
             if isinstance(row, AdditionalRow):
-                table.add_row("", Text.from_ansi(additional_label(row, use_color=self.deck.use_color)), "", "", key=row.row_id)
+                table.add_workset_row(row.row_id, Text.from_ansi(additional_label(row, use_color=self.deck.use_color)), "")
                 continue
             if isinstance(row, AuxiliaryRow):
-                table.add_row("", Text.from_ansi(auxiliary_label(row.scope, row.kind, row.directions, use_color=self.deck.use_color)), "", "", key=row.row_id)
+                table.add_workset_row(row.row_id, Text.from_ansi(auxiliary_label(row.scope, row.kind, row.directions, use_color=self.deck.use_color)), "")
                 continue
             identity = row.observation.identity
             label = render_package_label(
@@ -545,7 +594,7 @@ class SyncDeckApp(App[bool]):
             )
             if identity.child_path is not None:
                 label += "/" + identity.child_path
-            table.add_row("", Text.from_ansi(label), row.observation.effective_policy, "", key=row.row_id)
+            table.add_workset_row(row.row_id, Text.from_ansi(label), row.observation.effective_policy)
         table.move_cursor(row=self.deck.focus)
 
     def update_workset(self) -> None:
@@ -564,6 +613,8 @@ class SyncDeckApp(App[bool]):
             table.update_cell(row.row_id, table.ordered_columns[3].key,
                               Text.from_ansi(render_sync_term(row_resolution(row), use_color=self.deck.use_color)),
                               update_width=True)
+        # Resolution width varies with intent, so refit after every cell update.
+        table.fit_targets()
         self.update_detail()
         self.query_one("#notice", Static).update(self.deck.notice)
         if self.query_one(OptionList).display:
