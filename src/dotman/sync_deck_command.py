@@ -228,13 +228,7 @@ class SyncDeckCommandRunner:
             print(json.dumps(payload))
             return
         print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""))
-        # Clean in-sync units have nothing to approve; listing them buries actionable rows.
-        def is_quiet_in_sync(unit) -> bool:
-            return unit["observation"] == "directly-in-sync" and not unit["diagnostics"]
-        in_sync_count = sum(map(is_quiet_in_sync, payload["sync_units"]))
         for unit in payload["sync_units"]:
-            if is_quiet_in_sync(unit):
-                continue
             selection = "approved" if unit["approved"] else "unapproved"
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {unit['identity']}")
             if unit["resolution"]:
@@ -274,7 +268,7 @@ class SyncDeckCommandRunner:
             f"{summary['repository_changes']} repository changes / "
             f"{summary['live_writes']} live writes / "
             f"{summary['live_deletions']} live deletions / "
-            f"{in_sync_count} in sync"
+            f"{summary['in_sync_units']} in sync"
         )
         for item in payload["summary"]["diagnostics"]:
             print(item["message"], file=sys.stderr)
@@ -294,6 +288,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
                 for row in auxiliary if row.kind == kind]
     outcomes = {unit.identity: unit for unit in result.units} if result else {}
     units = []
+    in_sync_units = 0
     for observation in view.observations if view else ():
         identity = observation.identity.canonical
         row = rows.get(identity)
@@ -303,6 +298,11 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             *observation.diagnostics, *(row.diagnostics if row else ()),
             *(proposal.checkpoint_warnings if proposal else ()),
         )
+        # Clean in-sync units have nothing to approve; listing them buries actionable
+        # units and bloats output on large scopes, so only their count is reported.
+        if observation.state == "directly-in-sync" and not unit_diagnostics:
+            in_sync_units += 1
+            continue
         diagnostics = [
             {"code": item.code, "message": item.message, "severity": item.severity}
             for item in unit_diagnostics
@@ -350,6 +350,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
         "scope": list(dict.fromkeys([unit["identity"] for unit in units] + [row.scope for row in auxiliary])) if view else list(getattr(args, "scopes", ()) or ([args.binding] if getattr(args, "binding", None) else [])),
         "summary": {
             "sync_units": len(units),
+            "in_sync_units": in_sync_units,
             "selected_auxiliary": sum(row.included for row in auxiliary),
             "approved_units": sum(unit["approved"] for unit in units),
             "repository_changes": sum(unit["primary_source_change"] is not None for unit in units if unit["selected"]) + sum(row.approved for row in additional),

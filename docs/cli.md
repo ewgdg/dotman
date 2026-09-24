@@ -197,9 +197,9 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   of the unit's completion result. Diagnostics include `code`, `message`, and
   `severity` (`warning` or `error`). Checkpoint-only warnings do not turn completed
   required effects into execution failures.
-  Human (non-JSON) output omits units that are directly in sync without
-  diagnostics and reports their count as `N in sync` on the final summary line;
-  `--json` keeps every unit in `sync_units`.
+  Units directly in sync without diagnostics are omitted from `sync_units` and
+  `scope`; `summary.in_sync_units` counts them, and human output shows the count
+  as `N in sync` on the final summary line.
   Execution outcomes identify their repository, package instance or target scope
   canonically, including failed hooks whose units already converged.
 - Human output distinguishes direct agreement, convergence, deliberately pending

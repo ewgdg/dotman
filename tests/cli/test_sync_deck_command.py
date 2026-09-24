@@ -314,7 +314,7 @@ def test_human_summary_reports_completion_counts_and_canonical_identity(tmp_path
     assert "1 live writes" in output
 
 
-def test_human_output_omits_directly_in_sync_units_but_json_keeps_them(tmp_path, monkeypatch, capsys):
+def test_results_omit_directly_in_sync_units_and_count_them(tmp_path, monkeypatch, capsys):
     engine = make_engine(tmp_path, monkeypatch, [
         ("drift", "push-only", b"repo", b"live", ""),
         ("same", "push-only", b"same", b"same", ""),
@@ -326,8 +326,10 @@ def test_human_output_omits_directly_in_sync_units_but_json_keeps_them(tmp_path,
     assert "directly-in-sync" not in output
     assert "1 in sync" in output
     assert runner_for(engine).run(arguments()) == 0
-    identities = {unit["identity"] for unit in json.loads(capsys.readouterr().out)["sync_units"]}
-    assert identities == {"main:app.drift", "main:app.same"}
+    payload = json.loads(capsys.readouterr().out)
+    assert [unit["identity"] for unit in payload["sync_units"]] == ["main:app.drift"]
+    assert payload["scope"] == ["main:app.drift"]
+    assert payload["summary"]["in_sync_units"] == 1
 
 @pytest.mark.parametrize("projection", [
     'render = "cat $DOTMAN_SOURCE >&2; printf \'%s\' $DOTMAN_SOURCE >&2; exit 7"',
