@@ -71,6 +71,8 @@ def test_long_target_identities_shrink_so_all_columns_fit_the_terminal(tmp_path,
                 assert table.max_scroll_x == 0
                 header, short_row, long_row = (table.render_line(y).text for y in range(3))
                 assert "Resolution" in header
+                # The Selection header is no wider than its "[ ]" marker cells.
+                assert header.index("Target") <= len(" [ ]  ")
                 assert "main:app.a " in short_row
                 # Middle elision keeps both the repo prefix and the target name tail.
                 assert "main:app.very" in long_row and "…" in long_row and "off_screen" in long_row

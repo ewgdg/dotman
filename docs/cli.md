@@ -83,7 +83,7 @@ Base-backed **Merge**. Both-policy drift defaults to **Merge** with a usable Bas
 otherwise **Use live** is the visible fallback and Merge is unavailable.
 
 - Interactive Sync opens a persistent Command Deck with Approval initially off.
-  Its Textual table aligns Selection, Target, Policy, and Resolution columns.
+  Its Textual table aligns Selection (headed `✓`), Target, Policy, and Resolution columns.
   `Space` toggles Selection, `A` selects eligible rows, and `U` clears Selection.
   Selection means independent Proposal or Additional Source Change Approval,
   or direct auxiliary inclusion. Batch actions establish all final states before

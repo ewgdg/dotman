@@ -572,7 +572,8 @@ class SyncDeckApp(App[bool]):
         self.query_one("#busy").auto_refresh = 1 / 10
         self.query_one(OptionList).display = False
         table = self.query_one(WorksetTable)
-        table.add_columns("Selection", "Target", "Policy", "Resolution")
+        # The Selection header matches its narrow "[ ]" markers, leaving width for targets.
+        table.add_columns("✓", "Target", "Policy", "Resolution")
         self.show_workset()
 
     def rebuild_workset(self) -> None:
