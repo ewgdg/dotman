@@ -187,8 +187,11 @@ def test_cli_broker_password_prompt_result_and_terminal_lifecycle(
             preexec_fn=lambda: _controlling_terminal(slave),
             env={**os.environ, "TERM": "xterm-256color"},
         )
-        _wait_for(lambda: b"Exclude by number or range" in output, process, master, output)
-        os.write(master, b"\r")  # Keep the hook-only workset.
+        # Keep the initially selected hook-only workset and confirm execution.
+        _wait_for(lambda: b"Hook Work" in output, process, master, output)
+        os.write(master, b"x")
+        _wait_for(lambda: b"Confirmation" in output, process, master, output)
+        os.write(master, b"\r")
         _wait_for(
             lambda: all(path.exists() and path.read_text() for path in (ready, client_pid, provider_pid)),
             process, master, output,

@@ -40,15 +40,16 @@ See [Sync lifecycle](sync.md) for convergence semantics and
 - In one-sided Push and Pull, exit `100` from the operation's Guard omits
   its scope during planning; a Path Rule Guard omits matching child work.
   Repository exclusions cover lower scopes, while sibling scopes remain eligible.
-- Push human planning output shows `skipped (guard)`; its planning JSON exposes
-  `guard_skips` without command text. A wholly Guard-skipped one-sided operation
-  with no retained higher-scope hooks succeeds without execution or snapshots.
+- One-sided Push and Pull show each omitted scope as unselectable Guard-skipped
+  work and list it in JSON `guard_skips` without command text. A wholly
+  Guard-skipped one-sided operation with no retained higher-scope hooks succeeds
+  without execution or snapshots.
 - Sync instead intersects configured policy with surviving directional
   capabilities. For `both`, `guard_push = 100` leaves pull-only capability;
   for `push-only`, the same outcome leaves a visible non-approvable no-route
   diagnostic, not a successful omission. Guards never grant the opposite route.
-  Sync reports these diagnostics in its unit/work rows, not Push's
-  `guard_skips` output. Unattended Sync rejects a no-route blocker before
+  Sync reports these diagnostics in its unit/work rows, not as
+  `guard_skips`. Unattended Sync rejects a no-route blocker before
   mutation; interactive execution may retain unrelated approved work but still
   reports failure. Configured policy continues to determine Base eligibility.
 
@@ -63,7 +64,7 @@ including dependency closure and ownership winners. Groups are catalog
 selectors, not tracked identities, and are never returned as Sync scope
 members.
 
-The `sync` and `pull` commands resolve each input before scope resolution,
+The `sync`, `pull` and `push` commands resolve each input before scope resolution,
 using the same package-or-target lookup as `edit query`: `claude`,
 `claude.settings` or `dot:claude` resolve to their canonical identity when one
 tracked package or target matches exactly. Directory-child suffixes are kept
@@ -230,8 +231,8 @@ dotman --unattended sync main:app.settings
 - Normal CLI usage should accept a type-less selector.
 - A selector may resolve to either a package or a group.
 - Examples:
-  - `dotman push git@default`
-  - `dotman push os/arch@basic`
+  - `dotman track git@default`
+  - `dotman track os/arch@basic`
 - Selectors should be searched across configured repos in repo `order`.
 - Exact selector matches should take priority over search behavior.
 - If the same exact selector exists in multiple repos, dotman should display an interactive repo selection menu.
@@ -244,7 +245,7 @@ dotman --unattended sync main:app.settings
 - If partial lookup finds multiple matches, dotman should display an interactive selection menu.
 - In non-interactive mode, partial lookup with multiple matches should fail and print the candidates.
 - If no matches are found, dotman should fail fast.
-- Interactive ambiguity menus should use the shared CLI selector flow across `track`, `push`, `pull`, `untrack`, and `info tracked`.
+- Interactive ambiguity menus should use the shared CLI selector flow across `track`, `untrack`, and `info tracked`; `push`, `pull` and `sync` use scope resolution instead.
 - For shorter candidate lists, dotman should print a numbered menu and let the user pick.
 - Selector labels in those menus should use canonical selector text, and include the repo only as disambiguation context.
 - For longer candidate lists, dotman should prefer `fzf` when available instead of dumping a tall numbered menu.
@@ -343,75 +344,53 @@ Restore and unrelated state commands are outside this lock.
 
 ## Push
 
-- `push` is the repo-to-live command.
-- `push` should operate only on tracked package state.
-- `push` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
-- Plain `push` should perform real execution after planning, interactive exclusion, and diff review.
-- `push` should accept `--full-path` to disable human-output path compaction for preview, selection, review menus, and human execution output.
-- Global `--unattended` uses safe configured defaults for Push and rejects unresolved decisions without prompting.
-- `push` should accept `--run-noop` so hook-bearing packages still execute when the finalized selected plan has only noop target steps.
-- `push <selector>` should resolve only within tracked package state and reuse the tracked profile instead of prompting for a fresh profile.
-- Because groups are not tracked identities, tracked-package-state selector lookup for `push`, `pull`, `info tracked`, and `untrack` should resolve against tracked packages, not historical group names.
-- `push <package>` should also work when that package is currently included through another tracked explicit package entry; dotman should reuse the owning tracked profile in that case.
-- If a package selector matches multiple tracked `multi_instance` package instances, interactive mode should prompt for the specific instance and non-interactive mode should fail with the candidates.
-- `push` with no selector should replay the current explicit package entries from persisted state without changing that tracked package set.
-- `push` should fail before target planning if expanded tracked state contains ambiguous implicit singleton dependency profile contexts. Explicit singleton dependency entries suppress other implicit profile contexts for that package identity.
-- If group membership or package `depends` change in the repo, `push` should pick up newly introduced managed packages and files.
-- `push` should only touch files within the current managed selection.
+Push publishes repository outcomes to tracked live paths. It shares the frozen
+workset and Command Deck with Sync and Pull, but its only resolution is
+**Use repository** and it never writes repository sources on its own.
+
+- `dotman push [repo:package.target ...]` resolves scopes like Pull. Omit
+  scopes to use all tracked targets, including dependency closure and ownership
+  winners. Untracked input fails; use `track` first.
+- Only push-capable targets (`push-only`, `push-only-delete`, `both`) participate.
+  Drifted Proposals start approved. Space opts out; Enter inspects frozen Views
+  and the live outcome; E edits the repository source transactionally; T retries
+  a failed Proposal. There is no Resolution Intent or Merge choice.
+- Noninteractive use requires global `--unattended`, including `--dry-run` and
+  `--json`; without a terminal Push otherwise fails with `unattended-decision`.
+  Unattended Push aborts before publication if an initially approved unit fails.
+- `-d` / `--dry-run` runs frozen planning and review without live writes,
+  snapshots or Base saves. `--run-noop` retains eligible auxiliary hook work;
+  active Probes and retained hook work start selected and can be opted out.
+- Only push Guards and hooks run. Guard exit 100 omits its scope before
+  Observation and appears as unselectable **Guard skipped** work, e.g.
+  `main:app.unit (guard_push)`, in the deck, result output and JSON
+  `guard_skips`. Any other Guard failure aborts before review.
+- Real Push deletes the Sync Base of statically ineligible selected units before
+  Guards and review, as described in [Sync policy maintenance](sync.md#policy-maintenance).
 - A file target's missing repository source is a typed Missing outcome: Push
   deletes the selected live file, or plans no content change if live is also
   missing. Render does not run on an absent source, even when configured; Missing
   is not an empty file or input to a generator. Use explicit `type = "file"` when
   both paths are absent and file-kind inference is otherwise impossible.
-  Deletion retains normal review, symlink safety, snapshot, and checkpoint rules;
-  preview reports it without mutating live files or saving a Base.
+- Before the first live mutation of a real Push, dotman creates one manager-level
+  snapshot of the paths it will change. Hook-only work and direct agreement
+  create none. A snapshot survives later failure for inspection or `restore`.
+- Publication is fail-fast and nontransactional: completed writes survive later
+  failure, and remaining work is reported skipped.
 - Fresh direct agreement and successful eligible publication may save the frozen
-  repository-space outcome as a Sync Base, including uncommitted content and
-  content outside Git repositories. Publication acknowledgment waits for all
-  required unit effects, including chmod, without an extra Render. Required Push
-  Render succeeds during planning; it is not deferred or retried after hooks.
-  Checkpoint-only failures warn without stopping later work; preview never saves
-  a Base. Structured step results report `converged`, `acknowledged`,
-  `checkpoint_warning`, and `checkpoint_warning_code` separately. Human output
-  treats Base saves as bookkeeping: checkpoint steps are not numbered, counted
-  or printed on success, and a push whose only work is direct agreement reports
-  no pending target actions. Base problems surface only as stderr warnings or a
-  failed checkpoint line.
-- In interactive mode, `push` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.
-- Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
-- An explicit package entry that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
-- Synthetic hook-only selection rows should stay owner-scoped, not per-hook command rows. Supported rows are repo (`[hooks] repo`), package (`[hooks] repo:package`), and target (`[hooks] repo:package.target`).
-- After the interactive selection menu, `push` should enter an inspection-only diff review stage before continuing.
-- After diff review accepts, `push` should execute in nested repo/package/target order so repo and target hooks keep their real scope boundaries.
-- Before the first live mutation of a real `push`, dotman should create one manager-level snapshot for the finalized selected plan.
-- That snapshot should record enough state to restore the mutated paths later.
-- If the finalized `push` work is hook-only or only acknowledges direct agreement,
-  dotman does not create a snapshot. A checkpoint step cannot start a snapshot
-  ahead of a later live mutation.
-- If planning guards skip work before the first live mutation, dotman keeps going and creates the snapshot only when the first real mutation is about to begin.
-- `file_symlink_mode = prompt` means interactive replace is allowed; `follow` means dotman writes through to the resolved target.
-- `dir_symlink_mode = fail` rejects symlinked directory roots; `follow` means dotman manages the resolved tree.
-- `push --dry-run` should not create a snapshot.
-- Default symlink policy should be `file_symlink_mode = prompt` and `dir_symlink_mode = fail`; CLI flags can override either one for a single run.
-- `push` should fail fast when the active mode does not allow the live symlink shape.
-- If a real `push` fails after snapshot creation, dotman should keep that snapshot so the user can inspect it or restore it manually.
-- The interactive diff review stage should stay inspection-only.
-- Diff review should use `git diff --no-index --color=auto`.
-- Diff review headers should use explicit `live/...` and `repo/...` paths instead of opaque `before-*` or `after-*` temp names.
-- Diff review headers should compact long compared paths for readability, and should additionally collapse the current home directory to `~` instead of a machine-specific absolute prefix.
-- Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
-- Each reviewed diff should print the destination path under the banner so directory-target child diffs are identifiable even when the target label names the directory root.
-- Mode-only diff review should follow Git semantics: show executable-bit changes through `git diff` mode lines, but do not show or plan non-Git permission drift such as `600` vs `644` for directory-target child files.
-- In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
-- Review commands should support inspecting one item, inspecting all items, listing items, skipping remaining review, or aborting.
-- If the requested selector is not currently tracked, `push` should fail instead of implicitly creating or retargeting state. The user should use `track` for that.
-- Group composition should let a user keep a stable entrypoint such as `host/arch-niri` without manually listing every lower-level group.
-- Examples:
-  - `dotman push --dry-run git`
-  - `dotman push -d`
-  - `dotman push --full-path git`
-  - `dotman push git`
-  - `dotman push`
+  repository-space outcome as a Sync Base. Checkpoint-only failures warn without
+  stopping later work.
+- `file_symlink_mode = prompt` requires explicit per-row link replacement
+  authorization (Shift+L); unattended Push cannot grant it. A dangling live link
+  is replaceable the same way for push-only work; anything with pull capability
+  still rejects it, so it is never read as a deleted live file. `follow` writes through
+  to the resolved target. `dir_symlink_mode = fail` rejects symlinked directory
+  roots; `follow` manages the resolved tree. CLI flags override either mode for one run.
+- Results use the shared Sync document: drifted units report `converged`,
+  `would-converge`, `pending` or a failure status.
+
+Examples: `dotman push main:git.config`, `dotman --unattended push -d`,
+`dotman --json --unattended push`.
 
 ## Pull
 
@@ -478,6 +457,14 @@ Examples: `dotman pull main:git.config`,
 - `restore` should accept `-d` / `--dry-run` as an explicit preview-only mode selector.
 - `restore` should accept `--full-path` to disable human-output path compaction for preview, review menus, and human execution output.
 - Plain `restore` should perform real execution after planning and inspection-only diff review.
+- Diff review should use `git diff --no-index --color=auto`.
+- Diff review headers should use explicit `live/...` and `repo/...` paths instead of opaque `before-*` or `after-*` temp names.
+- Diff review headers should compact long compared paths for readability, and should additionally collapse the current home directory to `~` instead of a machine-specific absolute prefix.
+- Each reviewed diff should print a compact banner before the diff output so sequential reviews do not run together.
+- Each reviewed diff should print the destination path under the banner so directory-target child diffs are identifiable even when the target label names the directory root.
+- Mode-only diff review should follow Git semantics: show executable-bit changes through `git diff` mode lines, but do not show or plan non-Git permission drift such as `600` vs `644` for directory-target child files.
+- In interactive review, diff output should prefer Git's pager and fall back to `less -FRX -R` when the effective pager resolves to `cat`.
+- Review commands should support inspecting one item, inspecting all items, listing items, skipping remaining review, or aborting.
 - `restore` should compare the current live state against the selected snapshot state without consulting the current repo contents.
 - `restore` should restore only the live paths recorded by the selected snapshot.
 - `restore` should not run package hooks.

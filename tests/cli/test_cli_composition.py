@@ -109,7 +109,10 @@ def test_push_requires_execution_consent_without_terminal(json_output, tmp_path,
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     flags = ["--json"] if json_output else []
     assert main(["--config", str(config), *flags, "push"]) == 1
-    assert "--unattended" in capsys.readouterr().err
+    # JSON reports the refusal in the result document; human output on stderr.
+    captured = capsys.readouterr()
+    assert "Push requires a terminal or explicit --unattended." in (captured.out if json_output else captured.err)
+    assert not (tmp_path / "home/.gitconfig").exists()
 
 
 def test_sync_accepts_full_path_display_option() -> None:

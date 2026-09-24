@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import dotman.cli_interaction as cli
 from dotman.cli import main
 from dotman.models import SnapshotConfig, TargetPlan
 from dotman.snapshot import create_push_snapshot, list_snapshots
+from dotman.sync_session import AuthorizeSymlinkReplacement, SetApproval
 from tests.helpers import capture_parser_help, make_package_plan, write_named_manager_config
 
 
@@ -134,6 +134,22 @@ def test_info_snapshot_help_lists_full_path_flag(capsys) -> None:
     assert "--full-path" in output
 
 
+def _authorize_symlink_replacement_in_command_deck(monkeypatch) -> None:
+    """Symlinked live files need explicit Command Deck authorization before Push replaces them."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    def authorize(session, *, use_color):
+        for row in session.view.rows:
+            view = session.view
+            session.dispatch(AuthorizeSymlinkReplacement(view.session_id, view.revision, row.row_id))
+            view = session.view
+            session.dispatch(SetApproval(view.session_id, view.revision, row.row_id, True))
+        return all(row.approved and row.symlink_authorized for row in session.view.rows)
+
+    monkeypatch.setattr("dotman.sync_deck.run_command_deck", authorize)
+
+
 def test_push_execute_creates_snapshot_and_restore_restores_latest_snapshot(
     tmp_path: Path,
     monkeypatch,
@@ -233,7 +249,6 @@ def test_push_execute_replaces_symlinked_target_and_restore_restores_link(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     repo_root = tmp_path / "repo"
     _write_snapshot_execution_repo(repo_root)
@@ -246,14 +261,7 @@ def test_push_execute_replaces_symlinked_target_and_restore_restores_link(
     real_live_path.write_text("before push\n", encoding="utf-8")
     live_path.symlink_to(real_live_path)
 
-    answers = iter(["y"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
-    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False, unattended=False: True)
-    monkeypatch.setattr(
-        cli,
-        "filter_plans_for_interactive_selection",
-        lambda *, plans, operation, json_output, full_paths=False, run_noop=False: plans,
-    )
+    _authorize_symlink_replacement_in_command_deck(monkeypatch)
 
     push_exit_code = main(["--config", str(config_path), "push"])
 
@@ -326,7 +334,6 @@ def test_push_execute_replaces_broken_symlink_and_restore_restores_link(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     repo_root = tmp_path / "repo"
     _write_snapshot_execution_repo(repo_root)
@@ -338,14 +345,7 @@ def test_push_execute_replaces_broken_symlink_and_restore_restores_link(
     broken_target = live_path.parent / "missing-config.txt"
     live_path.symlink_to(broken_target)
 
-    answers = iter(["y"])
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(answers))
-    monkeypatch.setattr(cli, "review_plans_for_interactive_diffs", lambda *, plans, operation, json_output, full_paths=False, unattended=False: True)
-    monkeypatch.setattr(
-        cli,
-        "filter_plans_for_interactive_selection",
-        lambda *, plans, operation, json_output, full_paths=False, run_noop=False: plans,
-    )
+    _authorize_symlink_replacement_in_command_deck(monkeypatch)
 
     push_exit_code = main(["--config", str(config_path), "push"])
 

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from dotman.cli import main
@@ -15,7 +17,7 @@ def test_real_push_discards_ineligible_base_before_failing_guard(tmp_path, monke
     manifest = tmp_path / 'repo/packages/app/package.toml'
     manifest.write_text(manifest.read_text().replace('sync_policy = "both"', f'sync_policy = "{policy}"')
                         + '\n[targets.unit.hooks]\nguard_push = "exit 9"')
-    args = ['--config', str(engine.config.config_path), '--json', 'push']
+    args = ['--config', str(engine.config.config_path), '--json', '--unattended', 'push']
     if preview:
         args.append('--dry-run')
     assert main(args) != 0
@@ -46,7 +48,7 @@ def test_push_query_retains_unselected_and_eligible_bases(tmp_path, monkeypatch,
                         + '\n[targets.selected.hooks]\nguard_push = "exit 9"')
     peer_manifest = peer / 'package.toml'
     peer_manifest.write_text(peer_manifest.read_text().replace('sync_policy = "both"', 'sync_policy = "push-only"'))
-    assert main(['--config', str(engine.config.config_path), '--json', 'push', 'main:app']) != 0
+    assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push', 'main:app']) != 0
     capsys.readouterr()
     with SyncBaseStore.open(engine._tracked_state_context.state_root, 'main', read_only=True) as store:
         assert store.read(b'main:app.selected') is None
@@ -57,7 +59,7 @@ def test_push_query_retains_unselected_and_eligible_bases(tmp_path, monkeypatch,
 def test_push_invalid_static_resolution_preserves_base(tmp_path, monkeypatch, capsys):
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'both', b'same', b'same', '')])
     store_record(engine)
-    assert main(['--config', str(engine.config.config_path), '--json', 'push', 'main:app.unknown']) != 0
+    assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push', 'main:app.unknown']) != 0
     capsys.readouterr()
     with SyncBaseStore.open(engine._tracked_state_context.state_root, 'main', read_only=True) as store:
         assert store.read(b'main:app.unit') is not None
@@ -94,7 +96,7 @@ sync_policy = "push-only"
 [targets.tree.hooks]
 guard_push = "exit 9"
 ''')
-    assert main(['--config', str(engine.config.config_path), '--json', 'push']) != 0
+    assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push']) != 0
     capsys.readouterr()
     with SyncBaseStore.open(engine._tracked_state_context.state_root, 'main', read_only=True) as store:
         assert store.read(b'main:app.tree/selected') is None
@@ -111,10 +113,11 @@ def test_push_ineligible_base_maintenance_failure_warns_without_blocking(tmp_pat
     lock.chmod(0o644)
     before = record.read_bytes()
     assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push']) == 0
-    output = capsys.readouterr()
-    assert 'warning:' in output.err
-    assert 'main:app.unit' in output.err
-    assert 'Sync Base' in output.err
+    unit = json.loads(capsys.readouterr().out)['sync_units'][0]
+    assert unit['identity'] == 'main:app.unit'
+    assert unit['result'] == 'converged'
+    assert {'code': 'base-maintenance-failed', 'severity': 'warning'}.items() <= unit['diagnostics'][0].items()
+    assert 'Sync Base' in unit['diagnostics'][0]['message']
     assert record.read_bytes() == before
     assert lock.stat().st_mode & 0o777 == 0o644
     assert (tmp_path / 'live/unit').read_bytes() == b'repo'
@@ -126,7 +129,7 @@ def test_push_lock_contention_never_cleans_bases(tmp_path, monkeypatch, capsys):
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'push-only', b'same', b'same', '')])
     store_record(engine)
     with OperationLock.acquire(engine._tracked_state_context.state_root):
-        assert main(['--config', str(engine.config.config_path), '--json', 'push']) != 0
+        assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push']) != 0
     capsys.readouterr()
     with SyncBaseStore.open(engine._tracked_state_context.state_root, 'main', read_only=True) as store:
         assert store.read(b'main:app.unit') is not None

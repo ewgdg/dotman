@@ -46,19 +46,10 @@ def test_committed_checkpoint_reports_durability_warning_without_losing_acknowle
 
     monkeypatch.setattr(SyncBaseStore, 'replace', fail_after_commit)
     assert main(['--config', str(engine.config.config_path), '--json', '--unattended', operation]) == 0
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    if operation == 'push':
-        checkpoint = next(step for package in payload['packages'] for step in package['steps']
-                          if step['kind'] == 'checkpoint')
-        assert checkpoint['acknowledged']
-        assert checkpoint['checkpoint_warning_code'] == 'base-durability-uncertain'
-        assert 'not advanced' not in output.err
-    else:
-        unit = payload['sync_units'][0]
-        assert unit['base']['acknowledged']
-        assert unit['diagnostics'][0]['code'] == 'base-durability-uncertain'
-        assert unit['diagnostics'][0]['severity'] == 'warning'
+    unit = json.loads(capsys.readouterr().out)['sync_units'][0]
+    assert unit['base']['acknowledged']
+    assert unit['diagnostics'][0]['code'] == 'base-durability-uncertain'
+    assert unit['diagnostics'][0]['severity'] == 'warning'
 
 
 @pytest.mark.parametrize('fails', [False, True])
@@ -71,11 +62,11 @@ def test_push_human_reports_base_only_through_warnings(tmp_path, monkeypatch, ca
             raise SyncBaseStoreError('checkpoint unavailable')
         monkeypatch.setattr(SyncBaseStore, 'replace', fail)
     assert main(['--config', str(engine.config.config_path), '--unattended', 'push']) == 0
-    output = capsys.readouterr()
-    assert 'update' in output.out
-    # Base state is reported only through warnings, never as a result line.
-    assert 'Base' not in output.out
-    assert ('warning: Sync Base not advanced for main:app.unit' in output.err) == fails
+    output = capsys.readouterr().out
+    assert 'converged' in output
+    # Base state is reported only through unit diagnostics, never as a result line.
+    assert 'Base' not in output
+    assert ('checkpoint unavailable' in output) == fails
     assert (tmp_path / 'live/unit').read_bytes() == b'repo'
 
 

@@ -324,7 +324,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_dry_run_argument(push_parser)
     add_full_path_argument(push_parser)
-    add_tracked_package_argument(push_parser, required=False)
+    push_parser.add_argument(
+        "scopes", nargs="*", metavar="<repo:package.target>",
+        help="Exact tracked scopes (default: all tracked targets)",
+    )
     add_run_noop_argument(push_parser)
 
     pull_parser = subparsers.add_parser(

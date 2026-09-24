@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-import dotman.cli_interaction as cli
 import dotman.cli_emit as cli_emit
 from dotman.cli import main
 from dotman.sync_session import EditProposal, SetApproval
@@ -165,20 +164,18 @@ def test_push_cli_executes_tracked_binding_and_emits_json_results(
     assert stat.S_IMODE(live_path.stat().st_mode) == 0o600
     assert payload["mode"] == "execute"
     assert payload["operation"] == "push"
-    assert payload["packages"][0]["package_id"] == "app"
-    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "pre_push",
-        "create",
-        "chmod",
-        "acknowledge",
-        "post_push",
+    assert payload["status"] == "completed"
+    unit = payload["sync_units"][0]
+    assert unit["identity"] == "fixture:app.config"
+    assert unit["result"] == "converged"
+    assert unit["base"]["acknowledged"] is True
+    assert unit["diagnostics"] == []
+    assert [(step["action"], step["status"]) for step in payload["stages"]] == [
+        ("pre_push", "ok"),
+        ("write", "ok"),
+        ("chmod", "ok"),
+        ("post_push", "ok"),
     ]
-    checkpoint = next(step for step in payload["packages"][0]["steps"] if step["kind"] == "checkpoint")
-    assert checkpoint["status"] == "ok"
-    assert checkpoint["converged"] is True
-    assert checkpoint["acknowledged"] is True
-    assert checkpoint["checkpoint_warning"] is None
-    assert checkpoint["checkpoint_warning_code"] is None
     assert payload["guard_skips"] == []
 
 
@@ -338,12 +335,8 @@ def test_push_file_target_repairs_chmod_drift_without_content_change(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert [step["action"] for step in payload["packages"][0]["steps"]] == [
-        "pre_push",
-        "chmod",
-        "acknowledge",
-        "post_push",
-    ]
+    assert [effect["kind"] for effect in payload["sync_units"][0]["effects"]] == ["chmod"]
+    assert [step["action"] for step in payload["stages"]] == ["pre_push", "chmod", "post_push"]
     assert live_path.read_text(encoding="utf-8") == "repo value\n"
     assert stat.S_IMODE(live_path.stat().st_mode) == 0o600
 
@@ -436,14 +429,17 @@ def test_push_cli_dry_run_emits_symlink_hazard_metadata(
 
     exit_code = main(["--unattended", "--config", str(config_path), "--json", "push", "--dry-run"])
 
-    assert exit_code == 0
+    # Unattended preview cannot authorize replacing the link, so the hazard is a unit error.
+    assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
-    warning = payload["warnings"][0]
-    assert warning["replaceable"] is True
-    assert warning["live_path"] == str(live_root / "config.txt")
-    assert warning["symlink_target"] == str(symlink_target)
-    assert warning["target_kind"] == "file"
-    assert payload["package_entries"][0]["package_id"] == "app"
+    unit = payload["sync_units"][0]
+    assert unit["identity"] == "fixture:app.config"
+    assert unit["approved"] is False
+    assert unit["symlink_replacement_authorized"] is False
+    assert [item["code"] for item in unit["diagnostics"]] == ["symlink-authorization-required"]
+    assert payload["stages"] == []
+    assert (live_root / "config.txt").is_symlink()
+    assert symlink_target.read_text(encoding="utf-8") == "live value\n"
 
 
 
@@ -492,9 +488,12 @@ def test_push_cli_fails_fast_for_symlinked_live_target_in_non_interactive_mode(
     exit_code = main(["--unattended", "--config", str(config_path), "push"])
 
     assert exit_code == 1
-    error_output = capsys.readouterr().err
-    assert "symlink" in error_output
-    assert str(symlink_target) in error_output
+    output = capsys.readouterr().out
+    assert "[unapproved] fixture:app.config" in output
+    assert "Live symlink replacement requires explicit authorization" in output
+    assert ":: failed" in output
+    assert (live_root / "config.txt").is_symlink()
+    assert symlink_target.read_text(encoding="utf-8") == "live value\n"
 
 
 
@@ -547,12 +546,15 @@ def test_push_cli_fails_fast_for_symlinked_directory_live_target_in_non_interact
     real_live_root.mkdir(parents=True)
     live_root.symlink_to(real_live_root, target_is_directory=True)
 
-    exit_code = main(["--unattended", "--config", str(config_path), "push"])
+    exit_code = main(["--unattended", "--config", str(config_path), "--json", "push"])
 
     assert exit_code == 1
-    error_output = capsys.readouterr().err
-    assert "symlink" in error_output
-    assert str(live_root) in error_output
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "failed"
+    assert {item["code"] for unit in payload["sync_units"] for item in unit["diagnostics"]} == {"directory-symlink"}
+    assert payload["stages"] == []
+    assert live_root.is_symlink()
+    assert list(real_live_root.iterdir()) == []
 
 
 
@@ -583,66 +585,12 @@ def test_push_cli_follows_directory_symlink_when_configured(
 
 
 
-def test_push_cli_human_execution_emits_package_timeline_and_nested_logs(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    _write_basic_execution_repo(repo_root)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    exit_code = main(["--unattended", "--config", str(config_path), "push"])
-
-    assert exit_code == 0
-    captured = capsys.readouterr()
-    assert captured.err == ""
-    output = captured.out
-    assert "\n:: executing push\n" in output
-    assert "packages: 1" in output
-    # Sync Base bookkeeping is not user work: no step, no count, no status line.
-    assert "steps: 4" in output
-    assert ":: fixture:app@default" in output
-    assert "[1/4] pre_push" in output
-    assert "[3/4] chmod" in output
-    assert "600" in output
-    assert "acknowledge" not in output
-    assert "Base" not in output
-    assert "[4/4] post_push" in output
-    assert "guard push" not in output
-    assert "post push" in output
-    assert "\n    done\n" not in output
-
-
-
-def test_push_cli_human_execution_colors_step_status_only(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
-    monkeypatch.setattr("dotman.cli.colors_enabled", lambda: True)
-
-    repo_root = tmp_path / "repo"
-    _write_basic_execution_repo(repo_root)
-    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    _write_tracked_binding(tmp_path / "state")
-
-    exit_code = main(["--unattended", "--config", str(config_path), "push"])
-
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "\033[1;32mok\033[0m" in output
-    assert "\033[1;32mdone\033[0m" not in output
-
+def _write_in_sync_live_config(home: Path) -> Path:
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo value\n", encoding="utf-8")
+    live_path.chmod(0o600)
+    return live_path
 
 
 def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(
@@ -658,30 +606,23 @@ def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(
     _write_basic_execution_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     _write_tracked_binding(tmp_path / "state")
+    _write_in_sync_live_config(home)
 
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("repo value\n", encoding="utf-8")
-    live_path.chmod(0o600)
-
-    exit_code = main(["--unattended", "--config", str(config_path), "push", "--run-noop"])
+    exit_code = main(["--unattended", "--config", str(config_path), "--json", "push", "--run-noop"])
 
     assert exit_code == 0
-    captured = capsys.readouterr()
-    assert captured.err == ""
-    output = captured.out
-    assert ":: executing push" in output
-    assert "packages: 1" in output
-    assert "steps: 2" in output
-    assert "[1/2] pre_push" in output
-    assert "acknowledge" not in output
-    assert "Base" not in output
-    assert "[2/2] post_push" in output
-    assert "guard push" not in output
-    assert "pre push" in output
-    assert "post push" in output
-    assert "noop" not in output
-    assert " create " not in output
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sync_units"] == []
+    assert payload["summary"]["in_sync_units"] == 1
+    assert payload["hook_work"] == [
+        {"identity": "fixture:app", "selected": True, "directions": ["push"], "diagnostics": []},
+    ]
+    assert [(step["action"], step["status"]) for step in payload["stages"]] == [
+        ("pre_push", "ok"),
+        ("post_push", "ok"),
+    ]
+    # Hook-only work publishes nothing, so there is nothing to snapshot.
+    assert not (tmp_path / "xdg-data" / "dotman" / "snapshots").exists()
 
 
 def test_push_cli_human_execution_hides_direct_agreement_base_save(
@@ -697,11 +638,7 @@ def test_push_cli_human_execution_hides_direct_agreement_base_save(
     _write_basic_execution_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     _write_tracked_binding(tmp_path / "state")
-
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("repo value\n", encoding="utf-8")
-    live_path.chmod(0o600)
+    _write_in_sync_live_config(home)
 
     exit_code = main(["--unattended", "--config", str(config_path), "push"])
 
@@ -709,8 +646,8 @@ def test_push_cli_human_execution_hides_direct_agreement_base_save(
     captured = capsys.readouterr()
     assert captured.err == ""
     output = captured.out
-    assert "no pending target actions" in output
-    assert ":: fixture:app@default" not in output
+    assert "fixture:app" not in output
+    assert "in-sync: 1" in output
     assert "acknowledge" not in output
     assert "Base" not in output
 
@@ -721,28 +658,23 @@ def test_push_cli_run_noop_dry_run_json_shows_hook_only_package(
     capsys,
 ) -> None:
     home = tmp_path / "home"
-    data_home = tmp_path / "data"
     home.mkdir()
-    data_home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
 
     repo_root = tmp_path / "repo"
     _write_basic_execution_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     _write_tracked_binding(tmp_path / "state")
-
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("repo value\n", encoding="utf-8")
-    live_path.chmod(0o600)
+    _write_in_sync_live_config(home)
 
     exit_code = main(["--unattended", "--config", str(config_path), "--json", "push", "--dry-run", "--run-noop"])
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["package_entries"][0]["targets"] == []
-    assert set(payload["package_entries"][0]["hooks"]) == {"pre_push", "post_push"}
+    assert payload["mode"] == "dry-run"
+    assert payload["sync_units"] == []
+    assert [(work["identity"], work["directions"]) for work in payload["hook_work"]] == [("fixture:app", ["push"])]
+    assert payload["stages"] == []
 
 
 def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_and_does_not_create_snapshot(
@@ -751,17 +683,13 @@ def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_and_does_not_create_s
     capsys,
 ) -> None:
     home = tmp_path / "home"
-    data_home = tmp_path / "data"
     home.mkdir()
-    data_home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
 
     repo_root = tmp_path / "repo"
     _write_basic_execution_repo(repo_root, guard_push_exit_code=100)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
     _write_tracked_binding(tmp_path / "state")
-
     live_path = home / ".config" / "app" / "config.txt"
     live_path.parent.mkdir(parents=True)
     live_path.write_text("repo value\n", encoding="utf-8")
@@ -770,11 +698,12 @@ def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_and_does_not_create_s
 
     assert exit_code == 0
     output = capsys.readouterr().out
-    assert "skipped (guard)" in output
-    assert "pre push" not in output
-    assert "post push" not in output
-    snapshots_root = data_home / "dotman" / "snapshots"
-    assert not snapshots_root.exists() or list(snapshots_root.iterdir()) == []
+    assert "[skipped] fixture:app (guard_push)" in output
+    assert "Guard skipped: guard push" in output
+    assert "Hook Work" not in output
+    # Guard omission also skips the pending chmod repair.
+    assert stat.S_IMODE(live_path.stat().st_mode) != 0o600
+    assert not (tmp_path / "xdg-data" / "dotman" / "snapshots").exists()
 
 
 def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_in_json(
@@ -783,11 +712,8 @@ def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_in_json(
     capsys,
 ) -> None:
     home = tmp_path / "home"
-    data_home = tmp_path / "data"
     home.mkdir()
-    data_home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
 
     repo_root = tmp_path / "repo"
     _write_basic_execution_repo(repo_root, guard_push_exit_code=100)
@@ -799,9 +725,14 @@ def test_push_cli_run_noop_hook_only_plan_soft_skips_guard_in_json(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "execute"
-    assert payload["package_entries"] == []
-    assert payload["guard_skips"][0]["scope"] == "fixture:app"
-    assert payload["guard_skips"][0]["reason"] == "guard push"
+    assert payload["sync_units"] == []
+    assert payload["hook_work"] == []
+    assert payload["stages"] == []
+    assert payload["guard_skips"] == [{
+        "identity": "fixture:app", "direction": "push", "scope_kind": "package",
+        "path_rule_pattern": None, "reason": "guard push",
+    }]
+    assert not (home / ".config" / "app" / "config.txt").exists()
 
 
 def test_push_cli_fails_fast_and_skips_post_push_after_failed_guard(
@@ -821,16 +752,16 @@ def test_push_cli_fails_fast_and_skips_post_push_after_failed_guard(
     exit_code = main(["--unattended", "--config", str(config_path), "--json", "push"])
 
     assert exit_code == 1
-    captured = capsys.readouterr()
-    live_path = home / ".config" / "app" / "config.txt"
-    assert not live_path.exists()
-    assert captured.out == ""
-    assert "GuardPlanningError" in captured.err
-    assert "guard_push failed with exit 1: guard push failed" in captured.err
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "failed"
+    assert payload["summary"]["diagnostics"] == [
+        {"code": "planning-failed", "message": "fixture:app guard_push failed with exit 1"},
+    ]
+    assert payload["stages"] == []
+    assert not (home / ".config" / "app" / "config.txt").exists()
 
 
-
-def test_push_cli_human_execution_prints_package_skipped_only_for_skipped_packages(
+def test_push_cli_guard_failure_blocks_every_package_in_the_push(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -840,12 +771,12 @@ def test_push_cli_human_execution_prints_package_skipped_only_for_skipped_packag
     monkeypatch.setenv("HOME", str(home))
 
     failing_repo_root = tmp_path / "repo-failing"
-    skipped_repo_root = tmp_path / "repo-skipped"
+    healthy_repo_root = tmp_path / "repo-healthy"
     _write_basic_execution_repo(failing_repo_root, failing_guard=True, package_id="app", live_dir_name="app")
-    _write_basic_execution_repo(skipped_repo_root, package_id="other", live_dir_name="other")
+    _write_basic_execution_repo(healthy_repo_root, package_id="other", live_dir_name="other")
     config_path = write_named_manager_config(
         tmp_path,
-        {"fixture-a": failing_repo_root, "fixture-b": skipped_repo_root},
+        {"fixture-a": failing_repo_root, "fixture-b": healthy_repo_root},
     )
     _write_tracked_binding(tmp_path / "state", repo_name="fixture-a", selector="app")
     _write_tracked_binding(tmp_path / "state", repo_name="fixture-b", selector="other")
@@ -854,11 +785,10 @@ def test_push_cli_human_execution_prints_package_skipped_only_for_skipped_packag
 
     assert exit_code == 1
     captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "fixture-a:app" in captured.err
-    assert "guard_push failed with exit 1: guard push failed" in captured.err
-    assert "fixture-b:other" not in captured.err
-
+    assert ":: failed" in captured.out
+    assert "guard_push failed with exit 1" in captured.err
+    assert not (home / ".config" / "app" / "config.txt").exists()
+    assert not (home / ".config" / "other" / "config.txt").exists()
 
 
 def test_capture_patch_cli_emits_patched_repo_bytes(

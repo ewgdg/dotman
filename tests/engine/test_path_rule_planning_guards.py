@@ -309,7 +309,7 @@ def test_path_rule_guard_hard_failure_exposes_target_and_pattern_metadata(
     assert caught.value.path_rule_pattern == "*.txt"
 
 
-def test_all_path_rule_work_skipped_cli_reports_pattern_and_bypasses_interaction(
+def test_all_path_rule_work_skipped_cli_reports_pattern_without_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -331,22 +331,21 @@ def test_all_path_rule_work_skipped_cli_reports_pattern_and_bypasses_interaction
     (source_root / "one.txt").write_text("one\n", encoding="utf-8")
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
-    assert main(["--config", str(config_path), "push"]) == 0
+    assert main(["--config", str(config_path), "--unattended", "push"]) == 0
     human_output = capsys.readouterr().out
-    assert "skipped (guard) fixture:app.config (path rule: *.txt) (directory disabled)" in human_output
+    assert "[skipped] fixture:app.config (guard_push) (path rule: *.txt)" in human_output
+    assert "Guard skipped: directory disabled" in human_output
+    assert not (home / ".config/app/one.txt").exists()
 
-    assert main(["--config", str(config_path), "--json", "push", "--dry-run"]) == 0
+    assert main(["--config", str(config_path), "--json", "--unattended", "push", "--dry-run"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["package_entries"] == []
+    assert payload["sync_units"] == []
     assert payload["guard_skips"] == [
         {
-            "bound_profile": None,
-            "package_id": "app",
+            "identity": "fixture:app.config",
+            "direction": "push",
+            "scope_kind": "path_rule",
             "path_rule_pattern": "*.txt",
             "reason": "directory disabled",
-            "repo": "fixture",
-            "scope": "fixture:app.config",
-            "scope_kind": "path_rule",
-            "target_name": "config",
         }
     ]

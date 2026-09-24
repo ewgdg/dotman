@@ -718,7 +718,7 @@ class SyncDeckApp(App[bool]):
         self.query_one("#detail").display = True
         self.query_one("#review").display = False
         self.query_one("#confirmation").display = False
-        self.query_one("#title", Static).update(":: Sync Command Deck")
+        self.query_one("#title", Static).update(f":: {self.deck.session.view.operation.title()} Command Deck")
         self.update_workset()
         self.query_one(WorksetTable).focus()
 

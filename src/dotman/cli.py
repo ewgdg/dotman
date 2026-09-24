@@ -13,8 +13,8 @@ from dotman.interaction import Interaction, TerminalInteraction
 from dotman.standalone_commands import StandaloneCommandRunner
 from dotman.state_commands import StateCommandRunner
 from dotman.sync_base_store import SyncBaseStoreError
-from dotman.sync_commands import SyncCommandRunner
-from dotman.sync_deck_command import SyncDeckCommandRunner, PullDeckCommandRunner
+from dotman.restore_commands import RestoreCommandRunner
+from dotman.sync_deck_command import SyncDeckCommandRunner, PullDeckCommandRunner, PushDeckCommandRunner
 
 
 INTERRUPTED_EXIT_CODE = 130
@@ -66,7 +66,12 @@ def main(
                 use_color=use_color,
                 interaction=active_interaction,
             ),
-            SyncCommandRunner(
+            PushDeckCommandRunner(
+                engine_factory=engine_factory,
+                use_color=use_color,
+                interaction=active_interaction,
+            ),
+            RestoreCommandRunner(
                 engine_factory=engine_factory,
                 use_color=use_color,
             ),

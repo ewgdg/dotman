@@ -31,10 +31,9 @@ Focused CLI responsibilities live in dedicated modules:
   workflows
 - `state_commands.py` — track, untrack, add, and edit workflows composed with
   command-specific resolution and editor interfaces
-- `sync_commands.py` — typed push, pull, and restore planning, review, preview,
-  and execution workflows
-- `sync_deck_command.py` — Sync CLI authorization and final output over public
-  session views and commands
+- `restore_commands.py` — snapshot restore review, preview, and execution workflow
+- `sync_deck_command.py` — Sync, Pull and Push CLI authorization and final output
+  over public session views and commands
 - `sync_deck.py` — Textual DataTable workset, scrollable frozen review and
   confirmation over public SyncSession commands; ordinary terminal prompts
   continue to use `prompt_toolkit`
@@ -329,7 +328,6 @@ store handles or execution steps.
 References: [Python file locking](https://docs.python.org/3/library/fcntl.html#fcntl.flock)
 and [descriptor-relative file access](https://docs.python.org/3/library/os.html#os.open).
 
-`sync_deck_command.py` adapts Sync and Pull to the shared Command Deck.
+`sync_deck_command.py` adapts Sync, Pull and Push to the shared Command Deck.
 The engine opens Pull through `open_pull_session` and Push through
-`open_push_session`. The `push` command still uses its own plan and execution
-runner until it moves to the deck ([#85](https://github.com/ewgdg/dotman/issues/85)).
+`open_push_session`.

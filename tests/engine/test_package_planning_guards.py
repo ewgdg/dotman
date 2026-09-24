@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dotman import sync_commands
+from dotman import sync_deck_command
 from dotman.cli import main
 from dotman.engine import DotmanEngine
 from dotman.execution import build_execution_session
@@ -297,15 +297,17 @@ def test_all_guard_skipped_cli_reports_before_ui_and_returns_without_execution(
             self.closed = True
 
     sink = RecordingSink()
-    monkeypatch.setattr(sync_commands, "make_planning_sink", lambda *, json_output: sink)
+    monkeypatch.setattr(sync_deck_command, "make_planning_sink", lambda *, json_output, unit: sink)
 
-    exit_code = main(["--config", str(config_path), "push"])
+    exit_code = main(["--config", str(config_path), "--unattended", "push"])
 
     assert exit_code == 0
     assert sink.closed is True
     output = capsys.readouterr().out
-    assert "skipped (guard) fixture:app (host mismatch)" in output
-    assert "executing push" not in output
+    assert "[skipped] fixture:app (guard_push)" in output
+    assert "Guard skipped: host mismatch" in output
+    assert "[approved]" not in output
+    assert not (home / ".config/app/config.txt").exists()
 
 
 def test_guard_skip_json_is_structured_and_omits_command_text(
@@ -327,20 +329,20 @@ def test_guard_skip_json_is_structured_and_omits_command_text(
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
 
-    exit_code = main(["--config", str(config_path), "--json", "push", "--dry-run"])
+    exit_code = main(["--config", str(config_path), "--json", "--unattended", "push", "--dry-run"])
 
     assert exit_code == 0
     raw_output = capsys.readouterr().out
     payload = json.loads(raw_output)
     assert payload["guard_skips"] == [
         {
-            "bound_profile": None,
-            "package_id": "app",
-            "reason": "json reason",
-            "repo": "fixture",
-            "scope": "fixture:app",
+            "identity": "fixture:app",
+            "direction": "push",
             "scope_kind": "package",
+            "path_rule_pattern": None,
+            "reason": "json reason",
         }
     ]
-    assert payload["package_entries"] == []
+    assert payload["sync_units"] == []
+    assert payload["stages"] == []
     assert secret_command not in raw_output

@@ -530,7 +530,16 @@ Direct agreement may establish an eligible Base during Observation; changed Pull
 may establish one after qualifying repository effects. It does not use a Base for
 reconciliation. Permanent Pull and repository-only Sync share checkpoint evidence
 rules while retaining their distinct direction and Approval behavior.
-Push remains an independent one-sided operation.
+
+## Permanent Push
+
+Push uses the same Observation, Command Deck, Proposal review, transactional
+Editor and Live Publication as Sync. Its direction is fixed repository-to-live:
+drifted Proposals start approved with **Use repository** as the only resolution,
+and Guard exit 100 omits work shown as Guard-skipped rows. Real Push performs
+policy maintenance before Guards, snapshots before the first live mutation, and
+may acknowledge a Base after successful eligible publication. It never reads a
+Base for reconciliation.
 
 Interactive Pull permits a healthy approved subset after materialization failure.
 Unattended Pull aborts before Apply on initial failures, including in preview.

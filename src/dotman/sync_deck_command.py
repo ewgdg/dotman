@@ -156,8 +156,9 @@ class SyncDeckCommandRunner:
                 "message": f"{self.operation.title()} requires a terminal or explicit --unattended.",
             })
             return 1
+        # Configuration load failures keep the CLI's structured error and hint.
+        engine = self._engine_factory(args.config)
         try:
-            engine = self._engine_factory(args.config)
             scope = engine.resolve_sync_scope(self._resolve_scope_inputs(
                 engine, args.scopes, interaction=self._interaction if interactive else None,
             ))
@@ -471,6 +472,23 @@ class PullDeckCommandRunner(SyncDeckCommandRunner):
 
     def _open(self, engine, scope, args):
         return engine.open_pull_session(scope, preview=args.dry_run,
+                                        run_noop=getattr(args, "run_noop", False),
+                                        sink=make_planning_sink(json_output=args.json_output, unit="target"))
+
+    def _select_defaults(self, session):
+        # Opening already materialized standing opt-out Approval. In particular,
+        # do not retry and silently reauthorize a failed initial Proposal.
+        pass
+
+
+class PushDeckCommandRunner(SyncDeckCommandRunner):
+    """Push has fixed initially approved work, not unattended Sync defaults."""
+
+    command_names = frozenset({"push"})
+    operation = "push"
+
+    def _open(self, engine, scope, args):
+        return engine.open_push_session(scope, preview=args.dry_run,
                                         run_noop=getattr(args, "run_noop", False),
                                         sink=make_planning_sink(json_output=args.json_output, unit="target"))
 
