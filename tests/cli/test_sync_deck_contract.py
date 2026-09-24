@@ -25,7 +25,7 @@ def test_directory_root_is_auxiliary_selection_not_proposal_approval():
             "identity": "r:p.tree", "selected": True, "directions": ["push"], "diagnostics": [],
         }]
         assert document["sync_units"] == []
-        assert "0 approved units" in deck.confirmation_text()
+        assert "approved: 0" in deck.confirmation_text()
         deck.select_all(False)
         assert not session.view.rows[0].included
 

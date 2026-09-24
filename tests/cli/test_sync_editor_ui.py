@@ -165,7 +165,7 @@ def test_tty_editor_returns_terminal_and_cancel_preserves_selected_proposal(tmp_
         assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"repo"
         assert (tmp_path / "live/unit").read_bytes() == b"live"
         os.write(master, b"x")
-        wait_until(lambda: b"1 approved units" in output, process, read_output)
+        wait_until(lambda: b"approved:" in output, process, read_output)
         os.write(master, b"\x03")
         wait_until(lambda: process.poll() is not None, process, read_output)
         assert process.returncode == 130
@@ -323,7 +323,7 @@ def test_additional_edits_have_independent_canonical_review_and_json(tmp_path, m
         assert change["approved"] is True
         assert change["references"] == [session.view.rows[0].row_id]
         assert "additional-candidate" not in str(document)
-        assert "1 repository changes" in deck.confirmation_text()
+        assert "repos: 1" in deck.confirmation_text()
         deck.back()
         deck.select_all(False)
         assert not any(row.approved for row in session.view.rows)

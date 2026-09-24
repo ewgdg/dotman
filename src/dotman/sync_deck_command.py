@@ -10,7 +10,7 @@ from dotman.edit_resolution import EditResolver
 from dotman.interaction import Interaction
 from dotman.interaction_policy import interaction_scope
 from dotman.progress import make_planning_sink
-from dotman.cli_style import render_sync_term, render_package_label, style_text, MENU_REPO_STYLE
+from dotman.cli_style import render_sync_term, render_package_label, render_summary_stat, style_text, MENU_REPO_STYLE
 from dotman.sync_scope import _parse_scope_selector, split_scope_child_path
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_session import (
@@ -262,16 +262,26 @@ class SyncDeckCommandRunner:
                 for item in work["diagnostics"]:
                     print(f"      {item['message']}")
         summary = payload["summary"]
-        print(
-            f":: {render_sync_term(payload['status'], use_color=self._use_color)} — "
-            f"{summary['approved_units']} approved units / "
-            f"{summary['repository_changes']} repository changes / "
-            f"{summary['live_writes']} live writes / "
-            f"{summary['live_deletions']} live deletions / "
-            f"{summary['in_sync_units']} in sync"
+        stats = summary_stats(
+            (("approved", summary["approved_units"]), ("repos", summary["repository_changes"])),
+            writes=summary["live_writes"], deletions=summary["live_deletions"],
+            trailing=(("in-sync", summary["in_sync_units"]),), use_color=self._use_color,
         )
+        print(f":: {render_sync_term(payload['status'], use_color=self._use_color)} — {stats}")
         for item in payload["summary"]["diagnostics"]:
             print(item["message"], file=sys.stderr)
+
+
+def summary_stats(leading, *, writes, deletions, trailing=(), use_color) -> str:
+    """Join counts as dimmed `label: n` stats; live writes and deletions share one `live` stat."""
+    live = render_summary_stat(label="live", value=writes + deletions, use_color=use_color)
+    # Deletions are destructive, so they stay visible inside the merged live count.
+    if deletions:
+        live += f" ({deletions} deleted)"
+    stats = [render_summary_stat(label=label, value=value, use_color=use_color) for label, value in leading]
+    stats.append(live)
+    stats.extend(render_summary_stat(label=label, value=value, use_color=use_color) for label, value in trailing)
+    return " · ".join(stats)
 
 
 def sync_document(args, session, result, *, diagnostic=None) -> dict:

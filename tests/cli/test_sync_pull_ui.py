@@ -40,7 +40,7 @@ def test_pull_review_and_document_show_repository_effect(tmp_path, monkeypatch, 
         else:
             assert "Approval still required" in review
         deck.confirming = True
-        assert f"{int(kind is not None)} repository changes / 0 live writes" in deck.confirmation_text()
+        assert f"repos: {int(kind is not None)} · live: 0" in deck.confirmation_text()
         document = sync_document(SimpleNamespace(dry_run=True, scopes=[]), session, None)
         unit = document["sync_units"][0]
         assert unit["resolution_intent"] == "use-live"

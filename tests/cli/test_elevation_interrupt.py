@@ -311,7 +311,7 @@ def test_broker_password_prompt_in_tty_editor_cancels_only_editor_attempt(
         _wait_for(lambda: all(_stopped(pid) for pid in second_pids), process, master, output)
         assert not (termios.tcgetattr(slave)[3] & termios.ICANON), output.decode(errors="replace")
         os.write(master, b"x")
-        _wait_for(lambda: b"1 approved units" in output, process, master, output)
+        _wait_for(lambda: b"approved:" in output, process, master, output)
         os.write(master, b"\x03")
         _wait_for(lambda: process.poll() is not None, process, master, output)
         for _ in range(5):

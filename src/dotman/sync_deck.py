@@ -23,7 +23,7 @@ from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
 from dotman.cli_style import render_sync_term, render_package_label
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
-from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label
+from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
 
 
@@ -181,7 +181,12 @@ class CommandDeck:
         additional_count = sum(row.approved for row in self.session.view.rows if isinstance(row, AdditionalRow))
         repository_changes += additional_count
         verb = "Preview" if self.session.view.preview else "Execute"
-        return f":: {verb} {len(selected)} approved units / {additional_count} approved additional sources / {auxiliary_count} selected auxiliary / {repository_changes} repository changes / {writes} live writes / {deletions} live deletions / {modes} mode changes?\n\n  Enter confirm  Esc return"
+        stats = summary_stats(
+            (("approved", len(selected)), ("additional", additional_count),
+             ("auxiliary", auxiliary_count), ("repos", repository_changes)),
+            writes=writes, deletions=deletions, trailing=(("modes", modes),), use_color=self.use_color,
+        )
+        return f":: {verb}? — {stats}\n\n  Enter confirm  Esc return"
 
     def review_text(self) -> str:
         row = self.focused_row
@@ -789,7 +794,7 @@ class SyncDeckApp(App[bool]):
             self.query_one("#workset").display = False
             self.query_one("#detail").display = False
             self.query_one("#confirmation").display = True
-            self.query_one("#confirmation", Static).update(self.deck.confirmation_text())
+            self.query_one("#confirmation", Static).update(Text.from_ansi(self.deck.confirmation_text()))
             self.query_one("#title", Static).update(":: Confirmation")
             self.set_focus(None)
         self.update_workset()

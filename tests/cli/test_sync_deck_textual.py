@@ -206,7 +206,7 @@ def test_pull_review_keeps_frozen_evidence_and_never_approves_on_open(tmp_path, 
                 await pilot.press("space")
                 assert session.view.rows[0].approved
                 await pilot.press("escape", "x")
-                assert "1 repository changes / 0 live writes" in str(app.query_one("#confirmation", Static).render())
+                assert "repos: 1 · live: 0" in str(app.query_one("#confirmation", Static).render())
                 await pilot.press("ctrl+c")
                 assert app.return_value is False
         run(interact())

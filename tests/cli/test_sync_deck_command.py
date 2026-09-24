@@ -92,8 +92,8 @@ def test_confirmation_freezes_selection_and_cancel_restores_workset(tmp_path, mo
         deck.open_review()
         assert deck.focus == 0 and not deck.reviewing
         assert session.view == frozen
-        assert "1 approved units" in deck.confirmation_text()
-        assert "1 live writes" in deck.confirmation_text()
+        assert "approved: 1" in deck.confirmation_text()
+        assert "live: 1" in deck.confirmation_text()
         deck.back()
         assert not deck.confirming
         assert session.view == frozen
@@ -310,8 +310,8 @@ def test_human_summary_reports_completion_counts_and_canonical_identity(tmp_path
     output = capsys.readouterr().out
     assert "main:app.unit" in output
     assert "completed" in output
-    assert "1 approved units" in output
-    assert "1 live writes" in output
+    assert "approved: 1" in output
+    assert "live: 1" in output
 
 
 def test_results_omit_directly_in_sync_units_and_count_them(tmp_path, monkeypatch, capsys):
@@ -324,7 +324,7 @@ def test_results_omit_directly_in_sync_units_and_count_them(tmp_path, monkeypatc
     assert "main:app.drift" in output
     assert "main:app.same" not in output
     assert "directly-in-sync" not in output
-    assert "1 in sync" in output
+    assert "in-sync: 1" in output
     assert runner_for(engine).run(arguments()) == 0
     payload = json.loads(capsys.readouterr().out)
     assert [unit["identity"] for unit in payload["sync_units"]] == ["main:app.drift"]
