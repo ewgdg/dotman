@@ -50,10 +50,13 @@ code no longer suggests behavior dotman does not support.
   `emit_transform_output` through small test-local drivers.
 - `matches_ignore_pattern`: tests use `IgnoreMatcher.from_patterns`.
 
-## Follow-ups (not in scope)
+## Follow-ups (resolved)
 
-- Ruff reports pre-existing unused imports/locals in `manifest.py`,
-  `repository.py`, `snapshot.py`, `tracked_packages.py`.
-- The deleted `selected_policy_resolved` skipped Base cleanup for Pull;
-  `_discard_ineligible_bases` has no operation check. Unverified whether Pull
-  ever resolves push-only units.
+- Removed pre-existing unused imports in `manifest.py`, `repository.py`,
+  `snapshot.py`, `tracked_packages.py`, and the unused rendered
+  `render_command` in `tracked_packages` (the summary stores the raw `render`
+  name). `test_config.py` now imports `default_snapshot_root` from `dotman.config`.
+- Pull and ineligible Bases: `_discard_ineligible_bases` has no operation check,
+  and none is needed. Configured ineligibility is valid cleanup whichever
+  operation observes it. In practice Pull filters push-only units out by
+  direction before cleanup runs.

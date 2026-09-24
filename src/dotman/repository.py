@@ -10,7 +10,6 @@ from dotman.manifest import (
     build_hook_spec,
     build_target_spec,
     deep_merge,
-    merge_ignore_patterns,
     merge_package_specs,
     _validate_resolved_package,
     normalize_default_command_elevation,

@@ -5,9 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from dotman.config import expand_path
+from dotman.config import default_snapshot_root, expand_path
 from dotman.engine import DotmanEngine
-from dotman.snapshot import default_snapshot_root
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,

@@ -6,11 +6,10 @@ from typing import Any, TYPE_CHECKING
 
 from dotman.collisions import resolve_tracked_target_winners
 from dotman.config import expand_path
-from dotman.manifest import deep_merge, infer_profile_os, merge_ignore_patterns
+from dotman.manifest import deep_merge, infer_profile_os
 from dotman.projection import default_compare_live, resolve_target_kind, validate_probe_target_config
 from dotman.models import (
     FullSpecSelector,
-    HookCommandSpec,
     SelectorKind,
     TrackedPackageEntrySummary,
     TrackedOwnedTargetDetail,
@@ -377,11 +376,6 @@ def summarize_targets(
         rendered_path = render_template_string(target.path, context, base_dir=target.declared_in, source_path=target.declared_in)
         repo_path = (target.declared_in / rendered_source).resolve()
         live_path = expand_path(rendered_path, dereference=False)
-        render_command = (
-            render_template_string(target.render, context, base_dir=target.declared_in, source_path=target.declared_in)
-            if target.render is not None
-            else None
-        )
         capture_command = (
             render_template_string(target.capture, context, base_dir=target.declared_in, source_path=target.declared_in)
             if target.capture is not None

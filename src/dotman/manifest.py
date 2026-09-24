@@ -4,7 +4,7 @@ import sys
 from collections.abc import Collection
 from dataclasses import MISSING, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from dotman.models import AdditionalSource, DefaultCommandElevationMode, EditorSpec, HookCommandSpec, HookSpec, PackageSpec, TargetPathRule, TargetSpec
 from dotman.presets import BUILTIN_TARGET_PRESETS, get_builtin_target_preset

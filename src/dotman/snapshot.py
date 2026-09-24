@@ -12,7 +12,6 @@ from typing import Sequence
 
 from dotman.file_access import remove_empty_directory_tree
 from dotman.atomic_files import write_text_atomic
-from dotman.config import default_snapshot_root
 from dotman.toml_utils import load_toml_file
 from dotman.execution import delete_path_and_prune_empty_parents, write_bytes_atomic, write_symlink_atomic
 from dotman.models import PackagePlan, SnapshotConfig
