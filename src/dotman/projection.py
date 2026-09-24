@@ -16,6 +16,7 @@ from dotman.command_runtime import (
 )
 from dotman.collisions import validate_reserved_path_conflicts, validate_target_collisions
 from dotman.config import expand_path
+from dotman.file_access import needs_sudo_for_read, read_bytes
 from dotman.ignore import GitIgnoreChain, collect_gitignore_chain
 from dotman.manifest import (
     FORCED_COMMAND_PREFIX,
@@ -632,13 +633,28 @@ def project_file_view(
             repository_path = Path(directory) / "repository"
             repository_path.write_bytes(repository)
             repository_path.chmod(0o400)
+        # Projection commands run without elevation. Stage a protected input
+        # into a private readable copy so a command Render or Capture can read
+        # it without being elevated itself. The staging directory is removed
+        # afterwards with the proposal staging above.
+        if repository_path.exists() and needs_sudo_for_read(repository_path):
+            staged_repo = Path(directory) / f"repo-{repository_path.name}"
+            staged_repo.write_bytes(read_bytes(repository_path))
+            staged_repo.chmod(0o400)
+            repository_path = staged_repo
+        live_path = metadata.live_path
+        if live_path.exists() and needs_sudo_for_read(live_path):
+            staged_live = Path(directory) / f"live-{live_path.name}"
+            staged_live.write_bytes(read_bytes(live_path))
+            staged_live.chmod(0o400)
+            live_path = staged_live
         env = {
             **metadata.command_env,
             "DOTMAN_TARGET_REPO_PATH": str(repository_path),
             "DOTMAN_REPO_PATH": str(repository_path),
             "DOTMAN_SOURCE": str(repository_path),
-            "DOTMAN_TARGET_LIVE_PATH": str(metadata.live_path),
-            "DOTMAN_LIVE_PATH": str(metadata.live_path),
+            "DOTMAN_TARGET_LIVE_PATH": str(live_path),
+            "DOTMAN_LIVE_PATH": str(live_path),
         }
         result = command_runtime.run(
             CommandRequest(
