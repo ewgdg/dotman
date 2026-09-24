@@ -5,6 +5,7 @@ import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Sequence
 
 from dotman.atomic_files import write_bytes_atomic as atomic_write_bytes_atomic
 from dotman.atomic_files import write_symlink_atomic as atomic_write_symlink_atomic
@@ -44,6 +45,76 @@ class ExecutionStepResult:
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class StepStarted:
+    stage: str
+    step: ExecutionStep
+    index: int
+    total: int
+
+
+@dataclass(frozen=True)
+class StepFinished:
+    """A step's attempted result; index/total are None for steps reported without a start."""
+
+    stage: str
+    result: ExecutionStepResult
+    index: int | None = None
+    total: int | None = None
+
+
+ExecutionEvent = StepStarted | StepFinished
+ExecutionObserver = Callable[[ExecutionEvent], None]
+
+# Completion checkpoints are bookkeeping, not work the user selected.
+INVISIBLE_STEP_KINDS = frozenset({"unit-completion"})
+
+
+class StepReporter:
+    """Report planned steps numbered within contiguous repo or package groups."""
+
+    def __init__(self, stage: str, planned: Sequence[ExecutionStep], observe: ExecutionObserver | None) -> None:
+        self._stage = stage
+        self._planned = planned
+        self._observe = observe
+        self._positions = _group_positions(planned)
+        self._finished: set[int] = set()
+
+    def started(self, index: int) -> None:
+        if self._observe is not None and index in self._positions:
+            self._observe(StepStarted(self._stage, self._planned[index], *self._positions[index]))
+
+    def finished(self, index: int, results: Sequence[ExecutionStepResult]) -> None:
+        """Report the first attempted result recorded while running planned step `index`."""
+        attempted = next((result for result in results if result.status != "unattempted"), None)
+        if self._observe is None or attempted is None or index in self._finished:
+            return
+        self._finished.add(index)
+        position = self._positions.get(index, (None, None))
+        self._observe(StepFinished(self._stage, attempted, *position))
+
+    def unplanned(self, result: ExecutionStepResult) -> None:
+        if self._observe is not None:
+            self._observe(StepFinished(self._stage, result))
+
+
+def _group_positions(planned: Sequence[ExecutionStep]) -> dict[int, tuple[int, int]]:
+    visible = [index for index, step in enumerate(planned) if step.kind not in INVISIBLE_STEP_KINDS]
+    groups: list[list[int]] = []
+    for index in visible:
+        key = step_group_key(planned[index])
+        if not groups or step_group_key(planned[groups[-1][-1]]) != key:
+            groups.append([])
+        groups[-1].append(index)
+    return {index: (position, len(group)) for group in groups for position, index in enumerate(group, start=1)}
+
+
+def step_group_key(step: ExecutionStep) -> tuple[str, str | None, str | None]:
+    """Repo hooks group by repo; everything else by package instance."""
+    bound_profile = step.package_plan.bound_profile if step.package_plan is not None else None
+    return step.repo_name, step.package_id, bound_profile
 
 
 def _execute_step(step: ExecutionStep, *, stream_output: bool, unattended: bool) -> ExecutionStepResult:

@@ -340,22 +340,42 @@ snapshot. Restore never restores repository sources.
 
 ### Result log
 
-The human result leads each entry with its outcome: `ok`, `failed`,
-`interrupted` or `skipped`, plus `would-apply` in preview and `pending` when
-execution never started. Unselected entries are omitted unless they carry
-diagnostics. A failed hook step gets its own entry, named by canonical scope and
-hook action, e.g. `[failed] main:app.unit (pre_push)`, since the units it stops
-report only `skipped`. Any other failed step gets an entry only when no unit
-entry shows its error, e.g. `[failed] snapshot (finalize)`. Operation diagnostics
-repeat their failed step's error, so human output prints on stderr only those no
-entry already shows; JSON keeps them all.
+Human execution streams a step timeline while it runs, grouped by package (repo
+hooks by repo) and numbered within each group:
 
-A failed user command (Guard, Probe or hook) is summarized by the first
-non-empty line of its stderr, else stdout. Command output is untrusted and may
-contain managed content, so this line appears only in human output; JSON
-diagnostics and `stages` keep typed evidence (action, scope, exit status). Guard
-skip reasons (exit 100) are the exception: they are the Guard's declared
-explanation and appear in both.
+```
+:: Push
+  main:app
+    [1/2] pre_push    ./check.sh
+      <live hook output>
+      ok
+    [2/2] write       ~/.config/app/unit
+      ok
+:: completed — approved: 1 · repos: 0 · live: 1 · in-sync: 0
+```
+
+Sessions report `StepStarted`/`StepFinished` through their event sink and stream
+pipe-hook output only when opened with `stream_output`; completion checkpoints
+stay invisible. A failed hook adds only its exit status, since its output was
+already shown; other failures print their error. A failure outside the plan
+(snapshot finalize) is reported without a number.
+
+After the timeline, the log recaps only what the timeline could not show:
+entries that are not `ok` (e.g. `[skipped]` units stopped by an earlier
+failure), unshown diagnostics such as checkpoint warnings, Additional Source
+Changes, and Guard skips. Stderr diagnostics already shown are not repeated.
+
+Preview, abort and pre-execution failures print the entry log instead: each
+entry leads with its outcome (`ok`, `failed`, `interrupted`, `skipped`,
+`would-apply` in preview, `pending` when execution never started) followed by
+its Resolution and effects. Unselected entries are omitted unless they carry
+diagnostics. JSON never includes progress.
+
+A failed Guard or Probe is summarized by the first non-empty line of its stderr,
+else stdout. Command output is untrusted and may contain managed content, so
+this line appears only in human output; JSON diagnostics and `stages` keep typed
+evidence (action, scope, exit status). Guard skip reasons (exit 100) are the
+exception: they are the Guard's declared explanation and appear in both.
 
 ### Both-policy reconciliation
 

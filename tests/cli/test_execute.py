@@ -956,7 +956,7 @@ def test_pull_cli_editor_is_explicit_deck_action_with_approval(
     assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"edited"
     assert (tmp_path / "live/unit").read_bytes() == b"live"
     output = capsys.readouterr().out
-    assert "[ok] main:app.unit" in output
+    assert "[1/1] update" in output
 
 
 def test_pull_cli_run_noop_executes_only_pull_hooks(tmp_path, monkeypatch, capsys):

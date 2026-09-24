@@ -34,6 +34,7 @@ Focused CLI responsibilities live in dedicated modules:
 - `restore_commands.py` — snapshot restore review, preview, and execution workflow
 - `sync_deck_command.py` — Sync, Pull and Push CLI authorization and final output
   over public session views and commands
+- `sync_timeline.py` — live human execution timeline rendered from session step events
 - `sync_deck.py` — Textual DataTable workset, scrollable frozen review and
   confirmation over public SyncSession commands; ordinary terminal prompts
   continue to use `prompt_toolkit`

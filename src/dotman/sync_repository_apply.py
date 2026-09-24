@@ -9,7 +9,7 @@ from typing import Callable, Sequence
 from dotman import file_access
 from dotman.command_runtime import CommandRuntime, command_runtime_session, current_command_runtime
 from dotman.interaction_policy import interaction_scope
-from dotman.execution import ExecutionStepResult, _execute_step, directory_synced_file_mode
+from dotman.execution import ExecutionObserver, ExecutionStepResult, StepReporter, _execute_step, directory_synced_file_mode
 from dotman.atomic_files import default_created_file_mode
 from dotman.models import PackagePlan, ResolvedSyncTarget, TargetPlan
 from dotman.planning import PackagePlanningInput, plan_hooks, plan_repo_hooks
@@ -82,6 +82,7 @@ def execute_repository_apply(
     run_noop: bool = False,
     check_cancelled: Callable[[], None] | None = None,
     blocked: bool = False,
+    observe: ExecutionObserver | None = None,
 ) -> PublicationResult:
     """Apply repository effects and complete ready units at their ordered positions."""
     units = tuple(units)
@@ -107,8 +108,11 @@ def execute_repository_apply(
         return PublicationResult(tuple(results.values()), steps=unattempted_steps(planned))
     steps, error, interrupted = [], None, False
     with interaction_scope(unattended=unattended), command_runtime_session(command_runtime or current_command_runtime()):
+        reporter = StepReporter("repository-apply", planned, observe)
         for index, step in enumerate(planned):
             unit = None if step.kind == "hook" else by_identity[_target_identity(step.package_plan, step.target_plan)]
+            reported_from = len(steps)
+            reporter.started(index)
             try:
                 if check_cancelled is not None:
                     check_cancelled()
@@ -127,6 +131,7 @@ def execute_repository_apply(
                         results[unit.row_id] = PublicationUnitResult(unit.row_id, "ok")
                     result = ExecutionStepResult(step, "ok")
                 steps.append(result)
+                reporter.finished(index, steps[reported_from:])
                 if result.status != "ok":
                     raise _PublicationStopped(
                         result.error or f"{step.action} exited {result.exit_code}",
@@ -140,6 +145,7 @@ def execute_repository_apply(
                 error = str(exc) or "Repository apply interrupted"
                 if unit is not None:
                     results[unit.row_id] = PublicationUnitResult(unit.row_id, "failed", error)
+                reporter.finished(index, steps[reported_from:])
                 steps.extend(unattempted_steps(planned[index + 1:]))
                 break
     return PublicationResult(tuple(results.values()), error, tuple(steps), interrupted=interrupted)

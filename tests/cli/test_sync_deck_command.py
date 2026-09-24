@@ -446,14 +446,6 @@ def _engine_with_manifest_suffix(tmp_path, monkeypatch, suffix):
 FAILING_PRE_PUSH = '\n[targets.unit.hooks]\npre_push = "echo; echo refusing to replace directory >&2; exit 3"\n'
 
 
-def test_failed_hook_names_step_and_reason_in_human_log(tmp_path, monkeypatch, capsys):
-    engine = _engine_with_manifest_suffix(tmp_path, monkeypatch, FAILING_PRE_PUSH)
-    assert runner_for(engine).run(arguments(dry_run=False, json_output=False)) == 1
-    output = capsys.readouterr().out
-    assert "[failed] main:app.unit (pre_push)" in output
-    assert "exit 3: refusing to replace directory" in output
-
-
 def test_failed_hook_output_stays_out_of_json(tmp_path, monkeypatch, capsys):
     engine = _engine_with_manifest_suffix(tmp_path, monkeypatch, FAILING_PRE_PUSH)
     assert runner_for(engine).run(arguments(dry_run=False)) == 1
@@ -477,36 +469,55 @@ def test_failed_planning_commands_show_reason_in_human_output(tmp_path, monkeypa
     assert " 7: guard reason" in capsys.readouterr().err
 
 
-def _human_failure(tmp_path, monkeypatch, capsys, *, suffix="", patch=None):
+def _human_execution(tmp_path, monkeypatch, capsys, *, suffix="", patch=None, exit_code=1):
     engine = _engine_with_manifest_suffix(tmp_path, monkeypatch, suffix)
     if patch:
         patch()
-    assert runner_for(engine).run(arguments(dry_run=False, json_output=False)) == 1
+    assert runner_for(engine).run(arguments(dry_run=False, json_output=False)) == exit_code
     captured = capsys.readouterr()
-    return captured.out + captured.err
+    return captured.out, captured.err
 
 
-def test_failed_hook_is_reported_once(tmp_path, monkeypatch, capsys):
-    output = _human_failure(tmp_path, monkeypatch, capsys, suffix=FAILING_PRE_PUSH)
-    assert "[failed] main:app.unit (pre_push)" in output
-    assert "command exited with status 3" not in output
+def _in_order(text, *parts):
+    positions = [text.index(part) for part in parts]
+    return positions == sorted(positions)
 
 
-def test_failed_write_is_reported_once(tmp_path, monkeypatch, capsys):
+def test_execution_streams_step_timeline_with_live_hook_output(tmp_path, monkeypatch, capsys):
+    out, _ = _human_execution(
+        tmp_path, monkeypatch, capsys, exit_code=0,
+        suffix='\n[targets.unit.hooks]\npre_push = "echo checking-now"\npost_push = "true"\n',
+    )
+    assert _in_order(out, ":: Sync", "  main:app", "[1/3] pre_push", "      checking-now",
+                     "ok", "[2/3] write", "[3/3] post_push", ":: completed")
+    # Timeline replaces the per-entry log; a clean unit is not recapped.
+    assert "[ok] main:app.unit" not in out
+    assert "Use repository" not in out
+
+
+def test_failed_hook_is_reported_once_in_timeline(tmp_path, monkeypatch, capsys):
+    out, err = _human_execution(tmp_path, monkeypatch, capsys, suffix=FAILING_PRE_PUSH)
+    assert _in_order(out, "[1/2] pre_push", "exit 3", "failed", "[skipped] main:app.unit", ":: failed")
+    # Streamed hook stderr is the only stderr: no repeated operation diagnostic.
+    assert err.strip() == "refusing to replace directory"
+    assert "[2/2] write" not in out
+
+
+def test_failed_write_is_reported_once_in_timeline(tmp_path, monkeypatch, capsys):
     from dotman import file_access
     def fail(*args, **kwargs):
         raise OSError("disk full")
-    output = _human_failure(tmp_path, monkeypatch, capsys,
-                            patch=lambda: monkeypatch.setattr(file_access, "write_bytes_atomic", fail))
-    assert "[failed] main:app.unit" in output
-    assert output.count("disk full") == 1
+    out, err = _human_execution(tmp_path, monkeypatch, capsys,
+                                patch=lambda: monkeypatch.setattr(file_access, "write_bytes_atomic", fail))
+    assert _in_order(out, "[1/1] write", "disk full", "failed", ":: failed")
+    assert (out + err).count("disk full") == 1
 
 
-def test_failed_step_without_owning_entry_gets_its_own_entry(tmp_path, monkeypatch, capsys):
+def test_step_failure_without_start_is_attributed_in_timeline(tmp_path, monkeypatch, capsys):
     from dotman import sync_publication
     def fail(*args, **kwargs):
         raise OSError("snapshot store unavailable")
-    output = _human_failure(tmp_path, monkeypatch, capsys,
-                            patch=lambda: monkeypatch.setattr(sync_publication, "mark_snapshot_status", fail))
-    assert "[failed] snapshot (finalize)" in output
-    assert output.count("snapshot store unavailable") == 1
+    out, err = _human_execution(tmp_path, monkeypatch, capsys,
+                                patch=lambda: monkeypatch.setattr(sync_publication, "mark_snapshot_status", fail))
+    assert _in_order(out, "[1/1] write", "ok", "finalize", "snapshot store unavailable", ":: failed")
+    assert (out + err).count("snapshot store unavailable") == 1

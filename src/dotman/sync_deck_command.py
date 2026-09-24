@@ -10,6 +10,7 @@ from dotman.edit_resolution import EditResolver
 from dotman.interaction import Interaction
 from dotman.interaction_policy import interaction_scope
 from dotman.progress import make_planning_sink
+from dotman.sync_timeline import SyncTimelineRenderer
 from dotman.cli_style import render_sync_term, render_package_label, render_summary_stat, style_text, MENU_REPO_STYLE
 from dotman.sync_scope import _parse_scope_selector, split_scope_child_path
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
@@ -70,9 +71,6 @@ def auxiliary_label(scope: str, kind: str, directions, *, path_rule_pattern: str
             scope = style_text(scope, *MENU_REPO_STYLE)
     if kind == "hook":
         annotations = " ".join(f"({direction}-hooks)" for direction in directions)
-    elif kind == "step":
-        # A single execution step, annotated with its action (e.g. pre_push, finalize).
-        annotations = " ".join(f"({action})" for action in directions)
     elif kind == "guard-skip":
         annotations = " ".join(f"(guard_{direction})" for direction in directions)
         if path_rule_pattern is not None:
@@ -114,9 +112,15 @@ class SyncDeckCommandRunner:
     command_names = frozenset({"sync"})
     operation = "sync"
 
-    def _open(self, engine, scope, args):
-        return engine.open_sync_session(scope, preview=args.dry_run, run_noop=getattr(args, "run_noop", False),
-                                        sink=make_planning_sink(json_output=args.json_output, unit="target"))
+    def _open(self, engine, scope, args, timeline):
+        return engine.open_sync_session(scope, **self._session_options(args, timeline))
+
+    @staticmethod
+    def _session_options(args, timeline) -> dict:
+        # Only the human timeline shows live hook output; JSON stdout stays one document.
+        return dict(preview=args.dry_run, run_noop=getattr(args, "run_noop", False),
+                    sink=make_planning_sink(json_output=args.json_output, unit="target"),
+                    event_sink=timeline, stream_output=timeline is not None)
 
     def _select_defaults(self, session):
         set_all_selected(session, True)
@@ -174,7 +178,8 @@ class SyncDeckCommandRunner:
         if getattr(args, 'full_path', None) is not None:
             ui = replace(ui, full_paths=args.full_path)
         with ui_config_scope(ui):
-            opened = self._open(engine, scope, args)
+            timeline = None if args.json_output or args.dry_run else SyncTimelineRenderer(use_color=self._use_color)
+            opened = self._open(engine, scope, args, timeline)
             if isinstance(opened, SessionOpenFailed):
                 self._emit(args, None, None, diagnostic={
                     "code": opened.diagnostic.code, "message": opened.diagnostic.message,
@@ -226,6 +231,8 @@ class SyncDeckCommandRunner:
                     view = session.view
                     dispatched = session.dispatch(Preview(view.session_id, view.revision))
                 else:
+                    if timeline is not None:
+                        self._print_header(args)
                     dispatched = session.execute()
                 if isinstance(dispatched, CommandRejected):
                     self._emit(args, session, None, diagnostic={
@@ -233,64 +240,76 @@ class SyncDeckCommandRunner:
                         "message": dispatched.diagnostics[0].message if dispatched.diagnostics else dispatched.reason,
                     })
                     return 1
-                self._emit(args, session, dispatched.result)
+                self._emit(args, session, dispatched.result, timeline=timeline)
                 return dispatched.result.exit_code
 
-    def _emit(self, args, session: SyncSession | None, result, *, diagnostic=None, output_line=None) -> None:
+    def _print_header(self, args) -> None:
+        print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""), flush=True)
+
+    def _emit(self, args, session: SyncSession | None, result, *, diagnostic=None, output_line=None,
+              timeline: SyncTimelineRenderer | None = None) -> None:
         payload = sync_document(args, session, result, diagnostic=diagnostic)
         if args.json_output:
             print(json.dumps(payload))
             return
-        print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""))
+        if timeline is None:
+            self._print_header(args)
         term = lambda text: render_sync_term(text, use_color=self._use_color)
-        # Unselected entries only matter when they explain a problem.
+        # After a timeline the log is a recap: only what the timeline could not show.
+        timeline_errors = timeline.shown_errors if timeline else set()
+
+        def entry_lines(selected, outcome, diagnostics) -> list[str] | None:
+            """Diagnostic lines to print under a visible entry, or None to hide it."""
+            # Unselected entries only matter when they explain a problem.
+            if not (selected or diagnostics):
+                return None
+            messages = [item["message"] for item in diagnostics if item["message"] not in timeline_errors]
+            if timeline and not messages and outcome in ("ok", "failed", "interrupted"):
+                return None
+            return messages
+
         for unit in payload["sync_units"]:
-            if not (unit["selected"] or unit["diagnostics"]):
+            outcome = entry_outcome(unit["result"], unit["diagnostics"])
+            messages = entry_lines(unit["selected"], outcome, unit["diagnostics"])
+            if messages is None:
                 continue
-            print(f"  [{term(entry_outcome(unit['result'], unit['diagnostics']))}] {unit['identity']}")
-            if unit["resolution"]:
-                print(f"      {term(resolution_label(unit['resolution']))}")
-            if unit["fallback_reason"]:
-                print(f"      {term('Fallback')}: {unit['fallback_reason']}")
-            if unit["primary_source_change"]:
-                print(f"      repository {unit['primary_source_change']['kind']}")
-            for effect in unit["effects"]:
-                print(f"      {effect['kind']}")
-            for item in unit["diagnostics"]:
-                print(f"      {item['message']}")
+            print(f"  [{term(outcome)}] {unit['identity']}")
+            if timeline is None:
+                if unit["resolution"]:
+                    print(f"      {term(resolution_label(unit['resolution']))}")
+                if unit["fallback_reason"]:
+                    print(f"      {term('Fallback')}: {unit['fallback_reason']}")
+                if unit["primary_source_change"]:
+                    print(f"      repository {unit['primary_source_change']['kind']}")
+                for effect in unit["effects"]:
+                    print(f"      {effect['kind']}")
+            for message in messages:
+                print(f"      {message}")
         for change in payload["additional_source_changes"]:
+            # Additional Source Changes apply outside the step timeline, so always list them.
             if not (change["approved"] or change["diagnostics"]):
                 continue
-            print(f"  [{term(entry_outcome(change['result'], change['diagnostics']))}] {change['repo']}:{change['path']}")
+            outcome = entry_outcome(change["result"], change["diagnostics"])
+            messages = [item["message"] for item in change["diagnostics"]]
+            print(f"  [{term(outcome)}] {change['repo']}:{change['path']}")
             print(f"      {term('Additional Source Change')}: {change['kind']}")
-            for item in change["diagnostics"]:
-                print(f"      {item['message']}")
+            for message in messages:
+                print(f"      {message}")
         for kind, key in (("probe", "probe_work"), ("directory-root", "directory_root_work"), ("hook", "hook_work")):
             for work in payload[key]:
-                if not (work["selected"] or work["diagnostics"]):
-                    continue
-                label = auxiliary_label(work["identity"], kind, work["directions"], use_color=self._use_color)
                 outcome = auxiliary_outcome(work["identity"], payload["stages"], preview=args.dry_run,
                                             diagnostics=work["diagnostics"])
+                messages = entry_lines(work["selected"], outcome, work["diagnostics"])
+                if messages is None:
+                    continue
+                label = auxiliary_label(work["identity"], kind, work["directions"], use_color=self._use_color)
                 print(f"  [{term(outcome)}] {label}")
                 print(f"      {term(auxiliary_resolution(kind))}")
-                for item in work["diagnostics"]:
-                    print(f"      {item['message']}")
-        entry_messages = {item["message"] for entry in (*payload["sync_units"], *payload["additional_source_changes"])
-                          for item in entry["diagnostics"]}
-        failed_steps = [step for step in (result.steps if result else ()) if step.status in ("failed", "interrupted")]
-        for step in failed_steps:
-            # Hooks never own an entry (their units report only skipped); other
-            # steps need one only when no unit entry already shows the failure.
-            if step.kind != "hook" and step.error in entry_messages:
-                continue
-            label = auxiliary_label(step.scope_identity or step.repo or step.kind, "step", (step.action,),
-                                    use_color=self._use_color)
-            print(f"  [{term(step.status)}] {label}")
-            if step.status == "failed":
-                print(f"      {failed_step_detail(step)}")
+                for message in messages:
+                    print(f"      {message}")
         # Execution diagnostics copy their failed step's error; print each failure once.
-        shown = entry_messages | {step.error for step in failed_steps}
+        shown = timeline_errors | {item["message"] for entry in (*payload["sync_units"], *payload["additional_source_changes"])
+                                   for item in entry["diagnostics"]}
         for skip in payload["guard_skips"]:
             label = auxiliary_label(skip["identity"], "guard-skip", (skip["direction"],),
                                     path_rule_pattern=skip["path_rule_pattern"], use_color=self._use_color)
@@ -328,12 +347,6 @@ ENTRY_OUTCOME_BY_STATUS = {
     "pending": "pending",
     "excluded": "pending",
 }
-
-
-def failed_step_detail(step) -> str:
-    if step.kind == "hook" and step.exit_code is not None:
-        return f"exit {step.exit_code}" + (f": {step.output_line}" if step.output_line else "")
-    return step.error
 
 
 def entry_outcome(status: str | None, diagnostics) -> str:
@@ -532,10 +545,8 @@ class PullDeckCommandRunner(SyncDeckCommandRunner):
     command_names = frozenset({"pull"})
     operation = "pull"
 
-    def _open(self, engine, scope, args):
-        return engine.open_pull_session(scope, preview=args.dry_run,
-                                        run_noop=getattr(args, "run_noop", False),
-                                        sink=make_planning_sink(json_output=args.json_output, unit="target"))
+    def _open(self, engine, scope, args, timeline):
+        return engine.open_pull_session(scope, **self._session_options(args, timeline))
 
     def _select_defaults(self, session):
         # Opening already materialized standing opt-out Approval. In particular,
@@ -549,10 +560,8 @@ class PushDeckCommandRunner(SyncDeckCommandRunner):
     command_names = frozenset({"push"})
     operation = "push"
 
-    def _open(self, engine, scope, args):
-        return engine.open_push_session(scope, preview=args.dry_run,
-                                        run_noop=getattr(args, "run_noop", False),
-                                        sink=make_planning_sink(json_output=args.json_output, unit="target"))
+    def _open(self, engine, scope, args, timeline):
+        return engine.open_push_session(scope, **self._session_options(args, timeline))
 
     def _select_defaults(self, session):
         # Opening already materialized standing opt-out Approval. In particular,

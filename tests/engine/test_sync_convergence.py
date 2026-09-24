@@ -292,8 +292,7 @@ def test_post_hook_failure_preserves_convergence_and_reports_actual_steps(tmp_pa
         from dataclasses import fields
         assert {field.name for field in fields(result.steps[0])} == {
             "stage", "kind", "action", "scope", "scope_identity", "repo", "package_id",
-            # output_line is human-only; JSON projection omits it.
-            "status", "skip_reason", "exit_code", "error", "output_line",
+            "status", "skip_reason", "exit_code", "error",
         }
         assert all(
             value is None or isinstance(value, (str, int))

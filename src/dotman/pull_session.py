@@ -76,6 +76,7 @@ class PullSession(ProposalSession):
             complete=lambda unit: self._acknowledge(by_id[unit.row_id]), auxiliary=auxiliary, run_noop=self._run_noop,
             unattended=unattended_enabled(),
             check_cancelled=self.check_cancelled, blocked=bool(diagnostics),
+            stream_output=self._stream_output, observe=self._emit,
         )
         units, failures, apply_steps = self._execution_outcome(result, "repository-apply")
         return {identity: ("applied" if status == "converged" else status, errors)

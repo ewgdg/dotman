@@ -898,3 +898,24 @@ def test_child_ineligibility_cleanup_precedes_ancestor_guard_failures(
     assert isinstance(engine.open_sync_session(scope, preview=preview), SessionOpenFailed)
     with SyncBaseStore.open(tmp_path / 'state/dotman', 'main', read_only=True) as store:
         assert (store.read(b'main:app.tree/child') is not None) is preview
+
+
+def test_execution_reports_step_events_in_order(tmp_path, monkeypatch):
+    from dotman.execution import StepFinished, StepStarted
+    from dotman.sync_session import SetApproval
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "push-only", b"repo", b"live", '[targets.unit.hooks]\npre_push = "true"'),
+    ])
+    events = []
+    with open_session(engine, preview=False, event_sink=events.append) as session:
+        view = session.view
+        session.dispatch(SetApproval(view.session_id, view.revision, "main:app.unit", True))
+        session.execute()
+    steps = [(type(event).__name__, event.index, event.total,
+              (event.step if isinstance(event, StepStarted) else event.result.step).action,
+              event.result.status if isinstance(event, StepFinished) else None)
+             for event in events if isinstance(event, (StepStarted, StepFinished))]
+    assert steps == [
+        ("StepStarted", 1, 2, "pre_push", None), ("StepFinished", 1, 2, "pre_push", "ok"),
+        ("StepStarted", 2, 2, "write", None), ("StepFinished", 2, 2, "write", "ok"),
+    ]

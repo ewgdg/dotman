@@ -63,7 +63,9 @@ def test_push_human_reports_base_only_through_warnings(tmp_path, monkeypatch, ca
         monkeypatch.setattr(SyncBaseStore, 'replace', fail)
     assert main(['--config', str(engine.config.config_path), '--unattended', 'push']) == 0
     output = capsys.readouterr().out
-    assert '[ok] main:app.unit' in output
+    assert '[1/1] write' in output
+    # A clean unit is not recapped; a checkpoint warning is.
+    assert ('[ok] main:app.unit' in output) == fails
     # Base state is reported only through unit diagnostics, never as a result line.
     assert 'Base' not in output
     assert ('checkpoint unavailable' in output) == fails

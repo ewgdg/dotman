@@ -89,7 +89,7 @@ def test_pull_cli_command_deck_can_opt_out_before_execution(
     assert (pull_repo / "repo/packages/app/first").read_bytes() == b"live first"
     assert (pull_repo / "repo/packages/app/second").read_bytes() == b"repository second"
     output = capsys.readouterr().out
-    assert "[ok] main:app.first" in output
+    assert "[1/1] update" in output
     # Opted-out entries without diagnostics are noise in the final log.
     assert "main:app.second" not in output
 

@@ -12,7 +12,7 @@ from dotman.sync_path_policy import SyncPathError
 from dotman import file_access
 from dotman.command_runtime import INTERRUPTED_EXIT_CODE, CommandRuntime, command_runtime_session, current_command_runtime
 from dotman.interaction_policy import interaction_scope
-from dotman.execution import ExecutionStep, ExecutionStepResult, _execute_step
+from dotman.execution import ExecutionObserver, ExecutionStep, ExecutionStepResult, StepReporter, _execute_step
 from dotman.models import HookPlan, PackagePlan, ResolvedSyncTarget, SnapshotConfig, TargetPlan, package_ref_text
 from dotman.planning import PackagePlanningInput, plan_hooks, plan_repo_hooks
 from dotman.snapshot import SnapshotRecord, create_push_snapshot, mark_snapshot_status, prune_snapshots
@@ -358,6 +358,7 @@ def execute_publication(
     run_noop: bool = False,
     check_cancelled: Callable[[], None] | None = None,
     blocked: bool = False,
+    observe: ExecutionObserver | None = None,
 ) -> PublicationResult:
     """Consume frozen effects, recording every attempted and unattempted boundary."""
     units = tuple(units)
@@ -404,8 +405,11 @@ def execute_publication(
     snapshot_started = False
     effect_positions = {unit.row_id: 0 for unit in units}
     with interaction_scope(unattended=unattended), command_runtime_session(command_runtime or current_command_runtime()):
+        reporter = StepReporter("live-publication", planned, observe)
         for index, step in enumerate(planned):
             unit = None if step.kind == "hook" else by_identity[_target_identity(step.package_plan, step.target_plan)]
+            reported_from = len(steps)
+            reporter.started(index)
             try:
                 if check_cancelled is not None:
                     check_cancelled()
@@ -458,6 +462,7 @@ def execute_publication(
                         results[unit.row_id] = PublicationUnitResult(unit.row_id, "ok")
                     result = ExecutionStepResult(step, "ok")
                 steps.append(result)
+                reporter.finished(index, steps[reported_from:])
                 if result.status != "ok":
                     raise _PublicationStopped(
                         result.error or f"{step.action} exited {result.exit_code}",
@@ -471,6 +476,7 @@ def execute_publication(
                 error = str(exc) or "Publication interrupted"
                 if unit is not None:
                     results[unit.row_id] = PublicationUnitResult(unit.row_id, "failed", error, exc.code if isinstance(exc, SyncPathError) else exc.diagnostic_code if isinstance(exc, _PublicationStopped) else None)
+                reporter.finished(index, steps[reported_from:])
                 steps.extend(unattempted_steps(planned[index + 1:]))
                 break
         if snapshot is not None:
@@ -481,6 +487,7 @@ def execute_publication(
             except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
                 failure = _failed_step(ExecutionStep(kind="snapshot", action="finalize"), exc)
                 steps.append(failure)
+                reporter.unplanned(failure)
                 interrupted = interrupted or failure.status == "interrupted"
                 error = error or failure.error
     return PublicationResult(tuple(results.values()), error, tuple(steps), snapshot, interrupted)

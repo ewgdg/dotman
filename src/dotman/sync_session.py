@@ -10,8 +10,8 @@ from uuid import uuid4
 import stat
 
 from dotman.interaction_policy import unattended_enabled
-from dotman.command_runtime import CommandOperation, command_operation, command_runtime_session, first_output_line
-from dotman.execution import ExecutionStep, directory_synced_file_mode
+from dotman.command_runtime import CommandOperation, command_operation, command_runtime_session
+from dotman.execution import ExecutionStep, StepFinished, StepStarted, directory_synced_file_mode
 from dotman.atomic_files import default_created_file_mode
 from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
@@ -377,8 +377,6 @@ class SyncStepOutcome:
     skip_reason: str | None = None
     exit_code: int | None = None
     error: str | None = None
-    # First line of failed command output; human-only, never projected into JSON.
-    output_line: str | None = None
 
 
 def _step_scope_identity(step: ExecutionStep) -> str | None:
@@ -458,7 +456,7 @@ class SessionFinished:
     result: SyncResult
 
 
-SessionEvent = SessionOpened | SessionChanged | SessionFinished
+SessionEvent = SessionOpened | SessionChanged | SessionFinished | StepStarted | StepFinished
 SessionEventSink = Callable[[SessionEvent], None]
 
 
@@ -505,6 +503,7 @@ class ProposalSession:
             if (unit.compare_repo == "render" or unit.effective_policy == "push-only") and unit.comparison_repository is not None
         }
         self._event_sink = event_sink
+        self._stream_output = False
         self._operation_lock: OperationLock | None = None
         self._view = SessionView(
             uuid4().hex,
@@ -547,6 +546,7 @@ class ProposalSession:
         run_noop: bool = False,
         event_sink: SessionEventSink | None = None,
         sink: ProgressSink | None = None,
+        stream_output: bool = False,
     ) -> SyncSession | SessionOpenFailed:
         with command_operation() as operation, ExitStack() as resources:
             lock = None
@@ -631,6 +631,7 @@ class ProposalSession:
             session._obsolete_bases = obsolete_bases
             session._root_inputs = {_identity(target): (item, target) for item in selected_inputs.values() for target in item.target_metadata}
             session._run_noop = run_noop
+            session._stream_output = stream_output
             session._operation_lock = lock
             session._context = context
             session._command_operation = operation
@@ -1294,6 +1295,7 @@ class ProposalSession:
             complete=complete, auxiliary=auxiliary["pull"], run_noop=self._run_noop,
             unattended=unattended_enabled(),
             check_cancelled=self.check_cancelled, blocked=bool(additional_diagnostics),
+            stream_output=self._stream_output, observe=self._emit,
         )
         units, diagnostics, repository_steps = self._execution_outcome(result, "repository-apply")
         steps = additional_steps + repository_steps
@@ -1408,6 +1410,7 @@ class ProposalSession:
             unattended=unattended_enabled(),
             check_cancelled=self.check_cancelled, blocked=blocked,
             command_runtime=self._context.projection.command_runtime,
+            stream_output=self._stream_output, observe=self._emit,
         )
         units, diagnostics, steps = self._execution_outcome(result, "live-publication")
         units = {row_id: outcome for row_id, outcome in units.items() if row_id in by_id}
@@ -1444,7 +1447,6 @@ class ProposalSession:
                 skip_reason=item.skip_reason,
                 exit_code=item.exit_code,
                 error=item.error,
-                output_line=first_output_line(item.stderr, item.stdout) if item.status == "failed" else None,
             )
             for item in result.steps
         )
