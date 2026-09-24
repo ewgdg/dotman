@@ -15,7 +15,7 @@ from dotman.interaction_policy import interaction_scope
 from dotman.execution import ExecutionStep, ExecutionStepResult, _execute_step
 from dotman.models import HookPlan, PackagePlan, ResolvedSyncTarget, SnapshotConfig, TargetPlan, package_ref_text
 from dotman.planning import PackagePlanningInput, plan_hooks, plan_repo_hooks
-from dotman.snapshot import SnapshotRecord, create_push_snapshot, mark_snapshot_status
+from dotman.snapshot import SnapshotRecord, create_push_snapshot, mark_snapshot_status, prune_snapshots
 
 
 class Effect(Protocol):
@@ -198,9 +198,13 @@ def _effect_path(effect: Effect, target: TargetPlan, *, symlink_authorized: bool
         elif effect.kind != "delete" and symlink_authorized:
             try:
                 referent = path.stat()
+            except FileNotFoundError:
+                # An authorized write replaces a dangling link itself; Observation
+                # admits one only for push-only work.
+                referent = None
             except (OSError, RuntimeError) as exc:
                 raise SyncPathError("symlink-referent", f"Live link requires a regular-file referent: {path}") from exc
-            if not stat.S_ISREG(referent.st_mode):
+            if referent is not None and not stat.S_ISREG(referent.st_mode):
                 raise SyncPathError("symlink-referent", f"Live link requires a regular-file referent: {path}")
         elif effect.kind != "delete" and not symlink_authorized:
             raise SyncPathError("symlink-authorization-required", f"Live symlink replacement is not authorized: {path}")
@@ -391,7 +395,10 @@ def execute_publication(
                 unit = by_identity.get(_target_identity(package, target))
                 if unit is not None and unit.effects:
                     snapshot_endpoints.append((unit.effects[0], target, unit.symlink_authorized))
-                    targets.append(replace(target, action="delete" if unit.effects[0].kind == "delete" else "update"))
+                    effect = unit.effects[0]
+                    action = ("delete" if effect.kind == "delete"
+                              else "update" if effect.path.exists() or effect.path.is_symlink() else "create")
+                    targets.append(replace(target, action=action))
         if targets:
             snapshot_packages.append(replace(package, target_plans=targets))
     steps, snapshot, error, interrupted = [], None, None, False
@@ -470,6 +477,8 @@ def execute_publication(
         if snapshot is not None:
             try:
                 snapshot = mark_snapshot_status(snapshot, "failed" if error else "applied")
+                # Retention runs only after the final status is durable.
+                prune_snapshots(snapshot_config.path, max_generations=snapshot_config.max_generations)
             except (OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
                 failure = _failed_step(ExecutionStep(kind="snapshot", action="finalize"), exc)
                 steps.append(failure)

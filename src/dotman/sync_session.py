@@ -19,7 +19,7 @@ from dotman.sync_observation import _identity
 from dotman.sync_auxiliary import AuxiliaryRow, guard_skip_rows, plan_auxiliary, retain_directional_hooks
 from dotman.sync_reconciliation import reconcile, ReconciliationConflict, ReconciliationFailed
 from dotman.projection import project_file_view
-from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
+from dotman.models import GuardSkip, ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
 from dotman.planning_guards import GuardPlanningError
 from dotman.progress import ProgressSink
@@ -602,8 +602,11 @@ class ProposalSession:
                 return SessionOpenFailed(Diagnostic("base-failed", str(exc)))
             except GuardPlanningError as exc:
                 # Guard output may contain managed content; report typed command evidence only.
+                scope = GuardSkip(exc.scope_kind, exc.repo_name, exc.package_id, exc.bound_profile,
+                                  exc.target_name, exc.path_rule_pattern).scope_label
+                pattern = f" (path rule: {exc.path_rule_pattern})" if exc.path_rule_pattern is not None else ""
                 return SessionOpenFailed(Diagnostic(
-                    "planning-failed", f"{exc.hook_name} failed with exit {exc.exit_code}",
+                    "planning-failed", f"{scope}{pattern} {exc.hook_name} failed with exit {exc.exit_code}",
                 ))
             except ValueError as exc:
                 return SessionOpenFailed(Diagnostic("planning-failed", str(exc)))

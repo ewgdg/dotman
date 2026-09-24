@@ -251,7 +251,9 @@ def _observe_file(
         live, live_is_symlink, live_mode = _read_endpoint(
             metadata.live_path,
             repository=False, directory_child=identity.child_path is not None,
-            follow_missing=context.config.file_symlink_mode == "follow",
+            # Push-only work may replace a dangling link after authorization. Pull
+            # capability must not read it as Missing and delete the repository source.
+            follow_missing=context.config.file_symlink_mode == "follow" or effective in ("push-only", "push-only-delete"),
         )
         if identity.child_path is not None and isinstance(live, FilePresent):
             live = DirectoryChildPresent(live.content, projection.file_is_executable(live_mode))
@@ -335,6 +337,14 @@ class ObservedScope:
     guard_skips: tuple[tuple[str, GuardSkip], ...] = ()
 
 
+def _base_store_exists(context: planning.PlanningContext, item: planning.PackagePlanningInput) -> bool:
+    directory = context.tracked_state.state_root / "repos" / item.repo.config.state_key
+    try:
+        return any(name == LOCK_FILE_NAME or name.startswith(RECORD_FILE_PREFIX) for name in os.listdir(directory))
+    except FileNotFoundError:
+        return False
+
+
 def _discard_ineligible_bases(
     context: planning.PlanningContext,
     inputs: _ResolvedInputs,
@@ -349,7 +359,8 @@ def _discard_ineligible_bases(
         stores = {}
         for identity, (item, metadata) in inputs.items():
             unit = _base_unit(context, identity, item, metadata)
-            if unit.eligible:
+            # Absent storage holds nothing to discard; do not create it.
+            if unit.eligible or identity.repo not in stores and not _base_store_exists(context, item):
                 continue
             try:
                 if identity.repo not in stores:
@@ -492,13 +503,12 @@ def observe_scope(
             try:
                 # Even malformed existing storage must be validated, never
                 # mistaken for absence and automatically recreated.
-                directory = context.tracked_state.state_root / "repos" / item.repo.config.state_key
-                try:
-                    store_exists = any(name == LOCK_FILE_NAME or name.startswith(RECORD_FILE_PREFIX)
-                                       for name in os.listdir(directory))
-                except FileNotFoundError:
-                    store_exists = False
-                if not preview or store_exists:
+                # Only eligible units can acknowledge; ineligible-only repos
+                # must not create storage they will never use.
+                needs_store = not preview and any(
+                    unit.eligible for unit_identity, unit in units.items() if unit_identity.repo == identity.repo
+                )
+                if needs_store or _base_store_exists(context, item):
                     store = resources.enter_context(SyncBaseStore.open(
                         context.tracked_state.state_root, item.repo.config.state_key,
                         read_only=preview,

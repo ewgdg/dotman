@@ -98,3 +98,34 @@ def test_push_snapshot_only_for_real_publication(tmp_path, monkeypatch, preview)
     assert (tmp_path / "live/unit").read_bytes() == (b"live" if preview else b"repo")
     snapshots = list_snapshots(engine.config.snapshots.path) if engine.config.snapshots.path.exists() else []
     assert len(snapshots) == (0 if preview else 1)
+
+
+def test_push_replaces_dangling_live_link_only_after_authorization(tmp_path, monkeypatch):
+    from dotman.sync_session import AuthorizeSymlinkReplacement, SetApproval
+
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"repo", None, "")])
+    live = tmp_path / "live/unit"
+    live.parent.mkdir(exist_ok=True)
+    live.symlink_to(tmp_path / "live/missing")
+    with engine.open_push_session(engine.resolve_sync_scope()) as session:
+        row = session.view.rows[0]
+        assert "authorize-symlink-replacement" in row.allowed_commands
+        assert not row.approved and row.diagnostics[0].code == "symlink-authorization-required"
+        view = session.view
+        session.dispatch(AuthorizeSymlinkReplacement(view.session_id, view.revision, row.row_id))
+        view = session.view
+        session.dispatch(SetApproval(view.session_id, view.revision, row.row_id, True))
+        assert session.view.rows[0].proposal is not None
+        assert session.execute().result.status == "completed"
+    assert not live.is_symlink() and live.read_bytes() == b"repo"
+
+
+def test_pull_still_rejects_dangling_live_link(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"repo", None, "")])
+    live = tmp_path / "live/unit"
+    live.parent.mkdir(exist_ok=True)
+    live.symlink_to(tmp_path / "live/missing")
+    with engine.open_pull_session(engine.resolve_sync_scope(), preview=True) as session:
+        unit, = session.view.observations
+        assert unit.state == "observation-failed"
+        assert unit.diagnostics[0].code == "symlink-referent"
