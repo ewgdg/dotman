@@ -9,7 +9,7 @@ import dotman.reconcile as reconcile_module
 import pytest
 from dotman.cli import main
 from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
-from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import FullSpecSelector, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,

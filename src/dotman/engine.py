@@ -22,7 +22,6 @@ from dotman.models import (
     TrackedPackageEntryIssue,
     TrackedPackageSummary,
     ManagerConfig,
-    OperationPlan,
 )
 from dotman.package_resolution import parse_full_spec_selector_text
 from dotman.planning import PlanningContext
@@ -245,32 +244,6 @@ class DotmanEngine:
     def list_trackables(self) -> list[TrackableCatalogEntry]:
         return tracking.list_trackables(self._tracked_state_context)
 
-    def _plan_query(
-        self,
-        query_text: str,
-        *,
-        operation: str,
-        profile: str | None,
-        run_noop: bool,
-        maintain_sync_bases: bool = False,
-    ) -> OperationPlan:
-        _repo, query = self.resolve_full_spec_selector_text(query_text, profile=profile)
-        selections = planning.resolve_full_spec_selector(self._planning_context, query, operation=operation)
-        result = planning.build_package_plans(
-            self._planning_context,
-            selections,
-            operation=operation,
-            run_noop=run_noop,
-            maintain_sync_bases=maintain_sync_bases,
-        )
-        return planning.build_operation_plan(
-            list(result.package_plans),
-            repo_by_name={repo.name: self.repos[repo.name] for repo in self.config.ordered_repos},
-            operation=operation,
-            allow_standalone_noop_hooks=run_noop,
-            guard_skips=result.guard_skips,
-            considered_repo_names=result.considered_repo_names,
-        )
 
     def open_sync_session(
         self, scope: ResolvedSyncScope, *, preview: bool = False, run_noop: bool = False,
@@ -301,113 +274,6 @@ class DotmanEngine:
         """Resolve exact tracked identities for a SyncSession."""
         return resolve_sync_scope(self._planning_context, selectors)
 
-    def plan_push_query(self, query_text: str, *, profile: str | None = None, run_noop: bool = False, maintain_sync_bases: bool = False) -> OperationPlan:
-        return self._plan_query(
-            query_text,
-            operation="push",
-            profile=profile,
-            run_noop=run_noop,
-            maintain_sync_bases=maintain_sync_bases,
-        )
-
-
-    def resolve_tracked_binding(
-        self,
-        binding_text: str,
-        *,
-        operation: str = "untrack",
-        allow_package_owners: bool = False,
-    ) -> tuple[Repository, FullSpecSelector]:
-        explicit_repo, _parsed_selector, _parsed_profile = parse_full_spec_selector_text(binding_text)
-        selector, profile, exact_matches, partial_matches, owner_package_entries = self.find_tracked_package_entry_matches(binding_text)
-        binding_label = selector if profile is None else f"{selector}@{profile}"
-        if len(exact_matches) == 1:
-            return exact_matches[0]
-        if len(exact_matches) > 1:
-            candidates = ", ".join(
-                f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                for repo, binding in exact_matches
-            )
-            raise ValueError(f"tracked package entry '{binding_label}' is ambiguous: {candidates}")
-
-        if len(partial_matches) == 1:
-            repo, binding = partial_matches[0]
-            raise ValueError(
-                f"no exact match for '{binding_label}'; use exact name '{repo.config.name}:{binding.selector}@{binding.profile}'"
-            )
-        if len(partial_matches) > 1:
-            candidates = ", ".join(
-                f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                for repo, binding in partial_matches
-            )
-            raise ValueError(f"tracked package entry '{binding_label}' is ambiguous: {candidates}")
-
-        if owner_package_entries:
-            if allow_package_owners:
-                if len(owner_package_entries) == 1:
-                    owner_repo, owner_binding = owner_package_entries[0]
-                    return owner_repo, FullSpecSelector(
-                        repo=owner_repo.config.name,
-                        selector=selector,
-                        selector_kind="package",
-                        profile=owner_binding.profile,
-                    )
-                candidates = ", ".join(
-                    f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                    for repo, binding in owner_package_entries
-                )
-                raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked package entries: {candidates}")
-            owners = ", ".join(
-                f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                for repo, binding in owner_package_entries
-            )
-            required_repo = explicit_repo or owner_package_entries[0][0].config.name
-            required_ref = f"{required_repo}:{selector}"
-            raise ValueError(
-                f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
-            )
-
-        raise ValueError(f"tracked package entry '{binding_label}' is not currently tracked")
-
-    def find_tracked_package_entry_matches(
-        self,
-        binding_text: str,
-    ) -> tuple[str, str | None, list[tuple[Repository, FullSpecSelector]], list[tuple[Repository, FullSpecSelector]], list[tuple[Repository, FullSpecSelector]]]:
-        explicit_repo, selector, profile = parse_full_spec_selector_text(binding_text)
-        candidate_repos = self.candidate_repos(explicit_repo)
-        tracked = [
-            (repo, binding)
-            for repo in candidate_repos
-            for binding in self.read_effective_tracked_package_entries(repo)
-            if profile is None or binding.profile == profile
-        ]
-
-        exact_matches = [(repo, binding) for repo, binding in tracked if binding.selector == selector]
-        partial_matches = [(repo, binding) for repo, binding in tracked if selector in binding.selector]
-        unique_partials = {
-            (repo.config.name, binding.selector, binding.profile): (repo, binding)
-            for repo, binding in partial_matches
-        }
-        owner_package_entries = tracking.find_tracked_package_owners(
-            self._tracked_state_context,
-            candidate_repos,
-            selector,
-            profile,
-        )
-        unique_owners = {
-            (repo.config.name, binding.selector, binding.profile): (repo, binding)
-            for repo, binding in owner_package_entries
-        }
-        return selector, profile, exact_matches, list(unique_partials.values()), list(unique_owners.values())
-
-    def plan_push(self, *, sink: "ProgressSink | None" = None, run_noop: bool = False, maintain_sync_bases: bool = False) -> OperationPlan:
-        return planning.build_tracked_plans(
-            self._planning_context,
-            operation="push",
-            sink=sink,
-            run_noop=run_noop,
-            maintain_sync_bases=maintain_sync_bases,
-        )
 
 
     def list_tracked_state(self) -> TrackedStateSummary:

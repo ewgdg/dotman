@@ -359,9 +359,6 @@ def sync_policy_allows_operation(sync_policy: str, *, operation: str) -> bool:
     raise ValueError(f"unsupported sync policy '{sync_policy}'")
 
 
-def sync_policy_deletes_on_push(sync_policy: str) -> bool:
-    return sync_policy == "push-only-delete"
-
 
 def resolve_target_preset(
     *,

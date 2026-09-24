@@ -4,22 +4,13 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 from typing import Iterable
-import json
-import sys
 
 from pathspec import PathSpec
 from pathspec.gitignore import GitIgnoreSpec
 
-from dotman.command_runtime import (
-    ArgvCommand,
-    CommandRequest,
-    current_command_runtime,
-    raise_for_command_interruption,
-)
 
 
 
-GITIGNORE_CONTROL_FILE_PATTERNS = (".gitignore", "**/.gitignore")
 
 
 @dataclass(frozen=True)
@@ -131,165 +122,4 @@ def matches_ignore_pattern(relative_path: str, pattern: str) -> bool:
 
 
 
-def _symlink_target_text(path: Path) -> str:
-    try:
-        return os.readlink(path)
-    except OSError:
-        return "<unknown>"
 
-
-
-def _directory_identity(path: Path, *, relative_path: str) -> tuple[int, int]:
-    try:
-        stat_result = path.stat()
-    except OSError as exc:
-        display_path = relative_path or "."
-        raise ValueError(
-            "directory symlink cannot be resolved while scanning directory: "
-            f"{display_path} -> {_symlink_target_text(path)}"
-        ) from exc
-    return (stat_result.st_dev, stat_result.st_ino)
-
-
-
-def _directory_contains_skip_marker(directory: Path, skip_markers: tuple[str, ...]) -> bool:
-    for marker in skip_markers:
-        try:
-            (directory / marker).lstat()
-        except FileNotFoundError:
-            continue
-        return True
-    return False
-
-
-
-def _list_directory_files_without_sudo(
-    root: Path,
-    ignore_patterns: tuple[str, ...],
-    *,
-    skip_markers: tuple[str, ...] = (),
-    follow_dir_symlinks: bool = False,
-    force_ignore_patterns: tuple[str, ...] = (),
-    gitignore: GitIgnoreChain | None = None,
-) -> dict[str, Path]:
-    files: dict[str, Path] = {}
-    if not root.exists():
-        return files
-
-    matcher = IgnoreMatcher.from_patterns(ignore_patterns, gitignore=gitignore)
-    force_matcher = IgnoreMatcher.from_patterns(force_ignore_patterns)
-    active_dirs: set[tuple[int, int]] = set()
-
-    def scan_directory(directory: Path, relative_directory: str) -> None:
-        if _directory_contains_skip_marker(directory, skip_markers):
-            return
-        directory_identity = _directory_identity(directory, relative_path=relative_directory)
-        if directory_identity in active_dirs:
-            display_path = relative_directory or "."
-            raise ValueError(
-                "directory symlink loop encountered while scanning directory: "
-                f"{display_path} -> {_symlink_target_text(directory)}"
-            )
-        active_dirs.add(directory_identity)
-        try:
-            for child in sorted(directory.iterdir(), key=lambda path: path.name):
-                relative = f"{relative_directory}/{child.name}" if relative_directory else child.name
-                if child.is_symlink() and child.is_dir():
-                    if force_matcher.matches_directory(relative) or matcher.matches_directory(relative):
-                        continue
-                    if not follow_dir_symlinks:
-                        raise ValueError(
-                            "directory symlink encountered while scanning directory: "
-                            f"{relative} -> {_symlink_target_text(child)}; "
-                            'set symlinks.dir_symlink_mode = "follow" to descend'
-                        )
-                    scan_directory(child, relative)
-                    continue
-                if child.is_dir():
-                    if force_matcher.matches_directory(relative) or matcher.matches_directory(relative):
-                        continue
-                    scan_directory(child, relative)
-                    continue
-                if child.name in skip_markers or force_matcher.matches(relative) or matcher.matches(relative):
-                    continue
-                files[relative] = child
-        finally:
-            active_dirs.remove(directory_identity)
-
-    scan_directory(root, "")
-    return files
-
-
-
-def _list_directory_files_via_sudo(
-    root: Path,
-    ignore_patterns: tuple[str, ...],
-    *,
-    skip_markers: tuple[str, ...] = (),
-    follow_dir_symlinks: bool = False,
-    force_ignore_patterns: tuple[str, ...] = (),
-    gitignore: GitIgnoreChain | None = None,
-) -> dict[str, Path]:
-    from dotman.file_access import request_sudo
-
-    request_sudo(f"list protected directory: {root}")
-    result = current_command_runtime().run(
-        CommandRequest(
-            command=ArgvCommand(
-                (
-                    "sudo",
-                    "-n",
-                    sys.executable,
-                    "-m",
-                    "dotman.privileged_ops",
-                    "list-directory-files",
-                    str(root),
-                )
-            ),
-            input=json.dumps(
-                {
-                    "ignore_patterns": ignore_patterns,
-                    "skip_markers": skip_markers,
-                    "follow_dir_symlinks": follow_dir_symlinks,
-                    "force_ignore_patterns": force_ignore_patterns,
-                    "gitignore": {"target": gitignore.target, "controls": gitignore.controls} if gitignore else None,
-                }
-            ).encode("utf-8"),
-        )
-    )
-    raise_for_command_interruption(result)
-    if result.exit_code != 0:
-        stderr = result.stderr.decode("utf-8", errors="replace").strip()
-        raise PermissionError(stderr or f"permission denied for {root}")
-    payload = json.loads(result.stdout.decode("utf-8"))
-    return {relative: Path(path_text) for relative, path_text in payload.items()}
-
-
-
-def list_directory_files(
-    root: Path,
-    ignore_patterns: tuple[str, ...],
-    *,
-    skip_markers: tuple[str, ...] = (),
-    follow_dir_symlinks: bool = False,
-    force_ignore_patterns: tuple[str, ...] = (),
-    gitignore: GitIgnoreChain | None = None,
-) -> dict[str, Path]:
-    try:
-        return _list_directory_files_without_sudo(
-            root,
-            ignore_patterns,
-            skip_markers=skip_markers,
-            follow_dir_symlinks=follow_dir_symlinks,
-            force_ignore_patterns=force_ignore_patterns,
-            gitignore=gitignore,
-        )
-    except PermissionError:
-        return _list_directory_files_via_sudo(
-            root,
-            ignore_patterns,
-            skip_markers=skip_markers,
-            follow_dir_symlinks=follow_dir_symlinks,
-            force_ignore_patterns=force_ignore_patterns,
-            gitignore=gitignore,
-        )

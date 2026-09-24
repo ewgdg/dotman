@@ -18,7 +18,6 @@ from dotman.models import (
     TrackedPackageDetail,
     TrackedTargetSummary,
     PackageSpec,
-    TargetPlan,
     package_ref_text,
 )
 from dotman.repository import Repository
@@ -413,22 +412,6 @@ def summarize_targets(
     return target_summaries
 
 
-
-def tracked_target_summary_from_plan(target: TargetPlan) -> TrackedTargetSummary:
-    return TrackedTargetSummary(
-        target_name=target.target_name,
-        repo_path=target.repo_path,
-        live_path=target.live_path,
-        target_kind=target.target_kind,
-        probe_command=target.probe_command,
-        render=target.render,
-        capture=target.capture,
-        editor=target.editor,
-        compare_repo=target.compare_repo,
-        compare_live=target.compare_live,
-        additional_sources=target.additional_sources,
-        chmod=target.chmod,
-    )
 
 
 def describe_tracked_package_target_ownership(

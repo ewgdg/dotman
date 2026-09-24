@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.ignore import list_directory_files, matches_ignore_pattern
+from dotman.ignore import IgnoreMatcher, matches_ignore_pattern
 from tests.engine.test_sync_directory_observation import put
 from tests.helpers import initialize_git_repository, write_single_repo_config, write_tracked_packages_state
 
@@ -15,41 +15,11 @@ def _push_tracked_scope(engine: DotmanEngine) -> None:
         assert session.execute().result.status == "completed"
 
 
-def test_gitignore_style_recursive_directory_patterns_ignore_nested_pycache_files(
-    tmp_path: Path,
-) -> None:
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                '',
-                '[targets.config]',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                '',
-                '[targets.config.ignore]',
-                'patterns = ["**/__pycache__/"]',
-                '',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (source_root / "nested" / "__pycache__").mkdir(parents=True)
-    (source_root / "nested" / "__pycache__" / "cached.pyc").write_text(
-        "compiled\n",
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+def test_gitignore_style_recursive_directory_patterns_ignore_nested_pycache_directories() -> None:
+    matcher = IgnoreMatcher.from_patterns(("**/__pycache__/",))
 
-    files = list_directory_files(source_root, ("**/__pycache__/",))
-
-    assert "visible.conf" in files
-    assert "nested/__pycache__/cached.pyc" not in files
+    assert matcher.matches_directory("nested/__pycache__")
+    assert not matcher.matches("visible.conf")
 
 
 def test_gitignore_style_root_anchored_patterns_only_match_from_target_root() -> None:
@@ -62,96 +32,19 @@ def test_basename_only_ignore_patterns_still_match_nested_files() -> None:
     assert matches_ignore_pattern("gtk-3.0/settings.ini", "settings.ini")
 
 
-def test_negated_ignore_patterns_can_reinclude_specific_files(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    (root / "keep.pyc").write_text("keep\n", encoding="utf-8")
-    (root / "drop.pyc").write_text("drop\n", encoding="utf-8")
+def test_negated_ignore_patterns_can_reinclude_specific_files() -> None:
+    matcher = IgnoreMatcher.from_patterns(("*.pyc", "!keep.pyc"))
 
-    files = list_directory_files(root, ("*.pyc", "!keep.pyc"))
-
-    assert "keep.pyc" in files
-    assert "drop.pyc" not in files
+    assert not matcher.matches("keep.pyc")
+    assert matcher.matches("drop.pyc")
 
 
-def test_negated_directory_patterns_do_not_reinclude_still_ignored_descendant_files(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    (root / "plugins" / "pinned-window").mkdir(parents=True)
-    (root / "plugins" / "pinned-window" / "BarWidget.qml.dotdropbak").write_text(
-        "backup\n",
-        encoding="utf-8",
-    )
-    (root / "plugins" / "pinned-window" / "BarWidget.qml").write_text(
-        "live\n",
-        encoding="utf-8",
-    )
+def test_negated_directory_patterns_do_not_reinclude_still_ignored_descendant_files() -> None:
+    matcher = IgnoreMatcher.from_patterns(("**/*.dotdropbak", "!plugins/pinned-window/"))
 
-    files = list_directory_files(root, ("**/*.dotdropbak", "!plugins/pinned-window/"))
+    assert not matcher.matches("plugins/pinned-window/BarWidget.qml")
+    assert matcher.matches("plugins/pinned-window/BarWidget.qml.dotdropbak")
 
-    assert "plugins/pinned-window/BarWidget.qml" in files
-    assert "plugins/pinned-window/BarWidget.qml.dotdropbak" not in files
-
-
-def test_skip_marker_skips_nested_directory_subtree(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
-    (root / "cache").mkdir()
-    (root / "cache" / ".dotman-skip").write_text("", encoding="utf-8")
-    (root / "cache" / "state.db").write_text("state\n", encoding="utf-8")
-
-    files = list_directory_files(root, (), skip_markers=(".dotman-skip",))
-
-    assert sorted(files) == ["keep.txt"]
-
-
-def test_skip_marker_file_is_absent_from_results(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    (root / ".dotman-skip").write_text("", encoding="utf-8")
-    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
-
-    files = list_directory_files(root, (), skip_markers=(".dotman-skip",))
-
-    assert files == {}
-
-
-def test_no_prune_marker_config_treats_marker_as_normal_file(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    (root / ".dotman-skip").write_text("", encoding="utf-8")
-    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
-
-    files = list_directory_files(root, ())
-
-    assert sorted(files) == [".dotman-skip", "keep.txt"]
-
-
-def test_followed_directory_symlink_with_skip_marker_is_skipped_only_when_following(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "root"
-    target = tmp_path / "target"
-    root.mkdir()
-    target.mkdir()
-    (target / ".dotman-skip").write_text("", encoding="utf-8")
-    (target / "state.db").write_text("state\n", encoding="utf-8")
-    (root / "linked").symlink_to(target, target_is_directory=True)
-
-    with pytest.raises(ValueError, match="directory symlink encountered"):
-        list_directory_files(root, (), skip_markers=(".dotman-skip",))
-
-    files = list_directory_files(
-        root,
-        (),
-        skip_markers=(".dotman-skip",),
-        follow_dir_symlinks=True,
-    )
-
-    assert files == {}
 
 def write_sample_package(
     tmp_path: Path, *, package_extra: str = "", target_extra: str = "", repo_toml: str | None = None

@@ -650,24 +650,6 @@ def remove_tracked_package_entry(
 
 
 
-def find_tracked_package_owners(
-    context: TrackedStateContext,
-    candidate_repos: list[Repository],
-    selector: str,
-    profile: str | None,
-) -> list[tuple[Repository, FullSpecSelector]]:
-    owners: list[tuple[Repository, FullSpecSelector]] = []
-    candidate_repo_names = {repo.config.name for repo in candidate_repos}
-    for repo, binding, _selector_kind, package_ids in iter_tracked_package_entries(context):
-        if repo.config.name not in candidate_repo_names:
-            continue
-        if profile is not None and binding.profile != profile:
-            continue
-        if selector in package_ids and (repo, binding) not in owners:
-            owners.append((repo, binding))
-    return owners
-
-
 
 def write_tracked_package_entries(
     repo: Repository,

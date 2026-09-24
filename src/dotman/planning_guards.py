@@ -386,36 +386,6 @@ def evaluate_directory_path_rule_guards(
     return remaining_paths, tuple(guard_skips)
 
 
-def evaluate_hierarchical_guards(
-    planning_inputs: list["PackagePlanningInput"],
-    *,
-    command_runtime: CommandRuntime,
-    operation: str,
-    run_noop: bool,
-    sink: "ProgressSink | None" = None,
-) -> tuple[list["PackagePlanningInput"], tuple[GuardSkip, ...]]:
-    repo_inputs, repo_skips = _evaluate_repo_guards(
-        planning_inputs,
-        command_runtime=command_runtime,
-        operation=operation,
-        run_noop=run_noop,
-        sink=sink,
-    )
-    package_inputs, package_skips = _evaluate_package_guards(
-        repo_inputs,
-        command_runtime=command_runtime,
-        operation=operation,
-        run_noop=run_noop,
-        sink=sink,
-    )
-    target_inputs, target_skips = _evaluate_target_guards(
-        package_inputs,
-        command_runtime=command_runtime,
-        operation=operation,
-    )
-    return target_inputs, (*repo_skips, *package_skips, *target_skips)
-
-
 
 @dataclass(frozen=True)
 class DirectionalEligibility:

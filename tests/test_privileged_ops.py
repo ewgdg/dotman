@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -23,60 +22,4 @@ def test_privileged_ops_write_bytes_atomic_cleans_stale_temp_files(tmp_path: Pat
     assert not stale_temp_file.exists()
 
 
-def test_privileged_ops_list_directory_files_returns_json_payload(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
-    (root / "ignore.tmp").write_text("ignore\n", encoding="utf-8")
 
-    completed = subprocess.run(
-        [sys.executable, "-m", "dotman.privileged_ops", "list-directory-files", str(root)],
-        input=json.dumps(["*.tmp"]).encode("utf-8"),
-        capture_output=True,
-        check=False,
-    )
-
-    assert completed.returncode == 0, completed.stderr.decode("utf-8", errors="replace")
-    assert json.loads(completed.stdout.decode("utf-8")) == {
-        "keep.txt": str(root / "keep.txt"),
-    }
-
-
-def test_privileged_ops_list_directory_files_accepts_skip_markers(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
-    (root / "cache").mkdir()
-    (root / "cache" / ".dotman-skip").write_text("", encoding="utf-8")
-    (root / "cache" / "state.db").write_text("state\n", encoding="utf-8")
-
-    completed = subprocess.run(
-        [sys.executable, "-m", "dotman.privileged_ops", "list-directory-files", str(root)],
-        input=json.dumps(
-            {"ignore_patterns": [], "skip_markers": [".dotman-skip"]}
-        ).encode("utf-8"),
-        capture_output=True,
-        check=False,
-    )
-
-    assert completed.returncode == 0, completed.stderr.decode("utf-8", errors="replace")
-    assert json.loads(completed.stdout.decode("utf-8")) == {
-        "keep.txt": str(root / "keep.txt"),
-    }
-
-def test_privileged_directory_census_keeps_git_control_coordinates(tmp_path: Path) -> None:
-    (tmp_path / "private.log").write_text("private")
-    (tmp_path / "keep.log").write_text("keep")
-    completed = subprocess.run(
-        [sys.executable, "-m", "dotman.privileged_ops", "list-directory-files", str(tmp_path)],
-        input=json.dumps({
-            "ignore_patterns": ["!keep.log"],
-            "gitignore": {"target": "packages/app/config", "controls": [
-                ["", ["/packages/*/config/*.log"]]
-            ]},
-        }).encode(),
-        capture_output=True,
-        timeout=5,
-    )
-    assert completed.returncode == 0, completed.stderr
-    assert set(json.loads(completed.stdout)) == {"keep.log"}

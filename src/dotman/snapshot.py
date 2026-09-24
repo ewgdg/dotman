@@ -504,20 +504,6 @@ def _iter_push_snapshot_entries(plans: Sequence[PackagePlan]):
     for plan in plans:
         selection_label = plan.selection_label
         for target in plan.target_plans:
-            if target.directory_items:
-                for item in target.directory_items:
-                    if item.live_path in seen_live_paths:
-                        raise ValueError(f"duplicate snapshot live path: {item.live_path}")
-                    seen_live_paths.add(item.live_path)
-                    yield {
-                        "live_path": item.live_path,
-                        "push_action": item.action,
-                        "repo_name": plan.repo_name,
-                        "selection_label": selection_label,
-                        "package_id": target.package_id,
-                        "target_name": target.target_name,
-                    }
-                continue
             if target.action == "noop" or target.target_kind == "probe":
                 continue
             if target.live_path in seen_live_paths:

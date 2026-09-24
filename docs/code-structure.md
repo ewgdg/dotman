@@ -68,12 +68,12 @@ Current responsibility split:
 - `package_resolution.py` — selector parsing, package dependency closure, and resolved package selection construction
 - `tracking.py` — persisted tracked-package state flows through `TrackedStateContext`
 - `tracked_packages.py` — tracked package lookup and detail helpers
-- `planning.py` — high-level plan orchestration through `PlanningContext`, including the top-level operation-plan wrapper used for repo-scoped hooks
+- `planning.py` — shared static planning primitives through `PlanningContext`: tracked selection resolution, target metadata and ownership candidates, and hook plans
 - `planning_guards.py` — repo/package-instance/target/path-rule planning eligibility and guard diagnostics
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `sync_directory.py` — symmetric control-aware census and identity-derived child metadata; no aggregate payload or publication
-- `projection.py` — shared Render, Capture and comparison providers over real endpoints or staged Proposals plus Push file/directory action planning through `ProjectionContext`
-- `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
+- `projection.py` — shared Render, Capture and comparison providers over real endpoints or staged Proposals through `ProjectionContext`
+- `sync_scope.py` — static tracked scope resolution, ownership/collision/reserved-path validation, and canonical file/child identity keys
 - `sync_reconciliation.py` — typed three-way repository reconciliation from frozen Base, repository, and Capture evidence
 - `text_merge.py` — shared `git merge-file` three-way text merge used by Reconciliation and patch Capture
 - `sync_path_policy.py` — endpoint traversal, live-link interpretation, and execution-time path safety
@@ -81,13 +81,11 @@ Current responsibility split:
 - `pull_session.py` — fixed live-to-repository Observation, opt-out Proposal/Additional Approval and repository-only completion over the shared workset
 - `push_session.py` — fixed repository-to-live Observation, opt-out Use repository Approval and inherited Live Publication over the shared workset
 - `execution.py` — the shared command-hook execution boundary and atomic live-file helpers
-- `push_checkpoint.py` — frozen repository-space Push evidence attached to planned push targets
 - `sync_editor.py` — isolated configured/default Editor invocation and permitted source staging
 - `sync_observation.py` — file endpoint evidence, policy comparisons, frozen Guards/Base facts and opening-time Base lifecycle
 - `sync_auxiliary.py` — immutable Probe/hook rows, one-shot Probe activity and Guard-admitted directional hook retention
 - `operation_lock.py` — manager-wide non-blocking real-operation ownership shared by sessions and Push/Pull command workflows
 - `sync_base_lifecycle.py` — configured-policy Base eligibility, input fingerprints, applicability inspection, and per-unit checkpoint acknowledgment/deletion decisions
-- `sync_base_maintenance.py` — real Push selected-policy cleanup after static ownership/conflict resolution and before Guards; preserves excluded or unresolved children
 - `sync_base_inspection.py` — metadata-only list/info, exact manager-locked reset, and aggregate doctor diagnostics using shared static resolution and Base applicability
 - `sync_base_store.py` — secure per-repository file storage with self-contained Sync Base records and atomic per-unit replacement
 
@@ -170,14 +168,11 @@ per-unit lifecycle.
 
 The engine composes those immutable contexts once. Internal modules receive configuration, repositories, tracked state, and command execution directly; they do not receive `DotmanEngine` or call back through private facade methods.
 
-Current execution shape is intentionally nested:
-
-- operation plan
-- repo-scoped hook buckets
-- resolved package selections / package plans
-- target plans and target-scoped hooks
-
-That structure keeps repo/package/target hook ordering explicit instead of hiding it in ad hoc sorting.
+Sync, Pull and Push share one planning path: `resolve_sync_scope` resolves the
+tracked scope statically, then the session opens Observation over that frozen
+workset. Publication builds package and target plans only for approved work,
+keeping repo/package/target hook ordering explicit instead of hiding it in ad
+hoc sorting.
 
 ## Command runtime
 
@@ -211,7 +206,7 @@ still require context propagation and main-thread-only signal installation.
 Planning is package-centric:
 
 - selector queries and tracked package entries resolve into `ResolvedPackageSelection`
-- execution/review/snapshot flows consume `OperationPlan.package_plans`
+- Sync/Pull/Push sessions resolve them through `resolve_sync_scope`; publication and snapshot flows consume the resulting package plans
 - tracked-package persistence remains a separate storage concern from runtime package planning
 
 If a new engine feature clearly belongs to one of those areas, put it there first and keep `engine.py` as the public facade.

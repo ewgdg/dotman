@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dotman.cli_interaction as cli
 import pytest
 from dotman.cli import build_parser, main
-from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
+from dotman.models import FullSpecSelector, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,

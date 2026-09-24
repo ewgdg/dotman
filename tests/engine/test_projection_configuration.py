@@ -121,18 +121,6 @@ def test_builtin_name_command_object_remains_command_in_plan_and_serialization(t
     assert plan.to_dict()["render"] == {"run": "jinja"}
 
 
-def test_command_projection_runs_without_elevation_for_protected_inputs(tmp_path, monkeypatch):
-    from dotman.command_runtime import CommandResult, MemoryCommandRuntime
-    root = repo(tmp_path, ["render = 'cat \"$DOTMAN_SOURCE\"'"])
-    live = Path.home() / ".x"
-    live.write_text("old")
-    runtime = MemoryCommandRuntime([lambda _request: CommandResult(exit_code=0, stdout=b"rendered")] * 4)
-    monkeypatch.setattr("dotman.projection.needs_sudo_for_read", lambda _path: True)
-    push(tracked_engine(tmp_path, root, command_runtime=runtime))
-    assert runtime.requests
-    assert {request.elevation for request in runtime.requests} == {"none"}
-    assert live.read_text() == "rendered"
-
 
 def test_path_rule_preset_compare_sides_merge_independently(tmp_path):
     from dotman.manifest import build_target_spec

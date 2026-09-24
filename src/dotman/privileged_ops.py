@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
 
 from dotman.atomic_files import write_bytes_atomic, write_symlink_atomic
-from dotman.ignore import GitIgnoreChain, _list_directory_files_without_sudo
 from dotman.repo_access import restore_repo_path_access_for_invoking_user
 
 
@@ -55,32 +53,6 @@ def _chmod(path: Path, mode: int) -> None:
 
 
 
-def _list_directory_files(root: Path) -> None:
-    payload = json.loads(sys.stdin.read())
-    if isinstance(payload, dict):
-        ignore_patterns = tuple(payload.get("ignore_patterns", ()))
-        skip_markers = tuple(payload.get("skip_markers", ()))
-        follow_dir_symlinks = bool(payload.get("follow_dir_symlinks", False))
-        force_ignore_patterns = tuple(payload.get("force_ignore_patterns", ()))
-        gitignore_payload = payload.get("gitignore")
-        gitignore = GitIgnoreChain(**gitignore_payload) if gitignore_payload else None
-    else:
-        ignore_patterns = tuple(payload)
-        skip_markers = ()
-        follow_dir_symlinks = False
-        force_ignore_patterns = ()
-        gitignore = None
-    files = _list_directory_files_without_sudo(
-        root,
-        ignore_patterns,
-        skip_markers=skip_markers,
-        follow_dir_symlinks=follow_dir_symlinks,
-        force_ignore_patterns=force_ignore_patterns,
-        gitignore=gitignore,
-    )
-    sys.stdout.write(json.dumps({relative: str(path) for relative, path in files.items()}))
-
-
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
@@ -116,11 +88,6 @@ def main(argv: list[str] | None = None) -> int:
             if len(args) != 2:
                 raise PrivilegedOperationError("chmod requires: PATH MODE")
             _chmod(Path(args[0]), int(args[1]))
-            return 0
-        if command == "list-directory-files":
-            if len(args) != 1:
-                raise PrivilegedOperationError("list-directory-files requires: ROOT")
-            _list_directory_files(Path(args[0]))
             return 0
     except PrivilegedOperationError as exc:
         print(str(exc), file=sys.stderr)

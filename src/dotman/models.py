@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Literal, overload
-
-if TYPE_CHECKING:
-    from dotman.push_checkpoint import PushCheckpoint
-    from dotman.sync_base_store import SyncBasePayload
+from typing import Any, Literal
 
 
 def _serialized_projection(value: str) -> str | dict[str, str]:
@@ -800,7 +795,6 @@ class TargetPlan:
     action: str
     target_kind: str
     projection_kind: str
-    desired_text: str | None = None
     render: str = "raw"
     capture: str = "raw"
     compare_repo: str = "raw"
@@ -822,14 +816,8 @@ class TargetPlan:
     command_cwd: Path | None = None
     command_env: dict[str, str] | None = field(default=None, repr=False)
     desired_bytes: bytes | None = field(default=None, repr=False)
-    review_before_bytes: bytes | None = field(default=None, repr=False)
-    review_after_bytes: bytes | None = field(default=None, repr=False)
     child_path: str | None = None
-    directory_items: tuple["DirectoryPlanItem", ...] = ()
     probe_command: str | None = None
-    checkpoint_payload: SyncBasePayload | None = field(default=None, repr=False, compare=False)
-    checkpoint_agreements: tuple[DirectoryPlanItem, ...] = field(default=(), repr=False, compare=False)
-    push_checkpoints: tuple[PushCheckpoint, ...] = field(default=(), repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         is_probe = self.target_kind == "probe"
@@ -849,7 +837,6 @@ class TargetPlan:
             "sync_policy": self.sync_policy,
             "chmod": self.chmod,
             "path_rules": [rule.to_dict() for rule in self.path_rules],
-            "directory_items": [item.to_dict() for item in self.directory_items],
         }
         if self.probe_command is not None:
             payload["probe_command"] = self.probe_command
@@ -976,85 +963,4 @@ class PackagePlan:
         }
 
 
-@dataclass(frozen=True)
-class OperationPlan(Sequence[PackagePlan]):
-    operation: str
-    package_plans: tuple[PackagePlan, ...]
-    repo_hooks: dict[str, dict[str, list[HookPlan]]] = field(default_factory=dict)
-    repo_hook_plans: dict[str, dict[str, list[HookPlan]]] | None = field(default=None, repr=False)
-    repo_order: tuple[str, ...] = ()
-    guard_skips: tuple[GuardSkip, ...] = ()
 
-    def __iter__(self):
-        return iter(self.package_plans)
-
-    def __len__(self) -> int:
-        return len(self.package_plans)
-
-    @overload
-    def __getitem__(self, index: int) -> PackagePlan: ...
-
-    @overload
-    def __getitem__(self, index: slice) -> tuple[PackagePlan, ...]: ...
-
-    def __getitem__(self, index: int | slice) -> PackagePlan | tuple[PackagePlan, ...]:
-        return self.package_plans[index]
-
-    @property
-    def has_effective_work(self) -> bool:
-        return bool(self.repo_hooks) or any(
-            any(plan.hooks.values())
-            or any(target.action != "noop" for target in plan.target_plans)
-            for plan in self.package_plans
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "packages": [plan.to_dict() for plan in self.package_plans],
-            "repo_hooks": {
-                repo_name: {hook_name: [item.to_dict() for item in items] for hook_name, items in hooks.items()}
-                for repo_name, hooks in self.repo_hooks.items()
-            },
-            "guard_skips": [skip.to_dict() for skip in self.guard_skips],
-        }
-
-
-@dataclass(frozen=True)
-class DirectoryPlanItem:
-    relative_path: str
-    action: str
-    repo_path: Path
-    live_path: Path
-    chmod: str | None = None
-    render_command: str | None = None
-    capture_command: str | None = None
-    compare_repo: str = "raw"
-    compare_live: str = "raw"
-    editor: EditorSpec = field(default_factory=EditorSpec)
-    editor_explicit: bool = field(default=False, repr=False, compare=False)
-    additional_sources: tuple[str, ...] = ()
-    additional_source_entries: tuple[AdditionalSource, ...] = field(default=(), repr=False, compare=False)
-    sync_policy: str | None = None
-    desired_bytes: bytes | None = field(default=None, repr=False)
-    review_before_bytes: bytes | None = field(default=None, repr=False)
-    review_after_bytes: bytes | None = field(default=None, repr=False)
-    checkpoint_payload: SyncBasePayload | None = field(default=None, repr=False, compare=False)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "relative_path": self.relative_path,
-            "action": self.action,
-            "repo_path": str(self.repo_path),
-            "live_path": str(self.live_path),
-            "chmod": self.chmod,
-            "render": _serialized_projection(self.render_command or "raw"),
-            "capture": _serialized_projection(self.capture_command or "raw"),
-            "compare": {
-                "repo": _serialized_projection(self.compare_repo),
-                "live": _serialized_projection(self.compare_live),
-            },
-            "editor": self.editor.to_dict(),
-            "editor_explicit": self.editor_explicit,
-            "additional_sources": list(self.additional_sources),
-            "sync_policy": self.sync_policy,
-        }

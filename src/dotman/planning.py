@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
-import sys
 from typing import TYPE_CHECKING, Any, Mapping
 
-from dotman.ignore import collect_gitignore_chain
 from dotman.collisions import (
     TrackedTargetCandidate,
     TrackedTargetOverride,
     operation_write_path,
     resolve_tracked_target_winners,
-    validate_reserved_path_claims,
-    validate_target_collisions,
 )
-from dotman.command_runtime import CommandRuntime, command_runtime_session
-from dotman.config import expand_path
+from dotman.command_runtime import CommandRuntime
 from dotman.manifest import deep_merge, infer_profile_os
 from dotman.package_resolution import (
     resolve_package_ids,
@@ -25,13 +20,9 @@ from dotman.package_resolution import (
 )
 from dotman.models import (
     FullSpecSelector,
-    GuardSkip,
     ManagerConfig,
-    executable_package_ids_for_targets,
     HookPlan,
-    OperationPlan,
     PackageSelectionSourceKind,
-    PackagePlan,
     PackageSpec,
     package_ref_text,
     repo_qualified_target_text,
@@ -42,7 +33,6 @@ from dotman.models import (
     TrackedPackageEntry,
     TrackedTargetSummary,
 )
-from dotman.planning_guards import evaluate_hierarchical_guards
 from dotman.projection import (
     ProjectionContext,
     TargetMetadata,
@@ -50,7 +40,6 @@ from dotman.projection import (
     build_package_hook_env,
     build_repo_hook_env,
     resolve_target_kind,
-    plan_targets,
     target_claims_path,
 )
 from dotman.repository import Repository, VALID_HOOK_NAMES
@@ -58,7 +47,6 @@ from dotman.templates import build_template_context, render_template_string
 from dotman import tracking
 
 if TYPE_CHECKING:
-    from dotman.progress import ProgressSink
     from dotman.tracking import TrackedStateContext
 
 HOOK_NAMES_BY_OPERATION = {
@@ -257,12 +245,6 @@ class PackagePlanningInput:
     target_metadata: list[TargetMetadata]
 
 
-@dataclass(frozen=True)
-class PackagePlanningResult:
-    package_plans: tuple[PackagePlan, ...]
-    guard_skips: tuple[GuardSkip, ...]
-    considered_repo_names: tuple[str, ...]
-
 
 def build_package_planning_context(
     repo: Repository,
@@ -321,227 +303,6 @@ def resolve_tracked_package_entry(
         source_selector=entry.package_id,
     )
 
-
-def _filter_package_hook_plans(
-    hook_plans: dict[str, list[HookPlan]],
-    *,
-    package_id: str,
-    target_plans: list[Any],
-    allow_standalone_noop_hooks: bool = False,
-) -> dict[str, list[HookPlan]]:
-    executable_package_ids = executable_package_ids_for_targets(target_plans)
-    executable_target_ids = {
-        (target.package_id, target.target_name)
-        for target in target_plans
-        if target.action != "noop"
-    }
-    hooks: dict[str, list[HookPlan]] = {}
-    for hook_name, items in hook_plans.items():
-        retained = []
-        for hook in items:
-            if hook.package_id != package_id:
-                continue
-            if hook.scope_kind == "package":
-                allow_standalone_for_hook = allow_standalone_noop_hooks and not hook_name.startswith("guard_")
-                if package_id in executable_package_ids or allow_standalone_for_hook or hook.run_noop:
-                    retained.append(hook)
-                continue
-            if hook.target_name is None:
-                continue
-            if (package_id, hook.target_name) in executable_target_ids or allow_standalone_noop_hooks or hook.run_noop:
-                retained.append(hook)
-        if retained:
-            hooks[hook_name] = retained
-    return hooks
-
-
-def build_package_plan(
-    planning_context: PlanningContext,
-    repo: Repository,
-    selection: ResolvedPackageSelection,
-    *,
-    operation: str,
-    package_context: PackagePlanningContext | None = None,
-    target_metadata: list[TargetMetadata] | None = None,
-    run_noop: bool = False,
-    guard_skips: list[GuardSkip] | None = None,
-) -> PackagePlan:
-    package_context = package_context or build_package_planning_context(repo, selection)
-    target_plans = plan_targets(
-        planning_context.projection,
-        repo=repo,
-        packages=package_context.resolved_packages,
-        context=package_context.context,
-        selection=selection,
-        operation=operation,
-        inferred_os=package_context.inferred_os,
-        declaration_package_ids={selection.identity.package_id},
-        metadata_targets=target_metadata,
-        guard_skips=guard_skips,
-    )
-    if operation == "push":
-        from dotman.push_checkpoint import checkpoints_for_target
-        target_plans = [replace(target, push_checkpoints=checkpoints_for_target(
-            target, repo=repo, selection=selection, context=package_context.context,
-            manager_root=planning_context.tracked_state.state_root,
-        )) for target in target_plans]
-    hook_plans = plan_hooks(
-        repo,
-        package_context.resolved_packages,
-        package_context.context,
-        selection=selection,
-        operation=operation,
-        inferred_os=package_context.inferred_os,
-        variables=package_context.variables,
-        target_plans=target_plans,
-        declaration_package_ids={selection.identity.package_id},
-    )
-    hook_plans = {
-        hook_name: items
-        for hook_name, items in hook_plans.items()
-        if not hook_name.startswith("guard_")
-    }
-    hook_plans = {hook_name: items for hook_name, items in hook_plans.items() if items}
-    package_targets = [target for target in target_plans if target.package_id == selection.identity.package_id]
-    hooks = _filter_package_hook_plans(
-        hook_plans,
-        package_id=selection.identity.package_id,
-        target_plans=package_targets,
-        allow_standalone_noop_hooks=run_noop,
-    )
-    return PackagePlan(
-        operation=operation,
-        selection=selection,
-        variables=package_context.variables,
-        hooks=hooks,
-        target_plans=package_targets,
-        hook_plans=hook_plans,
-        repo_root=repo.root,
-        state_path=repo.config.state_path,
-        inferred_os=package_context.inferred_os,
-    )
-
-
-def _merge_package_plans(plans: list[PackagePlan]) -> list[PackagePlan]:
-    merged: list[PackagePlan] = []
-    plan_indexes: dict[tuple[str, str, str | None, str], int] = {}
-    for plan in plans:
-        key = resolved_package_selection_key(plan.selection)
-        existing_index = plan_indexes.get(key)
-        if existing_index is None:
-            plan_indexes[key] = len(merged)
-            merged.append(plan)
-            continue
-        existing = merged[existing_index]
-        if plan.selection.explicit and not existing.selection.explicit:
-            merged[existing_index] = plan
-    return merged
-
-
-def build_tracked_plans(
-    planning_context: PlanningContext,
-    *,
-    operation: str,
-    entries_by_repo: dict[str, list[TrackedPackageEntry]] | None = None,
-    sink: "ProgressSink | None" = None,
-    run_noop: bool = False,
-    maintain_sync_bases: bool = False,
-) -> OperationPlan:
-    selections = resolve_tracked_package_selections(planning_context, entries_by_repo=entries_by_repo)
-    planning_result = build_package_plans(
-        planning_context,
-        selections,
-        operation=operation,
-        sink=sink,
-        run_noop=run_noop,
-        maintain_sync_bases=maintain_sync_bases,
-    )
-    repo_by_name = {
-        repo_config.name: get_repository(planning_context, repo_config.name)
-        for repo_config in planning_context.config.ordered_repos
-    }
-    return build_operation_plan(
-        list(planning_result.package_plans),
-        repo_by_name=repo_by_name,
-        operation=operation,
-        allow_standalone_noop_hooks=run_noop,
-        guard_skips=planning_result.guard_skips,
-        considered_repo_names=planning_result.considered_repo_names,
-    )
-
-
-def build_package_plans(
-    planning_context: PlanningContext,
-    selections: list[ResolvedPackageSelection],
-    *,
-    operation: str,
-    sink: "ProgressSink | None" = None,
-    run_noop: bool = False,
-    maintain_sync_bases: bool = False,
-) -> PackagePlanningResult:
-    if sink is not None:
-        sink.start(len(selections))
-    try:
-        planning_inputs, candidates_by_path = collect_static_target_candidates(
-            planning_context,
-            selections,
-            operation=operation,
-        )
-        winner_indexes = resolve_tracked_target_winners(candidates_by_path)
-        selected_inputs = _select_static_package_planning_inputs(
-            planning_inputs,
-            winner_indexes=winner_indexes,
-        )
-        _validate_preprojection_conflicts(selected_inputs, operation=operation)
-        if maintain_sync_bases:
-            from dotman.sync_base_maintenance import discard_push_ineligible_bases
-
-            discard_push_ineligible_bases(planning_context, selected_inputs)
-        considered_repo_names = tuple(
-            dict.fromkeys(planning_input.selection.identity.repo for planning_input in selected_inputs)
-        )
-
-        # Privileged file helpers and the elevation broker still read the active runtime;
-        # bind the same explicit dependency that guards and projections receive directly.
-        with command_runtime_session(planning_context.command_runtime):
-            admitted_inputs, hierarchical_guard_skips = evaluate_hierarchical_guards(
-                selected_inputs,
-                command_runtime=planning_context.command_runtime,
-                operation=operation,
-                run_noop=run_noop,
-                sink=sink,
-            )
-            all_guard_skips = list(hierarchical_guard_skips)
-            host_inputs = _build_host_package_planning_inputs(
-                planning_context,
-                admitted_inputs,
-                operation=operation,
-            )
-
-            plans: list[PackagePlan] = []
-            for planning_input in host_inputs:
-                plans.append(
-                    build_package_plan(
-                        planning_context,
-                        planning_input.repo,
-                        planning_input.selection,
-                        operation=operation,
-                        package_context=planning_input.package_context,
-                        target_metadata=planning_input.target_metadata,
-                        run_noop=run_noop,
-                        guard_skips=all_guard_skips,
-                    )
-                )
-                if sink is not None:
-                    sink.update(1)
-        return PackagePlanningResult(
-            package_plans=tuple(plans),
-            guard_skips=tuple(all_guard_skips),
-            considered_repo_names=considered_repo_names,
-        )
-    finally:
-        if sink is not None:
-            sink.close()
 
 
 def collect_static_target_candidates(
@@ -604,102 +365,6 @@ def collect_static_target_candidates(
             )
     return planning_inputs, candidates_by_path
 
-
-def _select_static_package_planning_inputs(
-    planning_inputs: list[PackagePlanningInput],
-    *,
-    winner_indexes: set[tuple[int, int]],
-) -> list[PackagePlanningInput]:
-    selected_inputs: list[PackagePlanningInput] = []
-    for plan_index, planning_input in enumerate(planning_inputs):
-        selected_metadata = [
-            metadata
-            for target_index, metadata in enumerate(planning_input.target_metadata)
-            if not target_claims_path(metadata.target) or (plan_index, target_index) in winner_indexes
-        ]
-        selected_inputs.append(replace(planning_input, target_metadata=selected_metadata))
-    return selected_inputs
-
-
-def _build_host_package_planning_inputs(
-    planning_context: PlanningContext,
-    planning_inputs: list[PackagePlanningInput],
-    *,
-    operation: str,
-) -> list[PackagePlanningInput]:
-    host_inputs: list[PackagePlanningInput] = []
-    for planning_input in planning_inputs:
-        target_metadata = build_target_metadata(
-            repo=planning_input.repo,
-            packages=planning_input.package_context.resolved_packages,
-            context=planning_input.package_context.context,
-            selection=planning_input.selection,
-            operation=operation,
-            inferred_os=planning_input.package_context.inferred_os,
-            declaration_package_ids={planning_input.selection.identity.package_id},
-            target_names={metadata.target_name for metadata in planning_input.target_metadata},
-            validate_declaration_conflicts=False,
-        )
-        host_inputs.append(replace(planning_input, target_metadata=target_metadata))
-    return host_inputs
-
-
-def _validate_preprojection_conflicts(
-    planning_inputs: list[PackagePlanningInput],
-    *,
-    operation: str,
-) -> None:
-    repo_names = dict.fromkeys(planning_input.repo.config.name for planning_input in planning_inputs)
-    for repo_name in repo_names:
-        repo_inputs = [
-            planning_input
-            for planning_input in planning_inputs
-            if planning_input.repo.config.name == repo_name
-        ]
-        rendered_targets = [
-            (
-                metadata.package,
-                metadata.target,
-                metadata.repo_path,
-                metadata.live_path,
-                metadata.ignore_patterns,
-                metadata.live_path_is_symlink,
-                metadata.live_path_symlink_target,
-            )
-            for planning_input in repo_inputs
-            for metadata in planning_input.target_metadata
-            if target_claims_path(metadata.target)
-        ]
-        validate_target_collisions(rendered_targets, operation=operation, gitignore_chains={
-            (metadata.repo_path, metadata.live_path): metadata.gitignore
-            for planning_input in repo_inputs for metadata in planning_input.target_metadata
-        })
-        if operation == "push":
-            _validate_preprojection_reserved_path_conflicts(repo_inputs, rendered_targets=rendered_targets)
-
-
-def _validate_preprojection_reserved_path_conflicts(
-    planning_inputs: list[PackagePlanningInput],
-    *,
-    rendered_targets: list[tuple[PackageSpec, Any, Path, Path, tuple[str, ...], bool, str | None]],
-) -> None:
-    target_claims = [
-        (metadata_package.id, f"{metadata_package.id}:{target.name}", live_path)
-        for metadata_package, target, _repo_path, live_path, _ignore_patterns, _is_symlink, _symlink_target in rendered_targets
-    ]
-    reserved_claims: list[tuple[str, Path]] = []
-    for planning_input in planning_inputs:
-        package = planning_input.repo.resolve_package(planning_input.selection.identity.package_id)
-        for reserved_path in package.reserved_paths or ():
-            rendered_path = render_template_string(
-                reserved_path,
-                planning_input.package_context.context,
-                base_dir=package.package_root,
-                source_path=package.package_root,
-            )
-            reserved_claims.append((package.id, expand_path(rendered_path, dereference=False)))
-
-    validate_reserved_path_claims(target_claims=target_claims, reserved_claims=reserved_claims)
 
 
 def collect_tracked_ownership_candidates(
@@ -1036,143 +701,4 @@ def plan_repo_hooks(
     return dict(hooks)
 
 
-def finalize_repo_hook_plans(
-    hooks: dict[str, list[HookPlan]],
-    package_plans: list[PackagePlan],
-    *,
-    allow_standalone_noop_hooks: bool = False,
-    excluded_repo_names: set[str] | None = None,
-) -> dict[str, list[HookPlan]]:
-    if not hooks:
-        return {}
-    repo_name = next((hook.repo_name for hook_plans in hooks.values() for hook in hook_plans if hook.repo_name), None)
-    repo_has_lower_scope_work = any(
-        any(target.action != "noop" for target in plan.target_plans) or any(plan.hooks.values())
-        for plan in package_plans
-    )
-    if repo_has_lower_scope_work:
-        return hooks
-    if repo_name is not None and repo_name in (excluded_repo_names or set()):
-        return {}
-    finalized: dict[str, list[HookPlan]] = {}
-    for hook_name, hook_plans in hooks.items():
-        retained = [hook for hook in hook_plans if allow_standalone_noop_hooks or hook.run_noop]
-        if retained:
-            finalized[hook_name] = retained
-    return finalized
 
-
-def build_operation_plan(
-    package_plans: list[PackagePlan],
-    *,
-    repo_by_name: dict[str, Repository],
-    operation: str,
-    allow_standalone_noop_hooks: bool = False,
-    excluded_repo_names: set[str] | None = None,
-    guard_skips: tuple[GuardSkip, ...] = (),
-    considered_repo_names: tuple[str, ...] = (),
-) -> OperationPlan:
-    _validate_direct_package_plan_conflicts(package_plans, repo_by_name=repo_by_name)
-    active_repo_names = set(considered_repo_names) | {plan.repo_name for plan in package_plans}
-    repo_order = tuple(
-        repo_name
-        for repo_name in repo_by_name
-        if repo_name in active_repo_names
-    )
-    planning_skipped_repo_names = {
-        skip.repo_name
-        for skip in guard_skips
-        if skip.scope_kind == "repo"
-    }
-    effective_excluded_repo_names = set(excluded_repo_names or set()) | planning_skipped_repo_names
-    repo_hook_plans = {
-        repo_name: plan_repo_hooks(repo_by_name[repo_name], operation=operation)
-        for repo_name in repo_order
-    }
-    repo_hooks = {
-        repo_name: finalize_repo_hook_plans(
-            repo_hook_plans.get(repo_name, {}),
-            [plan for plan in package_plans if plan.repo_name == repo_name],
-            allow_standalone_noop_hooks=allow_standalone_noop_hooks,
-            excluded_repo_names=effective_excluded_repo_names,
-        )
-        for repo_name in repo_order
-    }
-    repo_hooks = {repo_name: hooks for repo_name, hooks in repo_hooks.items() if hooks}
-    return OperationPlan(
-        operation=operation,
-        package_plans=tuple(package_plans),
-        repo_hooks=repo_hooks,
-        repo_hook_plans=repo_hook_plans,
-        repo_order=repo_order,
-        guard_skips=guard_skips,
-    )
-
-
-def _validate_direct_package_plan_conflicts(
-    package_plans: list[PackagePlan],
-    *,
-    repo_by_name: dict[str, Repository],
-) -> None:
-    for repo_name in repo_by_name:
-        repo_package_plans = [plan for plan in package_plans if plan.repo_name == repo_name]
-        if len(repo_package_plans) < 2:
-            continue
-        repo = repo_by_name[repo_name]
-        rendered_targets = []
-        gitignore_chains = {}
-        for plan in repo_package_plans:
-            for target in plan.target_plans:
-                if target.target_kind == "probe":
-                    continue
-                package = repo.resolve_package(target.package_id)
-                target_spec = (package.targets or {})[target.target_name]
-                enabled = package.gitignore_enabled if package.gitignore_enabled is not None else repo.ignore_defaults.gitignore
-                gitignore_chains[(target.repo_path, target.live_path)] = (
-                    collect_gitignore_chain(target.repo_path, repo.root, nested=False) if enabled else None
-                )
-                rendered_targets.append(
-                    (
-                        package,
-                        target_spec,
-                        target.repo_path,
-                        target.live_path,
-                        target_spec.ignore_patterns or (),
-                        target.live_path_is_symlink,
-                        target.live_path_symlink_target,
-                    )
-                )
-        operation = repo_package_plans[0].operation
-        validate_target_collisions(rendered_targets, operation=operation, gitignore_chains=gitignore_chains)
-        if operation == "push":
-            _validate_reserved_path_conflicts_for_package_plans(repo_package_plans, repo=repo, rendered_targets=rendered_targets)
-
-
-def _validate_reserved_path_conflicts_for_package_plans(
-    package_plans: list[PackagePlan],
-    *,
-    repo: Repository,
-    rendered_targets: list[tuple[PackageSpec, Any, Path, Path, tuple[str, ...], bool, str | None]],
-) -> None:
-    target_claims = [
-        (package.id, f"{package.id}:{target.name}", live_path)
-        for package, target, _repo_path, live_path, _ignore_patterns, _live_path_is_symlink, _live_path_symlink_target in rendered_targets
-    ]
-    reserved_claims: list[tuple[str, Path]] = []
-    for plan in package_plans:
-        package = repo.resolve_package(plan.package_id)
-        context = build_template_context(
-            plan.variables,
-            profile=plan.requested_profile,
-            inferred_os=plan.inferred_os or sys.platform,
-        )
-        for reserved_path in package.reserved_paths or ():
-            rendered_path = render_template_string(
-                reserved_path,
-                context,
-                base_dir=package.package_root,
-                source_path=package.package_root,
-            )
-            reserved_claims.append((package.id, expand_path(rendered_path, dereference=False)))
-
-    validate_reserved_path_claims(target_claims=target_claims, reserved_claims=reserved_claims)
