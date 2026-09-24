@@ -228,7 +228,13 @@ class SyncDeckCommandRunner:
             print(json.dumps(payload))
             return
         print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""))
+        # Clean in-sync units have nothing to approve; listing them buries actionable rows.
+        def is_quiet_in_sync(unit) -> bool:
+            return unit["observation"] == "directly-in-sync" and not unit["diagnostics"]
+        in_sync_count = sum(map(is_quiet_in_sync, payload["sync_units"]))
         for unit in payload["sync_units"]:
+            if is_quiet_in_sync(unit):
+                continue
             selection = "approved" if unit["approved"] else "unapproved"
             print(f"  [{render_sync_term(selection, use_color=self._use_color)}] {unit['identity']}")
             if unit["resolution"]:
@@ -267,7 +273,8 @@ class SyncDeckCommandRunner:
             f"{summary['approved_units']} approved units / "
             f"{summary['repository_changes']} repository changes / "
             f"{summary['live_writes']} live writes / "
-            f"{summary['live_deletions']} live deletions"
+            f"{summary['live_deletions']} live deletions / "
+            f"{in_sync_count} in sync"
         )
         for item in payload["summary"]["diagnostics"]:
             print(item["message"], file=sys.stderr)
