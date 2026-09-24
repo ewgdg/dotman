@@ -19,6 +19,9 @@ import pytest
 
 from tests.engine.test_sync_session import make_engine
 
+# These PTY lifecycle tests rely on Linux /proc, AF_UNIX path lengths, and
+# pty/process-group semantics that macOS does not share.
+pytestmark = pytest.mark.skipif(sys.platform == "darwin", reason="Linux PTY lifecycle semantics")
 
 WAIT_SECONDS = 8
 
