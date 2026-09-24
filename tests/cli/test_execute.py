@@ -605,14 +605,15 @@ def test_push_cli_human_execution_emits_package_timeline_and_nested_logs(
     output = captured.out
     assert "\n:: executing push\n" in output
     assert "packages: 1" in output
-    assert "steps: 5" in output
+    # Sync Base bookkeeping is not user work: no step, no count, no status line.
+    assert "steps: 4" in output
     assert ":: fixture:app@default" in output
-    assert "[1/5] pre_push" in output
-    assert "[3/5] chmod" in output
+    assert "[1/4] pre_push" in output
+    assert "[3/4] chmod" in output
     assert "600" in output
-    assert "[4/5] acknowledge fixture:app.config" in output
-    assert "converged · Base advanced" in output
-    assert "[5/5] post_push" in output
+    assert "acknowledge" not in output
+    assert "Base" not in output
+    assert "[4/4] post_push" in output
     assert "guard push" not in output
     assert "post push" in output
     assert "\n    done\n" not in output
@@ -671,16 +672,47 @@ def test_push_cli_run_noop_executes_hooks_for_all_noop_push_plan(
     output = captured.out
     assert ":: executing push" in output
     assert "packages: 1" in output
-    assert "steps: 3" in output
-    assert "[1/3] pre_push" in output
-    assert "[2/3] acknowledge fixture:app.config" in output
-    assert "directly-in-sync · Base advanced" in output
-    assert "[3/3] post_push" in output
+    assert "steps: 2" in output
+    assert "[1/2] pre_push" in output
+    assert "acknowledge" not in output
+    assert "Base" not in output
+    assert "[2/2] post_push" in output
     assert "guard push" not in output
     assert "pre push" in output
     assert "post push" in output
     assert "noop" not in output
     assert " create " not in output
+
+
+def test_push_cli_human_execution_hides_direct_agreement_base_save(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    repo_root = tmp_path / "repo"
+    _write_basic_execution_repo(repo_root)
+    config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
+    _write_tracked_binding(tmp_path / "state")
+
+    live_path = home / ".config" / "app" / "config.txt"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_text("repo value\n", encoding="utf-8")
+    live_path.chmod(0o600)
+
+    exit_code = main(["--unattended", "--config", str(config_path), "push"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    output = captured.out
+    assert "no pending target actions" in output
+    assert ":: fixture:app@default" not in output
+    assert "acknowledge" not in output
+    assert "Base" not in output
 
 
 def test_push_cli_run_noop_dry_run_json_shows_hook_only_package(

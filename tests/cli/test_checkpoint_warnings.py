@@ -61,7 +61,7 @@ def test_committed_checkpoint_reports_durability_warning_without_losing_acknowle
 
 
 @pytest.mark.parametrize('fails', [False, True])
-def test_push_human_reports_completion_and_checkpoint_separately(tmp_path, monkeypatch, capsys, fails):
+def test_push_human_reports_base_only_through_warnings(tmp_path, monkeypatch, capsys, fails):
     from dotman.cli import main
 
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'both', b'repo', b'live', '')])
@@ -71,9 +71,10 @@ def test_push_human_reports_completion_and_checkpoint_separately(tmp_path, monke
         monkeypatch.setattr(SyncBaseStore, 'replace', fail)
     assert main(['--config', str(engine.config.config_path), '--unattended', 'push']) == 0
     output = capsys.readouterr()
-    assert 'main:app.unit' in output.out
-    assert 'converged' in output.out
-    assert ('Base not advanced' if fails else 'Base advanced') in output.out
+    assert 'update' in output.out
+    # Base state is reported only through warnings, never as a result line.
+    assert 'Base' not in output.out
+    assert ('warning: Sync Base not advanced for main:app.unit' in output.err) == fails
     assert (tmp_path / 'live/unit').read_bytes() == b'repo'
 
 

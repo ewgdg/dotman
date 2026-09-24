@@ -537,25 +537,39 @@ def execution_step_display(step: Any, *, full_paths: bool) -> str:
     return display_cli_path(reference_path, full_paths=full_paths)
 
 
+def _is_user_visible_step(step: Any) -> bool:
+    # Sync Base checkpoints are bookkeeping, not user-selected work. Human output
+    # hides them on success; failures surface through warnings instead.
+    return step.kind != "checkpoint"
+
+
+def _visible_steps(steps: Any) -> tuple[Any, ...]:
+    return tuple(step for step in steps if _is_user_visible_step(step))
+
+
 def _print_execution_header(*, session: Any, use_color: bool) -> None:
-    step_count = sum(len(repo.steps) for repo in session.repos)
+    visible_repos = [repo for repo in session.repos if _visible_steps(repo.steps)]
+    visible_packages = [package for package in session.packages if _visible_steps(package.steps)]
+    step_count = sum(len(_visible_steps(repo.steps)) for repo in visible_repos)
     _print_payload_header(f"executing {session.operation}", use_color=use_color)
     print(
         "  "
         + " · ".join(
             [
-                cli_style.render_summary_stat(label="repos", value=len(session.repos), use_color=use_color),
-                cli_style.render_summary_stat(label="packages", value=len(session.packages), use_color=use_color),
+                cli_style.render_summary_stat(label="repos", value=len(visible_repos), use_color=use_color),
+                cli_style.render_summary_stat(label="packages", value=len(visible_packages), use_color=use_color),
                 cli_style.render_summary_stat(label="steps", value=step_count, use_color=use_color),
             ]
         )
     )
-    if not session.repos:
+    if not visible_repos:
         print()
         print(f"  {cli_style.render_payload_section_label('no pending target actions', use_color=use_color)}")
 
 
 def _print_execution_package_start(package: Any, *, use_color: bool) -> None:
+    if not _visible_steps(package.steps):
+        return
     print()
     _print_payload_package_header(
         repo_name=package.repo_name,
@@ -565,8 +579,17 @@ def _print_execution_package_start(package: Any, *, use_color: bool) -> None:
     )
 
 
+def _visible_step_position(owner: Any, step: Any, index: int, total: int) -> tuple[int, int]:
+    owner_steps = getattr(owner, "steps", None)
+    if owner_steps is None or len(owner_steps) != total:
+        # Repo pre/post hooks are numbered within their own phase, never with checkpoints.
+        return index, total
+    visible = _visible_steps(owner_steps)
+    return next(position for position, candidate in enumerate(visible, start=1) if candidate is step), len(visible)
+
+
 def _print_execution_step_start(
-    _package: Any,
+    owner: Any,
     step: Any,
     index: int,
     total: int,
@@ -574,6 +597,9 @@ def _print_execution_step_start(
     full_paths: bool,
     use_color: bool,
 ) -> None:
+    if not _is_user_visible_step(step):
+        return
+    index, total = _visible_step_position(owner, step, index, total)
     print(
         f"    [{index}/{total}] "
         f"{cli_style.render_execution_action(step.action, use_color=use_color):<11} "
@@ -581,14 +607,18 @@ def _print_execution_step_start(
     )
 
 
-def _print_execution_step_finish(_package: Any, step_result: Any, _index: int, _total: int, *, use_color: bool) -> None:
-    if step_result.status == "ok":
-        if step_result.step.kind == "checkpoint":
-            completion = "converged" if step_result.converged else "directly-in-sync"
-            acknowledgment = "Base advanced" if step_result.acknowledged else "Base not advanced"
-            print(f"      {cli_style.render_sync_term(completion, use_color=use_color)} · "
-                  f"{cli_style.render_sync_term(acknowledgment, use_color=use_color)}")
+def _print_execution_step_finish(
+    _package: Any, step_result: Any, _index: int, _total: int, *, full_paths: bool, use_color: bool,
+) -> None:
+    if not _is_user_visible_step(step_result.step):
+        if step_result.status == "ok":
             return
+        # A hidden step that fails must still be attributable in the timeline.
+        print(
+            f"    {cli_style.render_execution_action(step_result.step.action, use_color=use_color):<11} "
+            f"{execution_step_display(step_result.step, full_paths=full_paths)}"
+        )
+    if step_result.status == "ok":
         print(f"      {cli_style.render_execution_status('ok', use_color=use_color)}")
         return
     if step_result.status == "interrupted" and _step_uses_terminal_passthrough(step_result.step):
@@ -646,6 +676,7 @@ class HumanExecutionRenderer:
                 event.result,
                 event.index,
                 event.total,
+                full_paths=self.full_paths,
                 use_color=self.use_color,
             )
         elif isinstance(event, SyncPackageFinished):

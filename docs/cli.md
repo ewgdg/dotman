@@ -366,7 +366,10 @@ Restore and unrelated state commands are outside this lock.
   Checkpoint-only failures warn without stopping later work; preview never saves
   a Base. Structured step results report `converged`, `acknowledged`,
   `checkpoint_warning`, and `checkpoint_warning_code` separately. Human output
-  distinguishes direct agreement or convergence from Base advancement.
+  treats Base saves as bookkeeping: checkpoint steps are not numbered, counted
+  or printed on success, and a push whose only work is direct agreement reports
+  no pending target actions. Base problems surface only as stderr warnings or a
+  failed checkpoint line.
 - In interactive mode, `push` should present one combined selection menu for pending non-noop target actions plus synthetic repo/package/target hook-only rows when noop-eligible hook work survives without a normal executable anchor.
 - Executable hooks should be derived only after tracked target winners are resolved and after the interactive exclusion menu is applied.
 - An explicit package entry that no longer owns any non-noop targets after those filters should not contribute executable hooks unless its package hooks are retained as standalone noop-eligible package work.
