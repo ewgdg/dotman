@@ -469,11 +469,11 @@ def test_failed_planning_commands_show_reason_in_human_output(tmp_path, monkeypa
     assert " 7: guard reason" in capsys.readouterr().err
 
 
-def _human_execution(tmp_path, monkeypatch, capsys, *, suffix="", patch=None, exit_code=1):
+def _human_execution(tmp_path, monkeypatch, capsys, *, suffix="", patch=None, exit_code=1, report=False):
     engine = _engine_with_manifest_suffix(tmp_path, monkeypatch, suffix)
     if patch:
         patch()
-    assert runner_for(engine).run(arguments(dry_run=False, json_output=False)) == exit_code
+    assert runner_for(engine).run(arguments(dry_run=False, json_output=False, report=report)) == exit_code
     captured = capsys.readouterr()
     return captured.out, captured.err
 
@@ -531,15 +531,52 @@ def test_successful_execution_has_no_skipped_stat(tmp_path, monkeypatch, capsys)
     assert "skipped" not in out
 
 
-def test_guard_skips_print_before_the_timeline(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("report", [False, True])
+def test_guard_skips_print_before_the_timeline(tmp_path, monkeypatch, capsys, report):
     from dotman.sync_deck_command import PullDeckCommandRunner
     engine = make_engine(tmp_path, monkeypatch, [
         ("unit", "both", b"repo", b"live", ""),
         ("other", "both", b"repo", b"live", '[targets.other.hooks]\nguard_pull = "echo host mismatch >&2; exit 100"'),
     ])
     runner = PullDeckCommandRunner(engine_factory=lambda _: engine, use_color=False)
-    assert runner.run(arguments(dry_run=False, json_output=False, command="pull")) == 0
+    assert runner.run(arguments(dry_run=False, json_output=False, command="pull", report=report)) == 0
     out = capsys.readouterr().out
-    assert _in_order(out, ":: Pull", "[skipped] main:app.other (guard_pull)", "Guard skipped: host mismatch",
-                     "[1/1] update", ":: completed")
+    guard = ("[skipped] main:app.other (guard_pull)", "Guard skipped: host mismatch")
+    # The report is the complete record, so it carries guard skips instead of the preamble.
+    expected = ("[1/1] update", *guard) if report else (*guard, "[1/1] update")
+    assert _in_order(out, ":: Pull", *expected, ":: completed")
     assert out.count("main:app.other") == 1
+
+
+@pytest.mark.parametrize("command", ["sync", "push", "pull"])
+def test_report_flag_is_accepted(command):
+    assert build_parser().parse_args([command, "--report"]).report is True
+
+
+def test_report_lists_every_entry_after_the_timeline(tmp_path, monkeypatch, capsys):
+    from dotman import sync_deck
+    from dotman.sync_session import SetApproval
+    import sys
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "push-only", b"repo", b"live", ""),
+        ("second", "push-only", b"repo", b"live", ""),
+    ])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    def approve_first(session, *, use_color):
+        view = session.view
+        session.dispatch(SetApproval(view.session_id, view.revision, "main:app.unit", True))
+        return True
+
+    monkeypatch.setattr(sync_deck, "run_command_deck", approve_first)
+    assert runner_for(engine).run(arguments(unattended=False, dry_run=False, json_output=False, report=True)) == 0
+    out = capsys.readouterr().out
+    assert _in_order(out, "[1/1] write", "[ok] main:app.unit", "Use repository", ":: completed")
+    assert "[unselected] main:app.second" in out
+
+
+def test_report_lists_skipped_work_instead_of_counting(tmp_path, monkeypatch, capsys):
+    out, _ = _human_execution(tmp_path, monkeypatch, capsys, suffix=FAILING_PRE_PUSH, report=True)
+    assert _in_order(out, "failed", "[skipped] main:app.unit", ":: failed")
+    assert "skipped: 1" not in out

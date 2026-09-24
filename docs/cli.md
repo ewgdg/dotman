@@ -75,12 +75,15 @@ fails with the candidates rather than guessing.
 ## Sync
 
 ```text
-dotman [--config PATH] [--json] [--unattended] [--file-symlink-mode MODE] [--dir-symlink-mode MODE] sync [-d | --dry-run] [--full-path] [--run-noop] [<tracked-scope> ...]
+dotman [--config PATH] [--json] [--unattended] [--file-symlink-mode MODE] [--dir-symlink-mode MODE] sync [-d | --dry-run] [--full-path] [--report] [--run-noop] [<tracked-scope> ...]
 ```
 
 File-symlink modes are `prompt` (default) and `follow`; directory-symlink modes
 are `fail` (default) and `follow`. Global mode flags override manager configuration.
 `--full-path` shows unabridged paths in detail output; deck identities remain canonical.
+`--report` (also on `push` and `pull`) prints the full entry log after the
+execution timeline instead of the short recap, including unselected,
+skipped and guard-skipped work.
 Resolution is chosen through policy defaults or the deck, not automation flags.
 
 Sync opens a one-shot session for file targets, independent directory children,

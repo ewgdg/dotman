@@ -39,7 +39,7 @@ def test_search_help_uses_explicit_query_placeholder(capsys) -> None:
 
 def test_push_help_lists_dry_run_and_full_path_flags(capsys) -> None:
     output = capture_parser_help(capsys, "push")
-    assert "usage: dotman push [-h] [-d] [--full-path] [--run-noop]" in output
+    assert "usage: dotman push [-h] [-d] [--full-path] [--report] [--run-noop]" in output
     assert "[<repo:package.target> ...]" in output
     assert "-d, --dry-run" in output
     assert "--full-path" in output
@@ -47,7 +47,7 @@ def test_push_help_lists_dry_run_and_full_path_flags(capsys) -> None:
 
 def test_pull_help_lists_dry_run_and_full_path_flags(capsys) -> None:
     output = capture_parser_help(capsys, "pull")
-    assert "usage: dotman pull [-h] [-d] [--full-path] [--run-noop]" in output
+    assert "usage: dotman pull [-h] [-d] [--full-path] [--report] [--run-noop]" in output
     assert "[<repo:package.target> ...]" in output
     assert "-d, --dry-run" in output
     assert "--full-path" in output

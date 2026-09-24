@@ -371,6 +371,10 @@ Guard skips are planning results, not execution steps, so they appear where work
 is reviewed and are always dimmed: as unselectable rows in the Command Deck, or,
 without a Deck (unattended), above the timeline.
 
+`--report` replaces the recap with the full entry log below: every entry with its
+Resolution and effects, skipped work listed rather than counted, unselected
+entries led by `[unselected]`, and guard skips (then omitted above the timeline).
+
 Preview, abort and pre-execution failures print the entry log instead: each
 entry leads with its outcome (`ok`, `failed`, `interrupted`, `skipped`,
 `would-apply` in preview, `pending` when execution never started) followed by

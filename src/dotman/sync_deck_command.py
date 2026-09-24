@@ -235,7 +235,8 @@ class SyncDeckCommandRunner:
                         self._print_header(args)
                         # Guard skips are planning results shown where work is reviewed:
                         # the Deck when interactive, otherwise above the timeline.
-                        if not interactive:
+                        # A report carries them itself.
+                        if not interactive and not getattr(args, "report", False):
                             self._print_guard_skips(guard_skip_summaries(
                                 row for row in session.view.rows if isinstance(row, AuxiliaryRow)))
                     dispatched = session.execute()
@@ -267,33 +268,37 @@ class SyncDeckCommandRunner:
         if timeline is None:
             self._print_header(args)
         term = lambda text: render_sync_term(text, use_color=self._use_color)
-        # After a timeline the log is a recap: only what the timeline could not show.
-        timeline_errors = timeline.shown_errors if timeline else set()
+        # --report prints every entry; otherwise, after a timeline, the log is a
+        # recap of only what the timeline could not show.
+        report = getattr(args, "report", False)
+        recap = timeline is not None and not report
+        timeline_errors = timeline.shown_errors if recap else set()
         # Work stopped by an earlier failure is counted, not listed, so the failure
         # stays next to the summary line.
         skipped_count = 0
 
-        def entry_lines(selected, outcome, diagnostics) -> list[str] | None:
-            """Diagnostic lines to print under a visible entry, or None to hide it."""
-            # Unselected entries only matter when they explain a problem.
-            if not (selected or diagnostics):
-                return None
+        def visible_entry(selected, outcome, diagnostics) -> tuple[str, list[str]] | None:
+            """The lead and diagnostic lines of a visible entry, or None to hide it."""
             nonlocal skipped_count
+            if not (selected or diagnostics or report):
+                # Unselected entries only matter when they explain a problem.
+                return None
+            lead = outcome if selected or diagnostics else "unselected"
             messages = [item["message"] for item in diagnostics if item["message"] not in timeline_errors]
-            if timeline and not messages and outcome == "skipped":
+            if recap and not messages and outcome == "skipped":
                 skipped_count += 1
                 return None
-            if timeline and not messages and outcome in ("ok", "failed", "interrupted"):
+            if recap and not messages and outcome in ("ok", "failed", "interrupted"):
                 return None
-            return messages
+            return lead, messages
 
         for unit in payload["sync_units"]:
-            outcome = entry_outcome(unit["result"], unit["diagnostics"])
-            messages = entry_lines(unit["selected"], outcome, unit["diagnostics"])
-            if messages is None:
+            entry = visible_entry(unit["selected"], entry_outcome(unit["result"], unit["diagnostics"]), unit["diagnostics"])
+            if entry is None:
                 continue
-            print(f"  [{term(outcome)}] {unit['identity']}")
-            if timeline is None:
+            lead, messages = entry
+            print(f"  [{term(lead)}] {unit['identity']}")
+            if not recap:
                 if unit["resolution"]:
                     print(f"      {term(resolution_label(unit['resolution']))}")
                 if unit["fallback_reason"]:
@@ -306,11 +311,12 @@ class SyncDeckCommandRunner:
                 print(f"      {message}")
         for change in payload["additional_source_changes"]:
             # Additional Source Changes apply outside the step timeline, so always list them.
-            if not (change["approved"] or change["diagnostics"]):
+            if not (change["approved"] or change["diagnostics"] or report):
                 continue
             outcome = entry_outcome(change["result"], change["diagnostics"])
+            lead = outcome if change["approved"] or change["diagnostics"] else "unselected"
             messages = [item["message"] for item in change["diagnostics"]]
-            print(f"  [{term(outcome)}] {change['repo']}:{change['path']}")
+            print(f"  [{term(lead)}] {change['repo']}:{change['path']}")
             print(f"      {term('Additional Source Change')}: {change['kind']}")
             for message in messages:
                 print(f"      {message}")
@@ -318,18 +324,19 @@ class SyncDeckCommandRunner:
             for work in payload[key]:
                 outcome = auxiliary_outcome(work["identity"], payload["stages"], preview=args.dry_run,
                                             diagnostics=work["diagnostics"])
-                messages = entry_lines(work["selected"], outcome, work["diagnostics"])
-                if messages is None:
+                entry = visible_entry(work["selected"], outcome, work["diagnostics"])
+                if entry is None:
                     continue
+                lead, messages = entry
                 label = auxiliary_label(work["identity"], kind, work["directions"], use_color=self._use_color)
-                print(f"  [{term(outcome)}] {label}")
+                print(f"  [{term(lead)}] {label}")
                 print(f"      {term(auxiliary_resolution(kind))}")
                 for message in messages:
                     print(f"      {message}")
         # Execution diagnostics copy their failed step's error; print each failure once.
         shown = timeline_errors | {item["message"] for entry in (*payload["sync_units"], *payload["additional_source_changes"])
                                    for item in entry["diagnostics"]}
-        if timeline is None:
+        if not recap:
             self._print_guard_skips(payload["guard_skips"])
         summary = payload["summary"]
         stats = summary_stats(

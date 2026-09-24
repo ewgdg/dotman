@@ -133,6 +133,14 @@ def add_run_noop_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_report_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="After execution, list every entry, including unselected, skipped and guard-skipped work",
+    )
+
+
 def add_full_path_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--full-path",
@@ -315,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_dry_run_argument(sync_parser)
     add_full_path_argument(sync_parser)
+    add_report_argument(sync_parser)
     add_run_noop_argument(sync_parser)
 
     push_parser = subparsers.add_parser(
@@ -324,6 +333,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_dry_run_argument(push_parser)
     add_full_path_argument(push_parser)
+    add_report_argument(push_parser)
     push_parser.add_argument(
         "scopes", nargs="*", metavar="<repo:package.target>",
         help="Exact tracked scopes (default: all tracked targets)",
@@ -337,6 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_dry_run_argument(pull_parser)
     add_full_path_argument(pull_parser)
+    add_report_argument(pull_parser)
     pull_parser.add_argument(
         "scopes", nargs="*", metavar="<repo:package.target>",
         help="Exact tracked scopes (default: all tracked targets)",
