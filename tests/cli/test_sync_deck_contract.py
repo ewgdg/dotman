@@ -125,3 +125,28 @@ def test_confirmation_requires_valid_completed_approved_proposals(tmp_path, monk
             confirmation = CommandDeck(SimpleNamespace(view=view), use_color=False)
             confirmation.confirm()
             assert confirmation.confirming
+
+
+def test_push_workset_names_fixed_repository_resolution(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
+    with engine.open_push_session(engine.resolve_sync_scope([]), preview=True) as session:
+        row = session.view.rows[0]
+        assert row_resolution(row) == "Use repository"
+        CommandDeck(session, use_color=False).open_review()
+        assert row_resolution(session.view.rows[0]) == "Use repository"
+
+
+def test_unavailable_base_store_warns_only_base_eligible_units(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("shared", "both", b"same", b"same", ""),
+        ("pushed", "push-only", b"same", b"same", ""),
+    ])
+    store_directory = tmp_path / "state/dotman/repos/main"
+    store_directory.rename(tmp_path / "relocated-store")
+    # Opening fails closed on a symlinked store directory.
+    store_directory.symlink_to(tmp_path / "relocated-store")
+    with engine.open_push_session(engine.resolve_sync_scope([])) as session:
+        rows = {row.observation.identity.target_name: row for row in session.view.rows}
+        assert set(rows) == {"shared"}
+        assert any(item.code == "base-unavailable" for item in rows["shared"].observation.diagnostics)
+        assert row_resolution(rows["shared"]) == "In sync"

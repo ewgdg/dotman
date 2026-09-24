@@ -338,9 +338,11 @@ def row_resolution(row) -> str:
         return "Observation failed"
     if row.diagnostics:
         return "Proposal failed"
-    if not row.allowed_intents:
-        return ("Edited" if row.proposal and row.proposal.intent == "editor" else "Use live") if "prepare-proposal-review" in row.allowed_commands else "Unsupported"
-    return resolution_label(row.proposal.intent if row.proposal else row.intent)
+    if "prepare-proposal-review" not in row.allowed_commands:
+        # In-sync units appear only to surface their warnings.
+        return "In sync" if row.observation.state == "directly-in-sync" else "Unsupported"
+    # Pull leaves its fixed direction implicit; Push records use-repository.
+    return resolution_label((row.proposal and row.proposal.intent) or row.intent or "use-live")
 
 
 def elide_middle(label: Text, width: int) -> Text:

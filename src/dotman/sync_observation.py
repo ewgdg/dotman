@@ -525,7 +525,10 @@ def observe_scope(
             push, pull = identity in admitted["push"], identity in admitted["pull"]
             effective = child_policies.get(identity, _effective_policy(unit.configured_policy, push, pull))
             lifecycle = lifecycles.get(identity.repo)
-            warning = checkpoint_warnings.get(identity) or store_warnings.get(identity.repo)
+            # Store failures only matter to units that keep a Sync Base.
+            warning = checkpoint_warnings.get(identity) or (
+                store_warnings.get(identity.repo) if unit.eligible else None
+            )
             base = BaseEvidence(
                 "unavailable" if unit.eligible else "not-applicable",
                 "absent" if unit.eligible else "ineligible",
