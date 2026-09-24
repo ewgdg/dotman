@@ -115,6 +115,9 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   completed approved Proposals; confirming executes the already-reviewed set without
   further materialization. Review scroll position is retained per target; arrow keys, `h`/`j`/`k`/`l`,
   Page Up/Down, and the mouse wheel scroll frozen evidence.
+  `Y` copies to the terminal clipboard (OSC 52): the full Target identity from the
+  workset, or the whole review text from review. `Ctrl-C` stays Abort; for ad-hoc
+  selection, most terminals bypass the deck's mouse capture with Shift+drag.
   `Esc` from the idle workset or `Ctrl-C` aborts. During Capture, Merge, and Render,
   the visible deck animates a busy indicator; other keyboard/mouse actions are
   ignored until materialization finishes. `Ctrl-C` or OS SIGINT cancels running

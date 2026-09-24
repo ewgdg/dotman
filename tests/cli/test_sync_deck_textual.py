@@ -117,6 +117,25 @@ def test_keyboard_review_scroll_return_approval_and_confirmation(tmp_path, monke
         assert [row.approved for row in session.view.rows] == [False, True]
 
 
+def test_copy_key_copies_full_target_identity_and_review_text(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo", b"live", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(40, 24)) as pilot:
+                await pilot.press("y")
+                # The narrow Target cell is elided; the copy keeps the full identity.
+                assert app.clipboard == "main:app.one"
+                await pilot.press("enter", "y")
+                assert app.clipboard.startswith(":: Proposal Review — main:app.one")
+                assert "\x1b[" not in app.clipboard
+                assert "Copied" in str(app.query_one("#notice", Static).render())
+        run(interact())
+
+
 def test_mouse_click_focuses_identity_and_toggles_only_approval(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
         ("one", "push-only", b"repo", b"live", ""),

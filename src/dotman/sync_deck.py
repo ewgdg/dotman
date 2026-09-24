@@ -426,6 +426,8 @@ class SyncDeckApp(App[bool]):
         Binding("u,U", "clear_all", "Clear all", priority=True),
         Binding("enter", "review_or_confirm", "Review / Confirm", priority=True),
         Binding("x,X", "confirm", "Preview / Execute", priority=True),
+        # Ctrl+C stays Abort, so copying needs its own key (vim-style yank).
+        Binding("y,Y", "copy", "Copy", priority=True),
         Binding("escape", "back", "Back / Abort", priority=True),
         Binding("ctrl+c", "abort", "Abort", priority=True),
     ]
@@ -656,9 +658,9 @@ class SyncDeckApp(App[bool]):
         elif self.deck.confirming:
             help_text = "Enter confirm · Esc return · Ctrl+C abort"
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            help_text = "Esc return · Space Approval · ↑/↓/j/k/PgUp/PgDn scroll · Ctrl+C abort"
+            help_text = "Esc return · Space Approval · Y copy · ↑/↓/j/k/PgUp/PgDn scroll · Ctrl+C abort"
         elif self.deck.reviewing:
-            help_text = "Esc return · Space Approval · E edit · T retry · ↑/↓/j/k/PgUp/PgDn scroll · Ctrl+C abort"
+            help_text = "Esc return · Space Approval · E edit · T retry · Y copy · ↑/↓/j/k/PgUp/PgDn scroll · Ctrl+C abort"
         else:
             help_text = "Esc abort · X confirm · Space mark · Enter view · E edit · T retry"
         row = self.deck.focused_row
@@ -881,6 +883,25 @@ class SyncDeckApp(App[bool]):
             result = retry_materialization(self.deck.session, row.row_id)
             self.deck.notice = result.reason if isinstance(result, CommandRejected) else ""
         self.materialize(retry)
+
+    def action_copy(self) -> None:
+        """Copy the full Target identity, or the whole review, via the terminal clipboard (OSC 52)."""
+        if self.busy or self.deck.confirming or self.query_one(OptionList).display:
+            return
+        self.sync_focus()
+        row = self.deck.focused_row
+        if row is None:
+            return
+        if self.deck.reviewing:
+            # The RichLog shows only a viewport and cannot be selected in-app.
+            text, subject = Text.from_ansi(self.deck.review_text()).plain, "review"
+        else:
+            # The Target cell may be elided; copy the untruncated identity.
+            # Not listed in workset help: it would wrap at 80 columns and cost a row.
+            text, subject = self.query_one(WorksetTable).full_targets[row.row_id].plain, "Target"
+        self.copy_to_clipboard(text)
+        self.deck.notice = f"Copied {subject} to clipboard."
+        self.update_workset()
 
     def action_abort(self) -> None:
         if self._editing:
