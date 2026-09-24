@@ -476,6 +476,12 @@ class SyncDeckApp(App[bool]):
         try:
             with ExitStack() as terminal:
                 if editor_io == "tty":
+                    # The event loop keeps running while the Editor owns the
+                    # terminal. Suspension stops Textual's bounded writer
+                    # thread, so repaints (the busy spinner) would fill its
+                    # queue and block the loop forever. Resume runs first on
+                    # exit (LIFO), then the batch ends and repaints the deck.
+                    terminal.enter_context(self.batch_update())
                     suspension = self.suspend()
                     suspension.__enter__()
                     # Textual resumes after its yield only on normal context exit.

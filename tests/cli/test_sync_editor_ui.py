@@ -182,6 +182,71 @@ def test_tty_editor_returns_terminal_and_cancel_preserves_selected_proposal(tmp_
         os.close(slave)
 
 
+def test_long_tty_editor_session_returns_to_deck(tmp_path, monkeypatch):
+    import os
+    import pty
+    import select
+    import subprocess
+    import sys
+    import termios
+    import time
+
+    from tests.cli.test_sync_interrupt import wait_until
+    from tests.engine.test_sync_session import make_engine
+
+    ready, release = tmp_path / "editor-ready", tmp_path / "editor-release"
+    editor = tmp_path / "terminal-editor"
+    editor.write_text(
+        f"#!{sys.executable}\n"
+        "import os, pathlib, time\n"
+        f"pathlib.Path({str(ready)!r}).touch()\n"
+        f"while not pathlib.Path({str(release)!r}).exists(): time.sleep(0.01)\n"
+        "pathlib.Path(os.environ['DOTMAN_EDITOR_PRIMARY_PATH']).write_text('edited')\n"
+    )
+    editor.chmod(0o700)
+    make_engine(tmp_path, monkeypatch, [
+        ("unit", "push-only", b"repo", b"live",
+         f'editor = {{ run = "{editor}", io = "tty" }}'),
+    ])
+    master, slave = pty.openpty()
+    terminal_before = termios.tcgetattr(slave)
+    process = subprocess.Popen(
+        [sys.executable, "-m", "dotman.cli", "--config", str(tmp_path / "config.toml"), "sync"],
+        stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+        env={**os.environ, "TERM": "xterm-256color"},
+    )
+    output = bytearray()
+
+    def read_output():
+        if select.select([master], [], [], 0.01)[0]:
+            output.extend(os.read(master, 65536))
+
+    try:
+        wait_until(lambda: b"Use repository" in output, process, read_output)
+        os.write(master, b"e")
+        wait_until(ready.exists, process, read_output)
+        # Outlast Textual's bounded output queue (30 writes) at the busy
+        # spinner's 10 Hz refresh; the deck must not repaint while suspended.
+        time.sleep(4)
+        resumed_from = len(output)
+        release.touch()
+        wait_until(lambda: b"Edited" in output[resumed_from:], process, read_output)
+        os.write(master, b"\x03")
+        wait_until(lambda: process.poll() is not None, process, read_output)
+        assert process.returncode == 130
+        assert termios.tcgetattr(slave) == terminal_before
+        assert b"Traceback" not in output
+    except AssertionError as exc:
+        exc.add_note(output[-6000:].decode(errors="replace"))
+        raise
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        os.close(master)
+        os.close(slave)
+
+
 def test_edited_pull_review_does_not_claim_capture_is_pending(tmp_path, monkeypatch):
     from dataclasses import replace
     from types import SimpleNamespace
