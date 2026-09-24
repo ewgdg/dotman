@@ -339,9 +339,6 @@ def test_record_binding_rejects_pull_only_same_repo_path_when_live_paths_do_not_
         engine.record_tracked_package_entry(selector)
 
 
-# Only the retired push planner enforced reserved_paths; tracked Sync/Push scope
-# resolution does not yet (#86 regression), so these stay as strict expected failures.
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason="reserved_paths not enforced by resolve_sync_scope (#86)")
 def test_package_reserved_paths_conflict_with_other_package_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -396,7 +393,6 @@ def test_package_reserved_paths_conflict_with_other_package_target(
         engine.resolve_sync_scope()
 
 
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason="reserved_paths not enforced by resolve_sync_scope (#86)")
 def test_package_reserved_paths_conflict_with_other_package_reserved_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -11,7 +11,40 @@ from dotman.models import (
     ResolvedSyncTarget,
 )
 from dotman.package_resolution import parse_package_ref_text
-from dotman.collisions import resolve_tracked_target_winners, validate_target_collisions
+from dotman.collisions import (
+    resolve_tracked_target_winners,
+    validate_reserved_path_claims,
+    validate_target_collisions,
+)
+from dotman.config import expand_path
+from dotman.templates import render_template_string
+
+
+def _validate_reserved_paths(
+    planning_inputs: list[planning.PackagePlanningInput],
+    winning_target_keys: set[tuple[str, str, str | None, str]],
+) -> None:
+    """Reject winning Push targets or reservations inside another package's reserved paths."""
+    for repo_name in dict.fromkeys(item.repo.config.name for item in planning_inputs):
+        repo_inputs = [item for item in planning_inputs if item.repo.config.name == repo_name]
+        target_claims = [
+            (metadata.package_id, f"{metadata.package_id}:{metadata.target_name}", metadata.live_path)
+            for item in repo_inputs
+            for metadata in item.target_metadata
+            if planning.target_claims_path(metadata.target)
+            and (repo_name, item.selection.identity.package_id, item.selection.identity.bound_profile,
+                 metadata.target_name) in winning_target_keys
+        ]
+        reserved_claims = []
+        for item in repo_inputs:
+            package = item.repo.resolve_package(item.selection.identity.package_id)
+            for reserved_path in package.reserved_paths or ():
+                rendered_path = render_template_string(
+                    reserved_path, item.package_context.context,
+                    base_dir=package.package_root, source_path=package.package_root,
+                )
+                reserved_claims.append((package.id, expand_path(rendered_path, dereference=False)))
+        validate_reserved_path_claims(target_claims=target_claims, reserved_claims=reserved_claims)
 
 
 @dataclass(frozen=True)
@@ -325,6 +358,8 @@ def resolve_sync_scope(
             (metadata.repo_path, metadata.live_path): metadata.gitignore
             for planning_input in planning_inputs for metadata in planning_input.target_metadata
         })
+        if operation == "push":
+            _validate_reserved_paths(planning_inputs, winning_target_keys)
 
     # Every surviving Sync target can edit its Primary Source, even when policy
     # forbids automatic Pull. Validate their union after directional ownership
