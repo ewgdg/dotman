@@ -457,11 +457,17 @@ def test_materialization_keeps_deck_responsive_and_gates_actions(tmp_path, monke
             async with app.run_test() as pilot:
                 try:
                     app.action_approve()
+                    # Quick work must not flash the busy line; it appears only once work lingers.
+                    assert not app.query_one("#busy").display
                     for _ in range(100):
                         if ready.is_set():
                             break
                         await asyncio.sleep(.01)
                     assert ready.is_set()
+                    for _ in range(100):
+                        if app.query_one("#busy").display:
+                            break
+                        await asyncio.sleep(.01)
                     assert app.query_one("#busy").display
                     revision = session.view.revision
                     app.action_clear_all()

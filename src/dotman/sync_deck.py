@@ -379,6 +379,9 @@ class WorksetTable(DataTable):
             event.stop()
 
 
+BUSY_REVEAL_DELAY_SECONDS = 0.3
+
+
 class SyncDeckApp(App[bool]):
     """Terminal adapter: the public session remains the sole mutation authority."""
 
@@ -453,9 +456,15 @@ class SyncDeckApp(App[bool]):
             "dots", text="Editing Proposal · Ctrl+C cancel Editor" if self._editing
             else "Materializing Proposal · Ctrl+C abort",
         ))
-        self.query_one("#busy").display = True
+        # Most dispatches finish within a frame or two; revealing the busy line
+        # immediately makes every Enter/Space flash it and shift the layout.
+        self._busy_reveal = self.set_timer(BUSY_REVEAL_DELAY_SECONDS, self._reveal_busy)
         self._materialization = asyncio.create_task(self._materialize(action, editor_io=editor_io))
         self._materialization.add_done_callback(self._materialization_finished)
+
+    def _reveal_busy(self) -> None:
+        if self.busy:
+            self.query_one("#busy").display = True
 
     def _materialization_finished(self, task: asyncio.Task) -> None:
         if self._materialization is task:
@@ -509,6 +518,7 @@ class SyncDeckApp(App[bool]):
         finally:
             self._materialization = None
             self._editing = False
+            self._busy_reveal.stop()
             self.query_one("#busy").display = False
         if self._aborting or any(d.code == "interrupted" for row in self.deck.session.view.rows for d in row.diagnostics):
             self.exit(False)
