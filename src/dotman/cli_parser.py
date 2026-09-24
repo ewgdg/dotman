@@ -120,7 +120,7 @@ def add_dry_run_argument(parser: argparse.ArgumentParser) -> None:
         "-d",
         "--dry-run",
         action="store_true",
-        help="Preview only; skip execution after planning and diff review",
+        help="Preview only; review planned changes without applying them",
     )
 
 
