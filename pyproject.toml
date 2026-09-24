@@ -9,7 +9,7 @@ description = "Dry-run planner for the package-oriented dotman engine"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
   "tqdm>=4.67.0",
   "Jinja2>=3.1.4",
