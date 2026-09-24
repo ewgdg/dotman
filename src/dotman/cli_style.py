@@ -441,10 +441,12 @@ def render_execution_status(status: str, *, use_color: bool) -> str:
 SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "selected": ("1", "32"),
     "unselected": ("2",),
-    "Probe Work": ("1", "36"),
-    "Directory Root Work": ("1", "36"),
-    "Additional Source Change": ("1", "36"),
-    "Hook Work": ("1", "36"),
+    # Auxiliary kinds share the Resolution column but are not decisions; keep
+    # them recessive so actual Resolutions stand out.
+    "Probe Work": ("2",),
+    "Directory Root Work": ("2",),
+    "Additional Source Change": ("2",),
+    "Hook Work": ("2",),
     "Guard skipped": ("2",),
     "Link replacement authorized": ("1", "32"),
     "Link replacement requires authorization": ("33",),
