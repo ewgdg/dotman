@@ -263,7 +263,7 @@ def _observe_file(
         else:
 
             def projected(view: str, *, repo_side: bool) -> FileState:
-                content = projection.project_frozen_file(
+                content = projection.project_file_view(
                     context.projection.command_runtime,
                     metadata=metadata,
                     context=item.package_context.context,
@@ -273,6 +273,7 @@ def _observe_file(
                     live=live.content if isinstance(live, (FilePresent, DirectoryChildPresent)) else None,
                     view=view,
                     repo_side=repo_side,
+                    repository_is_proposal=False,
                 )
                 return Missing() if content is None else (
                     DirectoryChildPresent(content, (repository if repo_side else live).executable)

@@ -478,7 +478,7 @@ commands = [
 - Dotman may pass standard path and context values to target commands through both env vars and command args.
 - Projection and Editor syntax and inheritance are defined in [Projection and Editor configuration](#projection-and-editor-configuration).
 - Directory targets inherit providers per child, including Editor; Path Rules refine each child independently.
-- Render derives live representation; Capture derives repository representation from frozen live evidence. Editor explicitly modifies staged repository sources.
+- Render derives live representation; Capture derives repository representation from the live endpoint. Providers read endpoints at their real paths, so they may use neighbouring files; projections of an unapplied repository Proposal read a private staged file. Editor explicitly modifies staged repository sources.
 - Hook `io` defaults to `pipe`; `tty` requires an interactive terminal. Unattended execution cannot invoke an interactive provider or request terminal input.
 - Capture failure stays a typed failure. It never launches Editor or chooses another Resolution Intent.
 - When `pull` writes repo-side files while dotman is running under `sudo`, dotman should restore ownership of the written repo path back to the invoking user so the repo does not get stranded as root-owned.

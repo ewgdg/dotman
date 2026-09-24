@@ -18,7 +18,7 @@ from dotman.sync_capture import capture_observation
 from dotman.sync_observation import _identity
 from dotman.sync_auxiliary import AuxiliaryRow, plan_auxiliary, retain_directional_hooks
 from dotman.sync_reconciliation import reconcile, ReconciliationConflict, ReconciliationFailed
-from dotman.projection import project_frozen_file
+from dotman.projection import project_file_view
 from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
 from dotman.planning_guards import GuardPlanningError
@@ -1180,12 +1180,12 @@ class ProposalSession:
                     metadata, _, _ = resources.enter_context(repository_workspace(
                         metadata=metadata, repo_root=item.repo.root, preimages=preimages,
                     ))
-                outcome = project_frozen_file(
+                outcome = project_file_view(
                     self._context.projection.command_runtime, metadata=metadata,
                     context=item.package_context.context,
                     repository=repository.content if isinstance(repository, (FilePresent, DirectoryChildPresent)) else None,
                     live=observation.live.content if isinstance(observation.live, (FilePresent, DirectoryChildPresent)) else None,
-                    view="render", repo_side=True,
+                    view="render", repo_side=True, repository_is_proposal=True,
                 )
             self._renders[key] = Missing() if outcome is None else (
                 DirectoryChildPresent(outcome, repository.executable)

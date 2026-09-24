@@ -160,7 +160,7 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   canonical scope with `(pull-hooks)` or `(push-hooks)`, never a file identity
   invented for hooks. `--run-noop` retains otherwise inactive pre/post hooks
   without restoring a Guard-removed capability.
-- Pull-only review lazily Captures frozen live evidence, shows the repository
+- Pull-only review lazily Captures live, shows the repository
   outcome and leaves live unchanged. Confirmation counts repository changes
   separately from live effects. Even a no-write drift resolution requires Approval
   and completion at its normal ordered position to become Converged. Checkpoint
@@ -420,8 +420,8 @@ Merge choice and never publishes to live paths.
   scopes to use all tracked targets; package instances use `repo:package<instance>.target`.
 - Drifted Proposals start approved. Space opts out; Enter inspects frozen Views
   and the repository outcome; E edits transactionally; T retries a failed Proposal.
-- Raw, configured Capture, verified Patch Capture and Missing outcomes use frozen
-  opening evidence. Capture comparison results are reused, not rerun for review.
+- Raw, verified Patch Capture and Missing outcomes use frozen opening evidence.
+  Capture reads the live endpoint; its result is reused, not rerun for review.
 - Saved Additional Source Changes start approved independently of their Primary
   Proposal. Unapproving one restores frozen original provider inputs, eagerly
   rebuilding approved dependants and invalidating unapproved ones for lazy reuse.

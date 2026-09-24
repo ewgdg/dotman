@@ -6,7 +6,7 @@ from tests.engine.test_sync_convergence import command
 from tests.engine.test_sync_session import make_engine, open_session
 
 
-def test_pull_review_lazily_captures_frozen_live_and_execution_only_applies_repository(tmp_path, monkeypatch):
+def test_pull_review_lazily_captures_live_and_execution_only_applies_repository(tmp_path, monkeypatch):
     marker = tmp_path / 'captures'
     engine = make_engine(tmp_path, monkeypatch, [
         ('unit', 'pull-only', b'repo', b'live',
@@ -17,7 +17,6 @@ def test_pull_review_lazily_captures_frozen_live_and_execution_only_applies_repo
         assert row.allowed_intents == ('use-live',)
         assert row.proposal is None and not row.approved
         assert not marker.exists()
-        (tmp_path / 'live/unit').write_bytes(b'external')
         command(session, PrepareProposalReview, row.row_id)
         proposal = session.view.rows[0].proposal
         assert proposal.intent == 'use-live'
@@ -33,11 +32,23 @@ def test_pull_review_lazily_captures_frozen_live_and_execution_only_applies_repo
         assert all(step.stage == 'repository-apply' for step in result.steps)
     assert marker.read_text().splitlines() == ['capture']
     assert (tmp_path / 'repo/packages/app/unit').read_bytes() == b'live'
-    assert (tmp_path / 'live/unit').read_bytes() == b'external'
+    assert (tmp_path / 'live/unit').read_bytes() == b'live'
     with open_session(engine) as later:
         record = later.view.observations[0].base.record
         assert record.payload == FilePresent(b'live')
     assert not list((tmp_path / 'state').rglob('manifest.json'))
+
+
+def test_capture_reads_files_beside_the_live_endpoint(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ('unit', 'pull-only', b'repo', b'live',
+         'capture = "cat \\"$(dirname \\"$DOTMAN_LIVE_PATH\\")/sibling\\""\ncompare = { live = "capture" }'),
+    ])
+    (tmp_path / 'live/sibling').write_bytes(b'from sibling')
+    with open_session(engine) as session:
+        observation = session.view.observations[0]
+        assert observation.diagnostics == ()
+        assert observation.comparison_live == FilePresent(b'from sibling')
 
 
 def test_lossy_pull_no_write_requires_approval_without_acknowledgment(tmp_path, monkeypatch):
@@ -130,7 +141,7 @@ def test_capture_comparison_is_reused_and_configured_agreement_never_runs_captur
         assert marker.read_text().splitlines() == ['capture']
 
 
-def test_failed_lazy_capture_remains_unapproved_and_retry_uses_frozen_inputs(tmp_path, monkeypatch):
+def test_failed_lazy_capture_remains_unapproved_and_retry_reads_current_live(tmp_path, monkeypatch):
     marker = tmp_path / 'ready'
     engine = make_engine(tmp_path, monkeypatch, [
         ('unit', 'pull-only', b'repo', b'live',
@@ -146,7 +157,8 @@ def test_failed_lazy_capture_remains_unapproved_and_retry_uses_frozen_inputs(tmp
         command(session, SetApproval, row.row_id, True)
         row = session.view.rows[0]
         assert row.approved and not row.diagnostics
-        assert row.proposal.repository == FilePresent(b'live')
+        # Retry reruns Capture against the live endpoint, so live-side fixes apply.
+        assert row.proposal.repository == FilePresent(b'external')
 
 
 def test_repository_apply_failure_prevents_live_publication_and_base(tmp_path, monkeypatch):

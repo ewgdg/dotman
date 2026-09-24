@@ -1642,7 +1642,7 @@ def build_repo_hook_env(
     return env
 
 
-def project_frozen_file(
+def project_file_view(
     command_runtime: CommandRuntime,
     *,
     metadata: TargetMetadata,
@@ -1651,12 +1651,16 @@ def project_frozen_file(
     live: bytes | None,
     view: str,
     repo_side: bool,
+    repository_is_proposal: bool,
 ) -> bytes | None:
-    """Project once from frozen endpoints; None is Missing, never empty bytes.
+    """Project one view from frozen evidence; None is Missing, never empty bytes.
 
-    Command providers receive private readable endpoint copies. Their configured
-    cwd and repository dependency access remain unchanged; as with other
-    projections, providers are trusted side-effect-free stdout producers.
+    ``repository`` and ``live`` are the Observation-time bytes that decide raw
+    views and Missing. Command providers read endpoints at their real paths so
+    they can depend on neighbouring files; the returned output is what the
+    session freezes. A repository proposal has no endpoint on disk, so it is
+    staged in a private file. Providers are trusted side-effect-free stdout
+    producers.
     """
     source = repository if repo_side else live
     if source is None or view == "raw":
@@ -1687,20 +1691,19 @@ def project_frozen_file(
             base_dir=metadata.target.declared_in,
             source_path=metadata.target.declared_in,
         )
-    with tempfile.TemporaryDirectory(prefix="dotman-observation-") as directory:
-        root = Path(directory)
-        repo_copy, live_copy = root / "repository", root / "live"
-        for path, content in ((repo_copy, repository), (live_copy, live)):
-            if content is not None:
-                path.write_bytes(content)
-                path.chmod(0o400)
+    with tempfile.TemporaryDirectory(prefix="dotman-proposal-") as directory:
+        repository_path = metadata.repo_path
+        if repository_is_proposal and repository is not None:
+            repository_path = Path(directory) / "repository"
+            repository_path.write_bytes(repository)
+            repository_path.chmod(0o400)
         env = {
             **metadata.command_env,
-            "DOTMAN_TARGET_REPO_PATH": str(repo_copy),
-            "DOTMAN_REPO_PATH": str(repo_copy),
-            "DOTMAN_SOURCE": str(repo_copy),
-            "DOTMAN_TARGET_LIVE_PATH": str(live_copy),
-            "DOTMAN_LIVE_PATH": str(live_copy),
+            "DOTMAN_TARGET_REPO_PATH": str(repository_path),
+            "DOTMAN_REPO_PATH": str(repository_path),
+            "DOTMAN_SOURCE": str(repository_path),
+            "DOTMAN_TARGET_LIVE_PATH": str(metadata.live_path),
+            "DOTMAN_LIVE_PATH": str(metadata.live_path),
         }
         result = command_runtime.run(
             CommandRequest(

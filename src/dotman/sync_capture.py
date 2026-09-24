@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from dotman.capture import BUILTIN_PATCH_CAPTURE, CaptureError, apply_review_patch
 from dotman.command_runtime import CommandRuntime
-from dotman.projection import TargetMetadata, project_frozen_file
+from dotman.projection import TargetMetadata, project_file_view
 from dotman.sync_base_store import FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 from dotman.sync_observation import Observation
 
@@ -29,11 +29,11 @@ def capture_observation(
             raise ValueError("Capture comparison evidence is missing")
         return observation.comparison_live
 
-    def project(repository, view, *, repo_side):
-        return project_frozen_file(
+    def project(repository, view, *, repo_side, repository_is_proposal):
+        return project_file_view(
             command_runtime, metadata=metadata, context=context,
             repository=repository, live=observation.live.content,
-            view=view, repo_side=repo_side,
+            view=view, repo_side=repo_side, repository_is_proposal=repository_is_proposal,
         )
 
     repository = (
@@ -53,7 +53,7 @@ def capture_observation(
             protect_template_syntax=metadata.render_command == "jinja",
             repo_path=observation.repository_path,
         )
-        if project(candidate, observation.compare_repo, repo_side=True) != observation.comparison_live.content:
+        if project(candidate, observation.compare_repo, repo_side=True, repository_is_proposal=True) != observation.comparison_live.content:
             raise CaptureError(observation.repository_path, "captured bytes do not match the review live bytes")
         payload = (DirectoryChildPresent(candidate, observation.live.executable)
                    if isinstance(observation.live, DirectoryChildPresent) else FilePresent(candidate))
@@ -65,7 +65,7 @@ def capture_observation(
                        else FilePresent(observation.comparison_live.content))
             validated_render(payload, outcome)
         return payload
-    captured = project(repository, "capture", repo_side=False)
+    captured = project(repository, "capture", repo_side=False, repository_is_proposal=False)
     return Missing() if captured is None else (
         DirectoryChildPresent(captured, observation.live.executable)
         if isinstance(observation.live, DirectoryChildPresent) else FilePresent(captured)

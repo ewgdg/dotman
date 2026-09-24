@@ -73,7 +73,7 @@ Current responsibility split:
 - `planning_guards.py` — repo/package-instance/target/path-rule planning eligibility and guard diagnostics
 - `collisions.py` — tracked-target winner resolution and conflict checks
 - `sync_directory.py` — symmetric control-aware census and identity-derived child metadata; no aggregate payload or publication
-- `projection.py` — shared frozen Render, Capture and comparison providers plus Push file/directory action planning through `ProjectionContext`
+- `projection.py` — shared Render, Capture and comparison providers over real endpoints or staged Proposals plus Push file/directory action planning through `ProjectionContext`
 - `sync_scope.py` — static tracked scope resolution and canonical file/child identity keys
 - `sync_reconciliation.py` — typed three-way repository reconciliation from frozen Base, repository, and Capture evidence
 - `text_merge.py` — shared `git merge-file` three-way text merge used by Reconciliation and patch Capture
@@ -273,7 +273,7 @@ direct agreement, approved convergence, pending/excluded drift and failures
 distinct. File inclusion never substitutes for Proposal Approval; auxiliary
 inclusion authorizes only retained directional hooks.
 
-`sync_capture.py` materializes Use live from frozen endpoints and comparison
+`sync_capture.py` materializes Use live from the live endpoint and frozen comparison
 evidence through shared projection and patch mechanics. A Capture-backed comparison
 is reused rather than run again. `sync_repository_apply.py` applies independently approved Additional Source
 Changes before exclusive Proposal-owned Primary Source outcomes through pull hooks without accessing live state or

@@ -55,8 +55,17 @@ direction. A unit-local failure does not discard unrelated evidence.
 Base availability describes frozen pre-acknowledgment evidence; a separate
 acknowledgment flag records successful opening-time maintenance.
 
-External changes never refresh an open session. Start another session to see
-new filesystem, configuration or Git state.
+External changes never refresh an open session's evidence. Start another session
+to see new filesystem, configuration or Git state.
+
+The session freezes what it produces, not what providers read. Render, Capture
+and comparison commands read endpoints at their real paths through
+`DOTMAN_REPO_PATH` / `DOTMAN_LIVE_PATH`, so a provider may depend on files beside
+its endpoint (for example, a lock captured from a whole config directory). Each
+projection output is then retained for the rest of the session. A repository
+Proposal has no endpoint on disk, so projections of a Proposal read a private
+staged file instead. Frozen endpoint bytes still decide raw views and `Missing`,
+and Merge uses frozen repository and Base evidence with the Capture output.
 
 ## Directory census and child capability
 
@@ -206,8 +215,9 @@ Approval or provider work. Interruption drains owned provider work before the
 session discards scratch state and releases its lock. It does not roll back
 completed effects or control deliberately detached descendants.
 
-For pull-only files, review or Approval lazily Captures frozen live evidence into
-the repository outcome. Capture does not read live again. Review shows the
+For pull-only files, review or Approval lazily Captures live into the repository
+outcome. Capture runs at most once per unit unless retried; retry reads the live
+endpoint again, so fixing live state can recover a failed Capture. Review shows the
 Primary Source Change (write, deletion, or none) authorized by Proposal Approval;
 live remains unchanged. Confirmation counts repository changes separately from
 live effects. Structured output keeps repository changes separate from Publication Effects.

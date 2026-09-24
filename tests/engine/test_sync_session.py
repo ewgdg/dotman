@@ -487,7 +487,7 @@ def test_checkpoint_survives_removing_git_metadata(tmp_path, monkeypatch):
         assert session.view.rows[0].proposal.repository == FilePresent(b"changed")
 
 
-def test_preview_uses_frozen_endpoint_copies_for_command_views_and_events(
+def test_command_views_read_real_endpoints_while_evidence_stays_frozen(
     tmp_path, monkeypatch
 ):
     from dotman.command_runtime import CommandResult, MemoryCommandRuntime, ShellCommand
@@ -518,10 +518,8 @@ def test_preview_uses_frozen_endpoint_copies_for_command_views_and_events(
         runtime.queue(respond)
         if isinstance(request.command, ShellCommand):
             calls.append(request.command.source)
-            repository_copy = Path(request.env["DOTMAN_REPO_PATH"])
-            live_copy = Path(request.env["DOTMAN_LIVE_PATH"])
-            assert repository_copy.read_bytes() == b"repo"
-            assert live_copy.read_bytes() == b"live"
+            assert request.env["DOTMAN_REPO_PATH"] == str(tmp_path / "repo/packages/app/unit")
+            assert request.env["DOTMAN_LIVE_PATH"] == str(tmp_path / "live/unit")
             (tmp_path / "repo/packages/app/unit").write_bytes(b"changed")
             (tmp_path / "live/unit").write_bytes(b"changed")
             return CommandResult(0, stdout=request.command.source.encode())
@@ -777,7 +775,7 @@ def test_projection_diagnostics_do_not_expose_private_staging_paths(
     )
     with open_session(engine) as session:
         message = session.view.rows[0].observation.diagnostics[0].message
-        assert "dotman-observation-" not in message
+        assert "dotman-proposal-" not in message
         assert str(tmp_path / "repo/packages/app/unit") in message
 
 

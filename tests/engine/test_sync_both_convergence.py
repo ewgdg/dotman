@@ -30,8 +30,8 @@ def test_merge_default_is_lazy_and_executes_frozen_three_way_outcome(tmp_path, m
         assert set(row.allowed_intents) == {"merge", "use-live", "use-repository"}
         assert row.fallback_reason is None and row.proposal is None
         assert not marker.exists()
+        # Merge inputs come from frozen repository evidence, not later disk state.
         (tmp_path / "repo/packages/app/unit").write_bytes(b"external")
-        (tmp_path / "live/unit").write_bytes(b"external")
         command(session, PrepareProposalReview, row.row_id)
         assert not session.view.rows[0].approved
         command(session, SetApproval, row.row_id, True)
@@ -173,7 +173,7 @@ def test_publication_failure_keeps_previous_base_after_repository_apply(tmp_path
         assert later.view.observations[0].base.record == before
 
 
-def test_capture_failure_is_typed_and_retry_preserves_frozen_intent_and_endpoints(tmp_path, monkeypatch):
+def test_capture_failure_is_typed_and_retry_merges_current_live(tmp_path, monkeypatch):
     ready = tmp_path / "ready"
     engine = established(tmp_path, monkeypatch,
         f'capture = "test -f {ready} || exit 8; cat $DOTMAN_LIVE_PATH"\ncompare = {{ repo = "raw", live = "raw" }}')
@@ -186,8 +186,10 @@ def test_capture_failure_is_typed_and_retry_preserves_frozen_intent_and_endpoint
         (tmp_path / "live/unit").write_bytes(b"external")
         command(session, RetryMaterialization, row.row_id)
         row = session.view.rows[0]
-        assert row.intent == "merge" and not row.approved and not row.diagnostics
-        assert row.proposal.repository == FilePresent(MERGED)
+        # The retried Capture sees the live edit, so Merge reports it instead of
+        # overwriting it with a result built from stale live bytes.
+        assert row.intent == "merge" and not row.approved and row.proposal is None
+        assert row.diagnostics[0].code == "reconciliation-conflict"
 
 
 def test_reconciliation_provider_failure_is_typed_and_retry_reuses_capture(tmp_path, monkeypatch):
