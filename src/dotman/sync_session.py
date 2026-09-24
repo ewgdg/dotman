@@ -10,7 +10,7 @@ from uuid import uuid4
 import stat
 
 from dotman.interaction_policy import unattended_enabled
-from dotman.command_runtime import CommandOperation, command_operation, command_runtime_session
+from dotman.command_runtime import CommandOperation, command_operation, command_runtime_session, first_output_line
 from dotman.execution import ExecutionStep, directory_synced_file_mode
 from dotman.atomic_files import default_created_file_mode
 from dotman.capture import CaptureError
@@ -18,7 +18,7 @@ from dotman.sync_capture import capture_observation
 from dotman.sync_observation import _identity
 from dotman.sync_auxiliary import AuxiliaryRow, guard_skip_rows, plan_auxiliary, retain_directional_hooks
 from dotman.sync_reconciliation import reconcile, ReconciliationConflict, ReconciliationFailed
-from dotman.projection import project_file_view
+from dotman.projection import ProbeCommandError, project_file_view
 from dotman.models import GuardSkip, ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
 from dotman.planning_guards import GuardPlanningError
@@ -377,6 +377,8 @@ class SyncStepOutcome:
     skip_reason: str | None = None
     exit_code: int | None = None
     error: str | None = None
+    # First line of failed command output; human-only, never projected into JSON.
+    output_line: str | None = None
 
 
 def _step_scope_identity(step: ExecutionStep) -> str | None:
@@ -436,6 +438,8 @@ class CommandRejected:
 @dataclass(frozen=True)
 class SessionOpenFailed:
     diagnostic: Diagnostic
+    # First line of failed command output; human-only, never projected into JSON.
+    output_line: str | None = None
 
 
 @dataclass(frozen=True)
@@ -607,7 +611,9 @@ class ProposalSession:
                 pattern = f" (path rule: {exc.path_rule_pattern})" if exc.path_rule_pattern is not None else ""
                 return SessionOpenFailed(Diagnostic(
                     "planning-failed", f"{scope}{pattern} {exc.hook_name} failed with exit {exc.exit_code}",
-                ))
+                ), output_line=exc.output_line)
+            except ProbeCommandError as exc:
+                return SessionOpenFailed(Diagnostic("planning-failed", str(exc)), output_line=exc.output_line)
             except ValueError as exc:
                 return SessionOpenFailed(Diagnostic("planning-failed", str(exc)))
             except (KeyboardInterrupt, InterruptedError):
@@ -1438,6 +1444,7 @@ class ProposalSession:
                 skip_reason=item.skip_reason,
                 exit_code=item.exit_code,
                 error=item.error,
+                output_line=first_output_line(item.stderr, item.stdout) if item.status == "failed" else None,
             )
             for item in result.steps
         )

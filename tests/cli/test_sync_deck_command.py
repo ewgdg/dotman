@@ -433,3 +433,45 @@ def test_noninteractive_sync_rejects_ambiguous_scope_with_candidates(tmp_path, m
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "failed"
     assert "sync scope 'o' is ambiguous: target main:app.one, target main:app.two" in json.dumps(payload)
+
+
+def _engine_with_manifest_suffix(tmp_path, monkeypatch, suffix):
+    from dotman.engine import DotmanEngine
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
+    manifest = tmp_path / "repo/packages/app/package.toml"
+    manifest.write_text(manifest.read_text() + suffix)
+    return DotmanEngine.from_config_path(engine.config.config_path)
+
+
+FAILING_PRE_PUSH = '\n[targets.unit.hooks]\npre_push = "echo; echo refusing to replace directory >&2; exit 3"\n'
+
+
+def test_failed_hook_names_step_and_reason_in_human_log(tmp_path, monkeypatch, capsys):
+    engine = _engine_with_manifest_suffix(tmp_path, monkeypatch, FAILING_PRE_PUSH)
+    assert runner_for(engine).run(arguments(dry_run=False, json_output=False)) == 1
+    output = capsys.readouterr().out
+    assert "[failed] main:app.unit (pre_push)" in output
+    assert "exit 3: refusing to replace directory" in output
+
+
+def test_failed_hook_output_stays_out_of_json(tmp_path, monkeypatch, capsys):
+    engine = _engine_with_manifest_suffix(tmp_path, monkeypatch, FAILING_PRE_PUSH)
+    assert runner_for(engine).run(arguments(dry_run=False)) == 1
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert (payload["stages"][0]["action"], payload["stages"][0]["status"]) == ("pre_push", "failed")
+    assert "refusing" not in output
+
+
+@pytest.mark.parametrize("command", ["guard", "probe"])
+def test_failed_planning_commands_show_reason_in_human_output(tmp_path, monkeypatch, capsys, command):
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
+    manifest = tmp_path / "repo/packages/app/package.toml"
+    if command == "guard":
+        manifest.write_text(manifest.read_text() + '\n[targets.unit.hooks]\nguard_push = "printf \'\\nguard reason\\n\' >&2; exit 7"\n')
+    else:
+        manifest.write_text('id = "app"\n[targets.unit]\nprobe = "printf \'\\nguard reason\\n\' >&2; exit 7"\nsync_policy = "push-only"\n')
+    from dotman.engine import DotmanEngine
+    engine = DotmanEngine.from_config_path(engine.config.config_path)
+    assert runner_for(engine).run(arguments(json_output=False)) == 1
+    assert " 7: guard reason" in capsys.readouterr().err

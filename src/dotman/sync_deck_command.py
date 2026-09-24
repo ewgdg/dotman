@@ -70,6 +70,9 @@ def auxiliary_label(scope: str, kind: str, directions, *, path_rule_pattern: str
             scope = style_text(scope, *MENU_REPO_STYLE)
     if kind == "hook":
         annotations = " ".join(f"({direction}-hooks)" for direction in directions)
+    elif kind == "hook-step":
+        # A single executed hook, annotated with its action (e.g. pre_push).
+        annotations = " ".join(f"({action})" for action in directions)
     elif kind == "guard-skip":
         annotations = " ".join(f"(guard_{direction})" for direction in directions)
         if path_rule_pattern is not None:
@@ -175,7 +178,7 @@ class SyncDeckCommandRunner:
             if isinstance(opened, SessionOpenFailed):
                 self._emit(args, None, None, diagnostic={
                     "code": opened.diagnostic.code, "message": opened.diagnostic.message,
-                })
+                }, output_line=opened.output_line)
                 return 130 if opened.diagnostic.code == "interrupted" else 1
             with opened as session:
                 if interactive:
@@ -233,7 +236,7 @@ class SyncDeckCommandRunner:
                 self._emit(args, session, dispatched.result)
                 return dispatched.result.exit_code
 
-    def _emit(self, args, session: SyncSession | None, result, *, diagnostic=None) -> None:
+    def _emit(self, args, session: SyncSession | None, result, *, diagnostic=None, output_line=None) -> None:
         payload = sync_document(args, session, result, diagnostic=diagnostic)
         if args.json_output:
             print(json.dumps(payload))
@@ -273,6 +276,16 @@ class SyncDeckCommandRunner:
                 print(f"      {term(auxiliary_resolution(kind))}")
                 for item in work["diagnostics"]:
                     print(f"      {item['message']}")
+        # Hooks run inside units, so their failures would otherwise surface only as skipped units.
+        for step in result.steps if result else ():
+            if step.kind != "hook" or step.status not in ("failed", "interrupted"):
+                continue
+            label = auxiliary_label(step.scope_identity or step.repo, "hook-step", (step.action,),
+                                    use_color=self._use_color)
+            print(f"  [{term(step.status)}] {label}")
+            if step.status == "failed":
+                reason = f": {step.output_line}" if step.output_line else ""
+                print(f"      exit {step.exit_code}{reason}")
         for skip in payload["guard_skips"]:
             label = auxiliary_label(skip["identity"], "guard-skip", (skip["direction"],),
                                     path_rule_pattern=skip["path_rule_pattern"], use_color=self._use_color)
@@ -287,7 +300,9 @@ class SyncDeckCommandRunner:
         )
         print(f":: {render_sync_term(payload['status'], use_color=self._use_color)} — {stats}")
         for item in payload["summary"]["diagnostics"]:
-            print(item["message"], file=sys.stderr)
+            # Command output belongs to the session-open diagnostic and stays out of JSON.
+            reason = f": {output_line}" if output_line and item is diagnostic else ""
+            print(f"{item['message']}{reason}", file=sys.stderr)
 
 
 # Collapse detailed Sync statuses into the execution log vocabulary

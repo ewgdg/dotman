@@ -12,6 +12,7 @@ from dotman.command_runtime import (
     CommandRequest,
     CommandRuntime,
     ShellCommand,
+    first_output_line,
     raise_for_command_interruption,
 )
 from dotman.collisions import validate_reserved_path_conflicts, validate_target_collisions
@@ -481,6 +482,14 @@ def file_is_executable(mode: int) -> bool:
 
 
 
+class ProbeCommandError(ValueError):
+    # Probe output is untrusted command data, not public diagnostic metadata:
+    # the message stays output-free and `output_line` is for human output only.
+    def __init__(self, message: str, *, output_line: str | None) -> None:
+        super().__init__(message)
+        self.output_line = output_line
+
+
 def run_probe_command(command_runtime: CommandRuntime, metadata: TargetMetadata) -> bool:
     if metadata.probe_command is None:
         raise ValueError(f"missing probe command for {metadata.package_id}:{metadata.target_name}")
@@ -496,10 +505,13 @@ def run_probe_command(command_runtime: CommandRuntime, metadata: TargetMetadata)
         return True
     if result.exit_code == 100:
         return False
-    # Probe output is untrusted command data, not public diagnostic metadata.
-    raise ValueError(
+    raise ProbeCommandError(
         f"probe failed for {metadata.package_id}:{metadata.target_name} "
-        f"with status {result.exit_code}"
+        f"with status {result.exit_code}",
+        output_line=first_output_line(
+            result.stderr.decode("utf-8", errors="replace"),
+            result.stdout.decode("utf-8", errors="replace"),
+        ),
     )
 
 

@@ -338,6 +338,22 @@ mutation. It covers only the frozen publication set and survives partial live
 failure. Preview, repository-only, no-write and hook-only operations create no
 snapshot. Restore never restores repository sources.
 
+### Result log
+
+The human result leads each entry with its outcome: `ok`, `failed`,
+`interrupted` or `skipped`, plus `would-apply` in preview and `pending` when
+execution never started. Unselected entries are omitted unless they carry
+diagnostics. A failed hook step gets its own entry, named by canonical scope and
+hook action, e.g. `[failed] main:app.unit (pre_push)`, since the units it stops
+report only `skipped`.
+
+A failed user command (Guard, Probe or hook) is summarized by the first
+non-empty line of its stderr, else stdout. Command output is untrusted and may
+contain managed content, so this line appears only in human output; JSON
+diagnostics and `stages` keep typed evidence (action, scope, exit status). Guard
+skip reasons (exit 100) are the exception: they are the Guard's declared
+explanation and appear in both.
+
 ### Both-policy reconciliation
 
 Merge lazily reconciles the usable Base payload, frozen repository representation,

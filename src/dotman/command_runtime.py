@@ -86,6 +86,16 @@ class CommandResult:
         return self.stderr.decode("utf-8")
 
 
+def first_output_line(stderr: str, stdout: str) -> str | None:
+    """Summarize a failed user command by its first non-empty stderr line, else stdout."""
+    for output in (stderr, stdout):
+        for line in output.splitlines():
+            stripped = line.strip()
+            if stripped:
+                return stripped
+    return None
+
+
 def raise_for_command_interruption(result: CommandResult) -> None:
     if result.exit_code == INTERRUPTED_EXIT_CODE:
         raise KeyboardInterrupt

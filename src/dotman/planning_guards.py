@@ -8,6 +8,7 @@ from dotman.command_runtime import (
     CommandRequest,
     CommandRuntime,
     ShellCommand,
+    first_output_line,
     raise_for_command_interruption,
 )
 from dotman.models import (
@@ -53,6 +54,7 @@ class GuardPlanningError(ValueError):
         self.path_rule_pattern = path_rule_pattern
         self.hook_name = hook_name
         self.exit_code = exit_code
+        self.output_line = detail
         message = f"{hook_name} failed with exit {exit_code}"
         if detail:
             message = f"{message}: {detail}"
@@ -85,15 +87,6 @@ def _package_has_potential_work(
         if run_noop or hook_spec.run_noop or any(command.run_noop for command in hook_spec.commands):
             return True
     return False
-
-
-def _first_nonempty_output_line(stderr: str, stdout: str) -> str | None:
-    for output in (stderr, stdout):
-        for line in output.splitlines():
-            stripped = line.strip()
-            if stripped:
-                return stripped
-    return None
 
 
 def _run_planning_guard(
@@ -132,7 +125,7 @@ def _run_planning_guard(
         stderr = result.stderr.decode("utf-8", errors="replace")
         if exit_code == 0:
             continue
-        detail = _first_nonempty_output_line(stderr, stdout)
+        detail = first_output_line(stderr, stdout)
         if exit_code == 100:
             return GuardSkip(
                 scope_kind=scope_kind,
