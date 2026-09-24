@@ -25,7 +25,11 @@ def test_deck_authorization_is_explicit_and_separate_from_selection(tmp_path, mo
                 await pilot.press("space")
                 await pilot.pause()
                 assert not session.view.rows[0].approved
+                # Lowercase l is vim-style navigation; only Shift+L authorizes.
                 await pilot.press("l")
+                await pilot.pause()
+                assert not session.view.rows[0].symlink_authorized
+                await pilot.press("L")
                 await pilot.pause()
                 assert session.view.rows[0].symlink_authorized
                 assert not session.view.rows[0].approved

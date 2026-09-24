@@ -247,6 +247,10 @@ def test_long_workset_scrolls_without_losing_focused_row(tmp_path, monkeypatch):
     ("end", 7, 7),
     ("left", 7, 7),
     ("right", 7, 7),
+    ("j", 0, 1),
+    ("k", 1, 0),
+    ("h", 7, 7),
+    ("l", 7, 7),
 ])
 @pytest.mark.parametrize("command", ["space", "enter"])
 def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, start, expected, command):
@@ -366,7 +370,9 @@ def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
                 menu = app.query_one(OptionList)
                 assert menu.display
                 assert menu.option_count == len(session.view.rows[0].allowed_intents)
-                await pilot.press('home', 'enter')
+                await pilot.press('home', 'j')
+                assert menu.highlighted == 1
+                await pilot.press('k', 'enter')
                 assert session.view.rows[0].intent == session.view.rows[0].allowed_intents[0]
                 assert not session.view.rows[0].approved
                 assert not menu.display

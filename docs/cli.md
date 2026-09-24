@@ -100,7 +100,7 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   to workset, review, and confirmation, wrapping to two lines on narrow terminals.
   Long Target identities are shortened in the middle (`…`) so every column fits
   the terminal width; the focused detail line shows the full identity. Arrow keys
-  navigate; terminals too narrow even for shortened targets scroll horizontally,
+  and vim-style `h`/`j`/`k`/`l` navigate; terminals too narrow even for shortened targets scroll horizontally,
   and long worksets scroll vertically without losing column alignment.
 - `Enter` opens focused Proposal Review or canonical Source Change Review;
   `Esc` returns to the same workset. Source Change Review shows the preimage diff,
@@ -113,7 +113,7 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   live writes, and live deletions; cancelling returns without
   changing Approval, inclusion or focus. Real execution is offered only for valid,
   completed approved Proposals; confirming executes the already-reviewed set without
-  further materialization. Review scroll position is retained per target; arrow keys,
+  further materialization. Review scroll position is retained per target; arrow keys, `h`/`j`/`k`/`l`,
   Page Up/Down, and the mouse wheel scroll frozen evidence.
   `Esc` from the idle workset or `Ctrl-C` aborts. During Capture, Merge, and Render,
   the visible deck animates a busy indicator; other keyboard/mouse actions are
@@ -128,7 +128,7 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   Successful editing preserves Approval; cancellation preserves the previous
   Proposal. Failed materialization clears only that unit's Approval.
   **T** retries materialization; Editor attempts can be retried with **E**.
-  **L** explicitly authorizes prompt-mode live-link replacement for the focused
+  **Shift+L** explicitly authorizes prompt-mode live-link replacement for the focused
   Proposal; it does not select or approve it. Review shows authorization in the
   shared warning/success colors. Unattended Sync cannot supply this decision.
   During editing, **Ctrl-C** or OS SIGINT cancels only the Editor attempt,

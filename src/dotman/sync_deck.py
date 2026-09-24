@@ -400,10 +400,10 @@ class SyncDeckApp(App[bool]):
             Binding(key, f"navigate('{table_action}', '{review_action}')",
                     show=False, priority=True)
             for key, table_action, review_action in (
-                ("up", "cursor_up", "scroll_up"),
-                ("down", "cursor_down", "scroll_down"),
-                ("left", "cursor_left", "scroll_left"),
-                ("right", "cursor_right", "scroll_right"),
+                ("up,k", "cursor_up", "scroll_up"),
+                ("down,j", "cursor_down", "scroll_down"),
+                ("left,h", "cursor_left", "scroll_left"),
+                ("right,l", "cursor_right", "scroll_right"),
                 ("pageup", "page_up", "page_up"),
                 ("pagedown", "page_down", "page_down"),
                 ("home", "scroll_home", "scroll_home"),
@@ -414,7 +414,8 @@ class SyncDeckApp(App[bool]):
         ],
         Binding("r,R", "resolution", "Resolution", priority=True),
         Binding("t,T", "retry", "Retry", priority=True),
-        Binding("l,L", "authorize_link", "Authorize link replacement", priority=True),
+        # Lowercase l is vim-style right; authorization needs the deliberate Shift+L.
+        Binding("L", "authorize_link", "Authorize link replacement", priority=True),
         Binding("e,E", "editor", "Editor", priority=True),
         Binding("space", "approve", "Select", priority=True),
         Binding("a,A", "approve_all", "Select all", priority=True),
@@ -619,18 +620,18 @@ class SyncDeckApp(App[bool]):
         self.update_detail()
         self.query_one("#notice", Static).update(self.deck.notice)
         if self.query_one(OptionList).display:
-            help_text = "↑/↓ choose Resolution · Enter select · Esc dismiss"
+            help_text = "↑/↓/j/k choose Resolution · Enter select · Esc dismiss"
         elif self.deck.confirming:
             help_text = "Enter confirm · Esc return · Ctrl+C abort"
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            help_text = "Esc return · Space Approval · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
+            help_text = "Esc return · Space Approval · ↑/↓/j/k/PgUp/PgDn scroll · Ctrl+C abort"
         elif self.deck.reviewing:
-            help_text = "Esc return · Space Approval · E edit · T retry · ↑/↓/PgUp/PgDn scroll · Ctrl+C abort"
+            help_text = "Esc return · Space Approval · E edit · T retry · ↑/↓/j/k/PgUp/PgDn scroll · Ctrl+C abort"
         else:
             help_text = "Esc abort · X confirm · Space mark · Enter view · E edit · T retry"
         row = self.deck.focused_row
         if row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming:
-            help_text += " · L authorize link replacement"
+            help_text += " · Shift+L authorize link replacement"
         if self.deck.session.view.operation == "sync" and not self.deck.reviewing and not self.query_one(OptionList).display and not self.deck.confirming:
             help_text += " · R intent"
         self.query_one("#help", Static).update(help_text)
