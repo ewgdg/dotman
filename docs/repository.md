@@ -339,6 +339,7 @@ exit 0
   `push` or `pull`, including during Sync.
 
 - Supported hook names are `guard_push`, `pre_push`, `post_push`, `guard_pull`, `pre_pull`, and `post_pull`.
+- Guards decide eligibility once, during planning, and are never rerun after review. Put checks that must hold at execution time (network, mounts, credentials) in `pre_push`/`pre_pull`, which run immediately before the work and stop it on failure.
 - Directory path-rule `[...path_rules.hooks]` tables support only `guard_push` and `guard_pull`; path-rule pre/post hooks are invalid.
 - Hook entries may be a single item, an ordered list, or a table with `commands` and optional metadata.
 - Repo, package, and target pre/post hook tables support `run_noop = true | false`.
