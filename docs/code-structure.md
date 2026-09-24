@@ -80,6 +80,7 @@ Current responsibility split:
 - `sync_path_policy.py` — endpoint traversal, live-link interpretation, and execution-time path safety
 - `sync_session.py` — shared Proposal workset, immutable views, semantic commands, transactional Approval and Sync convergence orchestration
 - `pull_session.py` — fixed live-to-repository Observation, opt-out Proposal/Additional Approval and repository-only completion over the shared workset
+- `push_session.py` — fixed repository-to-live Observation, opt-out Use repository Approval and inherited Live Publication over the shared workset
 - `execution.py` — Push execution and the shared command-hook execution boundary
 - `push_checkpoint.py` — frozen repository-space Push evidence and optional per-unit acknowledgment through the shared lifecycle
 - `sync_editor.py` — isolated configured/default Editor invocation and permitted source staging
@@ -329,5 +330,6 @@ References: [Python file locking](https://docs.python.org/3/library/fcntl.html#f
 and [descriptor-relative file access](https://docs.python.org/3/library/os.html#os.open).
 
 `sync_deck_command.py` adapts Sync and Pull to the shared Command Deck.
-The engine opens Pull through `open_pull_session`; Push retains its own plan
-and execution runner.
+The engine opens Pull through `open_pull_session` and Push through
+`open_push_session`. The `push` command still uses its own plan and execution
+runner until it moves to the deck ([#85](https://github.com/ewgdg/dotman/issues/85)).

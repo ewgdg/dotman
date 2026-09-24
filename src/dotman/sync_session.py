@@ -1207,7 +1207,7 @@ class ProposalSession:
             return proposal
         # Publication already freezes the required forward projection. A no-write
         # publication outcome carries the same proof without inventing an effect.
-        if self.operation == "sync" and observation.effective_policy in ("push-only", "both"):
+        if self.operation in ("sync", "push") and observation.effective_policy in ("push-only", "both"):
             return replace(proposal, checkpoint_qualified=True)
         try:
             rendered = self._render(observation, proposal.repository)

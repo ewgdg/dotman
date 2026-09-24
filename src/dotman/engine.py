@@ -290,6 +290,13 @@ class DotmanEngine:
         return PullSession.open(self._planning_context, scope, preview=preview,
                                 run_noop=run_noop, event_sink=event_sink, sink=sink)
 
+    def open_push_session(self, scope: ResolvedSyncScope, *, preview: bool = False,
+                          run_noop: bool = False, event_sink=None, sink: "ProgressSink | None" = None):
+        """Open permanent fixed-direction Push on the shared frozen workset."""
+        from dotman.push_session import PushSession
+        return PushSession.open(self._planning_context, scope, preview=preview,
+                                run_noop=run_noop, event_sink=event_sink, sink=sink)
+
     def resolve_sync_scope(self, selectors: Sequence[str] | None = None) -> ResolvedSyncScope:
         """Resolve exact tracked identities for a SyncSession."""
         return resolve_sync_scope(self._planning_context, selectors)
