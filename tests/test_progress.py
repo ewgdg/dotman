@@ -10,6 +10,7 @@ import pytest
 from dotman.command_runtime import CommandResult, MemoryCommandRuntime, ShellCommand
 from dotman.engine import DotmanEngine
 from dotman.progress import _TqdmSink, make_planning_sink
+from dotman.sync_session import SessionOpenFailed
 from tests.helpers import write_single_repo_config, write_tracked_packages_state
 
 
@@ -109,7 +110,7 @@ def test_tqdm_sink_redraws_elapsed_without_progress_update(
     assert sink._refresh_thread is None
 
 
-def test_engine_planning_reports_progress_after_package_build(
+def test_push_session_open_reports_progress_after_target_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -123,47 +124,38 @@ def test_engine_planning_reports_progress_after_package_build(
         _write_progress_fixture(tmp_path, render_command="render-command"),
         command_runtime=runtime,
     )
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("live\n", encoding="utf-8")
 
-    class PackageBuildOrderingSink(FakeSink):
+    class ProjectionOrderingSink(FakeSink):
         def update(self, n: int = 1) -> None:
             assert [request.command for request in runtime.requests] == [
                 ShellCommand("render-command")
             ]
             super().update(n)
 
-    sink = PackageBuildOrderingSink()
+    sink = ProjectionOrderingSink()
 
-    plan = engine.plan_push(sink=sink)
-
-    assert len(plan.package_plans) == 1
-    assert sink.events == [("start", 1), ("update", 1), ("close", None)]
+    with engine.open_push_session(engine.resolve_sync_scope(), preview=True, sink=sink):
+        assert sink.events == [("start", 1), ("update", 1), ("close", None)]
 
 
-def test_engine_planning_closes_progress_on_failure(
+def test_push_session_open_closes_progress_on_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    runtime = MemoryCommandRuntime(
-        [CommandResult(exit_code=1, stderr=b"projection failed\n")]
-    )
+    # Ctrl-C during projection aborts opening after progress has started.
     engine = DotmanEngine.from_config_path(
         _write_progress_fixture(tmp_path, render_command="render-command"),
-        command_runtime=runtime,
+        command_runtime=MemoryCommandRuntime([KeyboardInterrupt()]),
     )
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("live\n", encoding="utf-8")
     sink = FakeSink()
 
-    with pytest.raises(ValueError, match="command projection failed.*projection failed"):
-        engine.plan_push(sink=sink)
+    opened = engine.open_push_session(engine.resolve_sync_scope(), preview=True, sink=sink)
 
+    assert isinstance(opened, SessionOpenFailed), opened
+    assert opened.diagnostic.code == "interrupted"
     assert sink.events == [("start", 1), ("close", None)]
 
 

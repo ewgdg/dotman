@@ -412,13 +412,9 @@ def test_package_gitignore_boolean_overrides_repository_for_sync_and_push(tmp_pa
     put(tmp_path / "repo/packages/app/tree", ".gitignore", b"private\n")
     put(tmp_path / "repo/packages/app/tree", "private", b"payload")
     put(tmp_path / "repo/packages/app/tree", "visible", b"payload")
-    from dotman.engine import DotmanEngine
     engine = DotmanEngine.from_config_path(tmp_path / "config.toml")
-    with open_directory(engine) as session:
-        names = {item.identity.child_path for item in session.view.observations}
-        assert ("private" in names) is not enabled
-        assert "visible" in names
-    plan = engine.plan_push()
-    names = {item.relative_path for package in plan.package_plans
-             for target in package.target_plans for item in target.directory_items}
-    assert ("private" in names) is not enabled
+    for open_session in (engine.open_sync_session, engine.open_push_session):
+        with open_session(engine.resolve_sync_scope(), preview=True) as session:
+            names = {item.identity.child_path for item in session.view.observations}
+            assert ("private" in names) is not enabled
+            assert "visible" in names

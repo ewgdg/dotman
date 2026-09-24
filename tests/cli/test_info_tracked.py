@@ -1,29 +1,18 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import dotman.cli_interaction as cli
-import pytest
 from dotman.cli import main
-from dotman.engine import DotmanEngine
-from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
     EXAMPLE_REPO,
     REFERENCE_REPO,
-    capture_parser_help,
-    single_package_plan,
-    write_implicit_conflict_repo,
     write_manager_config,
     write_multi_instance_repo,
     write_named_manager_config,
-    write_package_override_preview_repo,
-    write_profile_switch_repo,
     write_single_repo_config,
-    write_untrack_conflict_repo,
 )
 
 def test_info_tracked_cli_interactively_selects_ambiguous_package(
@@ -191,49 +180,6 @@ def test_info_trackable_cli_emits_resolved_target_schema(
     assert target["additional_sources"] == []
     assert not {"render_command", "capture_command", "reconcile", "pull_view_repo", "pull_view_live"} & target.keys()
 
-
-def test_info_tracked_cli_does_not_build_push_plan(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "example"',
-                'package_id = "git"',
-                'profile = "basic"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    plan_push_calls = 0
-    original_plan_push = DotmanEngine.plan_push
-
-    def counting_plan_push(self: DotmanEngine):
-        nonlocal plan_push_calls
-        plan_push_calls += 1
-        return original_plan_push(self)
-
-    monkeypatch.setattr(DotmanEngine, "plan_push", counting_plan_push)
-
-    exit_code = main(["--config", str(config_path), "--json", "info", "tracked", "git"])
-
-    assert exit_code == 0
-    assert json.loads(capsys.readouterr().out)["operation"] == "info-tracked"
-    assert plan_push_calls == 0
 
 def test_info_tracked_cli_emits_readable_text_output(
     tmp_path: Path,
@@ -614,56 +560,6 @@ def test_info_tracked_cli_shows_capture_and_editor_values_for_target_preset(
     assert "reconcile" not in target
 
 
-
-def test_info_tracked_cli_emits_hooks_even_when_package_targets_are_noop(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
-    config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "example"',
-                'package_id = "git"',
-                'profile = "basic"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    engine = cli.DotmanEngine.from_config_path(config_path)
-    plan = single_package_plan(engine, "example:git@basic", operation="push")
-    (home / ".gitconfig").write_text(plan.target_plans[0].desired_text or "", encoding="utf-8")
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path),
-            "info",
-            "tracked",
-            "git",
-        ]
-    )
-
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "  :: hooks" in output
-    assert "    [pre_push]" in output
-    assert "      [1] printf 'install %s\\n' git" in output
-    assert "  :: owned targets" in output
-    assert "target refs" not in output
 
 def test_info_tracked_cli_requires_specific_multi_instance_package_identity_in_non_interactive_mode(
     tmp_path: Path,

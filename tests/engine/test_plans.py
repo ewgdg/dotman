@@ -5,18 +5,18 @@ from pathlib import Path
 
 import pytest
 
+from dotman.command_runtime import CommandRequest, CommandResult, ShellCommand
 from dotman.engine import DotmanEngine
 from dotman.models import HookCommandSpec
-from tests.helpers import open_tracked_pull_session, initialize_git_repository
+from dotman.sync_base_store import FilePresent
+from dotman.sync_observation import Observation
+from dotman.sync_session import SyncResult
 from tests.helpers import (
-    EXAMPLE_REPO,
-    REFERENCE_REPO,
-    single_package_plan,
+    initialize_git_repository,
+    open_tracked_pull_session,
     write_manager_config,
-    write_multi_instance_repo,
-    write_package_override_preview_repo,
     write_single_repo_config,
-    write_untrack_conflict_repo,
+    write_tracked_packages_state,
 )
 
 
@@ -253,7 +253,100 @@ def write_target_ref_repo(
     return repo_root
 
 
-def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
+def open_tracked_push_session(
+    engine: DotmanEngine,
+    tmp_path: Path,
+    *,
+    entries: list[tuple[str, str]],
+    repo_name: str = "fixture",
+    preview: bool = True,
+):
+    """Open the public Push seam from real tracked state."""
+    write_tracked_packages_state(tmp_path / "state", repo_name=repo_name, entries=entries)
+    return engine.open_push_session(engine.resolve_sync_scope(), preview=preview)
+
+
+def execute_tracked_push(
+    engine: DotmanEngine,
+    tmp_path: Path,
+    *,
+    entries: list[tuple[str, str]],
+    repo_name: str = "fixture",
+) -> SyncResult:
+    with open_tracked_push_session(engine, tmp_path, entries=entries, repo_name=repo_name, preview=False) as session:
+        return session.execute().result
+
+
+def observe_tracked_push(
+    engine: DotmanEngine,
+    tmp_path: Path,
+    *,
+    entries: list[tuple[str, str]],
+    repo_name: str = "fixture",
+) -> dict[str, Observation]:
+    with open_tracked_push_session(engine, tmp_path, entries=entries, repo_name=repo_name) as session:
+        return {unit.identity.canonical: unit for unit in session.view.observations}
+
+
+class RecordingCommandRuntime:
+    """Record every command request and succeed without running it (root elevation would need sudo)."""
+
+    def __init__(self) -> None:
+        self.requests: list[CommandRequest] = []
+
+    def request_cancel(self) -> None:
+        pass
+
+    def check_cancelled(self) -> None:
+        pass
+
+    def run(self, request: CommandRequest) -> CommandResult:
+        self.requests.append(request)
+        return CommandResult(exit_code=0)
+
+
+def write_sample_directory_repo(
+    tmp_path: Path,
+    target_lines: list[str],
+    *,
+    repo_children: dict[str, str] | None = None,
+    live_children: dict[str, str] | None = None,
+    repo_file: bool = False,
+    live_directory_link: bool = False,
+) -> tuple[Path, Path]:
+    """Write fixture:sample with target `config` at ~/.config/sample; return repo root and real live directory."""
+    repo_root = tmp_path / "repo"
+    (repo_root / "profiles").mkdir(parents=True)
+    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    package_root = repo_root / "packages" / "sample"
+    package_root.mkdir(parents=True)
+    (package_root / "package.toml").write_text(
+        "\n".join(['id = "sample"', "", "[targets.config]", 'source = "files/config"', 'path = "~/.config/sample"', *target_lines, ""]),
+        encoding="utf-8",
+    )
+    source_path = package_root / "files" / "config"
+    if repo_file:
+        source_path.parent.mkdir(parents=True)
+        source_path.write_text("repo file\n", encoding="utf-8")
+    for name, text in (repo_children or {}).items():
+        source_path.mkdir(parents=True, exist_ok=True)
+        (source_path / name).write_text(text, encoding="utf-8")
+    live_path = Path.home() / ".config" / "sample"
+    live_root = live_path.parent / "real-sample" if live_directory_link else live_path
+    if live_children is not None:
+        live_root.mkdir(parents=True)
+        for name, text in live_children.items():
+            (live_root / name).write_text(text, encoding="utf-8")
+    if live_directory_link:
+        live_path.symlink_to(live_root, target_is_directory=True)
+    return repo_root, live_root
+
+
+def read_tree(root: Path) -> dict[str, str]:
+    return {str(path.relative_to(root)): path.read_text(encoding="utf-8") for path in sorted(root.rglob("*")) if path.is_file()}
+
+
+def test_example_push_renders_package_defaults_profile_and_local_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -263,28 +356,21 @@ def test_example_push_plan_renders_package_defaults_profile_and_local_overrides(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = single_package_plan(engine, "example:git@basic", operation="push")
+    result = execute_tracked_push(engine, tmp_path, entries=[("git", "basic")], repo_name="example")
 
-    assert plan.repo_name == "example"
-    assert plan.package_id == "git"
-    assert plan.requested_profile == "basic"
-    assert [hook.command for hook in plan.hooks["pre_push"]] == [
-        "printf 'install %s\\n' git",
-        'sh "$DOTMAN_REPO_ROOT/scripts/log-package-event.sh" "install-packages" "$DOTMAN_PACKAGE_ID"',
+    assert result.status == "completed"
+    assert [(step.scope_identity, step.status) for step in result.steps if step.action == "pre_push"] == [
+        ("example:git", "ok"),
+        ("example:git", "ok"),
     ]
-
-    target = plan.target_plans[0]
-    assert target.package_id == "git"
-    assert target.target_name == "gitconfig"
-    assert target.action == "create"
-    assert target.live_path == home / ".gitconfig"
-    assert "name = Example User" in target.desired_text
-    assert "email = local@example.test" in target.desired_text
-    assert "editor = nvim" in target.desired_text
-    assert "[include]" not in target.desired_text
+    gitconfig = (home / ".gitconfig").read_text(encoding="utf-8")
+    assert "name = Example User" in gitconfig
+    assert "email = local@example.test" in gitconfig
+    assert "editor = nvim" in gitconfig
+    assert "[include]" not in gitconfig
 
 
-def test_probe_target_exit_zero_is_active_and_keeps_hooks(
+def test_push_active_probe_runs_repo_package_and_target_hooks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -292,91 +378,30 @@ def test_probe_target_exit_zero_is_active_and_keeps_hooks(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
+    log = tmp_path / "hooks.log"
     repo_root = write_probe_repo(
         tmp_path,
         probe_command='test "$DOTMAN_PACKAGE_ID:$DOTMAN_TARGET_NAME:$DOTMAN_OPERATION" = "app:version:push"',
         package_manifest=[
             "[hooks]",
-            'pre_push = "echo package pre"',
+            f'pre_push = "echo package >> {log}"',
         ],
         target_manifest=[
             "[targets.version.hooks]",
-            'pre_push = "echo target pre"',
+            f'pre_push = "echo target >> {log}"',
         ],
     )
+    (repo_root / "repo.toml").write_text(f'[hooks]\npre_push = "echo repo >> {log}"\n', encoding="utf-8")
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    plan = single_package_plan(engine, "fixture:app@default", operation="push")
+    with open_tracked_push_session(engine, tmp_path, entries=[("app", "default")], preview=False) as session:
+        assert session.view.observations == ()
+        assert [(row.kind, row.scope, row.included) for row in session.view.rows] == [
+            ("probe", "fixture:app.version", True),
+        ]
+        assert session.execute().result.status == "completed"
 
-    assert [(target.target_name, target.target_kind, target.action) for target in plan.target_plans] == [
-        ("version", "probe", "probe"),
-    ]
-    assert [hook.command for hook in plan.hooks["pre_push"]] == ["echo package pre", "echo target pre"]
-    assert plan.target_plans[0].to_dict()["repo_path"] is None
-    assert plan.target_plans[0].to_dict()["probe_command"].startswith("test ")
-
-
-def test_probe_target_without_attached_hooks_enables_repo_hooks(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_probe_repo(tmp_path, probe_command="exit 0")
-    (repo_root / "repo.toml").write_text("[hooks]\npre_push = \"echo repo pre\"\n", encoding="utf-8")
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    operation_plan = engine.plan_push_query("fixture:app@default")
-
-    assert operation_plan.package_plans[0].hooks == {}
-    assert [hook.command for hook in operation_plan.repo_hooks["fixture"]["pre_push"]] == ["echo repo pre"]
-
-
-def test_probe_target_exit_100_is_noop_and_drops_default_hooks(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_probe_repo(
-        tmp_path,
-        probe_command="exit 100",
-        package_manifest=[
-            "[hooks]",
-            'pre_push = "echo package pre"',
-        ],
-        target_manifest=[
-            "[targets.version.hooks]",
-            'pre_push = "echo target pre"',
-        ],
-    )
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert [(target.target_name, target.target_kind, target.action) for target in plan.target_plans] == [
-        ("version", "probe", "noop"),
-    ]
-    assert plan.hooks == {}
-
-
-def test_probe_target_non_soft_nonzero_exit_rejects_planning(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_probe_repo(tmp_path, probe_command="printf 'bad version check\\n' >&2; exit 12")
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    with pytest.raises(ValueError, match="probe failed for app:version.*status 12"):
-        single_package_plan(engine, "fixture:app@default", operation="push")
+    assert log.read_text(encoding="utf-8").splitlines() == ["repo", "package", "target"]
 
 
 def test_probe_target_rejects_file_payload_fields(tmp_path: Path) -> None:
@@ -393,50 +418,6 @@ def test_probe_target_rejects_file_payload_fields(tmp_path: Path) -> None:
         DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
 
-def test_tracked_push_keeps_active_probe_without_ownership_candidate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-
-    repo_root = write_probe_repo(
-        tmp_path,
-        probe_command="exit 0",
-        target_manifest=[
-            "[targets.version.hooks]",
-            'pre_push = "echo target pre"',
-        ],
-    )
-    state_dir = tmp_path / "state" / "dotman" / "repos" / "fixture"
-    state_dir.mkdir(parents=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "fixture"',
-                'package_id = "app"',
-                'profile = "default"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    operation_plan = engine.plan_push()
-
-    plan = operation_plan.package_plans[0]
-    assert [(target.target_name, target.target_kind, target.action) for target in plan.target_plans] == [
-        ("version", "probe", "probe"),
-    ]
-    assert [hook.command for hook in plan.hooks["pre_push"]] == ["echo target pre"]
-
-
 def test_probe_target_does_not_create_direct_collision_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -449,23 +430,10 @@ def test_probe_target_does_not_create_direct_collision_candidate(
     probe_package_root = repo_root / "packages" / "probe-app"
     file_package_root = repo_root / "packages" / "file-app"
     (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "groups").mkdir(parents=True)
-    (probe_package_root).mkdir(parents=True)
+    probe_package_root.mkdir(parents=True)
     (file_package_root / "files").mkdir(parents=True)
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "groups" / "bundle.toml").write_text('members = ["probe-app", "file-app"]\n', encoding="utf-8")
-    (probe_package_root / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "probe-app"',
-                "",
-                "[targets.version]",
-                'probe = "exit 0"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    (probe_package_root / "package.toml").write_text('id = "probe-app"\n\n[targets.version]\nprobe = "exit 0"\n', encoding="utf-8")
     (file_package_root / "files" / "config.txt").write_text("config\n", encoding="utf-8")
     # If probe targets entered path collision validation, their internal placeholder path
     # would be the probe package root and would conflict with this nested live path.
@@ -482,12 +450,12 @@ def test_probe_target_does_not_create_direct_collision_candidate(
         ),
         encoding="utf-8",
     )
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("probe-app", "default"), ("file-app", "default")])
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    operation_plan = engine.plan_push_query("fixture:bundle@default")
+    scope = engine.resolve_sync_scope()
 
-    target_kinds = sorted(target.target_kind for plan in operation_plan.package_plans for target in plan.target_plans)
-    assert target_kinds == ["file", "probe"]
+    assert sorted(target.canonical for target in scope.targets) == ["fixture:file-app.config", "fixture:probe-app.version"]
 
 
 def test_default_sync_policy_keeps_targets_in_push_and_pull(
@@ -500,12 +468,11 @@ def test_default_sync_policy_keeps_targets_in_push_and_pull(
 
     repo_root = write_sync_policy_repo(tmp_path, package_manifest=[])
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert [target.target_name for target in push_plan.target_plans] == ["config"]
-
     initialize_git_repository(repo_root)
+
+    with open_tracked_push_session(engine, tmp_path, entries=[("app", "default")]) as session:
+        assert [(unit.identity.package_id, unit.identity.target_name, unit.configured_policy)
+                for unit in session.view.observations] == [("app", "config", "both")]
     with open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")]) as session:
         assert [(unit.identity.package_id, unit.identity.target_name, unit.configured_policy)
                 for unit in session.view.observations] == [("app", "config", "both")]
@@ -525,38 +492,15 @@ def test_target_sync_policy_overrides_package_sync_policy(
         target_manifest=['sync_policy = "pull-only"'],
     )
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
+    initialize_git_repository(repo_root)
 
     assert engine.get_repo("fixture").resolve_package("app").sync_policy == "push-only"
-    assert push_plan.target_plans == []
-    assert push_plan.hooks == {}
-
-    initialize_git_repository(repo_root)
+    with open_tracked_push_session(engine, tmp_path, entries=[("app", "default")]) as session:
+        assert session.view.observations == ()
+        assert session.view.rows == ()
     with open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")]) as session:
         assert [(unit.identity.package_id, unit.identity.target_name, unit.configured_policy)
                 for unit in session.view.observations] == [("app", "config", "pull-only")]
-
-
-def test_hook_filtering_stays_quiet_when_no_targets_are_eligible(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_sync_policy_repo(
-        tmp_path,
-        package_manifest=['sync_policy = "pull-only"'],
-        hook_manifest=['[hooks]', 'pre_push = ["echo push"]'],
-    )
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert push_plan.target_plans == []
-    assert push_plan.hooks == {}
 
 
 def test_package_hook_table_form_parses_run_noop_metadata(
@@ -666,167 +610,92 @@ def test_package_hook_command_object_rejects_non_boolean_run_noop(
         )
 
 
-def test_package_hook_planning_preserves_per_command_io_and_json_payload(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_sync_policy_repo(
-        tmp_path,
-        package_manifest=[],
-        hook_manifest=[
-            "[hooks.pre_push]",
-            'commands = ["echo prep", { run = "echo tty", io = "tty" }]',
-        ],
-    )
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo prep", "echo tty"]
-    assert [hook.io for hook in push_plan.hooks["pre_push"]] == ["pipe", "tty"]
-    assert push_plan.to_dict()["hooks"]["pre_push"][1]["io"] == "tty"
-
-
-def test_package_hook_planning_preserves_per_command_elevation_metadata(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_sync_policy_repo(
-        tmp_path,
-        package_manifest=[],
-        hook_manifest=[
-            "[hooks.pre_push]",
-            'commands = ["echo prep", { run = "systemctl restart sddm", elevation = "root" }]',
-        ],
-    )
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo prep", "systemctl restart sddm"]
-    assert [hook.elevation for hook in push_plan.hooks["pre_push"]] == ["none", "root"]
-    assert push_plan.to_dict()["hooks"]["pre_push"][1]["elevation"] == "root"
-
-
-def test_package_hook_command_run_noop_retains_only_noop_eligible_command(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_sync_policy_repo(
-        tmp_path,
-        package_manifest=[],
-        hook_manifest=[
-            "[hooks.pre_push]",
-            'commands = ["echo normal", { run = "echo noop", run_noop = true }]',
-        ],
-    )
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("config\n", encoding="utf-8")
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo noop"]
-
-
-def test_target_hook_command_run_noop_retains_only_noop_eligible_command(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_repo_and_target_hook_repo(
-        tmp_path,
-        package_manifest=[
-            "[targets.config.hooks.pre_push]",
-            'commands = ["echo target normal", { run = "echo target noop", run_noop = true }]',
-        ],
-    )
-    live_path = home / ".config" / "app" / "config.txt"
-    live_path.parent.mkdir(parents=True)
-    live_path.write_text("config\n", encoding="utf-8")
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert [hook.command for hook in push_plan.hooks["pre_push"]] == ["echo target noop"]
-
-
-def test_repo_hook_command_run_noop_retains_only_noop_eligible_command(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
+def test_push_hook_commands_keep_per_command_io_and_elevation(tmp_path: Path) -> None:
     repo_root = write_repo_and_target_hook_repo(
         tmp_path,
         repo_manifest=[
+            'default_command_elevation = "broker"',
             "[hooks.pre_push]",
-            'commands = ["echo repo normal", { run = "echo repo noop", run_noop = true }]',
+            'commands = ["echo repo"]',
         ],
+        package_manifest=[
+            "[hooks.pre_push]",
+            'commands = ["echo package", { run = "echo root", elevation = "root" }, { run = "echo tty", io = "tty" }]',
+        ],
+    )
+    runtime = RecordingCommandRuntime()
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root),
+        command_runtime=runtime,
+    )
+
+    result = execute_tracked_push(engine, tmp_path, entries=[("app", "default")])
+
+    assert [(request.command.source, request.io, request.elevation)
+            for request in runtime.requests if isinstance(request.command, ShellCommand)] == [
+        ("echo repo", "pipe", "broker"),
+        ("echo package", "pipe", "broker"),
+        ("echo root", "pipe", "root"),
+    ]
+    # Tests have no terminal, so a tty command proves its io reached execution by failing before it runs.
+    assert [step.error for step in result.steps if step.status == "failed"] == [
+        "hook command io 'tty' requires an interactive terminal",
+    ]
+
+
+@pytest.mark.parametrize("scope", ["repo", "package", "target"])
+def test_push_noop_target_runs_only_noop_eligible_hook_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scope: str,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    log = tmp_path / "hooks.log"
+    hook_lines = [
+        f"[{'targets.config.' if scope == 'target' else ''}hooks.pre_push]",
+        f'commands = ["echo normal >> {log}", {{ run = "echo noop >> {log}", run_noop = true }}]',
+    ]
+    repo_root = write_repo_and_target_hook_repo(
+        tmp_path,
+        repo_manifest=hook_lines if scope == "repo" else None,
+        package_manifest=hook_lines if scope != "repo" else None,
     )
     live_path = home / ".config" / "app" / "config.txt"
     live_path.parent.mkdir(parents=True)
     live_path.write_text("config\n", encoding="utf-8")
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    operation_plan = engine.plan_push_query("fixture:app@default")
+    assert execute_tracked_push(engine, tmp_path, entries=[("app", "default")]).status == "completed"
 
-    assert [hook.command for hook in operation_plan.repo_hooks["fixture"]["pre_push"]] == ["echo repo noop"]
+    assert log.read_text(encoding="utf-8").splitlines() == ["noop"]
 
 
 @pytest.mark.parametrize("elevation", ["none", "root", "lease", "broker", "intercept"])
 def test_package_hook_command_object_accepts_elevation_modes(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     elevation: str,
 ) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_sync_policy_repo(
+    repo_root = write_hook_metadata_repo(
         tmp_path,
-        package_manifest=[],
-        hook_manifest=[
+        package_manifest=[
             "[hooks.pre_push]",
             f'commands = [{{ run = "echo prep", elevation = "{elevation}" }}]',
         ],
     )
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert push_plan.hooks["pre_push"][0].elevation == elevation
+    hook = engine.get_repo("fixture").resolve_package("app").hooks["pre_push"]
+    assert hook.commands == (HookCommandSpec(run="echo prep", elevation=elevation),)
 
 
 @pytest.mark.parametrize("default_elevation", ["none", "broker", "intercept"])
 def test_repo_default_command_elevation_applies_to_omitted_command_elevation(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     default_elevation: str,
 ) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
     repo_root = write_repo_and_target_hook_repo(
         tmp_path,
         repo_manifest=[
@@ -847,12 +716,13 @@ def test_repo_default_command_elevation_applies_to_omitted_command_elevation(
     )
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    operation_plan = engine.plan_push_query("fixture:app@default")
-    package_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert [hook.elevation for hook in operation_plan.repo_hooks["fixture"]["pre_push"]] == [default_elevation, default_elevation, "none"]
-    assert [hook.elevation for hook in package_plan.hooks["pre_push"]] == [default_elevation, "root", default_elevation]
-    assert package_plan.target_plans[0].to_dict()["editor"] == {
+    repo = engine.get_repo("fixture")
+    package = repo.resolve_package("app")
+    target = package.targets["config"]
+    assert [command.elevation for command in repo.hooks["pre_push"].commands] == [default_elevation, default_elevation, "none"]
+    assert [command.elevation for command in package.hooks["pre_push"].commands] == [default_elevation, "root"]
+    assert [command.elevation for command in target.hooks["pre_push"].commands] == [default_elevation]
+    assert target.editor.to_dict() == {
         "run": "sh hooks/reconcile.sh",
         "io": "tty",
         "elevation": default_elevation,
@@ -1010,8 +880,9 @@ def test_package_hook_table_form_allows_empty_commands_and_skips_execution(
     assert hook.commands == ()
     assert hook.run_noop is True
 
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-    assert push_plan.hooks == {}
+    result = execute_tracked_push(engine, tmp_path, entries=[("app", "default")])
+    assert result.status == "completed"
+    assert [step.kind for step in result.steps if step.kind == "hook"] == []
 
 
 def test_package_hook_empty_override_disables_inherited_hook(
@@ -1149,9 +1020,6 @@ def test_repo_hook_table_form_parses_run_noop_metadata(
     assert hook.commands == (HookCommandSpec(run="echo repo", io="tty"),)
     assert hook.run_noop is True
 
-    operation_plan = engine.plan_push_query("fixture:app@default")
-    assert operation_plan.repo_hooks["fixture"]["pre_push"][0].io == "tty"
-
 
 def test_target_hook_table_form_parses_run_noop_metadata(
     tmp_path: Path,
@@ -1170,9 +1038,6 @@ def test_target_hook_table_form_parses_run_noop_metadata(
     hook = engine.get_repo("fixture").resolve_package("app").targets["config"].hooks["pre_push"]
     assert hook.commands == (HookCommandSpec(run="echo target", io="tty"),)
     assert hook.run_noop is True
-
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-    assert push_plan.hooks["pre_push"][0].io == "tty"
 
 
 def test_target_hook_override_replaces_metadata_when_merging_extends(
@@ -1235,20 +1100,17 @@ def test_package_sync_policy_is_inherited_through_extends(
         child_manifest=[],
     )
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    child_package = engine.get_repo("fixture").resolve_package("child")
-    push_plan = single_package_plan(engine, "fixture:child@default", operation="push")
-
-    assert child_package.sync_policy == "pull-only"
-    assert push_plan.target_plans == []
-
     initialize_git_repository(repo_root)
+
+    assert engine.get_repo("fixture").resolve_package("child").sync_policy == "pull-only"
+    with open_tracked_push_session(engine, tmp_path, entries=[("child", "default")]) as session:
+        assert session.view.observations == ()
     with open_tracked_pull_session(engine, tmp_path, entries=[("child", "default")]) as session:
         assert [(unit.identity.package_id, unit.identity.target_name, unit.configured_policy)
                 for unit in session.view.observations] == [("child", "config", "pull-only")]
 
 
-def test_push_only_delete_sync_policy_deletes_live_path_without_touching_repo_source(
+def test_push_only_delete_target_is_absent_from_pull(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1264,39 +1126,11 @@ def test_push_only_delete_sync_policy_deletes_live_path_without_touching_repo_so
     live_path = home / ".config" / "app" / "config.txt"
     live_path.parent.mkdir(parents=True)
     live_path.write_text("live\n", encoding="utf-8")
-
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    push_plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    target = push_plan.target_plans[0]
-    assert target.action == "delete"
-    assert target.repo_path.read_text(encoding="utf-8") == "config\n"
-
     initialize_git_repository(repo_root)
+
     with open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")]) as session:
-        assert [(unit.identity.package_id, unit.identity.target_name, unit.configured_policy)
-                for unit in session.view.observations] == []
-
-
-def test_push_only_delete_sync_policy_noops_when_live_path_is_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = write_sync_policy_repo(
-        tmp_path,
-        package_manifest=[],
-        target_manifest=['sync_policy = "push-only-delete"'],
-    )
-    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
-
-    plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert plan.target_plans[0].action == "noop"
+        assert session.view.observations == ()
 
 
 @pytest.mark.parametrize(
@@ -1320,7 +1154,8 @@ def test_sync_policy_rejects_invalid_values(
     with pytest.raises(ValueError, match="sync_policy"):
         DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-def test_example_group_push_plan_expands_depends_and_render_target(
+
+def test_example_meta_package_push_expands_depends_and_renders_command_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1329,25 +1164,18 @@ def test_example_group_push_plan_expands_depends_and_render_target(
     monkeypatch.setenv("HOME", str(home))
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
+    write_tracked_packages_state(tmp_path / "state", repo_name="example", entries=[("core-cli-meta", "basic")])
 
-    operation_plan = engine.plan_push_query("example:os/arch@basic")
-
-    assert [plan.package_id for plan in operation_plan.package_plans] == ["git", "nvim", "core-cli-meta"]
-    assert {plan.selection_label for plan in operation_plan.package_plans} == {
-        "example:os/arch@basic",
-        "example:git@basic",
-        "example:nvim@basic",
-    }
-    assert {target.package_id for plan in operation_plan.package_plans for target in plan.target_plans} == {"git", "nvim"}
-
-    nvim_target = next(
-        target
-        for plan in operation_plan.package_plans
-        for target in plan.target_plans
-        if target.package_id == "nvim"
+    assert [selection.package_id for selection in engine.resolve_sync_scope().package_selections] == [
+        "git",
+        "nvim",
+        "core-cli-meta",
+    ]
+    observations = observe_tracked_push(engine, tmp_path, entries=[("core-cli-meta", "basic")], repo_name="example")
+    assert sorted(observations) == ["example:git.gitconfig", "example:nvim.init_lua"]
+    assert observations["example:nvim.init_lua"].comparison_repository == FilePresent(
+        b'vim.g.mapleader = " "\nvim.cmd.colorscheme("industry")\n'
     )
-    assert nvim_target.projection_kind == "command"
-    assert nvim_target.desired_text == 'vim.g.mapleader = " "\nvim.cmd.colorscheme("industry")\n'
 
 
 def test_meta_package_depends_on_group_expands_group_members(
@@ -1399,20 +1227,16 @@ def test_meta_package_depends_on_group_expands_group_members(
         ]),
         encoding="utf-8",
     )
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("tooling-meta", "basic")])
 
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    operation_plan = engine.plan_push_query("fixture:tooling-meta@basic")
+    scope = engine.resolve_sync_scope(["fixture:tooling-meta"])
 
-    assert [plan.package_id for plan in operation_plan.package_plans] == ["git", "nvim", "tooling-meta"]
-    assert {plan.selection_label for plan in operation_plan.package_plans} == {
-        "fixture:tooling-meta@basic",
-        "fixture:git@basic",
-        "fixture:nvim@basic",
-    }
-    assert {target.package_id for plan in operation_plan.package_plans for target in plan.target_plans} == {"git", "nvim"}
+    assert [selection.package_id for selection in scope.package_selections] == ["git", "nvim", "tooling-meta"]
+    assert [target.canonical for target in scope.targets] == ["fixture:git.git", "fixture:nvim.nvim"]
 
 
 def test_dependency_resolution_allows_mixed_package_and_group_cycles_without_revisiting_packages(
@@ -1452,19 +1276,16 @@ def test_dependency_resolution_allows_mixed_package_and_group_cycles_without_rev
         ]),
         encoding="utf-8",
     )
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("alpha", "basic")])
 
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    operation_plan = engine.plan_push_query("fixture:alpha@basic")
+    scope = engine.resolve_sync_scope(["fixture:alpha"])
 
-    assert [plan.package_id for plan in operation_plan.package_plans] == ["beta", "alpha"]
-    assert {plan.selection_label for plan in operation_plan.package_plans} == {
-        "fixture:alpha@basic",
-        "fixture:beta@basic",
-    }
-    assert {target.package_id for plan in operation_plan.package_plans for target in plan.target_plans} == {"alpha", "beta"}
+    assert [selection.package_id for selection in scope.package_selections] == ["beta", "alpha"]
+    assert [target.canonical for target in scope.targets] == ["fixture:beta.beta", "fixture:alpha.alpha"]
 
 
 def test_example_extends_preserves_child_values_after_local_merge(
@@ -1477,108 +1298,15 @@ def test_example_extends_preserves_child_values_after_local_merge(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    plan = single_package_plan(engine, "example:work/git@work", operation="push")
+    observation, = observe_tracked_push(engine, tmp_path, entries=[("work/git", "work")], repo_name="example").values()
 
-    target = plan.target_plans[0]
-    assert "name = Work User" in target.desired_text
-    assert "email = local@example.test" in target.desired_text
-    assert "path = ~/.config/git/includes/work.inc" in target.desired_text
-
-
-def test_target_preset_jinja_editor_expands_default_workflow(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "shell" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "shell"',
-                "",
-                "[targets.profile]",
-                'source = "files/profile"',
-                'path = "~/.profile"',
-                'preset = "jinja-editor"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
-        "{% include 'env.core.sh' %}\n",
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "shell" / "files" / "env.core.sh").write_text(
-        "export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n",
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (home / ".profile").write_text("export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    push_plan = single_package_plan(engine, "fixture:shell@default", operation="push")
-
-    push_target = push_plan.target_plans[0]
-    assert push_target.render == "jinja"
+    rendered = observation.comparison_repository.content.decode()
+    assert "name = Work User" in rendered
+    assert "email = local@example.test" in rendered
+    assert "path = ~/.config/git/includes/work.inc" in rendered
 
 
-def test_target_preset_jinja_patch_expands_default_workflow(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "shell" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "shell"',
-                "",
-                "[targets.profile]",
-                'source = "files/profile"',
-                'path = "~/.profile"',
-                'preset = "jinja-patch"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
-        "{% include 'env.core.sh' %}\n",
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "shell" / "files" / "env.core.sh").write_text(
-        "export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n",
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (home / ".profile").write_text("export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    push_plan = single_package_plan(engine, "fixture:shell@default", operation="push")
-
-    push_target = push_plan.target_plans[0]
-    assert push_target.render == "jinja"
-    assert push_target.capture == "patch"
-
-
-def test_push_directory_items_store_materialized_review_bytes_when_planning_already_reads_them(
+def test_push_renders_directory_children_matched_by_path_rule(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1616,15 +1344,11 @@ def test_push_directory_items_store_materialized_review_bytes_when_planning_alre
     live_path.parent.mkdir(parents=True)
     live_path.write_text("greeting = world\n", encoding="utf-8")
 
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    engine = DotmanEngine.from_config_path(config_path)
-    push_plan = single_package_plan(engine, "fixture:shell@default", operation="push")
+    assert execute_tracked_push(engine, tmp_path, entries=[("shell", "default")]).status == "completed"
 
-    item = push_plan.target_plans[0].directory_items[0]
-    assert item.desired_bytes == b"greeting = hello\n"
-    assert item.review_before_bytes == b"greeting = world\n"
-    assert item.review_after_bytes == b"greeting = hello\n"
+    assert live_path.read_text(encoding="utf-8") == "greeting = hello\n"
 
 
 def test_unknown_path_rule_preset_fails_engine_load(tmp_path: Path) -> None:
@@ -1655,58 +1379,6 @@ def test_unknown_path_rule_preset_fails_engine_load(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="path_rules\\.templates uses unknown preset 'missing'"):
         DotmanEngine.from_config_path(config_path)
-
-
-def test_target_preset_jinja_patch_editor_expands_default_workflow(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "shell" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "shell"',
-                "",
-                "[targets.profile]",
-                'source = "files/profile"',
-                'path = "~/.profile"',
-                'preset = "jinja-patch-editor"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
-        "{% include 'env.core.sh' %}\n",
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "shell" / "files" / "env.core.sh").write_text(
-        "export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n",
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (home / ".profile").write_text("export XDG_CONFIG_HOME=\"${XDG_CONFIG_HOME:-$HOME/.config}\"\n", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    push_plan = single_package_plan(engine, "fixture:shell@default", operation="push")
-
-    push_target = push_plan.target_plans[0]
-    assert push_target.render == "jinja"
-    assert push_target.capture == "patch"
-    assert push_target.to_dict()["editor"] == {
-        "type": "jinja",
-        "io": "tty",
-        "elevation": "none",
-    }
 
 
 def test_capture_patch_rejects_raw_review_views(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1809,9 +1481,20 @@ def test_unknown_target_preset_fails_engine_load(tmp_path: Path) -> None:
         DotmanEngine.from_config_path(config_path)
 
 
-def test_plain_file_with_jinja_markers_requires_explicit_render(
+@pytest.mark.parametrize(
+    ("target_lines", "source_text", "expected_live"),
+    [
+        # Jinja markers alone never opt a plain file into rendering.
+        ([], "profile={{ profile }}\n", "profile={{ profile }}\n"),
+        (['render = "jinja"'], "export SHELL_PROFILE=1\n{% include 'env.core.sh' %}\n", "export SHELL_PROFILE=1\nexport CORE_ENV=1\n"),
+    ],
+)
+def test_push_renders_file_only_when_render_is_explicit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    target_lines: list[str],
+    source_text: str,
+    expected_live: str,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -1821,46 +1504,20 @@ def test_plain_file_with_jinja_markers_requires_explicit_render(
     (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
     (repo_root / "profiles").mkdir()
     (repo_root / "packages" / "shell" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "shell"',
-                "",
-                "[targets.profile]",
-                'source = "files/profile"',
-                'path = "~/.profile"',
-                "",
-            ]
-        ),
+        "\n".join(['id = "shell"', "", "[targets.profile]", 'source = "files/profile"', 'path = "~/.profile"', *target_lines, ""]),
         encoding="utf-8",
     )
-    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
-        "profile={{ profile }}\n",
-        encoding="utf-8",
-    )
+    (repo_root / "packages" / "shell" / "files" / "profile").write_text(source_text, encoding="utf-8")
+    (repo_root / "packages" / "shell" / "files" / "env.core.sh").write_text("export CORE_ENV=1\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    assert execute_tracked_push(engine, tmp_path, entries=[("shell", "default")]).status == "completed"
 
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plan = single_package_plan(engine, "fixture:shell@default", operation="push")
-
-    assert plan.target_plans[0].projection_kind == "raw"
-    assert plan.target_plans[0].desired_text == "profile={{ profile }}\n"
+    assert (home / ".profile").read_text(encoding="utf-8") == expected_live
 
 
-def test_template_file_render_supports_relative_include(
+def test_sandbox_host_push_composes_profile_vars_and_namespaced_packages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1868,63 +1525,19 @@ def test_template_file_render_supports_relative_include(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
-    repo_root = tmp_path / "repo"
-    (repo_root / "packages" / "shell" / "files").mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "shell" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "shell"',
-                "",
-                "[targets.profile]",
-                'source = "files/profile"',
-                'path = "~/.profile"',
-                'render = "jinja"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "shell" / "files" / "profile").write_text(
-        "\n".join(
-            [
-                "export SHELL_PROFILE=1",
-                "{% include 'env.core.sh' %}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "shell" / "files" / "env.core.sh").write_text(
-        "export CORE_ENV=1\n",
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
+    write_tracked_packages_state(tmp_path / "state", repo_name="sandbox", entries=[("host/linux-meta", "host/linux")])
 
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    scope = engine.resolve_sync_scope()
+    assert {selection.identity.repo for selection in scope.package_selections} == {"sandbox"}
+    assert "linux/1password" in {selection.package_id for selection in scope.package_selections}
 
-    engine = DotmanEngine.from_config_path(config_path)
+    observations = observe_tracked_push(engine, tmp_path, entries=[("host/linux-meta", "host/linux")], repo_name="sandbox")
+    # The host profile's desktop variable selects the niri-specific sunshine source.
+    assert observations["sandbox:sunshine.selected_config"].repository_path.name == "sunshine-niri.conf"
 
-    plan = single_package_plan(engine, "fixture:shell@default", operation="push")
 
-    assert plan.target_plans[0].projection_kind == "template"
-    assert plan.target_plans[0].desired_text.strip().splitlines() == [
-        "export SHELL_PROFILE=1",
-        "export CORE_ENV=1",
-    ]
-
-def test_sandbox_host_plan_composes_profile_vars_and_namespaced_packages(
+def test_sandbox_nested_directory_and_file_targets_push_without_collision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1934,670 +1547,112 @@ def test_sandbox_host_plan_composes_profile_vars_and_namespaced_packages(
 
     engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
 
-    operation_plan = engine.plan_push_query("host/linux-meta@host/linux")
-    plans_by_package_id = {plan.package_id: plan for plan in operation_plan.package_plans}
+    observations = observe_tracked_push(engine, tmp_path, entries=[("gsettings", "host/linux")], repo_name="sandbox")
 
-    assert {plan.repo_name for plan in operation_plan.package_plans} == {"sandbox"}
-    assert "linux/1password" in plans_by_package_id
-    assert plans_by_package_id["host/linux-meta"].variables["desktop"] == "niri"
-    assert plans_by_package_id["host/linux-meta"].variables["UV_RUN"] == 'uv run --project "$DOTMAN_REPO_ROOT"'
-
-    sunshine_target = next(
-        target
-        for plan in operation_plan.package_plans
-        for target in plan.target_plans
-        if target.package_id == "sunshine" and target.target_name == "selected_config"
-    )
-    assert sunshine_target.repo_path.name == "sunshine-niri.conf"
-
-def test_sandbox_nested_directory_and_file_targets_plan_without_collision(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    engine = DotmanEngine.from_config_path(write_manager_config(tmp_path))
-
-    plan = single_package_plan(engine, "gsettings@host/linux", operation="push")
-
-    assert {target.target_name for target in plan.target_plans} == {
+    assert {canonical.split("/")[0].removeprefix("sandbox:gsettings.") for canonical in observations} == {
         "desktop",
         "nautilus",
-        "gtk3_dir",
         "gtk3_settings",
-        "gtk4_dir",
         "gtk4_settings",
     }
+    assert "sandbox:gsettings.gtk3_dir/settings.ini" not in observations
+    assert "sandbox:gsettings.gtk4_dir/settings.ini" not in observations
 
-    gtk3_dir = next(target for target in plan.target_plans if target.target_name == "gtk3_dir")
-    assert all(item.relative_path != "settings.ini" for item in gtk3_dir.directory_items)
 
-def test_repo_toml_ignore_push_preserves_live_paths_during_push_cleanup(
+@pytest.mark.parametrize(
+    ("target_lines", "repo_children", "live_children", "live_directory_link", "dir_symlink_mode", "expected_live"),
+    [
+        # Missing repo source: the live directory decides the target type and push deletes its children.
+        ([], None, {"alpha.toml": "live"}, False, None, {}),
+        # Both paths missing: nothing to publish.
+        ([], None, None, False, None, None),
+        (['type = "directory"'], None, None, False, None, None),
+        # A followed live directory symlink is published through, with or without an explicit type.
+        (['type = "directory"', 'sync_policy = "push-only-delete"'], None, {"old.txt": "old"}, True, "follow", {}),
+        (['sync_policy = "push-only-delete"'], None, {"old.txt": "old"}, True, "follow", {}),
+        # Existing trees publish per child: update, create, and delete.
+        (
+            [],
+            {"alpha.toml": "repo alpha", "beta.toml": "repo beta"},
+            {"alpha.toml": "live alpha", "gamma.toml": "live gamma"},
+            False,
+            None,
+            {"alpha.toml": "repo alpha", "beta.toml": "repo beta"},
+        ),
+    ],
+)
+def test_push_directory_target_publishes_repository_tree(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    target_lines: list[str],
+    repo_children: dict[str, str] | None,
+    live_children: dict[str, str] | None,
+    live_directory_link: bool,
+    dir_symlink_mode: str | None,
+    expected_live: dict[str, str] | None,
 ) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "repo.toml").write_text(
-        "\n".join(
-            [
-                "[ignore]",
-                'patterns = ["*.bak"]',
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    repo_root, live_root = write_sample_directory_repo(
+        tmp_path,
+        target_lines,
+        repo_children=repo_children,
+        live_children=live_children,
+        live_directory_link=live_directory_link,
     )
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    live_root = home / ".config" / "sample"
-    live_root.mkdir(parents=True)
-    (live_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
-    (live_root / "tool.conf.bak").write_text("old value = 0\n", encoding="utf-8")
-
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    engine = DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root),
+        dir_symlink_mode=dir_symlink_mode,
     )
 
-    engine = DotmanEngine.from_config_path(config_path)
+    assert execute_tracked_push(engine, tmp_path, entries=[("sample", "default")]).status == "completed"
 
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    assert plan.target_plans[0].action == "noop"
-
-
-def test_push_plan_infers_directory_target_from_live_path_when_repo_source_is_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    live_root = home / ".config" / "sample"
-    live_root.mkdir(parents=True)
-    (live_root / "alpha.toml").write_text('value = "live alpha"\n', encoding="utf-8")
-
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.target_kind == "directory"
-    assert target.action == "delete"
-    assert [(item.action, item.relative_path) for item in target.directory_items] == [
-        ("delete", "alpha.toml"),
-    ]
+    assert (read_tree(live_root) if live_root.exists() else None) == expected_live
+    assert read_tree(repo_root / "packages" / "sample" / "files") == {
+        f"config/{name}": text for name, text in (repo_children or {}).items()
+    }
 
 
-def test_push_plan_marks_directory_target_unknown_when_repo_and_live_paths_are_both_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.target_kind == "unknown"
-    assert target.action == "noop"
-    assert target.directory_items == ()
-
-
-def test_push_plan_uses_explicit_file_type_when_custom_render_source_is_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.profile]",
-                'type = "file"',
-                'source = "generated/profile"',
-                'path = "~/.profile"',
-                'render = \'printf "generated\\n"\'',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.target_kind == "file"
-    assert target.action == "noop"
-    assert target.projection_kind == "command"
-    assert target.desired_bytes is None
-    assert target.desired_text is None
-
-
-def test_push_plan_uses_explicit_directory_type_when_paths_are_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.empty]",
-                'type = "directory"',
-                'source = "files/empty"',
-                'path = "~/.config/sample/empty"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.target_kind == "directory"
-    assert target.action == "noop"
-    assert target.directory_items == ()
-
-
-def test_target_type_rejects_unknown_values(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'type = "socket"',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+def test_target_type_rejects_unknown_values(tmp_path: Path) -> None:
+    repo_root, _live_root = write_sample_directory_repo(tmp_path, ['type = "socket"'])
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("sample", "default")])
 
     with pytest.raises(ValueError, match="unsupported target type 'socket'"):
-        DotmanEngine.from_config_path(config_path).plan_push_query("fixture:sample@default")
+        DotmanEngine.from_config_path(
+            write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+        ).resolve_sync_scope()
 
 
-def test_target_type_rejects_existing_repo_source_shape_mismatch(
+@pytest.mark.parametrize(
+    ("target_lines", "repo_file", "live_children", "live_directory_link", "diagnostic_code"),
+    [
+        (['type = "directory"'], True, None, False, "unsupported-entry"),
+        (['type = "file"'], True, {}, False, "unsupported-entry"),
+        # Without follow mode a live directory symlink is not a directory endpoint.
+        (['type = "directory"', 'sync_policy = "push-only-delete"'], False, {"old.txt": "old"}, True, "directory-symlink"),
+    ],
+)
+def test_push_rejects_target_type_shape_mismatch(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    target_lines: list[str],
+    repo_file: bool,
+    live_children: dict[str, str] | None,
+    live_directory_link: bool,
+    diagnostic_code: str,
 ) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_path = repo_root / "packages" / "sample" / "files" / "config"
-    source_path.parent.mkdir(parents=True)
-    source_path.write_text("repo file\n", encoding="utf-8")
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'type = "directory"',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-
-    with pytest.raises(ValueError, match='declares type = "directory" but repo source path is file'):
-        DotmanEngine.from_config_path(config_path).plan_push_query("fixture:sample@default")
-
-
-def test_target_type_rejects_existing_live_path_shape_mismatch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    live_path = home / ".config" / "sample"
-    live_path.mkdir(parents=True)
-    repo_root = tmp_path / "repo"
-    source_path = repo_root / "packages" / "sample" / "files" / "config"
-    source_path.parent.mkdir(parents=True)
-    source_path.write_text("repo file\n", encoding="utf-8")
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'type = "file"',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-
-    with pytest.raises(ValueError, match='declares type = "file" but live path is directory'):
-        DotmanEngine.from_config_path(config_path).plan_push_query("fixture:sample@default")
-
-
-def test_target_type_rejects_live_directory_symlink_when_follow_is_disabled(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    real_live_dir = home / ".config" / "real-sample"
-    real_live_dir.mkdir(parents=True)
-    live_path = home / ".config" / "sample"
-    live_path.symlink_to(real_live_dir)
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'type = "directory"',
-                'sync_policy = "push-only-delete"',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-
-    with pytest.raises(ValueError, match='declares type = "directory" but live path is file'):
-        DotmanEngine.from_config_path(config_path).plan_push_query("fixture:sample@default")
-
-
-def test_target_type_allows_live_directory_symlink_when_follow_is_enabled(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    real_live_dir = home / ".config" / "real-sample"
-    real_live_dir.mkdir(parents=True)
-    (real_live_dir / "old.txt").write_text("old\n", encoding="utf-8")
-    live_path = home / ".config" / "sample"
-    live_path.symlink_to(real_live_dir, target_is_directory=True)
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'type = "directory"',
-                'sync_policy = "push-only-delete"',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    engine = DotmanEngine.from_config_path(config_path, dir_symlink_mode="follow")
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.target_kind == "directory"
-    assert target.action == "delete"
-    assert [(item.action, item.relative_path) for item in target.directory_items] == [("delete", "old.txt")]
-
-
-def test_push_only_delete_infers_directory_symlink_when_follow_is_enabled(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    real_live_dir = home / ".config" / "real-sample"
-    real_live_dir.mkdir(parents=True)
-    (real_live_dir / "old.txt").write_text("old\n", encoding="utf-8")
-    live_path = home / ".config" / "sample"
-    live_path.symlink_to(real_live_dir, target_is_directory=True)
-    repo_root = tmp_path / "repo"
-    (repo_root / "profiles").mkdir(parents=True)
-    (repo_root / "packages" / "sample").mkdir(parents=True)
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'sync_policy = "push-only-delete"',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    engine = DotmanEngine.from_config_path(config_path, dir_symlink_mode="follow")
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.target_kind == "directory"
-    assert target.action == "delete"
-    assert [(item.action, item.relative_path) for item in target.directory_items] == [("delete", "old.txt")]
-
-
-def test_push_plan_exposes_file_level_items_for_directory_targets(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "alpha.toml").write_text('value = "repo alpha"\n', encoding="utf-8")
-    (source_root / "beta.toml").write_text('value = "repo beta"\n', encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    live_root = home / ".config" / "sample"
-    live_root.mkdir(parents=True)
-    (live_root / "alpha.toml").write_text('value = "live alpha"\n', encoding="utf-8")
-    (live_root / "gamma.toml").write_text('value = "live gamma"\n', encoding="utf-8")
-
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.action == "update"
-    assert [(item.action, item.relative_path) for item in target.directory_items] == [
-        ("update", "alpha.toml"),
-        ("create", "beta.toml"),
-        ("delete", "gamma.toml"),
-    ]
-
-def test_shared_ignore_appends_to_repo_and_target_operation_ignores(tmp_path: Path) -> None:
-    repo_root = write_repo_and_target_hook_repo(
+    repo_root, live_root = write_sample_directory_repo(
         tmp_path,
-        repo_manifest=[
-            "[ignore]",
-            'patterns = ["repo.one", "repo.two"]',
-        ],
-        target_manifest=[
-            "",
-            "[targets.config.ignore]",
-            'patterns = ["target.one", "target.two"]',
-        ],
+        target_lines,
+        repo_file=repo_file,
+        live_children=live_children,
+        live_directory_link=live_directory_link,
     )
-    config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
 
-    engine = DotmanEngine.from_config_path(config_path)
+    with open_tracked_push_session(engine, tmp_path, entries=[("sample", "default")], preview=False) as session:
+        row, = session.view.rows
+        assert (row.row_id, row.kind, row.approved) == ("fixture:sample.config", "diagnostic", False)
+        assert [diagnostic.code for diagnostic in row.observation.diagnostics if diagnostic.severity == "error"] == [diagnostic_code]
+        session.execute()
 
-    plan = single_package_plan(engine, "fixture:app@default", operation="push")
-
-    assert "target.one" not in {item.relative_path for item in plan.target_plans[0].directory_items}
-
-
-def test_repo_toml_ignore_defaults_merge_with_target_ignore_for_directory_targets(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "repo.toml").write_text(
-        "\n".join(
-            [
-                "[ignore]",
-                'patterns = ["*.archived", "*.bak"]',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                    "[targets.config]",
-                    'source = "files/config"',
-                    'path = "~/.config/sample"',
-                    "",
-                    "[targets.config.ignore]",
-                    'patterns = ["*.bak", "keep.local"]',
-                    "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
-    (source_root / "old.archived").write_text("ignored\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    live_root = home / ".config" / "sample"
-    live_root.mkdir(parents=True)
-    (live_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
-    (live_root / "tool.conf.bak").write_text("old value = 0\n", encoding="utf-8")
-    (live_root / "keep.local").write_text("keep me\n", encoding="utf-8")
-
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[repos.fixture]",
-                f'path = "{repo_root}"',
-                "order = 10",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    assert plan.target_plans[0].action == "noop"
-    assert plan.target_plans[0].action == "noop"
+    assert (read_tree(live_root) if live_root.exists() else None) == live_children
 
 
 def test_sync_policy_resolution_survives_profile_and_local_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2624,12 +1679,10 @@ path = "~/.config/{{ profile }}-{{ suffix }}"
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
 
     engine = DotmanEngine.from_config_path(config_path)
-    push = single_package_plan(engine, "fixture:app@work", operation="push")
-
-    assert push.target_plans[0].live_path == home / ".config" / "work-local"
-    assert push.target_plans[0].sync_policy == "push-only"
-
     initialize_git_repository(repo_root)
+
+    observation, = observe_tracked_push(engine, tmp_path, entries=[("app", "work")]).values()
+    assert observation.live_path == home / ".config" / "work-local"
+    assert observation.configured_policy == "push-only"
     with open_tracked_pull_session(engine, tmp_path, entries=[("app", "work")]) as session:
-        assert [(unit.identity.package_id, unit.identity.target_name, unit.configured_policy)
-                for unit in session.view.observations] == []
+        assert session.view.observations == ()

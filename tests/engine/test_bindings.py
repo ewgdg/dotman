@@ -9,7 +9,6 @@ from dotman.models import FullSpecSelector
 from dotman.engine import DotmanEngine
 from tests.helpers import (
     EXAMPLE_REPO,
-    single_package_plan,
     write_manager_config,
     write_multi_instance_repo,
     write_package_override_preview_repo,
@@ -18,51 +17,6 @@ from tests.helpers import (
     write_single_repo_config_with_state_key,
 )
 
-
-def test_tracked_push_plan_drops_hooks_for_packages_without_winning_targets(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "example"',
-                'package_id = "core-cli-meta"',
-                'profile = "basic"',
-                "",
-                "[[packages]]",
-                'repo = "example"',
-                'package_id = "work/git"',
-                'profile = "work"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plans_by_package_id = {plan.package_id: plan for plan in engine.plan_push()}
-
-    core_cli_meta_plan = plans_by_package_id["core-cli-meta"]
-    assert core_cli_meta_plan.target_plans == []
-    assert core_cli_meta_plan.hooks == {}
-    assert {target.package_id for target in plans_by_package_id["nvim"].target_plans} == {"nvim"}
-
-    work_git_plan = plans_by_package_id["work/git"]
-    assert {target.package_id for target in work_git_plan.target_plans} == {"work/git"}
-    assert set(work_git_plan.hooks) == {"pre_push", "post_push"}
-    assert {hook.package_id for hook in work_git_plan.hooks["pre_push"]} == {"work/git"}
 
 def test_group_selected_package_is_marked_explicit_in_tracked_detail(
     tmp_path: Path,
@@ -136,83 +90,6 @@ def test_info_tracked_drops_hooks_for_non_effective_provenance_binding(
     assert package_detail.package_entries[0].hooks == {}
     assert set(package_detail.package_entries[1].hooks) == {"guard_push", "pre_push", "post_push"}
 
-def test_plan_push_uses_current_tracked_state_without_writing_new_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "example"',
-                'package_id = "core-cli-meta"',
-                'profile = "basic"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plans = engine.plan_push()
-
-    assert len(plans) == 3
-    assert plans[0].operation == "push"
-    assert plans[0].package_id == "git"
-    assert [plan.package_id for plan in plans] == ["git", "nvim", "core-cli-meta"]
-    assert not (state_dir / "tracked-packages.toml").with_suffix(".tmp").exists()
-
-def test_plan_push_prefers_explicit_targets_over_implicit_targets(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    config_path = write_manager_config(tmp_path)
-    state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "tracked-packages.toml").write_text(
-        "\n".join(
-            [
-                "schema_version = 1",
-                "",
-                "[[packages]]",
-                'repo = "example"',
-                'package_id = "core-cli-meta"',
-                'profile = "basic"',
-                "",
-                "[[packages]]",
-                'repo = "example"',
-                'package_id = "work/git"',
-                'profile = "work"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    engine = DotmanEngine.from_config_path(config_path)
-
-    plans = engine.plan_push()
-    plans_by_package_id = {plan.package_id: plan for plan in plans}
-
-    assert plans_by_package_id["core-cli-meta"].target_plans == []
-    assert {target.package_id for target in plans_by_package_id["nvim"].target_plans} == {"nvim"}
-    assert {target.package_id for target in plans_by_package_id["work/git"].target_plans} == {"work/git"}
-    assert "Work User" in plans_by_package_id["work/git"].target_plans[0].desired_text
-
 def test_preview_package_selection_implicit_overrides_returns_unique_packages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -255,12 +132,9 @@ def test_record_binding_writes_resolved_binding_state(
 
     config_path = write_manager_config(tmp_path)
     engine = DotmanEngine.from_config_path(config_path)
-    plan = single_package_plan(engine, "example:git@basic", operation="push")
     state_path = tmp_path / "state" / "dotman" / "repos" / "example" / "tracked-packages.toml"
 
-    engine.record_tracked_package_entry(
-        FullSpecSelector(repo=plan.repo_name, selector=plan.package_id, selector_kind="package", profile=plan.requested_profile)
-    )
+    engine.record_tracked_package_entry(FullSpecSelector(repo="example", selector="git", selector_kind="package", profile="basic"))
 
     assert state_path.exists()
     assert state_path.read_text(encoding="utf-8") == "\n".join(
@@ -339,11 +213,7 @@ def test_record_binding_replaces_existing_selector_binding_with_new_profile(
     )
     state_path.chmod(0o600)
 
-    plan = single_package_plan(engine, "example:git@work", operation="push")
-
-    engine.record_tracked_package_entry(
-        FullSpecSelector(repo=plan.repo_name, selector=plan.package_id, selector_kind="package", profile=plan.requested_profile)
-    )
+    engine.record_tracked_package_entry(FullSpecSelector(repo="example", selector="git", selector_kind="package", profile="work"))
 
     bindings = engine.read_tracked_package_entries(engine.get_repo("example"))
     assert [(binding.selector, binding.profile) for binding in bindings] == [

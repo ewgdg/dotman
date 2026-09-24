@@ -6,7 +6,8 @@ import pytest
 
 from dotman.engine import DotmanEngine
 from dotman.ignore import list_directory_files, matches_ignore_pattern
-from tests.helpers import single_package_plan, write_single_repo_config, write_tracked_packages_state
+from tests.engine.test_sync_directory_observation import put
+from tests.helpers import initialize_git_repository, write_single_repo_config, write_tracked_packages_state
 
 
 def _push_tracked_scope(engine: DotmanEngine) -> None:
@@ -152,335 +153,96 @@ def test_followed_directory_symlink_with_skip_marker_is_skipped_only_when_follow
 
     assert files == {}
 
-def test_directory_target_ignore_push_uses_gitignore_semantics_for_nested_pycache_files(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
+def write_sample_package(
+    tmp_path: Path, *, package_extra: str = "", target_extra: str = "", repo_toml: str | None = None
+) -> tuple[Path, Path]:
+    """Write fixture:sample with directory target `config`; return its source and live roots."""
     repo_root = tmp_path / "repo"
     source_root = repo_root / "packages" / "sample" / "files" / "config"
     source_root.mkdir(parents=True)
     (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                '',
-                '[targets.config]',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                '',
-                '[targets.config.ignore]',
-                'patterns = ["**/__pycache__/"]',
-                '',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (source_root / "nested" / "__pycache__").mkdir(parents=True)
-    (source_root / "nested" / "__pycache__" / "cached.pyc").write_text(
-        "compiled\n",
-        encoding="utf-8",
-    )
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    if repo_toml is not None:
+        (repo_root / "repo.toml").write_text(repo_toml, encoding="utf-8")
+    (repo_root / "packages" / "sample" / "package.toml").write_text(
+        f'id = "sample"\n{package_extra}\n'
+        f'[targets.config]\nsource = "files/config"\npath = "~/.config/sample"\n{target_extra}\n',
+        encoding="utf-8",
+    )
+    return source_root, Path.home() / ".config" / "sample"
 
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+
+def tracked_sample_engine(tmp_path: Path, *, dir_symlink_mode: str | None = None) -> DotmanEngine:
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("sample", "default")])
+    return DotmanEngine.from_config_path(
+        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=tmp_path / "repo"),
+        dir_symlink_mode=dir_symlink_mode,
     )
 
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
 
-    target = plan.target_plans[0]
-    assert target.action == "create"
-    assert [item.relative_path for item in target.directory_items] == ["visible.conf"]
+def observed_push_children(engine: DotmanEngine) -> set[str]:
+    with engine.open_push_session(engine.resolve_sync_scope(), preview=True) as session:
+        return {unit.identity.child_path for unit in session.view.observations}
 
 
-def test_directory_target_ignore_push_preserves_gitignore_style_nested_pycache_files_during_push_cleanup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def live_files(live_root: Path) -> list[str]:
+    return sorted(str(path.relative_to(live_root)) for path in live_root.rglob("*") if path.is_file())
+
+
+def test_push_skips_ignored_repository_children_and_preserves_ignored_live_children(tmp_path: Path) -> None:
+    source, live = write_sample_package(
+        tmp_path,
+        target_extra='[targets.config.ignore]\npatterns = ["**/__pycache__/"]',
+        repo_toml='[ignore]\nskip_markers = [".dotman-skip"]\n',
+    )
+    for name in ("visible.conf", "nested/__pycache__/cached.pyc"):
+        put(source, name)
+    for name in ("stale.conf", "nested/__pycache__/live.pyc", "cache/.dotman-skip", "cache/local-state"):
+        put(live, name)
+
+    _push_tracked_scope(tracked_sample_engine(tmp_path))
+
+    # Push-only cleanup deletes the unignored live-only child but keeps ignored and skip-marked subtrees.
+    assert live_files(live) == ["cache/.dotman-skip", "cache/local-state", "nested/__pycache__/live.pyc", "visible.conf"]
+
+
+@pytest.mark.parametrize(
+    ("dir_symlink_mode", "target_extra", "observed", "external_kept"),
+    [
+        (None, "", {"visible.conf": "directly-in-sync", "linked": "observation-failed"}, True),
+        (None, '[targets.config.ignore]\npatterns = ["linked/"]', {"visible.conf": "directly-in-sync"}, True),
+        ("follow", "", {"visible.conf": "directly-in-sync", "linked/extra.conf": "drifted"}, False),
+    ],
+)
+def test_push_live_directory_symlink_is_rejected_ignored_or_followed(
+    tmp_path: Path, dir_symlink_mode, target_extra, observed, external_kept
 ) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
+    source, live = write_sample_package(tmp_path, target_extra=target_extra)
+    put(source, "visible.conf")
+    put(live, "visible.conf")
+    external = put(tmp_path / "external", "extra.conf")
+    (live / "linked").symlink_to(external.parent, target_is_directory=True)
+    engine = tracked_sample_engine(tmp_path, dir_symlink_mode=dir_symlink_mode)
 
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                '',
-                '[targets.config]',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                '',
-                '[targets.config.ignore]',
-                'patterns = ["**/__pycache__/"]',
-                '',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    with engine.open_push_session(engine.resolve_sync_scope()) as session:
+        assert {unit.identity.child_path: unit.state for unit in session.view.observations} == observed
+        session.execute()
 
-    live_root = home / ".config" / "sample"
-    live_root.mkdir(parents=True)
-    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (live_root / "nested" / "__pycache__").mkdir(parents=True)
-    (live_root / "nested" / "__pycache__" / "cached.pyc").write_text(
-        "compiled\n",
-        encoding="utf-8",
-    )
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.action == "noop"
-    assert [item.relative_path for item in target.directory_items] == []
+    assert external.exists() is external_kept
 
 
-def test_directory_target_scan_rejects_nested_live_directory_symlink_by_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
+def test_push_following_live_directory_symlink_loop_fails_locally(tmp_path: Path) -> None:
+    source, live = write_sample_package(tmp_path)
+    put(source, "visible.conf")
+    put(live, "visible.conf")
+    (live / "loop").symlink_to(live, target_is_directory=True)
+    engine = tracked_sample_engine(tmp_path, dir_symlink_mode="follow")
 
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                '',
-                '[targets.config]',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                '',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    with engine.open_push_session(engine.resolve_sync_scope(), preview=True) as session:
+        units = {unit.identity.child_path: unit for unit in session.view.observations}
 
-    live_root = home / ".config" / "sample"
-    linked_target = home / ".config" / "linked-real"
-    live_root.mkdir(parents=True)
-    linked_target.mkdir(parents=True)
-    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (live_root / "linked").symlink_to(linked_target, target_is_directory=True)
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    with pytest.raises(ValueError, match="directory symlink encountered while scanning directory: linked"):
-        single_package_plan(engine, "fixture:sample@default", operation="push")
-
-
-def test_directory_target_scan_allows_ignored_nested_live_directory_symlink(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                '',
-                '[targets.config]',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                '',
-                '[targets.config.ignore]',
-                'patterns = ["linked/"]',
-                '',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    live_root = home / ".config" / "sample"
-    linked_target = home / ".config" / "linked-real"
-    live_root.mkdir(parents=True)
-    linked_target.mkdir(parents=True)
-    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (linked_target / "hidden.conf").write_text("hidden = true\n", encoding="utf-8")
-    (live_root / "linked").symlink_to(linked_target, target_is_directory=True)
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.action == "noop"
-    assert [item.relative_path for item in target.directory_items] == []
-
-
-def test_directory_target_scan_follows_nested_live_directory_symlink_when_enabled(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                '',
-                '[targets.config]',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                '',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    live_root = home / ".config" / "sample"
-    linked_target = home / ".config" / "linked-real"
-    live_root.mkdir(parents=True)
-    linked_target.mkdir(parents=True)
-    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (linked_target / "extra.conf").write_text("extra = true\n", encoding="utf-8")
-    (live_root / "linked").symlink_to(linked_target, target_is_directory=True)
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root),
-        dir_symlink_mode="follow",
-    )
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.action == "update"
-    assert [(item.action, item.relative_path) for item in target.directory_items] == [("delete", "linked/extra.conf")]
-
-
-def test_directory_target_scan_rejects_nested_directory_symlink_loop_when_following(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                '',
-                '[targets.config]',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                '',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    live_root = home / ".config" / "sample"
-    live_root.mkdir(parents=True)
-    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (live_root / "loop").symlink_to(live_root, target_is_directory=True)
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root),
-        dir_symlink_mode="follow",
-    )
-
-    with pytest.raises(ValueError, match="directory symlink loop encountered while scanning directory: loop"):
-        single_package_plan(engine, "fixture:sample@default", operation="push")
-
-
-def test_directory_target_push_skip_marker_preserves_live_subtree_during_cleanup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "repo.toml").write_text(
-        "\n".join(["[ignore]", 'skip_markers = [".dotman-skip"]', ""]),
-        encoding="utf-8",
-    )
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                '',
-                '[targets.config]',
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                '',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    live_root = home / ".config" / "sample"
-    live_root.mkdir(parents=True)
-    (live_root / "tool.conf").write_text("value = 1\n", encoding="utf-8")
-    (live_root / "cache").mkdir()
-    (live_root / "cache" / ".dotman-skip").write_text("", encoding="utf-8")
-    (live_root / "cache" / "local-state").write_text("keep\n", encoding="utf-8")
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.action == "noop"
-    assert target.directory_items == ()
+    assert units["visible.conf"].state == "directly-in-sync"
+    assert units["loop"].diagnostics[0].code == "directory-symlink-loop"
 
 
 def test_repo_toml_loads_skip_markers_from_ignore_table(tmp_path: Path) -> None:
@@ -573,287 +335,38 @@ def test_repo_toml_rejects_invalid_gitignore_values(tmp_path: Path) -> None:
         )
 
 
-def test_directory_target_applies_gitignore_patterns_during_push(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-                "[targets.config.ignore]",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+def test_push_applies_repository_gitignore_to_both_trees_with_explicit_negation_override(tmp_path: Path) -> None:
+    source, live = write_sample_package(
+        tmp_path,
+        target_extra='[targets.config.ignore]\npatterns = ["!important.log"]',
+        repo_toml="[ignore]\ngitignore = true\n",
     )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (source_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
-    (source_root / "app.log").write_text("log\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = true\n", encoding="utf-8")
+    # Negating a control file must not turn it into a payload.
+    put(source, ".gitignore", b"*.log\n*.local\n!.gitignore\n!nested/.gitignore\n")
+    put(source, "nested/.gitignore", b"*.tmp\n")
+    for name in ("visible.conf", "important.log", "trash.log", "nested/drop.tmp"):
+        put(source, name)
+    for name in ("machine.local", "stale.conf"):
+        put(live, name)
 
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
+    _push_tracked_scope(tracked_sample_engine(tmp_path))
 
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.action == "create"
-    rel_paths = [item.relative_path for item in target.directory_items]
-    assert "visible.conf" in rel_paths
-    assert "app.log" not in rel_paths
+    assert live_files(live) == ["important.log", "machine.local", "visible.conf"]
 
 
-def test_directory_target_gitignore_applies_to_both_repo_and_live_scans_during_push(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
+@pytest.mark.parametrize(
+    ("package_ignore", "excluded"),
+    [('patterns = ["*.secret"]', "machine.secret"), ("gitignore = true", "machine.local")],
+)
+def test_package_ignore_table_is_applied_during_push(tmp_path: Path, package_ignore: str, excluded: str) -> None:
+    source, live = write_sample_package(tmp_path, package_extra=f"[ignore]\n{package_ignore}\n")
+    put(source, ".gitignore", b"*.local\n")
+    for name in ("visible.conf", excluded):
+        put(source, name)
 
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-                "[targets.config.ignore]",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (source_root / ".gitignore").write_text("*.local\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = true\n", encoding="utf-8")
+    _push_tracked_scope(tracked_sample_engine(tmp_path))
 
-    live_root = home / ".config" / "sample"
-    live_root.mkdir(parents=True)
-    (live_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (live_root / "machine.local").write_text("local\n", encoding="utf-8")
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.action == "noop"
-    assert [item.relative_path for item in target.directory_items] == []
-
-
-def test_gitignore_control_files_are_not_reincluded_by_negation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-                "[targets.config.ignore]",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / ".gitignore").write_text("!.gitignore\n!nested/.gitignore\n", encoding="utf-8")
-    (source_root / "nested").mkdir()
-    (source_root / "nested" / ".gitignore").write_text("*.tmp\n", encoding="utf-8")
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = true\n", encoding="utf-8")
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    rel_paths = {item.relative_path for item in plan.target_plans[0].directory_items}
-    assert "visible.conf" in rel_paths
-    assert ".gitignore" not in rel_paths
-    assert "nested/.gitignore" not in rel_paths
-
-
-def test_explicit_ignore_can_override_gitignore_with_negation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-                "[targets.config.ignore]",
-                'patterns = ["!important.log"]',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (source_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
-    (source_root / "important.log").write_text("important\n", encoding="utf-8")
-    (source_root / "trash.log").write_text("trash\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-    (repo_root / "repo.toml").write_text("[ignore]\ngitignore = true\n", encoding="utf-8")
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-
-    target = plan.target_plans[0]
-    assert target.action == "create"
-    items = [(item.relative_path, item.action) for item in target.directory_items]
-    assert ("visible.conf", "create") in items
-    assert ("important.log", "create") in items
-    assert not any("trash.log" in ref for ref, _ in items)
-
-
-def test_package_ignore_patterns_are_resolved_and_applied_during_push(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[ignore]",
-                'patterns = ["*.secret"]',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (source_root / "machine.secret").write_text("secret\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("sample", "default")])
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    package = engine.get_repo("fixture").resolve_package("sample")
-    assert package.ignore_patterns == ("*.secret",)
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-    target = plan.target_plans[0]
-    assert [item.relative_path for item in target.directory_items] == ["visible.conf"]
-
-    _push_tracked_scope(engine)
-    live_root = home / ".config" / "sample"
-    assert (live_root / "visible.conf").read_text(encoding="utf-8") == "visible = true\n"
-    assert not (live_root / "machine.secret").exists()
-
-
-def test_package_gitignore_enablement_is_resolved_and_applied_during_push(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        "\n".join(
-            [
-                'id = "sample"',
-                "",
-                "[ignore]",
-                'gitignore = true',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (source_root / "visible.conf").write_text("visible = true\n", encoding="utf-8")
-    (source_root / ".gitignore").write_text("*.local\n", encoding="utf-8")
-    (source_root / "machine.local").write_text("local\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("sample", "default")])
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-
-    package = engine.get_repo("fixture").resolve_package("sample")
-    assert package.ignore_patterns is None
-    assert package.gitignore_enabled is True
-
-    plan = single_package_plan(engine, "fixture:sample@default", operation="push")
-    target = plan.target_plans[0]
-    assert [item.relative_path for item in target.directory_items] == ["visible.conf"]
-
-    _push_tracked_scope(engine)
-    live_root = home / ".config" / "sample"
-    assert (live_root / "visible.conf").read_text(encoding="utf-8") == "visible = true\n"
-    assert not (live_root / "machine.local").exists()
+    assert live_files(live) == ["visible.conf"]
 
 
 def test_repository_ignore_patterns_are_direction_independent(tmp_path: Path) -> None:
@@ -873,102 +386,35 @@ def test_repository_ignore_patterns_are_direction_independent(tmp_path: Path) ->
     assert not hasattr(defaults, "pull")
 
 
-def test_ignore_patterns_compose_repo_package_target_in_order_and_keep_empty_package_layer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "repo.toml").write_text(
-        '[ignore]\npatterns = ["*.tmp"]\ngitignore = true\n',
-        encoding="utf-8",
+def test_ignore_patterns_compose_repo_package_target_in_order_and_keep_empty_package_layer(tmp_path: Path) -> None:
+    source, _live = write_sample_package(
+        tmp_path,
+        package_extra="[ignore]\npatterns = []\n",
+        target_extra='[targets.config.ignore]\npatterns = ["!keep.log"]',
+        repo_toml='[ignore]\npatterns = ["*.tmp"]\ngitignore = true\n',
     )
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        '\n'.join(
-            [
-                'id = "sample"',
-                "",
-                "[ignore]",
-                "patterns = []",
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-                "[targets.config.ignore]",
-                'patterns = ["!keep.log"]',
-            ]
-        ),
-        encoding="utf-8",
+    put(source, ".gitignore", b"*.log\n")
+    for name in ("keep.tmp", "drop.tmp", "keep.log", "drop.log", "visible.conf"):
+        put(source, name)
+
+    assert observed_push_children(tracked_sample_engine(tmp_path)) == {"keep.log", "visible.conf"}
+
+
+def test_ignore_pattern_order_preserves_later_repeated_exclusion_after_negation(tmp_path: Path) -> None:
+    source, _live = write_sample_package(
+        tmp_path,
+        package_extra='[ignore]\npatterns = ["!keep.tmp"]\n',
+        target_extra='[targets.config.ignore]\npatterns = ["*.tmp"]',
+        repo_toml='[ignore]\npatterns = ["*.tmp"]\n',
     )
-    (source_root / ".gitignore").write_text("*.log\n", encoding="utf-8")
-    for name in ("keep.tmp", "drop.tmp", "keep.log", "drop.log"):
-        (source_root / name).write_text(name + "\n", encoding="utf-8")
-    (source_root / "visible.conf").write_text("visible\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
+    for name in ("keep.tmp", "drop.tmp", "visible.conf"):
+        put(source, name)
 
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-    target = single_package_plan(engine, "fixture:sample@default", operation="push").target_plans[0]
-    paths = {item.relative_path for item in target.directory_items}
-
-    assert "visible.conf" in paths
-    assert "keep.tmp" not in paths
-    assert "drop.tmp" not in paths
-    assert "keep.log" in paths
-    assert "drop.log" not in paths
-
-
-def test_ignore_pattern_order_preserves_later_repeated_exclusion_after_negation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    repo_root = tmp_path / "repo"
-    source_root = repo_root / "packages" / "sample" / "files" / "config"
-    source_root.mkdir(parents=True)
-    (repo_root / "profiles").mkdir()
-    (repo_root / "repo.toml").write_text('[ignore]\npatterns = ["*.tmp"]\n', encoding="utf-8")
-    (repo_root / "packages" / "sample" / "package.toml").write_text(
-        '\n'.join(
-            [
-                'id = "sample"',
-                "",
-                "[ignore]",
-                'patterns = ["!keep.tmp"]',
-                "",
-                "[targets.config]",
-                'source = "files/config"',
-                'path = "~/.config/sample"',
-                "",
-                "[targets.config.ignore]",
-                'patterns = ["*.tmp"]',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    for name in ("keep.tmp", "drop.tmp"):
-        (source_root / name).write_text(name + "\n", encoding="utf-8")
-    (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
-
-    engine = DotmanEngine.from_config_path(
-        write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
-    )
-    target = single_package_plan(engine, "fixture:sample@default", operation="push").target_plans[0]
-    paths = {item.relative_path for item in target.directory_items}
-
-    assert "keep.tmp" not in paths
-    assert "drop.tmp" not in paths
+    assert observed_push_children(tracked_sample_engine(tmp_path)) == {"visible.conf"}
 
 
 def test_pull_unified_controls_preserve_excluded_repository_children(tmp_path, monkeypatch):
-    from tests.engine.test_sync_directory_observation import directory_engine, put
+    from tests.engine.test_sync_directory_observation import directory_engine
 
     engine = directory_engine(
         tmp_path, monkeypatch,
@@ -990,6 +436,11 @@ def test_pull_unified_controls_preserve_excluded_repository_children(tmp_path, m
     for name in ("excluded/a", "private.secret", "a.ignored", "repo-marked/a", "live-marked/a"):
         assert (repo / name).read_bytes() == b"preserve"
     assert (repo / ".gitignore").read_bytes() == b"*.ignored\n"
+
+def open_session(engine: DotmanEngine, operation: str):
+    opener = {"push": engine.open_push_session, "pull": engine.open_pull_session, "sync": engine.open_sync_session}
+    return opener[operation](engine.resolve_sync_scope(), preview=True)
+
 
 @pytest.mark.parametrize("operation", ["push", "pull", "sync"])
 @pytest.mark.parametrize("enabled", [True, False])
@@ -1019,17 +470,11 @@ def test_repository_gitignore_chain_is_symmetric(tmp_path, monkeypatch, operatio
     (source / "blocked/.gitignore").write_text('!keep\n')
     (live / "live-only.log").write_text("live")
     (live / ".gitignore").write_text("visible\n")
+    initialize_git_repository(root)
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("sample", "default")])
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=root))
-    if operation == "push":
-        plan = single_package_plan(engine, "fixture:sample@default")
-        paths = {item.relative_path for item in plan.target_plans[0].directory_items}
-    else:
-        from tests.helpers import initialize_git_repository, write_tracked_packages_state
-        initialize_git_repository(root)
-        write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("sample", "default")])
-        opener = engine.open_pull_session if operation == "pull" else engine.open_sync_session
-        with opener(engine.resolve_sync_scope(), preview=True) as session:
-            paths = {row.observation.identity.child_path for row in session.view.rows}
+    with open_session(engine, operation) as session:
+        paths = {row.observation.identity.child_path for row in session.view.rows}
     if enabled:
         assert paths == {"visible", "keep.log", "nested/keep.tmp"}
     else:
@@ -1060,7 +505,6 @@ def test_scoped_gitignore_preserves_git_pattern_syntax_and_parent_exclusion(tmp_
 @pytest.mark.parametrize("operation", ["push", "pull", "sync"])
 @pytest.mark.parametrize("control_scope", ["repository", "target"])
 def test_gitignore_exclusion_allows_separately_owned_nested_target(tmp_path, monkeypatch, operation, control_scope):
-    from tests.helpers import initialize_git_repository, write_tracked_packages_state
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -1082,9 +526,5 @@ def test_gitignore_exclusion_allows_separately_owned_nested_target(tmp_path, mon
     initialize_git_repository(root)
     write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=root))
-    if operation == "push":
-        assert len(single_package_plan(engine, "fixture:app@default").target_plans) == 2
-    else:
-        opener = engine.open_pull_session if operation == "pull" else engine.open_sync_session
-        with opener(engine.resolve_sync_scope(), preview=True) as session:
-            assert session.view.observations
+    with open_session(engine, operation) as session:
+        assert {unit.identity.target_name for unit in session.view.observations} == {"tree", "owned"}

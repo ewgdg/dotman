@@ -9,8 +9,7 @@ import pytest
 from dotman.cli import main
 from dotman.engine import DotmanEngine
 from dotman.models import HookCommandSpec
-from dotman.planning_guards import GuardPlanningError
-from tests.helpers import open_tracked_pull_session
+from dotman.sync_session import SessionOpenFailed
 from tests.helpers import write_single_repo_config, write_tracked_packages_state
 
 
@@ -52,6 +51,15 @@ def _guard_rule(*, pattern: str, operation: str, command: str, extra: list[str] 
         *(extra or []),
         f"hooks = {{ guard_{operation} = {json.dumps(command)} }}",
     ]
+
+
+def _open(engine: DotmanEngine, tmp_path: Path, operation: str = "push"):
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
+    return getattr(engine, f"open_{operation}_session")(engine.resolve_sync_scope(), preview=True)
+
+
+def _guard_skips(session) -> list:
+    return [row.guard_skip for row in session.view.rows if getattr(row, "kind", None) == "guard-skip"]
 
 
 def test_path_rule_guards_normalize_supported_command_forms_and_elevation(tmp_path: Path) -> None:
@@ -137,13 +145,9 @@ def test_path_rule_guards_activate_once_for_repo_live_shared_and_noop_candidates
     (live_root / "shared-changed.txt").write_text("live changed\n", encoding="utf-8")
     (live_root / "shared-noop.txt").write_text("same\n", encoding="utf-8")
 
-    engine = _engine(tmp_path, repo_root)
-    if operation == "push":
-        operation_plan = engine.plan_push_query("fixture:app@default")
-        assert operation_plan.guard_skips == ()
-    else:
-        with open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")]) as session:
-            assert len(session.view.observations) == 4
+    with _open(_engine(tmp_path, repo_root), tmp_path, operation) as session:
+        assert len(session.view.observations) == 4
+        assert _guard_skips(session) == []
     assert marker.read_text(encoding="utf-8").splitlines() == patterns[:-1]
 
 
@@ -177,7 +181,8 @@ def test_path_rule_activation_excludes_ignored_control_and_skip_marker_paths(
     (source_root / "skipped" / ".dotman-skip").write_text("", encoding="utf-8")
     (source_root / "skipped" / "hidden.txt").write_text("hidden\n", encoding="utf-8")
 
-    _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
+    with _open(_engine(tmp_path, repo_root), tmp_path) as session:
+        assert [unit.identity.child_path for unit in session.view.observations] == ["keep.txt"]
 
     assert marker.read_text(encoding="utf-8").splitlines() == ["keep.txt"]
 
@@ -226,25 +231,13 @@ def test_overlapping_path_rule_guards_run_in_order_prune_work_and_keep_scalar_pr
     for name in ("a.txt", "b.txt"):
         (live_root / name).write_text(f"live {name}\n", encoding="utf-8")
 
-    operation_plan = _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
+    with _open(_engine(tmp_path, repo_root), tmp_path) as session:
+        assert [(unit.identity.child_path, unit.chmod) for unit in session.view.observations] == [("b.txt", "640")]
+        assert [
+            (skip.scope_kind, skip.scope_label, skip.path_rule_pattern, skip.reason) for skip in _guard_skips(session)
+        ] == [("path_rule", "fixture:app.config", "a.txt", "a disabled")]
 
     assert marker.read_text(encoding="utf-8").splitlines() == ["skip-a", "broad", "specific-b"]
-    target = operation_plan.package_plans[0].target_plans[0]
-    assert [(item.relative_path, item.action, item.chmod) for item in target.directory_items] == [
-        ("b.txt", "update", "640")
-    ]
-    assert [skip.to_dict() for skip in operation_plan.guard_skips] == [
-        {
-            "scope_kind": "path_rule",
-            "repo": "fixture",
-            "package_id": "app",
-            "bound_profile": None,
-            "scope": "fixture:app.config",
-            "reason": "a disabled",
-            "target_name": "config",
-            "path_rule_pattern": "a.txt",
-        }
-    ]
 
 
 def test_path_rule_guard_environment_uses_target_roots_and_pattern_without_child_path(
@@ -273,15 +266,15 @@ def test_path_rule_guard_environment_uses_target_roots_and_pattern_without_child
     )
     (source_root / "one.txt").write_text("one\n", encoding="utf-8")
 
-    operation_plan = _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
+    with _open(_engine(tmp_path, repo_root), tmp_path) as session:
+        assert [skip.reason for skip in _guard_skips(session)] == ["host mismatch"]
 
     assert marker.read_text(encoding="utf-8").strip() == "|".join(
         ["*.txt", str(source_root), str(home / ".config" / "app"), "unset"]
     )
-    assert operation_plan.guard_skips[0].reason == "host mismatch"
 
 
-def test_path_rule_guard_hard_failure_exposes_target_and_pattern_metadata(
+def test_path_rule_guard_hard_failure_names_target_and_pattern_without_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -301,12 +294,12 @@ def test_path_rule_guard_hard_failure_exposes_target_and_pattern_metadata(
     )
     (source_root / "one.txt").write_text("one\n", encoding="utf-8")
 
-    with pytest.raises(GuardPlanningError, match="guard_push failed with exit 7: rule exploded") as caught:
-        _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
+    failed = _open(_engine(tmp_path, repo_root), tmp_path)
 
-    assert caught.value.scope_kind == "path_rule"
-    assert caught.value.target_name == "config"
-    assert caught.value.path_rule_pattern == "*.txt"
+    assert isinstance(failed, SessionOpenFailed)
+    assert failed.diagnostic.code == "planning-failed"
+    # Guard output may contain managed content, so it never reaches the diagnostic.
+    assert failed.diagnostic.message == "fixture:app.config (path rule: *.txt) guard_push failed with exit 7"
 
 
 def test_all_path_rule_work_skipped_cli_reports_pattern_without_execution(

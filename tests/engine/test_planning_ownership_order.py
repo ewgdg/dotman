@@ -210,8 +210,12 @@ def write_same_package_conflict_repo(repo_root: Path, *, operation: str) -> None
     )
 
 
+def open_tracked_session(engine: DotmanEngine, operation: str):
+    return getattr(engine, f"open_{operation}_session")(engine.resolve_sync_scope(), preview=True)
+
+
 @pytest.mark.parametrize("operation", ["push", "pull"])
-def test_public_planning_skips_overridden_target_projection(
+def test_tracked_session_skips_overridden_target_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
@@ -245,18 +249,46 @@ def test_public_planning_skips_overridden_target_projection(
         assert not loser_marker.exists()
         return
 
-    operation_plan = engine.plan_push()
+    with engine.open_push_session(engine.resolve_sync_scope()) as session:
+        assert session.execute().result.status == "completed"
 
-    plans_by_package = {plan.package_id: plan for plan in operation_plan.package_plans}
-    loser_targets = plans_by_package["loser"].target_plans
-    assert [(target.target_name, target.target_kind) for target in loser_targets] == [("probe", "probe")]
+    assert (home / ".config" / "shared.conf").read_text(encoding="utf-8") == "winner\n"
+    # A non-path Probe target survives ownership even when its package lost every file target.
     assert probe_marker is not None and probe_marker.read_text(encoding="utf-8") == "probe"
-    assert [target.target_name for target in plans_by_package["winner"].target_plans] == ["shared"]
     assert not loser_marker.exists()
 
 
+def test_push_runs_hooks_only_for_packages_with_winning_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    repo_root = tmp_path / "repo"
+    write_override_repo(repo_root, operation="push", loser_marker=tmp_path / "loser-projection-ran")
+    hook_log = tmp_path / "hooks.log"
+    for package_id in ("loser", "loser-meta", "winner"):
+        manifest = repo_root / "packages" / package_id / "package.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8") + f'\n[hooks]\npre_push = "echo {package_id} >> {hook_log}"\n',
+            encoding="utf-8",
+        )
+    write_tracked_packages_state(
+        tmp_path / "state",
+        repo_name="fixture",
+        entries=[("loser-meta", "default"), ("winner", "default")],
+    )
+    engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root))
+
+    with engine.open_push_session(engine.resolve_sync_scope()) as session:
+        assert session.execute().result.status == "completed"
+
+    assert hook_log.read_text(encoding="utf-8").splitlines() == ["winner"]
+
+
 @pytest.mark.parametrize("operation", ["push", "pull"])
-def test_public_query_planning_rejects_static_conflict_before_projection(
+def test_tracked_scope_rejects_static_conflict_before_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
@@ -274,17 +306,16 @@ def test_public_query_planning_rejects_static_conflict_before_projection(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
-    with pytest.raises(ValueError):
-        if operation == "push":
-            engine.plan_push_query("fixture:all@default")
-        else:
-            open_tracked_pull_session(engine, tmp_path, entries=[("alpha", "default"), ("beta", "default")])
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("alpha", "default"), ("beta", "default")])
+
+    with pytest.raises(ValueError, match="conflicting explicit tracked targets"):
+        open_tracked_session(engine, operation)
 
     assert not any(marker.exists() for marker in markers)
 
 
 @pytest.mark.parametrize("operation", ["push", "pull"])
-def test_public_query_planning_rejects_same_package_target_conflict(
+def test_tracked_scope_rejects_same_package_target_conflict(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
@@ -300,17 +331,16 @@ def test_public_query_planning_rejects_same_package_target_conflict(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
 
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
+
     with pytest.raises(
         ValueError,
         match=r"fixture:app@default -> fixture:app\.a, fixture:app@default -> fixture:app\.b",
     ):
-        if operation == "push":
-            engine.plan_push_query("fixture:app@default")
-        else:
-            open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")])
+        open_tracked_session(engine, operation)
 
 
-def test_public_push_planning_does_not_scan_overridden_directory(
+def test_push_does_not_scan_overridden_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -361,14 +391,11 @@ def test_public_push_planning_does_not_scan_overridden_directory(
     )
     engine = DotmanEngine.from_config_path(config_path)
 
-    operation_plan = engine.plan_push()
-
-    plans_by_package = {plan.package_id: plan for plan in operation_plan.package_plans}
-    assert plans_by_package["loser"].target_plans == []
-    assert [target.target_name for target in plans_by_package["winner"].target_plans] == ["shared"]
+    with engine.open_push_session(engine.resolve_sync_scope(), preview=True) as session:
+        assert [unit.identity.canonical for unit in session.view.observations] == ["fixture:winner.shared/winner.conf"]
 
 
-def test_public_query_planning_rejects_nested_collision_without_disabled_git_controls(
+def test_tracked_scope_rejects_nested_collision_without_disabled_git_controls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -377,6 +404,7 @@ def test_public_query_planning_rejects_nested_collision_without_disabled_git_con
     monkeypatch.setenv("HOME", str(home))
     repo_root = tmp_path / "repo"
     write_nested_collision_repo(repo_root)
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("parent", "default"), ("child", "default")])
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
@@ -387,11 +415,11 @@ def test_public_query_planning_rejects_nested_collision_without_disabled_git_con
     monkeypatch.setattr(projection, "collect_gitignore_chain", fail_gitignore_scan)
 
     with pytest.raises(ValueError, match="incompatible nested targets"):
-        engine.plan_push_query("fixture:all@default")
+        engine.resolve_sync_scope()
 
 
 @pytest.mark.parametrize("operation", ["push", "pull"])
-def test_public_planning_normalizes_static_paths_without_resolving_filesystem(
+def test_tracked_scope_normalizes_static_paths_without_resolving_filesystem(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
@@ -420,8 +448,5 @@ def test_public_planning_normalizes_static_paths_without_resolving_filesystem(
 
     monkeypatch.setattr(Path, "resolve", fail_resolve)
 
-    if operation == "pull":
-        # Scope ownership is static; opening a session subsequently accesses endpoints.
-        assert engine.resolve_sync_scope().targets
-    else:
-        assert engine.plan_push().operation == operation
+    # Scope ownership is static; opening a session subsequently accesses endpoints.
+    assert engine.resolve_sync_scope().targets

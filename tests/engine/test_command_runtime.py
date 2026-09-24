@@ -4,10 +4,12 @@ from pathlib import Path
 
 from dotman.command_runtime import CommandResult, MemoryCommandRuntime, ShellCommand
 from dotman.engine import DotmanEngine
-from tests.helpers import write_single_repo_config
+from dotman.sync_base_store import FilePresent
+from dotman.sync_session import AuxiliaryRow, SessionRow
+from tests.helpers import write_single_repo_config, write_tracked_packages_state
 
 
-def test_planning_uses_injected_runtime_for_guard_probe_and_projection(
+def test_push_session_uses_injected_runtime_for_guard_probe_and_projection(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -41,28 +43,25 @@ def test_planning_uses_injected_runtime_for_guard_probe_and_projection(
         ),
         encoding="utf-8",
     )
-    runtime = MemoryCommandRuntime(
-        [
-            CommandResult(exit_code=0),
-            CommandResult(exit_code=0),
-            CommandResult(exit_code=0, stdout=b"projected\n"),
-        ]
-    )
+    def respond(request) -> CommandResult:
+        projected = request.command == ShellCommand("render-command")
+        return CommandResult(exit_code=0, stdout=b"projected\n" if projected else b"")
+
+    runtime = MemoryCommandRuntime([respond] * 3)
     config_path = write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
+    engine = DotmanEngine.from_config_path(config_path, command_runtime=runtime)
 
-    plan = DotmanEngine.from_config_path(
-        config_path,
-        command_runtime=runtime,
-    ).plan_push_query("fixture:app@default")
+    with engine.open_push_session(engine.resolve_sync_scope(), preview=True) as session:
+        rows = session.view.rows
+        observation, = session.view.observations
 
-    assert [request.command for request in runtime.requests] == [
-        ShellCommand("guard-command"),
+    # Guard gates the package, so it runs before any probe or projection.
+    assert runtime.requests[0].command == ShellCommand("guard-command")
+    assert {request.command for request in runtime.requests[1:]} == {
         ShellCommand("probe-command"),
         ShellCommand("render-command"),
-    ]
+    }
     assert runtime.requests[0].excluded_env_keys == frozenset({"DOTMAN_UNATTENDED"})
-    assert [(target.target_name, target.action) for target in plan.package_plans[0].target_plans] == [
-        ("available", "probe"),
-        ("config", "create"),
-    ]
-    assert plan.package_plans[0].target_plans[1].desired_bytes == b"projected\n"
+    assert [type(row) for row in rows] == [SessionRow, AuxiliaryRow]
+    assert observation.comparison_repository == FilePresent(b"projected\n")

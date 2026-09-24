@@ -8,6 +8,7 @@ import pytest
 
 from dotman.cli import main
 from dotman.engine import DotmanEngine
+from dotman.sync_session import SessionOpenFailed
 from tests.helpers import open_tracked_pull_session, initialize_git_repository
 from tests.helpers import write_named_manager_config, write_single_repo_config, write_tracked_packages_state
 
@@ -71,6 +72,20 @@ def _engine(tmp_path: Path, repo_root: Path) -> DotmanEngine:
     )
 
 
+def _open_push(engine: DotmanEngine, tmp_path: Path, entries: list[tuple[str, str]] | None = None):
+    if entries is not None:
+        write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=entries)
+    return engine.open_push_session(engine.resolve_sync_scope(), preview=True)
+
+
+def _guard_skips(session) -> list:
+    return [row.guard_skip for row in session.view.rows if getattr(row, "kind", None) == "guard-skip"]
+
+
+def _observed(session) -> list[str]:
+    return [unit.identity.canonical for unit in session.view.observations]
+
+
 def test_repo_guard_skip_short_circuits_lower_planning_and_sibling_repo_continues(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -126,7 +141,11 @@ def test_repo_guard_skip_short_circuits_lower_planning_and_sibling_repo_continue
     write_tracked_packages_state(tmp_path / "state", repo_name="skipped", entries=[("app", "default")])
     write_tracked_packages_state(tmp_path / "state", repo_name="admitted", entries=[("app", "default")])
 
-    operation_plan = DotmanEngine.from_config_path(config_path).plan_push()
+    with _open_push(DotmanEngine.from_config_path(config_path), tmp_path) as session:
+        assert _observed(session) == ["admitted:app.config"]
+        assert [(skip.scope_kind, skip.scope_label, skip.reason) for skip in _guard_skips(session)] == [
+            ("repo", "skipped", "wrong host")
+        ]
 
     assert marker.read_text(encoding="utf-8").splitlines() == [
         "repo-skipped",
@@ -134,17 +153,6 @@ def test_repo_guard_skip_short_circuits_lower_planning_and_sibling_repo_continue
         "package-admitted",
         "target-admitted",
         "projection-admitted",
-    ]
-    assert [plan.repo_name for plan in operation_plan.package_plans] == ["admitted"]
-    assert [skip.to_dict() for skip in operation_plan.guard_skips] == [
-        {
-            "scope_kind": "repo",
-            "repo": "skipped",
-            "package_id": None,
-            "bound_profile": None,
-            "scope": "skipped",
-            "reason": "wrong host",
-        }
     ]
 
 
@@ -170,14 +178,12 @@ def test_package_dependency_guard_skip_is_local_to_dependency(
         targets=[("app", "~/.config/app.txt", None, None)],
     )
 
-    operation_plan = _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
-
-    assert [plan.package_id for plan in operation_plan.package_plans] == ["app"]
-    assert [target.target_name for target in operation_plan.package_plans[0].target_plans] == ["app"]
-    assert operation_plan.guard_skips[0].scope_label == "fixture:dependency"
+    with _open_push(_engine(tmp_path, repo_root), tmp_path, [("app", "default")]) as session:
+        assert _observed(session) == ["fixture:app.app"]
+        assert [skip.scope_label for skip in _guard_skips(session)] == ["fixture:dependency"]
 
 
-def test_target_guard_skip_prevents_projection_and_directory_scan_but_keeps_sibling_target(
+def test_target_guard_skip_prevents_projection_and_directory_children_but_keeps_sibling_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -201,11 +207,10 @@ def test_target_guard_skip_prevents_projection_and_directory_scan_but_keeps_sibl
         ],
     )
 
-    operation_plan = _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
-
+    with _open_push(_engine(tmp_path, repo_root), tmp_path, [("app", "default")]) as session:
+        assert _observed(session) == ["fixture:app.kept"]
+        assert [skip.scope_label for skip in _guard_skips(session)] == ["fixture:app.skipped"]
     assert not marker.exists()
-    assert [target.target_name for target in operation_plan.package_plans[0].target_plans] == ["kept"]
-    assert operation_plan.guard_skips[0].scope_label == "fixture:app.skipped"
 
     directory_root = tmp_path / "directory-repo"
     _write_profile(directory_root)
@@ -229,18 +234,16 @@ def test_target_guard_skip_prevents_projection_and_directory_scan_but_keeps_sibl
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "dotman.projection.list_directory_files",
-        lambda *_args, **_kwargs: pytest.fail("directory scan must not run"),
-    )
     directory_config_root = tmp_path / "directory-config"
     directory_config_root.mkdir()
-
-    directory_plan = DotmanEngine.from_config_path(
+    directory_engine = DotmanEngine.from_config_path(
         write_single_repo_config(directory_config_root, repo_name="fixture", repo_path=directory_root)
-    ).plan_push_query("fixture:app@default")
-
-    assert directory_plan.package_plans[0].target_plans == []
+    )
+    # Sync censuses directory children before Guards on purpose (ineligibility
+    # cleanup must survive a Guard failure), so only child observation is omitted.
+    with _open_push(directory_engine, directory_config_root, [("app", "default")]) as session:
+        assert session.view.observations == ()
+        assert [skip.scope_label for skip in _guard_skips(session)] == ["fixture:app.tree"]
 
 
 def test_probe_target_guard_runs_before_probe_and_distinguishes_guard_skip_from_probe_noop(
@@ -272,15 +275,13 @@ def test_probe_target_guard_runs_before_probe_and_distinguishes_guard_skip_from_
         encoding="utf-8",
     )
 
-    operation_plan = _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
+    with _open_push(_engine(tmp_path, repo_root), tmp_path, [("app", "default")]) as session:
+        # A probe no-op leaves no row; only the Guard skip explains omitted work.
+        assert [(row.kind, row.scope) for row in session.view.rows] == [("guard-skip", "fixture:app.skipped")]
 
     assert guard_marker.read_text(encoding="utf-8") == "guard"
     assert not skipped_probe_marker.exists()
     assert noop_probe_marker.read_text(encoding="utf-8") == "probe"
-    assert [(target.target_name, target.action) for target in operation_plan.package_plans[0].target_plans] == [
-        ("noop", "noop")
-    ]
-    assert operation_plan.guard_skips[0].scope_label == "fixture:app.skipped"
 
 
 def test_repo_and_target_pull_guards_use_same_hierarchy(
@@ -317,7 +318,7 @@ def test_repo_and_target_pull_guards_use_same_hierarchy(
     assert marker.read_text(encoding="utf-8").splitlines() == ["repo", "target"]
 
 
-def test_repo_package_and_target_guards_are_deduplicated_per_plan_build(
+def test_repo_package_and_target_guards_are_deduplicated_per_session_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -353,8 +354,9 @@ def test_repo_package_and_target_guards_are_deduplicated_per_plan_build(
         )
     engine = _engine(tmp_path, repo_root)
 
-    engine.plan_push_query("fixture:all@default")
-    engine.plan_push_query("fixture:all@default")
+    for _ in range(2):
+        with _open_push(engine, tmp_path, [("meta-a", "default"), ("meta-b", "default")]) as session:
+            assert _observed(session) == ["fixture:app.config"]
 
     assert marker.read_text(encoding="utf-8").splitlines() == [
         "repo",
@@ -387,13 +389,13 @@ def test_static_ownership_conflict_is_reported_before_repo_guard(
         )
 
     with pytest.raises(ValueError, match="conflicting explicit tracked targets"):
-        _engine(tmp_path, repo_root).plan_push_query("fixture:all@default")
+        _open_push(_engine(tmp_path, repo_root), tmp_path, [("alpha", "default"), ("beta", "default")])
 
     assert not marker.exists()
 
 
 @pytest.mark.parametrize("scope", ["repo", "target"])
-def test_repo_and_target_guard_hard_failures_abort_planning_with_captured_detail(
+def test_repo_and_target_guard_hard_failures_abort_opening_with_typed_evidence_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     scope: str,
@@ -418,9 +420,14 @@ def test_repo_and_target_guard_hard_failures_abort_planning_with_captured_detail
         targets=[("config", "~/.config/app.txt", target_guard, None)],
     )
 
-    expected_status = 7 if scope == "repo" else 8
-    with pytest.raises(ValueError, match=rf"guard_push failed with exit {expected_status}: {scope} guard exploded"):
-        _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
+    failed = _open_push(_engine(tmp_path, repo_root), tmp_path, [("app", "default")])
+
+    assert isinstance(failed, SessionOpenFailed)
+    assert failed.diagnostic.code == "planning-failed"
+    # Guard output may contain managed content, so it never reaches the diagnostic.
+    assert failed.diagnostic.message == (
+        "fixture guard_push failed with exit 7" if scope == "repo" else "fixture:app.config guard_push failed with exit 8"
+    )
 
 
 def test_target_guard_diagnostic_uses_package_instance_identity(
@@ -454,9 +461,8 @@ def test_target_guard_diagnostic_uses_package_instance_identity(
     )
     (repo_root / "profiles" / "work.toml").write_text("", encoding="utf-8")
 
-    operation_plan = _engine(tmp_path, repo_root).plan_push_query("fixture:profiled@work")
-
-    assert operation_plan.guard_skips[0].scope_label == "fixture:profiled<work>.config"
+    with _open_push(_engine(tmp_path, repo_root), tmp_path, [("profiled", "work")]) as session:
+        assert [row.scope for row in session.view.rows] == ["fixture:profiled<work>.config"]
 
 
 def test_target_guard_hard_failure_fails_push_for_package_instance(
@@ -511,8 +517,9 @@ def test_target_skip_can_leave_noop_eligible_package_and_repo_hooks(
     monkeypatch.setenv("HOME", str(home))
     repo_root = tmp_path / "repo"
     _write_profile(repo_root)
+    hook_output = shlex.quote(str(tmp_path / "hook-output"))
     repo_root.joinpath("repo.toml").write_text(
-        "[hooks.pre_push]\ncommands = [\"printf repo pre\"]\nrun_noop = true\n",
+        f"[hooks.pre_push]\ncommands = [\"printf repo >> {hook_output}\"]\nrun_noop = true\n",
         encoding="utf-8",
     )
     _write_file_package(
@@ -523,15 +530,20 @@ def test_target_skip_can_leave_noop_eligible_package_and_repo_hooks(
     package_path = repo_root / "packages" / "app" / "package.toml"
     package_path.write_text(
         package_path.read_text(encoding="utf-8")
-        + "\n[hooks.pre_push]\ncommands = [\"printf package pre\"]\nrun_noop = true\n",
+        + f"\n[hooks.pre_push]\ncommands = [\"printf package >> {hook_output}\"]\nrun_noop = true\n",
         encoding="utf-8",
     )
 
-    operation_plan = _engine(tmp_path, repo_root).plan_push_query("fixture:app@default")
+    engine = _engine(tmp_path, repo_root)
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
 
-    assert set(operation_plan.package_plans[0].hooks) == {"pre_push"}
-    assert set(operation_plan.repo_hooks["fixture"]) == {"pre_push"}
-    assert operation_plan.has_effective_work is True
+    with engine.open_push_session(engine.resolve_sync_scope()) as session:
+        assert [(row.kind, row.scope) for row in session.view.rows] == [
+            ("hook", "fixture"), ("hook", "fixture:app"), ("guard-skip", "fixture:app.config"),
+        ]
+        assert session.execute().result.status == "completed"
+
+    assert (tmp_path / "hook-output").read_text(encoding="utf-8") == "repopackage"
 
 
 @pytest.mark.parametrize("scope", ["repo", "target"])

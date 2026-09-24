@@ -110,13 +110,6 @@ def make_package_plan(
     )
 
 
-def single_package_plan(engine, query_text: str, *, operation: str = "push", profile: str | None = None) -> PackagePlan:
-    assert operation == "push"
-    operation_plan = engine.plan_push_query(query_text, profile=profile)
-    assert len(operation_plan.package_plans) == 1
-    return operation_plan.package_plans[0]
-
-
 def capture_parser_help(capsys: pytest.CaptureFixture[str], *args: str) -> str:
     parser = build_parser()
 

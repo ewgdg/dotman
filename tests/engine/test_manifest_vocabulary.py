@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
-from tests.helpers import write_single_repo_config
+from tests.helpers import write_single_repo_config, write_tracked_packages_state
 
 
 def write_manifest_repo(
@@ -132,15 +132,10 @@ def test_repo_config_rejects_unsupported_schema_fields(tmp_path: Path) -> None:
         load_manifest_repo(tmp_path, repo_root)
 
 
-def test_canonical_manifest_vocabulary_loads_unchanged(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    live_target = home / ".config" / "app" / "config"
+def test_canonical_manifest_vocabulary_loads_unchanged(tmp_path: Path) -> None:
+    live_target = Path.home() / ".config" / "app" / "config"
     live_target.mkdir(parents=True)
     (live_target / "example.conf").write_text("old config\n", encoding="utf-8")
-    monkeypatch.setenv("HOME", str(home))
     repo_root = write_manifest_repo(
         tmp_path,
         target_is_directory=True,
@@ -166,12 +161,18 @@ def test_canonical_manifest_vocabulary_loads_unchanged(
         ],
     )
 
-    engine = load_manifest_repo(tmp_path, repo_root)
-    push_plan = engine.plan_push_query("fixture:app@default")
-    push_target = push_plan.package_plans[0].target_plans[0]
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("app", "default")])
 
-    assert push_plan.repo_hooks["fixture"]["pre_push"][0].elevation == "root"
-    assert "push_ignore" not in push_target.to_dict()
+    engine = load_manifest_repo(tmp_path, repo_root)
+    repo = engine.get_repo("fixture")
+
+    assert repo.hooks["pre_push"].commands[0].elevation == "root"
+    assert repo.ignore_defaults.patterns == ("repo.one", "repo.two")
+    with engine.open_push_session(engine.resolve_sync_scope(), preview=True) as session:
+        child, = session.view.observations
+    assert child.identity.child_path == "example.conf"
+    assert child.inputs.path_rules == ("rule",)
+    assert (child.compare_repo, child.compare_live) == ("render", "raw")
 
 
 def test_ignore_schema_has_no_directional_or_anonymous_fields(tmp_path: Path) -> None:
