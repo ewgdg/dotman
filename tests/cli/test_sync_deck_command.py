@@ -394,3 +394,24 @@ def test_interrupted_hook_json_keeps_exit_evidence_without_output(tmp_path, monk
     assert interrupted[0]["action"] == hook
     assert interrupted[0]["exit_code"] == 130
     assert document["summary"]["diagnostics"][0]["code"] == "interrupted"
+
+
+def test_sync_resolves_shorthand_scopes_to_canonical_identities(tmp_path, monkeypatch, capsys):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo", b"live", ""),
+        ("two", "push-only", b"repo", b"live", ""),
+    ])
+    assert runner_for(engine).run(arguments(scopes=["one"])) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [unit["identity"] for unit in payload["sync_units"]] == ["main:app.one"]
+
+
+def test_noninteractive_sync_rejects_ambiguous_scope_with_candidates(tmp_path, monkeypatch, capsys):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo", b"live", ""),
+        ("two", "push-only", b"repo", b"live", ""),
+    ])
+    assert runner_for(engine).run(arguments(scopes=["o"])) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "failed"
+    assert "sync scope 'o' is ambiguous: target main:app.one, target main:app.two" in json.dumps(payload)

@@ -141,3 +141,16 @@ def test_edit_resolver_query_reports_cross_kind_ambiguity_and_preserves_target_i
     assert resolver.resolve_query_path("alpha:note.note") == (
         engine.get_repo("alpha").resolve_package("note").package_root / "files" / "note.txt"
     )
+
+
+def test_tracked_identity_resolution_returns_canonical_package_or_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _engine(tmp_path, monkeypatch, ("alpha",))
+    interaction = ScriptedInteraction(choices=["alpha:git<basic>.gitconfig"])
+    resolver = EditResolver(engine.config, engine=engine, interaction=interaction)
+
+    assert resolver.resolve_tracked_identity("git", subject="sync scope") == "alpha:git<basic>"
+    assert resolver.resolve_tracked_identity("gitconfig", subject="sync scope") == "alpha:git<basic>.gitconfig"
+    assert interaction.requests[0].header_text == "Select a sync scope for 'gitconfig':"

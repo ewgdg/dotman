@@ -61,8 +61,15 @@ POSIX suffix. Multiple inputs form a stable de-duplicated union. Omitting
 inputs expands the current tracked package state across every configured repo,
 including dependency closure and ownership winners. Groups are catalog
 selectors, not tracked identities, and are never returned as Sync scope
-members. Partial or ambiguous lookup remains an interactive concern; JSON,
-unattended, and non-terminal resolution fails rather than guessing.
+members.
+
+The `sync` and `pull` commands resolve each input before scope resolution,
+using the same package-or-target lookup as `edit query`: `claude`,
+`claude.settings` or `dot:claude` resolve to their canonical identity when one
+tracked package or target matches exactly. Directory-child suffixes are kept
+verbatim after the owning target resolves. Partial or ambiguous input opens a
+selection menu in a terminal; JSON, unattended, and non-terminal resolution
+fails with the candidates rather than guessing.
 
 ## Sync
 

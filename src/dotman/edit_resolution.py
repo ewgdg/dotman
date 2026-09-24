@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -159,9 +159,35 @@ class EditResolver:
         intent, explicit_repo, selector = self._parse_query_text(query_text)
         if intent == "target":
             return self.resolve_target_path(query_text)
-
-        engine = self._require_engine()
         query = selector if explicit_repo is None else f"{explicit_repo}:{selector}"
+        return self._resolve_tracked_query(
+            query,
+            query_text=query_text,
+            subject="edit query",
+            header_text=f"Select an edit target for '{query_text}':",
+            value_of=lambda candidate: candidate.path,
+        )
+
+    def resolve_tracked_identity(self, query_text: str, *, subject: str) -> str:
+        """Resolve a package, package-instance or target query to its canonical identity."""
+        return self._resolve_tracked_query(
+            query_text,
+            query_text=query_text,
+            subject=subject,
+            header_text=f"Select a {subject} for '{query_text}':",
+            value_of=lambda candidate: candidate.ref_text,
+        )
+
+    def _resolve_tracked_query(
+        self,
+        query: str,
+        *,
+        query_text: str,
+        subject: str,
+        header_text: str,
+        value_of: Callable[[_EditQueryCandidate], CandidateValue],
+    ) -> CandidateValue:
+        engine = self._require_engine()
         _package_query, _bound_profile, package_exact, package_partial = (
             engine.find_tracked_package_matches(query)
         )
@@ -173,21 +199,21 @@ class EditResolver:
             self._edit_package_candidate(*match) for match in package_partial
         ] + [self._edit_target_candidate(match) for match in target_partial]
 
-        selected = self._resolve_candidates(
-            exact_candidates=[self._query_path_candidate(candidate) for candidate in exact_candidates],
-            partial_candidates=[self._query_path_candidate(candidate) for candidate in partial_candidates],
+        return self._resolve_candidates(
+            exact_candidates=[self._query_candidate(candidate, value_of) for candidate in exact_candidates],
+            partial_candidates=[self._query_candidate(candidate, value_of) for candidate in partial_candidates],
             query_text=query_text,
-            header_text=f"Select an edit target for '{query_text}':",
+            header_text=header_text,
             exact_error=(
-                f"edit query '{query_text}' is ambiguous: "
+                f"{subject} '{query_text}' is ambiguous: "
                 + self._format_edit_query_candidates(exact_candidates)
             ),
             partial_error=(
-                f"edit query '{query_text}' is ambiguous: "
+                f"{subject} '{query_text}' is ambiguous: "
                 + self._format_edit_query_candidates(partial_candidates)
             ),
             not_found_error=(
-                f"edit query '{query_text}' did not match any tracked package or target"
+                f"{subject} '{query_text}' did not match any tracked package or target"
             ),
             single_partial_error=(
                 f"no exact match for '{query_text}'; use exact name "
@@ -196,7 +222,6 @@ class EditResolver:
                 else None
             ),
         )
-        return selected
 
     def _resolve_repo_config(
         self,
@@ -441,9 +466,12 @@ class EditResolver:
         )
 
     @staticmethod
-    def _query_path_candidate(candidate: _EditQueryCandidate) -> _Candidate[Path]:
+    def _query_candidate(
+        candidate: _EditQueryCandidate,
+        value_of: Callable[[_EditQueryCandidate], CandidateValue],
+    ) -> _Candidate[CandidateValue]:
         return _Candidate(
-            value=candidate.path,
+            value=value_of(candidate),
             label=candidate.label,
             resolver_option=candidate.resolver_option,
         )

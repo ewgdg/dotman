@@ -59,8 +59,13 @@ def main(
             SyncDeckCommandRunner(
                 engine_factory=engine_factory,
                 use_color=use_color,
+                interaction=active_interaction,
             ),
-            PullDeckCommandRunner(engine_factory=engine_factory, use_color=use_color),
+            PullDeckCommandRunner(
+                engine_factory=engine_factory,
+                use_color=use_color,
+                interaction=active_interaction,
+            ),
             SyncCommandRunner(
                 engine_factory=engine_factory,
                 use_color=use_color,

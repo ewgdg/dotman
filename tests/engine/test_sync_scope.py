@@ -382,3 +382,14 @@ def test_resolved_sync_scope_checks_nested_push_only_primary_sources(
     else:
         with pytest.raises(ValueError, match="incompatible nested targets"):
             engine.resolve_sync_scope()
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("app", ("app", None)),
+    ("work/git.cfg", ("work/git.cfg", None)),
+    ("main:app.dir/sub/leaf", ("main:app.dir", "sub/leaf")),
+    ("app<work.v2>.dir/leaf", ("app<work.v2>.dir", "leaf")),
+])
+def test_split_scope_child_path_keeps_package_slashes(text, expected):
+    from dotman.sync_scope import split_scope_child_path
+    assert split_scope_child_path(text) == expected

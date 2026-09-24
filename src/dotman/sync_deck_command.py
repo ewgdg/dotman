@@ -6,9 +6,11 @@ import json
 from dataclasses import replace
 import sys
 
+from dotman.edit_resolution import EditResolver
+from dotman.interaction import Interaction
 from dotman.interaction_policy import interaction_scope
 from dotman.cli_style import render_sync_term, render_package_label, style_text, MENU_REPO_STYLE
-from dotman.sync_scope import _parse_scope_selector
+from dotman.sync_scope import _parse_scope_selector, split_scope_child_path
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_session import (
     AdditionalRow, BatchSetApproval, PrepareSourceReview, AuxiliaryRow, CommandRejected, EditProposal, PrepareProposalReview, Preview, SessionOpenFailed,
@@ -104,9 +106,23 @@ class SyncDeckCommandRunner:
     def _select_defaults(self, session):
         set_all_selected(session, True)
 
-    def __init__(self, *, engine_factory, use_color: bool) -> None:
+    def _resolve_scope_inputs(self, engine, scopes, *, interaction: Interaction | None) -> list[str]:
+        """Resolve shorthand or ambiguous scopes to the canonical identities Sync requires."""
+        resolver = EditResolver(engine.config, engine=engine, interaction=interaction, use_color=self._use_color)
+
+        def resolve(text: str) -> str:
+            # Directory-child paths are not tracked targets; resolve the owning
+            # target and keep the child suffix verbatim for the engine to validate.
+            target_text, child_path = split_scope_child_path(text)
+            identity = resolver.resolve_tracked_identity(target_text, subject="sync scope")
+            return identity if child_path is None else f"{identity}/{child_path}"
+
+        return [resolve(text) for text in scopes]
+
+    def __init__(self, *, engine_factory, use_color: bool, interaction: Interaction | None = None) -> None:
         self._engine_factory = engine_factory
         self._use_color = use_color
+        self._interaction = interaction
 
     def run(self, args) -> int:
         with interaction_scope(unattended=args.unattended):
@@ -125,7 +141,9 @@ class SyncDeckCommandRunner:
             return 1
         try:
             engine = self._engine_factory(args.config)
-            scope = engine.resolve_sync_scope(args.scopes)
+            scope = engine.resolve_sync_scope(self._resolve_scope_inputs(
+                engine, args.scopes, interaction=self._interaction if interactive else None,
+            ))
         except ValueError as exc:
             self._emit(args, None, None, diagnostic={
                 "code": "invalid-input", "message": str(exc),
