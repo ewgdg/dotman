@@ -54,7 +54,9 @@ def freeze_additional_sources(*, metadata, repo_root, primary_paths):
 @contextmanager
 def repository_workspace(*, metadata, repo_root, preimages):
     with tempfile.TemporaryDirectory(prefix='dotman-sync-editor-') as directory:
-        root = Path(directory) / 'repository'
+        # System temp roots may sit behind symlinks (macOS /var -> /private/var);
+        # resolve once so the symlink checks below judge only staged sources.
+        root = Path(directory).resolve() / 'repository'
         # Keep provider-relative dependencies isolated; overwrite declared inputs
         # from Observation-time bytes rather than adopting external edits.
         shutil.copytree(repo_root, root, symlinks=True, ignore=shutil.ignore_patterns('.git'))
@@ -68,7 +70,7 @@ def repository_workspace(*, metadata, repo_root, preimages):
             destination.write_bytes(content)
         env = {key: value.replace(str(repo_root), str(root)) for key, value in metadata.command_env.items()}
         yield replace(metadata, repo_path=staged(metadata.repo_path),
-                      command_cwd=staged(metadata.command_cwd), command_env=env), staged, Path(directory)
+                      command_cwd=staged(metadata.command_cwd), command_env=env), staged, root.parent
 
 
 def edit_sources(*, observation, proposal, metadata, repo_root, preimages, additional=()):
