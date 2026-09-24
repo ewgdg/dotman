@@ -37,8 +37,8 @@ Focused CLI responsibilities live in dedicated modules:
 - `sync_deck.py` — Textual DataTable workset, scrollable frozen review and
   confirmation over public SyncSession commands; ordinary terminal prompts
   continue to use `prompt_toolkit`
-- `cli_interaction.py` — shared terminal selection, resolution, diff review,
-  and focused runtime adapters used by command runners
+- `cli_interaction.py` — shared terminal selection, resolution, restore diff
+  review, and focused runtime adapters used by command runners
 - `cli_style.py` — labels, colors, and display helpers
 - `interaction.py` — typed terminal choices, confirmations, and text input, with
   production and deterministic scripted adapters
@@ -46,14 +46,14 @@ Focused CLI responsibilities live in dedicated modules:
   `edit_resolution.py` — command-specific matching, ambiguity, profile, label,
   and confirmation policy
 
-Execution presentation is event-driven. `operation_runner.py` owns the push,
-pull, and restore mutation lifecycle and emits typed events. Human and JSON
-renderers in `cli_emit.py` consume those events and final results without
-performing command, privilege, snapshot, or restore work.
+Restore execution presentation is event-driven. `operation_runner.py` owns the
+restore mutation lifecycle and emits typed events. Human and JSON renderers in
+`cli_emit.py` consume those events and final results without performing
+privilege, snapshot, or restore work.
 
-The root selects every command through the same declared runner map. Sync
-commands call typed engine planning and operation-runner interfaces directly;
-there is no global callback-dispatch record or sync-specific fallback path.
+The root selects every command through the same declared runner map. Sync, Pull
+and Push commands open typed engine sessions directly; there is no global
+callback-dispatch record or sync-specific fallback path.
 
 If new CLI behavior grows beyond a small helper, prefer adding or extending a focused module instead of rebuilding a large `cli.py` monolith.
 
@@ -80,8 +80,8 @@ Current responsibility split:
 - `sync_session.py` — shared Proposal workset, immutable views, semantic commands, transactional Approval and Sync convergence orchestration
 - `pull_session.py` — fixed live-to-repository Observation, opt-out Proposal/Additional Approval and repository-only completion over the shared workset
 - `push_session.py` — fixed repository-to-live Observation, opt-out Use repository Approval and inherited Live Publication over the shared workset
-- `execution.py` — Push execution and the shared command-hook execution boundary
-- `push_checkpoint.py` — frozen repository-space Push evidence and optional per-unit acknowledgment through the shared lifecycle
+- `execution.py` — the shared command-hook execution boundary and atomic live-file helpers
+- `push_checkpoint.py` — frozen repository-space Push evidence attached to planned push targets
 - `sync_editor.py` — isolated configured/default Editor invocation and permitted source staging
 - `sync_observation.py` — file endpoint evidence, policy comparisons, frozen Guards/Base facts and opening-time Base lifecycle
 - `sync_auxiliary.py` — immutable Probe/hook rows, one-shot Probe activity and Guard-admitted directional hook retention
@@ -202,11 +202,9 @@ still require context propagation and main-thread-only signal installation.
 
 ## Operation runner
 
-`src/dotman/operation_runner.py` is the operation-level mutation boundary.
+`src/dotman/operation_runner.py` is the restore mutation boundary.
 
-- Push execution builds one execution session, owns one sudo lease scope, emits ordered repo/package/step events, and preserves command-runtime streaming, TTY, interruption, and exit behavior.
-- Sync and Pull use their process-local Proposal sessions and shared destination stages rather than this plan runner.
-- Push snapshots are created lazily before the first live mutation, finalized once, and pruned only after final status is durable.
+- Sync, Pull and Push use their process-local Proposal sessions and shared publication stages rather than this runner.
 - Restore executes visible actions in order, stops at the first failure, records successful restore metadata, and emits typed action events/results.
 - Human and JSON output policy is selected at CLI composition. JSON consumes no progress events and emits one final result document.
 

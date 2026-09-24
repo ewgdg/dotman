@@ -16,20 +16,15 @@ from dotman.models import (
 from dotman.repository import Repository
 from dotman.sync_base_lifecycle import (
     BaseInputs,
-    BaseLifecycleResult,
     BaseProfileContext,
     BaseUnit,
     FrozenBaseUnit,
-    ProposalCompletion,
-    SyncBaseLifecycle,
 )
 from dotman.sync_base_store import (
     DirectoryChildPresent,
     FilePresent,
     Missing,
     SyncBasePayload,
-    SyncBaseStore,
-    SyncBaseStoreError,
 )
 
 
@@ -47,19 +42,6 @@ class PushCheckpoint:
     manager_root: Path
     state_key: str
     action: str
-
-    def acknowledge(self) -> BaseLifecycleResult:
-        try:
-            with SyncBaseStore.open(self.manager_root, self.state_key) as store:
-                lifecycle = SyncBaseLifecycle(store, operation="push")
-                if self.action == "noop":
-                    return lifecycle.direct_agreement(self.frozen)
-                return lifecycle.complete(
-                    self.frozen,
-                    ProposalCompletion("use-repository", approved=True, publication_effects="succeeded"),
-                )
-        except SyncBaseStoreError as exc:
-            return BaseLifecycleResult(converged=self.action != "noop", failure=exc)
 
 
 def checkpoints_for_target(

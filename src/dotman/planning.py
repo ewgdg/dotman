@@ -1062,20 +1062,6 @@ def finalize_repo_hook_plans(
     return finalized
 
 
-def standalone_repo_hook_summary(
-    hooks: dict[str, list[HookPlan]],
-    package_plans: list[PackagePlan],
-) -> tuple[str, ...] | None:
-    if any(any(target.action != "noop" for target in plan.target_plans) or any(plan.hooks.values()) for plan in package_plans):
-        return None
-    hook_names: list[str] = []
-    for hook_name, hook_plans in hooks.items():
-        if not hook_plans:
-            continue
-        hook_names.append(hook_name)
-    return tuple(hook_names) if hook_names else None
-
-
 def build_operation_plan(
     package_plans: list[PackagePlan],
     *,

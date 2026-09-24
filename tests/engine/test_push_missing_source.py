@@ -2,9 +2,15 @@
 
 import pytest
 
-from dotman.execution import build_execution_session, execute_session
 from dotman.sync_base_store import Missing, SyncBaseStore
 from tests.engine.test_sync_session import make_engine
+
+
+def push_tracked_scope(engine):
+    with engine.open_push_session(engine.resolve_sync_scope()) as session:
+        result = session.execute().result
+    assert result.status == "completed", result
+    return result
 
 
 @pytest.mark.parametrize("transformed", [False, True])
@@ -23,14 +29,12 @@ def test_missing_repository_file_publishes_typed_absence(tmp_path, monkeypatch, 
     assert target.action == ("delete" if live is not None else "noop")
     assert target.desired_bytes is None
     assert target.push_checkpoints[0].frozen.payload == Missing()
-    result = execute_session(build_execution_session(plans, operation="push"), stream_output=False)
-    assert result.status == "ok"
+    push_tracked_scope(engine)
     assert not destination.exists()
     assert not source.exists()
     assert not marker.exists()
-    checkpoint = target.push_checkpoints[0]
-    with SyncBaseStore.open(checkpoint.manager_root, checkpoint.state_key, read_only=True, create=False) as store:
-        assert store.read(checkpoint.frozen.unit.identity_bytes).payload == Missing()
+    with SyncBaseStore.open(engine._tracked_state_context.state_root, "main", read_only=True) as store:
+        assert store.read(b"main:app.unit").payload == Missing()
 
 
 @pytest.mark.parametrize("live", [b"live", None])
@@ -44,7 +48,7 @@ def test_missing_patch_capture_source_is_valid_push_endpoint(tmp_path, monkeypat
     assert target.action == ("delete" if live is not None else "noop")
     assert target.checkpoint_payload == Missing()
     assert target.desired_bytes is None
-    assert execute_session(build_execution_session(plans, operation="push"), stream_output=False).status == "ok"
+    push_tracked_scope(engine)
     assert not source.exists()
     assert not destination.exists()
 
@@ -69,35 +73,14 @@ def test_missing_repository_preview_is_read_only(tmp_path, monkeypatch, live):
     assert (destination.read_bytes() if live is not None else None) == live
 
 
-def test_missing_repository_source_does_not_bypass_live_symlink_consent(tmp_path, monkeypatch):
-    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", None, None, "")])
-    referent = tmp_path / "outside"
-    referent.write_bytes(b"keep")
-    (tmp_path / "live").mkdir()
-    (tmp_path / "live/unit").symlink_to(referent)
-    plans = engine.plan_push_query("main:app@default")
-    assert plans[0].target_plans[0].action == "delete"
-    with pytest.raises(ValueError, match="unresolved symlinked live target"):
-        build_execution_session(plans, operation="push")
-    assert referent.read_bytes() == b"keep"
-    assert (tmp_path / "live/unit").is_symlink()
-
-
 def test_missing_repository_source_deletion_has_restorable_snapshot(tmp_path, monkeypatch):
-    from dotman.models import SnapshotConfig
-    from dotman.operation_runner import run_sync_operation
     from dotman.snapshot import build_restore_actions, execute_restore_action, list_snapshots
 
     engine = make_engine(tmp_path, monkeypatch, [("unit", "both", None, b"live", "")])
-    snapshots = SnapshotConfig(enabled=True, path=tmp_path / "snapshots", max_generations=5)
-    result = run_sync_operation(
-        operation="push", plans=engine.plan_push_query("main:app@default"),
-        snapshot_config=snapshots, stream_output=False,
-    )
-    assert result.status == "ok"
+    push_tracked_scope(engine)
     destination = tmp_path / "live/unit"
     assert not destination.exists()
-    saved, = list_snapshots(snapshots.path)
+    saved, = list_snapshots(engine.config.snapshots.path)
     assert saved.entries[0].push_action == "delete"
     assert saved.entries[0].existed_before
     for action in build_restore_actions(saved):
@@ -119,7 +102,7 @@ def test_missing_repository_source_follow_link_deletes_referent_only(tmp_path, m
     link.symlink_to(referent)
     plans = engine.plan_push_query("main:app@default")
     assert plans[0].target_plans[0].action == "delete"
-    assert execute_session(build_execution_session(plans, operation="push"), stream_output=False).status == "ok"
+    push_tracked_scope(engine)
     assert link.is_symlink()
     assert not referent.exists()
 

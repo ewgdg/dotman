@@ -5,9 +5,9 @@ import shlex
 import shutil
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Literal, TypeVar
 
 from dotman import cli_emit, cli_style
 from dotman.add import (
@@ -23,33 +23,22 @@ from dotman.command_runtime import (
 )
 from dotman.diff_review import (
     ReviewItem,
-    build_review_items,
     run_review_item_diff,
 )
 from dotman.engine import DotmanEngine
 from dotman.interaction import Interaction
-from dotman.interaction_policy import interaction_scope, unattended_enabled
+from dotman.interaction_policy import interaction_scope, unattended_enabled  # noqa: F401 -- interaction_scope re-exported for cli.py
 from dotman.models import (
     FullSpecSelector,
-    OperationPlan,
-    PackagePlan,
-    PlanCollection,
     SelectorKind,
-    finalize_hook_plans_for_targets,
-    package_plans_for_operation_plan,
     package_ref_text,
-    standalone_hook_package_summaries,
-    standalone_hook_target_summaries,
 )
 from dotman.package_resolution import (
     parse_full_spec_selector_text,
     parse_package_ref_text,
 )
-from dotman.planning import finalize_repo_hook_plans, standalone_repo_hook_summary
 from dotman.resolver import (
     ResolverOption,
-    build_full_spec_selector_field_kinds,
-    build_full_spec_selector_match_fields,
     build_package_field_kinds,
     build_package_match_fields,
     build_selector_field_kinds,
@@ -77,20 +66,6 @@ EXECUTION_STATUS_STYLE_BY_NAME = cli_style.EXECUTION_STATUS_STYLE_BY_NAME
 MENU_SELECTION_OVERHEAD_LINES = 6
 SelectableItem = TypeVar("SelectableItem")
 SinglePartialResolverMode = Literal["confirm", "menu"]
-
-
-@dataclass(frozen=True)
-class PendingSelectionItem:
-    selection_label: str
-    package_id: str
-    action: str
-    target_name: str | None = None
-    bound_profile: str | None = None
-    source_path: str | None = None
-    destination_path: str | None = None
-    kind: str = "target"
-    hook_names: tuple[str, ...] = ()
-    repo_name: str | None = None
 
 
 def prompt(message: str, *, escape_result: str | None = None) -> str:
@@ -383,43 +358,6 @@ def parse_selection_index(raw_answer: str, item_count: int) -> int:
     return selected_index
 
 
-def parse_selection_token(token: str, item_count: int) -> set[int]:
-    if token.isdigit():
-        selected_index = int(token)
-        if not 1 <= selected_index <= item_count:
-            raise ValueError(f"selection index out of range: {selected_index}")
-        return {selected_index}
-    if "-" not in token:
-        raise ValueError(f"unsupported token: {token}")
-    start_text, end_text = token.split("-", 1)
-    if not start_text.isdigit() or not end_text.isdigit():
-        raise ValueError(f"unsupported token: {token}")
-    start_index = int(start_text)
-    end_index = int(end_text)
-    if start_index > end_index:
-        raise ValueError(f"invalid range: {token}")
-    if start_index < 1 or end_index > item_count:
-        raise ValueError(f"selection index out of range: {token}")
-    return set(range(start_index, end_index + 1))
-
-
-def parse_selection_indexes(raw_answer: str, item_count: int) -> set[int]:
-    answer = raw_answer.strip()
-    if not answer:
-        return set()
-    keep_only_mode = answer.startswith("^")
-    if keep_only_mode:
-        answer = answer[1:].strip()
-        if not answer:
-            raise ValueError("missing keep-only selection after '^'")
-    selected_indexes: set[int] = set()
-    for token in answer.replace(",", " ").split():
-        selected_indexes.update(parse_selection_token(token, item_count))
-    if keep_only_mode:
-        return set(range(1, item_count + 1)) - selected_indexes
-    return selected_indexes
-
-
 def _select_menu_option_with_prompt(*, header_text: str, option_labels: Sequence[str]) -> int:
     print_selection_header(header_text)
     indexed_labels = list(enumerate(option_labels, start=1))
@@ -531,18 +469,6 @@ def selection_prompt() -> str:
     )
 
 
-def pending_selection_prompt() -> str:
-    prompt_text = "Exclude by number or range"
-    hint_text = '("?"; e.g. "1 2 4-6" or "^3"; default: none)'
-    if not colors_enabled():
-        return f"\n{prompt_text} {hint_text}: "
-    return (
-        f"\n{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
-        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
-        f"{style_text(hint_text, *MENU_HINT_STYLE)}: "
-    )
-
-
 def review_menu_prompt() -> str:
     prompt_text = "Review command"
     hint_text = '("?", number, "n", "a", "l", "s", Esc; default: next)'
@@ -561,18 +487,6 @@ def partial_match_confirmation_prompt(*, candidate_label: str) -> str:
     if not colors_enabled():
         return f"{prompt_text} {hint_text} "
     return (
-        f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
-        f"{style_text(hint_text, *MENU_HINT_STYLE)} "
-    )
-
-
-def push_symlink_replacement_prompt() -> str:
-    prompt_text = "Replace symlinked live target(s) before push?"
-    hint_text = "[y/n]"
-    if not colors_enabled():
-        return f"{prompt_text} {hint_text} "
-    return (
-        f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} "
         f"{style_text(prompt_text, *MENU_PROMPT_STYLE)} "
         f"{style_text(hint_text, *MENU_HINT_STYLE)} "
     )
@@ -613,14 +527,6 @@ def print_selection_help() -> None:
     print("  <number>  choose that item")
 
 
-def print_pending_selection_help() -> None:
-    print("Selection help:")
-    print("  <number>       exclude one item")
-    print("  <a-b>          exclude a range")
-    print("  1 3 5-7        exclude multiple items or ranges")
-    print("  ^<selection>   keep only the selected items")
-
-
 def print_review_command_help() -> None:
     print("Review commands:")
     print("  <number>   inspect one diff")
@@ -642,12 +548,6 @@ def interactive_mode_enabled(*, json_output: bool) -> bool:
 
 def confirm_partial_candidate_match(*, candidate_label: str) -> bool:
     return _prompt_yes_no(partial_match_confirmation_prompt(candidate_label=candidate_label))
-
-
-def confirm_push_symlink_replacement(*, unattended: bool = False) -> bool:
-    if unattended:
-        return True
-    return _prompt_yes_no(push_symlink_replacement_prompt())
 
 
 def parse_review_command(raw_answer: str, item_count: int) -> tuple[str, int | None]:
@@ -748,392 +648,6 @@ def resolve_candidate_match(
         )
         return ranked_partial_matches[selected_index]
     raise ValueError(not_found_text)
-
-
-def resolve_tracked_package_entry_text(
-    engine: DotmanEngine,
-    binding_text: str,
-    *,
-    operation: str,
-    allow_package_owners: bool,
-    json_output: bool,
-) -> tuple[object | None, FullSpecSelector]:
-    explicit_repo, selector, profile = parse_full_spec_selector_text(binding_text)
-    interactive = interactive_mode_enabled(json_output=json_output)
-    binding_label = selector if profile is None else f"{selector}@{profile}"
-
-    if operation == "untrack":
-        resolved_selector, _resolved_profile, exact_matches, partial_matches = engine.find_persisted_tracked_package_entry_matches(binding_text)
-        package_matches, owner_package_entries = engine.find_tracked_package_matches_for_untrack(
-            selector=resolved_selector,
-            profile=profile,
-            repo_name=explicit_repo,
-        )
-
-        def persisted_option(record) -> ResolverOption:
-            base_label = render_full_spec_selector_label(
-                repo_name=record.package_entry.repo,
-                selector=record.package_entry.selector,
-                profile=record.package_entry.profile,
-                selector_first=True,
-            )
-            state_badge = ""
-            if record.repo is None or record.state_key != record.package_entry.repo:
-                state_badge = render_menu_badge(f"[{record.state_key}]")
-            return ResolverOption(
-                display_label=join_menu_display_fields(base_label, state_badge),
-                display_fields=(base_label, state_badge) if state_badge else (base_label,),
-                match_fields=build_full_spec_selector_match_fields(
-                    repo_name=record.package_entry.repo,
-                    selector=record.package_entry.selector,
-                    profile=record.package_entry.profile,
-                ),
-                field_kinds=build_full_spec_selector_field_kinds(),
-            )
-
-        def package_option(package) -> ResolverOption:
-            display_label = render_package_label(
-                repo_name=package.repo,
-                package_id=package.package_id,
-                bound_profile=package.bound_profile,
-                package_first=True,
-                include_repo_context=True,
-            )
-            return ResolverOption(
-                display_label=display_label,
-                match_fields=build_package_match_fields(
-                    repo_name=package.repo,
-                    package_id=package.package_id,
-                    bound_profile=package.bound_profile,
-                ),
-                field_kinds=build_package_field_kinds(has_bound_profile=package.bound_profile is not None),
-            )
-
-        def package_owner_error(package) -> ValueError:
-            matching_owner_package_entries = [
-                binding
-                for binding in package.package_entries
-                if profile is None or binding.profile == profile
-            ]
-            owners = ", ".join(
-                render_full_spec_selector_label(
-                    repo_name=binding.repo,
-                    selector=binding.selector,
-                    profile=binding.profile,
-                    selector_first=True,
-                )
-                for binding in matching_owner_package_entries
-            )
-            required_repo = explicit_repo or package.repo
-            required_ref = render_package_label(
-                repo_name=required_repo,
-                package_id=package.package_id,
-                bound_profile=package.bound_profile,
-                package_first=True,
-                include_repo_context=True,
-            )
-            return ValueError(
-                f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
-            )
-
-        filtered_package_matches = [
-            package
-            for package in package_matches
-            if not any(
-                record.package_entry.repo == package.repo and record.package_entry.selector == package.package_id
-                for record in partial_matches
-            )
-        ]
-
-        def combined_option(match) -> ResolverOption:
-            match_kind, item = match
-            if match_kind == "binding":
-                return persisted_option(item)
-            return package_option(item)
-
-        if interactive and (exact_matches or partial_matches or filtered_package_matches):
-            selected_kind, selected_item = resolve_candidate_match(
-                exact_matches=[("binding", record) for record in exact_matches],
-                partial_matches=[("binding", record) for record in partial_matches]
-                + [("package", package) for package in filtered_package_matches],
-                query_text=binding_label,
-                interactive=True,
-                exact_header_text=f"Select a tracked package entry for '{binding_label}':",
-                partial_header_text=(
-                    f"Select an untrack target for '{binding_label}':"
-                    if filtered_package_matches
-                    else f"Select a tracked package entry for '{binding_label}':"
-                ),
-                option_resolver=combined_option,
-                exact_error_text="unused",
-                partial_error_text="unused",
-                not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
-            )
-            if selected_kind == "binding":
-                selected_record = cast(Any, selected_item)
-                return selected_record.repo, selected_record.package_entry
-            raise package_owner_error(selected_item)
-
-        if len(exact_matches) == 1:
-            record = exact_matches[0]
-            return record.repo, record.package_entry
-        if len(exact_matches) > 1:
-            raise ValueError(
-                f"tracked package entry '{binding_label}' is ambiguous: "
-                + ", ".join(
-                    f"{record.package_entry.repo}:{record.package_entry.selector}@{record.package_entry.profile}"
-                    for record in exact_matches
-                )
-            )
-
-        if partial_matches:
-            if filtered_package_matches:
-                package_candidates = ", ".join(
-                    f"{package.repo}:{package.package_ref}"
-                    for package in filtered_package_matches
-                )
-                raise ValueError(
-                    f"tracked package entry '{binding_label}' is ambiguous: tracked packages: {package_candidates}"
-                )
-            if len(partial_matches) == 1:
-                record = partial_matches[0]
-                raise ValueError(
-                    f"no exact match for '{binding_label}'; use exact name '{persisted_option(record).display_label}'"
-                )
-            raise ValueError(
-                f"tracked package entry '{binding_label}' is ambiguous: "
-                + ", ".join(
-                    f"{record.package_entry.repo}:{record.package_entry.selector}@{record.package_entry.profile}"
-                    for record in partial_matches
-                )
-            )
-
-        if filtered_package_matches:
-            if len(filtered_package_matches) > 1:
-                raise ValueError(
-                    f"tracked package entry '{binding_label}' is ambiguous: tracked packages: "
-                    + ", ".join(
-                        f"{package.repo}:{package.package_ref}" for package in filtered_package_matches
-                    )
-                )
-            raise package_owner_error(filtered_package_matches[0])
-
-        raise ValueError(f"tracked package entry '{binding_label}' is not currently tracked")
-
-    repo_names = [repo_config.name for repo_config in engine.config.ordered_repos]
-    lookup_repo, lookup_selector = parse_slash_qualified_query(
-        repo_names=repo_names,
-        explicit_repo=explicit_repo,
-        selector=selector,
-    )
-    lookup_binding_text = (
-        f"{lookup_repo}:{lookup_selector}" if lookup_repo is not None else lookup_selector
-    )
-    if profile is not None:
-        lookup_binding_text = f"{lookup_binding_text}@{profile}"
-    resolved_selector, resolved_profile, exact_matches, partial_matches, owner_package_entries = (
-        engine.find_tracked_package_entry_matches(lookup_binding_text)
-    )
-    binding_resolver = lambda match: ResolverOption(
-        display_label=render_full_spec_selector_label(
-            repo_name=match[0].config.name,
-            selector=match[1].selector,
-            profile=match[1].profile,
-            selector_first=True,
-        ),
-        match_fields=build_full_spec_selector_match_fields(
-            repo_name=match[0].config.name,
-            selector=match[1].selector,
-            profile=match[1].profile,
-        ),
-        field_kinds=build_full_spec_selector_field_kinds(),
-    )
-
-    package_matches, _package_owner_package_entries = engine.find_tracked_package_matches_for_untrack(
-        selector=resolved_selector,
-        profile=resolved_profile,
-        repo_name=lookup_repo,
-    )
-    direct_binding_match_keys = {
-        (repo.config.name, binding.selector, binding.profile)
-        for repo, binding in [*exact_matches, *partial_matches]
-    }
-    owner_target_matches: list[tuple[object, str, FullSpecSelector]] = []
-    seen_owner_target_matches: set[tuple[str, str, str, str]] = set()
-    for package in package_matches:
-        repo = engine.get_repo(package.repo)
-        for owner_binding in package.package_entries:
-            if resolved_profile is not None and owner_binding.profile != resolved_profile:
-                continue
-            if (package.repo, package.package_id, owner_binding.profile) in direct_binding_match_keys:
-                continue
-            owner_match_key = (
-                package.repo,
-                package.package_id,
-                owner_binding.profile,
-                owner_binding.selector,
-            )
-            if owner_match_key in seen_owner_target_matches:
-                continue
-            seen_owner_target_matches.add(owner_match_key)
-            owner_target_matches.append(
-                (
-                    repo,
-                    package.package_id,
-                    FullSpecSelector(
-                        repo=owner_binding.repo,
-                        selector=owner_binding.selector,
-                        selector_kind=owner_binding.selector_kind,
-                        profile=owner_binding.profile,
-                    ),
-                )
-            )
-
-    owner_exact_matches = [match for match in owner_target_matches if match[1] == resolved_selector]
-    owner_partial_matches = [match for match in owner_target_matches if match[1] != resolved_selector]
-
-    def owner_target_resolver(match) -> ResolverOption:
-        owner_repo, package_id, owner_binding = match
-        target_label = render_package_profile_label(
-            repo_name=owner_repo.config.name,
-            package_id=package_id,
-            profile=owner_binding.profile,
-        )
-        owner_label = full_spec_selector_label_text(
-            repo_name=owner_repo.config.name,
-            selector=owner_binding.selector,
-            profile=owner_binding.profile,
-            selector_first=True,
-        )
-        owner_badge = render_menu_badge(f"[via {owner_label}]")
-        return ResolverOption(
-            display_label=target_label,
-            display_fields=(target_label, owner_badge),
-            match_fields=build_full_spec_selector_match_fields(
-                repo_name=owner_repo.config.name,
-                selector=package_id,
-                profile=owner_binding.profile,
-            ),
-            field_kinds=build_full_spec_selector_field_kinds(),
-        )
-
-    def owner_target_error_label(match) -> str:
-        owner_repo, package_id, owner_binding = match
-        return (
-            f"{owner_repo.config.name}:{package_id}@{owner_binding.profile}"
-            f" via {owner_repo.config.name}:{owner_binding.selector}@{owner_binding.profile}"
-        )
-
-    def binding_from_owner_match(match) -> tuple[object, FullSpecSelector]:
-        owner_repo, package_id, owner_binding = match
-        return owner_repo, FullSpecSelector(
-            repo=owner_repo.config.name,
-            selector=package_id,
-            selector_kind="package",
-            profile=owner_binding.profile,
-        )
-
-    if allow_package_owners and not exact_matches and (partial_matches or owner_exact_matches or owner_partial_matches):
-        # Tracked package targets can be selected through owner bindings. Combine them
-        # with partial tracked-binding hits so ambiguous user input goes through the
-        # normal resolver instead of silently preferring one path.
-        def combined_resolver(match) -> ResolverOption:
-            match_kind, item = match
-            if match_kind == "binding":
-                return binding_resolver(item)
-            return owner_target_resolver(item)
-
-        combined_exact_matches = [(
-            "owner", match
-        ) for match in owner_exact_matches] if not partial_matches else []
-        combined_partial_matches = [("binding", match) for match in partial_matches] + [
-            ("owner", match)
-            for match in ([*owner_exact_matches, *owner_partial_matches] if partial_matches else owner_partial_matches)
-        ]
-        selected_kind, selected_item = resolve_candidate_match(
-            exact_matches=combined_exact_matches,
-            partial_matches=combined_partial_matches,
-            query_text=binding_label,
-            interactive=interactive,
-            exact_header_text=f"Select a tracked package entry for '{binding_label}':",
-            partial_header_text=f"Select a tracked package entry for '{binding_label}':",
-            option_resolver=combined_resolver,
-            exact_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
-            + ", ".join(owner_target_error_label(match) for match in owner_exact_matches),
-            partial_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
-            + ", ".join(
-                [
-                    *(
-                        f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                        for repo, binding in partial_matches
-                    ),
-                    *(
-                        owner_target_error_label(match)
-                        for match in ([*owner_exact_matches, *owner_partial_matches] if partial_matches else owner_partial_matches)
-                    ),
-                ]
-            ),
-            not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
-        )
-        if selected_kind == "binding":
-            return cast(tuple[Repository, FullSpecSelector], selected_item)
-        return binding_from_owner_match(selected_item)
-
-    try:
-        return resolve_candidate_match(
-            exact_matches=exact_matches,
-            partial_matches=partial_matches,
-            query_text=binding_label,
-            interactive=interactive,
-            exact_header_text=f"Select a tracked package entry for '{binding_label}':",
-            partial_header_text=f"Select a tracked package entry for '{binding_label}':",
-            option_resolver=binding_resolver,
-            exact_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
-            + ", ".join(f"{repo.config.name}:{binding.selector}@{binding.profile}" for repo, binding in exact_matches),
-            partial_error_text=f"tracked package entry '{binding_label}' is ambiguous: "
-            + ", ".join(f"{repo.config.name}:{binding.selector}@{binding.profile}" for repo, binding in partial_matches),
-            not_found_text=f"tracked package entry '{binding_label}' is not currently tracked",
-        )
-    except ValueError as exc:
-        if allow_package_owners and owner_package_entries:
-            if len(owner_package_entries) == 1:
-                owner_repo, owner_binding = owner_package_entries[0]
-            elif interactive:
-                owner_repo, owner_binding = resolve_candidate_match(
-                    exact_matches=[],
-                    partial_matches=owner_package_entries,
-                    query_text=binding_label,
-                    interactive=interactive,
-                    exact_header_text=f"Select a tracked package entry for '{binding_label}':",
-                    partial_header_text=f"Select a tracked package entry for '{binding_label}':",
-                    option_resolver=binding_resolver,
-                    exact_error_text="unused",
-                    partial_error_text=f"{operation} target '{binding_label}' is ambiguous across tracked package entries: "
-                    + ", ".join(
-                        f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                        for repo, binding in owner_package_entries
-                    ),
-                    not_found_text="unused",
-                )
-            else:
-                candidates = ", ".join(
-                    f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                    for repo, binding in owner_package_entries
-                )
-                raise ValueError(f"{operation} target '{binding_label}' is ambiguous across tracked package entries: {candidates}") from None
-            return binding_from_owner_match((owner_repo, owner_binding))
-        if owner_package_entries and not allow_package_owners:
-            owners = ", ".join(
-                f"{repo.config.name}:{binding.selector}@{binding.profile}"
-                for repo, binding in owner_package_entries
-            )
-            repo_name, _selector, _profile = parse_full_spec_selector_text(binding_text)
-            required_repo = repo_name or lookup_repo or owner_package_entries[0][0].config.name
-            required_ref = f"{required_repo}:{resolved_selector}"
-            raise ValueError(
-                f"cannot {operation} '{required_ref}': required by tracked package entries: {owners}"
-            ) from None
-        raise exc
 
 
 def resolve_tracked_package_text(
@@ -1241,432 +755,6 @@ def resolve_trackable_selector_text(
         + ", ".join(f"{repo.config.name}:{match}" for repo, match, _ in partial_matches),
         not_found_text=f"selector '{selector}' did not match any package or group",
     )
-
-
-def collect_pending_selection_items(plans: Sequence) -> list[PendingSelectionItem]:
-    return collect_pending_selection_items_for_operation(plans, operation="push")
-
-
-def selection_item_paths(*, operation: str, repo_path: Path | str, live_path: Path | str) -> tuple[str, str]:
-    repo_text = str(repo_path)
-    live_text = str(live_path)
-    return repo_text, live_text
-
-
-def selection_item_action(*, operation: str, action: str) -> str:
-    if action == "probe":
-        return "install"
-    return action
-
-
-def selection_item_identity(
-    *,
-    selection_label: str,
-    package_id: str,
-    target_name: str,
-    operation: str,
-    repo_path: Path | str,
-    live_path: Path | str,
-) -> tuple[str, str, str, str, str]:
-    source_path, destination_path = selection_item_paths(
-        operation=operation,
-        repo_path=repo_path,
-        live_path=live_path,
-    )
-    return (
-        selection_label,
-        package_id,
-        target_name,
-        source_path,
-        destination_path,
-    )
-
-
-def collect_pending_selection_items_for_operation(
-    plans: Sequence,
-    *,
-    operation: str,
-    run_noop: bool = False,
-    use_raw_hook_plans: bool = False,
-) -> list[PendingSelectionItem]:
-    selection_items: list[PendingSelectionItem] = []
-    package_plans = package_plans_for_operation_plan(plans)
-    for plan in package_plans:
-        selection_label = plan.selection_label
-        for target in plan.target_plans:
-            if target.directory_items:
-                for item in target.directory_items:
-                    source_path, destination_path = selection_item_paths(
-                        operation=operation,
-                        repo_path=item.repo_path,
-                        live_path=item.live_path,
-                    )
-                    selection_items.append(
-                        PendingSelectionItem(
-                            selection_label=selection_label,
-                            package_id=target.package_id,
-                            target_name=target.target_name,
-                            action=selection_item_action(operation=operation, action=item.action),
-                            source_path=source_path,
-                            destination_path=destination_path,
-                        )
-                    )
-                continue
-            if target.action == "noop":
-                continue
-            if target.target_kind == "probe":
-                selection_items.append(
-                    PendingSelectionItem(
-                        selection_label=selection_label,
-                        package_id=target.package_id,
-                        action=selection_item_action(operation=operation, action=target.action),
-                        target_name=target.target_name,
-                        bound_profile=plan.bound_profile,
-                    )
-                )
-                continue
-            source_path, destination_path = selection_item_paths(
-                operation=operation,
-                repo_path=target.repo_path,
-                live_path=target.live_path,
-            )
-            selection_items.append(
-                PendingSelectionItem(
-                    selection_label=selection_label,
-                    package_id=target.package_id,
-                    action=selection_item_action(operation=operation, action=target.action),
-                    target_name=target.target_name,
-                    bound_profile=plan.bound_profile,
-                    source_path=source_path,
-                    destination_path=destination_path,
-                )
-            )
-        hook_source = (getattr(plan, "hook_plans", None) or plan.hooks) if use_raw_hook_plans else plan.hooks
-        finalized_hooks = (
-            finalize_hook_plans_for_targets(
-                hook_source,
-                plan.target_plans,
-                allow_standalone_noop_hooks=run_noop,
-            )
-            if use_raw_hook_plans
-            else hook_source
-        )
-        standalone_hook_packages = standalone_hook_package_summaries(finalized_hooks, plan.target_plans)
-        for package_id, hook_names in standalone_hook_packages.items():
-            selection_items.append(
-                PendingSelectionItem(
-                    selection_label=selection_label,
-                    package_id=package_id,
-                    action="hooks",
-                    kind="package_hook_noop",
-                    bound_profile=plan.bound_profile,
-                    hook_names=hook_names,
-                )
-            )
-        standalone_hook_targets = standalone_hook_target_summaries(finalized_hooks, plan.target_plans)
-        for (package_id, target_name), hook_names in standalone_hook_targets.items():
-            selection_items.append(
-                PendingSelectionItem(
-                    selection_label=selection_label,
-                    package_id=package_id,
-                    target_name=target_name,
-                    action="hooks",
-                    kind="target_hook_noop",
-                    bound_profile=plan.bound_profile,
-                    hook_names=hook_names,
-                )
-            )
-    if isinstance(plans, OperationPlan):
-        provisional_package_plans = [
-            replace(
-                plan,
-                hooks=(
-                    finalize_hook_plans_for_targets(
-                        (getattr(plan, "hook_plans", None) or plan.hooks),
-                        plan.target_plans,
-                        allow_standalone_noop_hooks=run_noop,
-                    )
-                    if use_raw_hook_plans
-                    else plan.hooks
-                ),
-            )
-            for plan in package_plans
-        ]
-        for repo_name in plans.repo_order:
-            repo_package_plans = [plan for plan in provisional_package_plans if plan.repo_name == repo_name]
-            hook_source = (plans.repo_hook_plans or {}).get(repo_name, {}) if use_raw_hook_plans else plans.repo_hooks.get(repo_name, {})
-            finalized_repo_hooks = (
-                finalize_repo_hook_plans(
-                    hook_source,
-                    repo_package_plans,
-                    allow_standalone_noop_hooks=run_noop,
-                )
-                if use_raw_hook_plans
-                else hook_source
-            )
-            hook_names = standalone_repo_hook_summary(finalized_repo_hooks, repo_package_plans)
-            if hook_names is None:
-                continue
-            selection_items.append(
-                PendingSelectionItem(
-                    selection_label=f"{repo_name}:repo@repo",
-                    package_id=repo_name,
-                    action="hooks",
-                    kind="repo_hook_noop",
-                    hook_names=hook_names,
-                    repo_name=repo_name,
-                )
-            )
-    return selection_items
-
-
-def print_pending_selection_item(index: int, item: PendingSelectionItem, *, full_paths: bool | None = None) -> None:
-    full_paths = _effective_full_paths(full_paths)
-    repo_name = item.repo_name or repo_name_from_selection_label(item.selection_label)
-    if item.kind in {"package_hook_noop", "target_hook_noop", "repo_hook_noop"}:
-        if item.kind == "repo_hook_noop":
-            owner_label = repo_name
-        else:
-            owner_label = package_label_text(
-                repo_name=repo_name,
-                package_id=item.package_id,
-                bound_profile=item.bound_profile,
-                target_name=item.target_name if item.kind == "target_hook_noop" else None,
-            )
-        hook_summary = cli_style.hook_summary_text(item.hook_names)
-        if not colors_enabled():
-            item_text = f"[hooks] {owner_label}"
-            item_text += cli_style.render_annotation_parentheses(hook_summary, use_color=False)
-            print(f"  {index:>2}) {item_text}")
-            return
-
-        badge_text = style_text("[hooks]", *MENU_ACTION_STYLE_BY_NAME.get("update", ("1",)))
-        if item.kind == "repo_hook_noop":
-            package_text = style_text(repo_name, *MENU_REPO_STYLE)
-        elif item.kind == "target_hook_noop":
-            if item.target_name is None:
-                raise ValueError("target hook selection items must include a target name")
-            package_text = render_package_target_label(
-                repo_name=repo_name,
-                package_id=item.package_id,
-                target_name=item.target_name,
-                bound_profile=item.bound_profile,
-            )
-        else:
-            package_text = render_package_label(repo_name=repo_name, package_id=item.package_id, bound_profile=item.bound_profile)
-        summary_text = cli_style.render_annotation_parentheses(hook_summary, use_color=True)
-        print(
-            f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
-            f"{badge_text} {package_text}{summary_text}"
-        )
-        return
-
-    if item.target_name is None:
-        raise ValueError("target selection items must include a target name")
-
-    package_target = package_label_text(
-        repo_name=repo_name,
-        package_id=item.package_id,
-        bound_profile=item.bound_profile,
-        target_name=item.target_name,
-    )
-    if item.action == "install" and item.source_path is None and item.destination_path is None:
-        if not colors_enabled():
-            print(f"  {index:>2}) [install] {package_target} [probe]")
-            return
-        action_text = style_text("[install]", *MENU_ACTION_STYLE_BY_NAME.get("install", ("1",)))
-        package_label = render_package_target_label(
-            repo_name=repo_name,
-            package_id=item.package_id,
-            target_name=item.target_name,
-            bound_profile=item.bound_profile,
-        )
-        probe_badge = cli_style.render_menu_badge("[probe]", use_color=True)
-        print(
-            f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
-            f"{action_text} {package_label} {probe_badge}"
-        )
-        return
-    if item.source_path is None or item.destination_path is None:
-        raise ValueError("file selection items must include source and destination paths")
-    source_path = display_cli_path(item.source_path, full_paths=full_paths)
-    destination_path = display_cli_path(item.destination_path, full_paths=full_paths)
-    if not colors_enabled():
-        item_text = (
-            f"[{item.action}] {package_target}: "
-            f"{source_path} -> {destination_path}"
-        )
-        print(f"  {index:>2}) {item_text}")
-        return
-
-    action_style = MENU_ACTION_STYLE_BY_NAME.get(item.action, ("1",))
-    action_text = style_text(f"[{item.action}]", *action_style)
-    package_label = render_package_target_label(
-        repo_name=repo_name,
-        package_id=item.package_id,
-        target_name=item.target_name,
-        bound_profile=item.bound_profile,
-    )
-    arrow_text = style_text("->", *MENU_HINT_STYLE)
-    print(
-        f"  {style_text(f'{index:>2})', *MENU_INDEX_STYLE)} "
-        f"{action_text} {package_label}: {source_path} {arrow_text} {destination_path}"
-    )
-
-
-def prompt_for_excluded_items(
-    selection_items: Sequence[PendingSelectionItem],
-    *,
-    operation: str,
-    full_paths: bool | None = None,
-) -> set[int]:
-    full_paths = _effective_full_paths(full_paths)
-    print_selection_header(f"Select items to exclude from {operation}:")
-    for index, item in enumerate(selection_items, start=1):
-        print_pending_selection_item(index, item, full_paths=full_paths)
-    while True:
-        try:
-            answer = prompt(pending_selection_prompt())
-            if answer.strip() == "?":
-                print_pending_selection_help()
-                continue
-            return parse_selection_indexes(answer, len(selection_items))
-        except ValueError as exc:
-            print(f"invalid selection: {exc}", file=sys.stderr)
-
-
-def filter_plans_for_interactive_selection(
-    *,
-    plans: PlanCollection,
-    operation: str,
-    json_output: bool,
-    full_paths: bool | None = None,
-    run_noop: bool = False,
-) -> OperationPlan | list[PackagePlan]:
-    full_paths = _effective_full_paths(full_paths)
-    selection_items = collect_pending_selection_items_for_operation(
-        plans,
-        operation=operation,
-        run_noop=run_noop,
-        use_raw_hook_plans=True,
-    )
-    excluded_indexes: set[int] = set()
-    if interactive_mode_enabled(json_output=json_output) and selection_items:
-        excluded_indexes = prompt_for_excluded_items(
-            selection_items,
-            operation=operation,
-            full_paths=full_paths,
-        )
-
-    excluded_targets: set[tuple[str, str, str, str, str]] = set()
-    excluded_standalone_packages: set[tuple[str, str]] = set()
-    excluded_standalone_targets: set[tuple[str, str, str]] = set()
-    excluded_repo_names: set[str] = set()
-    for excluded_index in excluded_indexes:
-        item = selection_items[excluded_index - 1]
-        if item.kind == "package_hook_noop":
-            excluded_standalone_packages.add((item.selection_label, item.package_id))
-            continue
-        if item.kind == "target_hook_noop":
-            excluded_standalone_targets.add((item.selection_label, item.package_id, item.target_name or ""))
-            continue
-        if item.kind == "repo_hook_noop":
-            excluded_repo_names.add(item.repo_name or repo_name_from_selection_label(item.selection_label))
-            continue
-        excluded_targets.add(
-            (
-                item.selection_label,
-                item.package_id,
-                item.target_name or "",
-                item.source_path or "",
-                item.destination_path or "",
-            )
-        )
-
-    package_plans = package_plans_for_operation_plan(plans)
-    filtered_plans = []
-    for plan in package_plans:
-        selection_label = plan.selection_label
-        filtered_targets = []
-        for target in plan.target_plans:
-            if target.target_kind == "probe":
-                probe_identity = (
-                    selection_label,
-                    target.package_id,
-                    target.target_name,
-                    "",
-                    "",
-                )
-                if probe_identity not in excluded_targets:
-                    filtered_targets.append(target)
-                continue
-            if target.directory_items:
-                remaining_items = tuple(
-                    item
-                    for item in target.directory_items
-                    if selection_item_identity(
-                        selection_label=selection_label,
-                        package_id=target.package_id,
-                        target_name=target.target_name,
-                        operation=operation,
-                        repo_path=item.repo_path,
-                        live_path=item.live_path,
-                    )
-                    not in excluded_targets
-                )
-                if remaining_items:
-                    filtered_targets.append(replace(target, directory_items=remaining_items))
-                else:
-                    filtered_targets.append(replace(target, action="noop", directory_items=()))
-                continue
-            if selection_item_identity(
-                selection_label=selection_label,
-                package_id=target.package_id,
-                target_name=target.target_name,
-                operation=operation,
-                repo_path=target.repo_path,
-                live_path=target.live_path,
-            ) not in excluded_targets:
-                filtered_targets.append(target)
-        raw_hook_plans = getattr(plan, "hook_plans", None) or plan.hooks
-        filtered_plans.append(
-            replace(
-                plan,
-                hooks=finalize_hook_plans_for_targets(
-                    raw_hook_plans,
-                    filtered_targets,
-                    allow_standalone_noop_hooks=run_noop,
-                    excluded_standalone_package_ids={
-                        package_id
-                        for current_selection_label, package_id in excluded_standalone_packages
-                        if current_selection_label == selection_label
-                    },
-                    excluded_standalone_target_ids={
-                        (package_id, target_name)
-                        for current_selection_label, package_id, target_name in excluded_standalone_targets
-                        if current_selection_label == selection_label
-                    },
-                ),
-                target_plans=filtered_targets,
-            )
-        )
-    if isinstance(plans, OperationPlan):
-        repo_hooks = {
-            repo_name: finalize_repo_hook_plans(
-                (plans.repo_hook_plans or {}).get(repo_name, {}),
-                [plan for plan in filtered_plans if plan.repo_name == repo_name],
-                allow_standalone_noop_hooks=run_noop,
-                excluded_repo_names=excluded_repo_names,
-            )
-            for repo_name in plans.repo_order
-        }
-        repo_hooks = {repo_name: hooks for repo_name, hooks in repo_hooks.items() if hooks}
-        return replace(
-            plans,
-            package_plans=tuple(filtered_plans),
-            repo_hooks=repo_hooks,
-        )
-    return filtered_plans
 
 
 def print_review_item(index: int, item: ReviewItem, *, full_paths: bool | None = None) -> None:
@@ -1877,76 +965,6 @@ def run_diff_review_menu(
     return True
 
 
-def review_plans_for_interactive_diffs(
-    *,
-    plans: PlanCollection,
-    operation: str,
-    json_output: bool,
-    full_paths: bool | None = None,
-    unattended: bool = False,
-) -> bool:
-    full_paths = _effective_full_paths(full_paths)
-    if not interactive_mode_enabled(json_output=json_output):
-        return True
-    review_items = build_review_items(plans, operation=operation)
-    if not review_items:
-        return True
-    return run_diff_review_menu(review_items, operation=operation, full_paths=full_paths, unattended=unattended)
-
-
-def _push_symlink_hazard_description(hazard: cli_emit.PushSymlinkHazard, *, full_paths: bool | None) -> str:
-    full_paths = _effective_full_paths(full_paths)
-    live_path = cli_emit.display_cli_path(hazard.live_path, full_paths=full_paths)
-    symlink_target = hazard.symlink_target or "<unknown>"
-    return (
-        f"{hazard.selection_label} "
-        f"{cli_style.package_label_text(repo_name=hazard.selection_label.split(':', 1)[0], package_id=hazard.package_id, target_name=hazard.target_name)} "
-        f"({live_path} -> {symlink_target})"
-    )
-
-
-def prepare_push_plans_for_execution(
-    *,
-    plans: OperationPlan,
-    json_output: bool,
-    full_paths: bool | None = None,
-    unattended: bool = False,
-) -> OperationPlan | None:
-    full_paths = _effective_full_paths(full_paths)
-    hazards = cli_emit.collect_push_live_symlink_hazards(plans)
-    if not hazards:
-        return plans
-
-    interactive = interactive_mode_enabled(json_output=json_output)
-    if interactive:
-        cli_emit.print_push_live_symlink_hazard_warning(hazards, use_color=colors_enabled(), full_paths=full_paths)
-
-    hazard_descriptions = ", ".join(
-        _push_symlink_hazard_description(hazard, full_paths=full_paths)
-        for hazard in hazards
-    )
-    unsupported = [hazard for hazard in hazards if not hazard.replaceable]
-    if unsupported:
-        unsupported_descriptions = ", ".join(
-            _push_symlink_hazard_description(hazard, full_paths=full_paths)
-            for hazard in unsupported
-        )
-        if interactive:
-            raise ValueError(
-                f"refusing to replace unsupported symlinked directory target(s): {unsupported_descriptions}"
-            )
-        raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
-
-    if unattended:
-        raise InteractionRequiredError(f"unsafe symlink decision in unattended mode: {hazard_descriptions}")
-    if not interactive:
-        raise ValueError(f"refusing to replace symlinked live target(s) in non-interactive mode: {hazard_descriptions}")
-
-    if not confirm_push_symlink_replacement(unattended=unattended):
-        return None
-    return cli_emit.allow_push_live_symlink_replacements(plans)
-
-
 def emit_interrupt_notice() -> None:
     sys.stderr.write("\ninterrupted\n")
 
@@ -1981,7 +999,6 @@ visible_restore_actions = cli_emit.visible_restore_actions
 build_restore_review_items = cli_emit.build_restore_review_items
 
 
-
 def review_restore_actions_for_interactive_diffs(
     *,
     snapshot: SnapshotRecord,
@@ -1997,7 +1014,6 @@ def review_restore_actions_for_interactive_diffs(
     if not review_items:
         return True
     return run_diff_review_menu(review_items, operation="restore", full_paths=full_paths, unattended=unattended)
-
 
 
 @dataclass(frozen=True)
@@ -2060,4 +1076,3 @@ class StateRuntime:
 
     def emit_resolution_message(self, message: str) -> None:
         sys.stdout.write(message)
-

@@ -338,10 +338,6 @@ def render_snapshot_provenance(
     )
 
 
-def hook_summary_text(hook_names: Sequence[str]) -> str:
-    return ", ".join(hook_names)
-
-
 def render_annotation_parentheses(annotation_text: str, *, use_color: bool) -> str:
     if not annotation_text:
         return ""
@@ -382,12 +378,10 @@ def render_menu_badge(text: str, *, use_color: bool) -> str:
     return style_text(text, *MENU_HINT_STYLE)
 
 
-
 def render_sudo_badge(*, use_color: bool) -> str:
     if not use_color:
         return "[sudo]"
     return style_text("[sudo]", *SUDO_BADGE_STYLE)
-
 
 
 def join_menu_display_fields(*fields: str) -> str:

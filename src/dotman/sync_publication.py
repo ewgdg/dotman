@@ -307,7 +307,6 @@ def ordered_stage_steps(
                     repo_name=hook.repo_name or "", package_id=hook.package_id,
                     package_plan=package, target_plan=target, kind="hook",
                     action=name, scope_kind=hook.scope_kind, hook_plan=hook,
-                    privileged=hook.elevation == "root",
                 ))
 
     for repo, repo_hooks in metadata.repo_hooks:

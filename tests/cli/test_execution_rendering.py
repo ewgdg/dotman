@@ -1,49 +1,15 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from dotman.cli_emit import HumanExecutionRenderer, JsonExecutionRenderer
-from dotman.execution import ExecutionResult, ExecutionSession
+from dotman.cli_emit import HumanExecutionRenderer
 from dotman.operation_runner import (
     RestoreActionFinished,
     RestoreActionStarted,
     RestoreOperationFinished,
     RestoreOperationStarted,
-    SyncOperationFinished,
-    SyncOperationStarted,
 )
 from dotman.snapshot import RestoreAction, RestoreActionResult, RestoreResult, SnapshotRecord
-
-
-def test_human_renderer_consumes_sync_events_without_running_execution(capsys) -> None:
-    session = ExecutionSession(operation="push")
-    result = ExecutionResult(session=session, status="ok", repos=())
-    renderer = HumanExecutionRenderer(full_paths=False, use_color=False)
-
-    renderer.render_sync_event(SyncOperationStarted(session))
-    renderer.render_sync_event(SyncOperationFinished(result))
-
-    output = capsys.readouterr().out
-    assert ":: executing push" in output
-    assert "repos: 0 · packages: 0 · steps: 0" in output
-    assert "no pending target actions" in output
-
-
-def test_json_renderer_ignores_progress_and_emits_one_final_document(capsys) -> None:
-    session = ExecutionSession(operation="push")
-    result = ExecutionResult(session=session, status="ok", repos=())
-    renderer = JsonExecutionRenderer()
-
-    renderer.render_sync_event(SyncOperationStarted(session))
-    assert capsys.readouterr().out == ""
-
-    exit_code = renderer.render_sync_result(result)
-    output = capsys.readouterr().out
-
-    assert exit_code == 0
-    assert json.loads(output) == result.to_dict()
-    assert output.count("\n{") == 0
 
 
 def test_human_renderer_consumes_restore_events_without_mutating_filesystem(tmp_path: Path, capsys) -> None:

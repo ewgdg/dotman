@@ -7,29 +7,8 @@ from dotman.sync_base_store import FilePresent
 from dotman.sync_session import CommandAccepted, EditProposal
 from tests.engine.test_sync_session import make_engine
 
-from dotman.command_runtime import MemoryCommandRuntime
-from dotman.execution import build_execution_session, execute_session
 from dotman.engine import DotmanEngine
-from tests.helpers import make_package_plan, write_single_repo_config
-
-
-def test_push_only_delete_directory_child_executes_delete_not_push(tmp_path):
-    from dotman.models import DirectoryPlanItem, TargetPlan
-
-    repo_path = tmp_path / "repo"; repo_path.mkdir()
-    live_path = tmp_path / "live"; live_path.mkdir()
-    live_file = live_path / "a.conf"; live_file.write_text("live\n", encoding="utf-8")
-    item = DirectoryPlanItem(relative_path="a.conf", action="delete", repo_path=repo_path / "a.conf", live_path=live_file)
-    target = TargetPlan(package_id="app", target_name="config", repo_path=repo_path, live_path=live_path,
-                        action="delete", target_kind="directory", projection_kind="directory", directory_items=(item,))
-    package = make_package_plan(operation="push", repo_name="fixture", package_id="app",
-                                requested_profile="default", target_plans=[target], repo_root=tmp_path)
-    result = execute_session(build_execution_session([package], operation="push"), stream_output=False,
-                             unattended=True, command_runtime=MemoryCommandRuntime([]))
-    assert result.status == "ok"
-    assert not live_file.exists()
-
-
+from tests.helpers import write_single_repo_config
 
 
 def edit_first(session):

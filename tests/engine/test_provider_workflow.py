@@ -76,28 +76,18 @@ def test_probe_uses_workflow_while_guards_and_hooks_keep_direction(tmp_path, mon
         'pre_pull = \'test "$DOTMAN_OPERATION" = pull\'\n'
     )
     engine = DotmanEngine.from_config_path(tmp_path / "config.toml")
-    if operation == "push":
-        from dotman.execution import build_execution_session, execute_session
-        plan = engine.plan_push()
-        assert plan.package_plans[0].target_plans[0].action == "probe"
-        assert execute_session(build_execution_session(plan, operation="push"), unattended=True,
-                               stream_output=False).status == "ok"
-    else:
-        with getattr(engine, f"open_{operation}_session")(engine.resolve_sync_scope()) as session:
-            row, = session.view.rows
-            assert row.kind == "probe"
-            send(session, SetIncluded, row.row_id, True)
-            assert session.execute().result.status == "completed"
+    with getattr(engine, f"open_{operation}_session")(engine.resolve_sync_scope()) as session:
+        row, = session.view.rows
+        assert row.kind == "probe"
+        send(session, SetIncluded, row.row_id, True)
+        assert session.execute().result.status == "completed"
 
 
 def test_push_render_keeps_push_workflow_identity(tmp_path, monkeypatch):
-    from dotman.execution import build_execution_session, execute_session
     engine = make_engine(tmp_path, monkeypatch, [
         ("unit", "both", b"repo", b"live", 'render = \'printf "%s" "$DOTMAN_OPERATION"\''),
     ])
-    plan = engine.plan_push()
-    assert plan.package_plans[0].target_plans[0].desired_bytes == b"push"
-    assert execute_session(build_execution_session(plan, operation="push"), unattended=True,
-                           stream_output=False).status == "ok"
+    with engine.open_push_session(engine.resolve_sync_scope()) as session:
+        assert session.execute().result.status == "completed"
     assert (tmp_path / "live/unit").read_bytes() == b"push"
     assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"repo"

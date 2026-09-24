@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import dotman.cli_interaction as cli
 import pytest
 from dotman.cli import build_parser, main
-from dotman.cli_interaction import PendingSelectionItem, prompt_for_excluded_items
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 
 from tests.helpers import (
@@ -296,55 +295,6 @@ def test_select_menu_option_shows_help_then_accepts_selection(monkeypatch, capsy
     assert "Selection help:" in output
     assert "  <number>  choose that item" in output
     assert "Enter" not in output
-
-def test_prompt_for_excluded_items_shows_help_then_returns_selection(monkeypatch, capsys) -> None:
-    prompts = iter(["?", "1 3-4"])
-    items = [
-        cli.PendingSelectionItem(
-            selection_label="example:git@basic",
-            package_id="git",
-            target_name="gitconfig",
-            action="update",
-            source_path="/repo/gitconfig",
-            destination_path="/live/gitconfig",
-        )
-        for _ in range(4)
-    ]
-
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
-    excluded = cli.prompt_for_excluded_items(items, operation="push")
-
-    output = capsys.readouterr().out
-    assert excluded == {1, 3, 4}
-    assert "Selection help:" in output
-    assert "  ^<selection>   keep only the selected items" in output
-    assert "Enter" not in output
-
-def test_prompt_for_excluded_items_uses_full_paths_when_requested(monkeypatch, capsys) -> None:
-    prompts = iter([""])
-    items = [
-        cli.PendingSelectionItem(
-            selection_label="example:git@basic",
-            package_id="git",
-            target_name="gitconfig",
-            action="update",
-            source_path="/repo/very/long/path/gitconfig",
-            destination_path="/live/very/long/path/gitconfig",
-        )
-    ]
-
-    monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
-    excluded = cli.prompt_for_excluded_items(items, operation="push", full_paths=True)
-
-    output = capsys.readouterr().out
-    assert excluded == set()
-    assert "/repo/very/long/path/gitconfig -> /live/very/long/path/gitconfig" in output
-    assert "repo/.../path/gitconfig" not in output
-
 
 def test_run_diff_review_menu_shows_help_then_skips_review(monkeypatch, capsys) -> None:
     review_item = cli.ReviewItem(

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-import dotman.cli_emit as cli_emit
 from dotman.cli import main
 from dotman.sync_session import EditProposal, SetApproval
 from tests.engine.test_sync_session import make_engine
@@ -440,28 +439,6 @@ def test_push_cli_dry_run_emits_symlink_hazard_metadata(
     assert payload["stages"] == []
     assert (live_root / "config.txt").is_symlink()
     assert symlink_target.read_text(encoding="utf-8") == "live value\n"
-
-
-
-def test_push_cli_dry_run_human_warning_uses_package_target_label(capsys) -> None:
-    cli_emit.print_push_live_symlink_hazard_warning(
-        [
-            cli_emit.PushSymlinkHazard(
-                selection_label="main:sunshine@host/linux",
-                package_id="sunshine",
-                target_name="f_config_sunshine_sunshine_conf",
-                live_path=Path("/live/config.txt"),
-                symlink_target="/real/config.txt",
-                target_kind="file",
-                replaceable=True,
-            )
-        ],
-        use_color=False,
-    )
-
-    output = capsys.readouterr().out
-    assert "[replaceable] main:sunshine.f_config_sunshine_sunshine_conf" in output
-    assert ":f_config_sunshine_sunshine_conf" not in output
 
 
 

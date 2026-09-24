@@ -9,7 +9,6 @@ import pytest
 from dotman import sync_deck_command
 from dotman.cli import main
 from dotman.engine import DotmanEngine
-from dotman.execution import build_execution_session
 from tests.helpers import open_tracked_pull_session
 from tests.helpers import write_single_repo_config, write_tracked_packages_state
 
@@ -202,8 +201,6 @@ def test_package_guard_runs_once_per_instance_per_plan_build_and_never_enters_ex
     assert marker.read_text(encoding="utf-8") == "runrun"
     app_plan = next(plan for plan in first_plan.package_plans if plan.package_id == "app")
     assert "guard_push" not in app_plan.hooks
-    session = build_execution_session(first_plan, operation="push")
-    assert all(step.action != "guard_push" for repo in session.repos for step in repo.steps)
     assert second_plan.guard_skips == ()
 
 

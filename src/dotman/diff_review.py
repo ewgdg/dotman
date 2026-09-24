@@ -3,12 +3,11 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
-import stat
 import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable
 
 from dotman import cli_style
 from dotman.command_runtime import (
@@ -17,13 +16,10 @@ from dotman.command_runtime import (
     current_command_runtime,
     raise_for_command_interruption,
 )
-from dotman.file_access import read_bytes
-from dotman.models import AdditionalSource, HookPlan, PackagePlan
+from dotman.models import AdditionalSource
 from dotman.reconcile import resolve_editor_additional_sources, run_basic_reconcile
 from dotman.reconcile_helpers import run_jinja_reconcile
 from dotman.ui_context import current_ui_config
-
-
 
 
 DEFAULT_REVIEW_PAGER = "less -FRX"
@@ -61,156 +57,6 @@ class ReviewItem:
     is_probe: bool = False
     probe_command: str | None = field(default=None, repr=False)
     hook_command_summaries: tuple[str, ...] = ()
-
-
-
-def build_review_items(plans: Sequence[PackagePlan], *, operation: str) -> list[ReviewItem]:
-    review_items: list[ReviewItem] = []
-    for plan in plans:
-        selection_label = plan.selection_label
-        for target in plan.target_plans:
-            if target.directory_items:
-                for item in target.directory_items:
-                    source_path, destination_path = _selection_item_paths(
-                        operation=operation,
-                        repo_path=item.repo_path,
-                        live_path=item.live_path,
-                    )
-                    before_bytes, before_loader = _directory_item_review_byte_source(
-                        item,
-                        target=target,
-                        plan=plan,
-                        operation=operation,
-                        before=True,
-                    )
-                    after_bytes, after_loader = _directory_item_review_byte_source(
-                        item,
-                        target=target,
-                        plan=plan,
-                        operation=operation,
-                        before=False,
-                    )
-                    review_items.append(
-                        ReviewItem(
-                            selection_label=selection_label,
-                            package_id=target.package_id,
-                            target_name=target.target_name,
-                            action=item.action,
-                            operation=operation,
-                            repo_path=item.repo_path,
-                            live_path=item.live_path,
-                            source_path=source_path,
-                            destination_path=destination_path,
-                            before_bytes=before_bytes,
-                            after_bytes=after_bytes,
-                            before_bytes_loader=before_loader,
-                            after_bytes_loader=after_loader,
-                            before_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=True),
-                            after_mode=_load_item_mode(repo_path=item.repo_path, live_path=item.live_path, operation=operation, before=False),
-                            editor=item.editor,
-                            editor_explicit=item.editor_explicit,
-                            additional_sources=item.additional_sources,
-                            additional_source_entries=item.additional_source_entries,
-                            additional_sources_root=target.additional_sources_root,
-                            command_cwd=target.command_cwd,
-                            command_env=target.command_env,
-                            bound_profile=plan.bound_profile,
-                        )
-                    )
-                continue
-
-            if target.action == "noop":
-                continue
-            if target.target_kind == "probe":
-                review_items.append(
-                    ReviewItem(
-                        selection_label=selection_label,
-                        package_id=target.package_id,
-                        target_name=target.target_name,
-                        action="install",
-                        operation=operation,
-                        repo_path=target.repo_path,
-                        live_path=target.live_path,
-                        source_path="",
-                        destination_path="",
-                        bound_profile=plan.bound_profile,
-                        is_probe=True,
-                        probe_command=target.probe_command,
-                        hook_command_summaries=_related_hook_command_summaries(
-                            plan.hooks,
-                            package_id=target.package_id,
-                            target_name=target.target_name,
-                        ),
-                    )
-                )
-                continue
-
-            source_path, destination_path = _selection_item_paths(
-                operation=operation,
-                repo_path=target.repo_path,
-                live_path=target.live_path,
-            )
-            diff_unavailable_reason = None
-            if target.review_after_bytes is None:
-                diff_unavailable_reason = "diff preview is unavailable"
-            review_items.append(
-                ReviewItem(
-                    selection_label=selection_label,
-                    package_id=target.package_id,
-                    target_name=target.target_name,
-                    action=target.action,
-                    operation=operation,
-                    repo_path=target.repo_path,
-                    live_path=target.live_path,
-                    source_path=source_path,
-                    destination_path=destination_path,
-                    before_bytes=target.review_before_bytes,
-                    after_bytes=target.review_after_bytes,
-                    before_mode=_target_review_before_mode(target, operation=operation),
-                    after_mode=_target_review_after_mode(target, operation=operation),
-                    editor=target.editor,
-                    editor_explicit=target.editor_explicit,
-                    additional_sources=target.additional_sources,
-                    additional_source_entries=target.additional_source_entries,
-                    additional_sources_root=target.additional_sources_root,
-                    command_cwd=target.command_cwd,
-                    command_env=target.command_env,
-                    diff_unavailable_reason=diff_unavailable_reason,
-                    bound_profile=plan.bound_profile,
-                )
-            )
-    return review_items
-
-
-def _related_hook_command_summaries(
-    hooks: dict[str, list[HookPlan]],
-    *,
-    package_id: str,
-    target_name: str,
-) -> tuple[str, ...]:
-    summaries: list[str] = []
-    for hook_name, hook_plans in hooks.items():
-        for hook_plan in hook_plans:
-            if _hook_plan_matches_target(
-                hook_plan,
-                package_id=package_id,
-                target_name=target_name,
-            ):
-                summaries.append(f"{hook_name}: {hook_plan.command}")
-    return tuple(summaries)
-
-
-def _hook_plan_matches_target(
-    hook_plan: HookPlan,
-    *,
-    package_id: str,
-    target_name: str,
-) -> bool:
-    return (
-        hook_plan.scope_kind == "target"
-        and hook_plan.package_id == package_id
-        and hook_plan.target_name == target_name
-    )
 
 
 def edit_status(review_item: ReviewItem) -> str:
@@ -333,41 +179,6 @@ def run_review_item_edit(review_item: ReviewItem) -> int:
             raise ValueError("editor command was not found") from exc
 
 
-def _directory_item_review_byte_source(
-    item,
-    *,
-    target,
-    plan: PackagePlan,
-    operation: str,
-    before: bool,
-) -> tuple[bytes | None, ReviewBytesLoader | None]:
-    planned_bytes = item.review_before_bytes if before else item.review_after_bytes
-    if planned_bytes is not None:
-        return planned_bytes, None
-    if operation == "push" and not before and item.desired_bytes is not None:
-        return item.desired_bytes, None
-    return (
-        _load_item_bytes(
-            repo_path=item.repo_path,
-            live_path=item.live_path,
-            operation=operation,
-            before=before,
-        ),
-        None,
-    )
-
-
-
-
-
-
-
-
-
-
-
-
-
 def _review_item_bytes(review_item: ReviewItem, *, before: bool) -> bytes:
     bytes_value = review_item.before_bytes if before else review_item.after_bytes
     if bytes_value is not None:
@@ -378,62 +189,12 @@ def _review_item_bytes(review_item: ReviewItem, *, before: bool) -> bytes:
     raise ValueError("diff preview is unavailable")
 
 
-
-def _load_item_bytes(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> bytes:
-    target_path = _review_item_side_path(repo_path=repo_path, live_path=live_path, operation=operation, before=before)
-    try:
-        return read_bytes(target_path)
-    except FileNotFoundError:
-        return b""
-
-
-def _load_item_mode(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> int | None:
-    if operation != "push":
-        return None
-    target_path = _review_item_side_path(repo_path=repo_path, live_path=live_path, operation=operation, before=before)
-    try:
-        return git_file_mode(stat.S_IMODE(target_path.stat().st_mode))
-    except (FileNotFoundError, PermissionError):
-        return None
-
-
-def _review_item_side_path(*, repo_path: Path, live_path: Path, operation: str, before: bool) -> Path:
-    return live_path if before else repo_path
-
-
-def _target_review_before_mode(target, *, operation: str) -> int | None:
-    if operation != "push" or target.chmod is None:
-        return None
-    try:
-        return git_file_mode(stat.S_IMODE(target.live_path.stat().st_mode))
-    except FileNotFoundError:
-        return None
-
-
-def _target_review_after_mode(target, *, operation: str) -> int | None:
-    if operation != "push" or target.chmod is None:
-        return None
-    return git_file_mode(int(target.chmod, 8))
-
-
-def git_file_mode(mode: int) -> int:
-    return 0o755 if mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) else 0o644
-
-
 def _review_diff_file_modes(review_item: ReviewItem) -> tuple[int | None, int | None]:
     if review_item.before_mode is None or review_item.after_mode is None:
         return None, None
     if review_item.before_mode == review_item.after_mode:
         return None, None
     return review_item.before_mode, review_item.after_mode
-
-
-def _selection_item_paths(*, operation: str, repo_path: Path | str, live_path: Path | str) -> tuple[str, str]:
-    repo_text = str(repo_path)
-    live_text = str(live_path)
-    if operation == "restore":
-        return repo_text, live_text
-    return repo_text, live_text
 
 
 def _review_diff_side_names(*, operation: str) -> tuple[str, str]:

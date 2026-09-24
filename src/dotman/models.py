@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 if TYPE_CHECKING:
     from dotman.push_checkpoint import PushCheckpoint
@@ -815,7 +815,6 @@ class TargetPlan:
     capture_command: str | None = None
     live_path_is_symlink: bool = field(default=False, repr=False)
     live_path_symlink_target: str | None = field(default=None, repr=False)
-    allow_live_path_symlink_replace: bool = field(default=False, repr=False)
     file_symlink_mode: str = field(default="prompt", repr=False)
     dir_symlink_mode: str = field(default="fail", repr=False)
     chmod: str | None = None
@@ -928,55 +927,6 @@ def finalize_hook_plans_for_targets(
     return filtered_hooks
 
 
-def standalone_hook_package_summaries(
-    hooks: dict[str, list[HookPlan]],
-    target_plans: list[TargetPlan],
-) -> dict[str, tuple[str, ...]]:
-    executable_package_ids = executable_package_ids_for_targets(target_plans)
-    hook_names_by_package: dict[str, list[str]] = {}
-    for hook_name, hook_plans in hooks.items():
-        for hook_plan in hook_plans:
-            if hook_plan.scope_kind != "package":
-                continue
-            if hook_plan.package_id is None:
-                raise ValueError("package-scoped hook plans must include a package ID")
-            if hook_plan.package_id in executable_package_ids:
-                continue
-            package_hook_names = hook_names_by_package.setdefault(hook_plan.package_id, [])
-            if hook_name not in package_hook_names:
-                package_hook_names.append(hook_name)
-    return {
-        package_id: tuple(hook_names)
-        for package_id, hook_names in hook_names_by_package.items()
-    }
-
-
-def standalone_hook_target_summaries(
-    hooks: dict[str, list[HookPlan]],
-    target_plans: list[TargetPlan],
-) -> dict[tuple[str, str], tuple[str, ...]]:
-    executable_target_ids = {
-        (target.package_id, target.target_name)
-        for target in target_plans
-        if target.action != "noop"
-    }
-    hook_names_by_target: dict[tuple[str, str], list[str]] = {}
-    for hook_name, hook_plans in hooks.items():
-        for hook_plan in hook_plans:
-            if hook_plan.scope_kind != "target" or hook_plan.package_id is None or hook_plan.target_name is None:
-                continue
-            target_id = (hook_plan.package_id, hook_plan.target_name)
-            if target_id in executable_target_ids:
-                continue
-            target_hook_names = hook_names_by_target.setdefault(target_id, [])
-            if hook_name not in target_hook_names:
-                target_hook_names.append(hook_name)
-    return {
-        target_id: tuple(hook_names)
-        for target_id, hook_names in hook_names_by_target.items()
-    }
-
-
 @dataclass(frozen=True)
 class PackagePlan:
     operation: str
@@ -1067,15 +1017,6 @@ class OperationPlan(Sequence[PackagePlan]):
             },
             "guard_skips": [skip.to_dict() for skip in self.guard_skips],
         }
-
-
-PlanCollection: TypeAlias = OperationPlan | Sequence[PackagePlan]
-
-
-def package_plans_for_operation_plan(plans: PlanCollection) -> list[PackagePlan]:
-    if isinstance(plans, OperationPlan):
-        return list(plans.package_plans)
-    return list(plans)
 
 
 @dataclass(frozen=True)

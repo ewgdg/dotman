@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import dotman.cli_interaction as cli
 import pytest
 from dotman.cli import main
-from dotman.cli_interaction import PendingSelectionItem, prompt_for_excluded_items
 from dotman.engine import DotmanEngine
 from dotman.models import FullSpecSelector, DirectoryPlanItem, HookPlan, TargetPlan
 

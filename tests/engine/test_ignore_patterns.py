@@ -5,9 +5,13 @@ from pathlib import Path
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.execution import build_execution_session, execute_session
 from dotman.ignore import list_directory_files, matches_ignore_pattern
-from tests.helpers import single_package_plan, write_single_repo_config
+from tests.helpers import single_package_plan, write_single_repo_config, write_tracked_packages_state
+
+
+def _push_tracked_scope(engine: DotmanEngine) -> None:
+    with engine.open_push_session(engine.resolve_sync_scope()) as session:
+        assert session.execute().result.status == "completed"
 
 
 def test_gitignore_style_recursive_directory_patterns_ignore_nested_pycache_files(
@@ -783,6 +787,7 @@ def test_package_ignore_patterns_are_resolved_and_applied_during_push(
     (source_root / "machine.secret").write_text("secret\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
 
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("sample", "default")])
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
@@ -794,11 +799,7 @@ def test_package_ignore_patterns_are_resolved_and_applied_during_push(
     target = plan.target_plans[0]
     assert [item.relative_path for item in target.directory_items] == ["visible.conf"]
 
-    result = execute_session(
-        build_execution_session([plan], operation="push"),
-        stream_output=False,
-    )
-    assert result.status == "ok"
+    _push_tracked_scope(engine)
     live_root = home / ".config" / "sample"
     assert (live_root / "visible.conf").read_text(encoding="utf-8") == "visible = true\n"
     assert not (live_root / "machine.secret").exists()
@@ -836,6 +837,7 @@ def test_package_gitignore_enablement_is_resolved_and_applied_during_push(
     (source_root / "machine.local").write_text("local\n", encoding="utf-8")
     (repo_root / "profiles" / "default.toml").write_text("", encoding="utf-8")
 
+    write_tracked_packages_state(tmp_path / "state", repo_name="fixture", entries=[("sample", "default")])
     engine = DotmanEngine.from_config_path(
         write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo_root)
     )
@@ -848,11 +850,7 @@ def test_package_gitignore_enablement_is_resolved_and_applied_during_push(
     target = plan.target_plans[0]
     assert [item.relative_path for item in target.directory_items] == ["visible.conf"]
 
-    result = execute_session(
-        build_execution_session([plan], operation="push"),
-        stream_output=False,
-    )
-    assert result.status == "ok"
+    _push_tracked_scope(engine)
     live_root = home / ".config" / "sample"
     assert (live_root / "visible.conf").read_text(encoding="utf-8") == "visible = true\n"
     assert not (live_root / "machine.local").exists()

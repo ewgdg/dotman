@@ -8,7 +8,6 @@ import pytest
 
 from dotman.cli import main
 from dotman.engine import DotmanEngine
-from dotman.execution import build_execution_session, execute_session
 from tests.helpers import open_tracked_pull_session, initialize_git_repository
 from tests.helpers import write_named_manager_config, write_single_repo_config, write_tracked_packages_state
 
@@ -582,48 +581,6 @@ def test_repo_and_target_guard_manifests_reject_interactive_io_and_run_noop(
     )
     with pytest.raises(ValueError, match=error_match):
         _engine(tmp_path, repo_root).get_repo("fixture").resolve_package("app")
-
-
-def test_generated_execution_session_omits_all_guards_and_late_state_change_fails_hard(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    repo_root = tmp_path / "repo"
-    _write_profile(repo_root)
-    guard_runs = tmp_path / "guard-runs"
-    blocked = tmp_path / "blocked"
-    _write_repo_guard(repo_root, operation="push", command=f"printf repo >> {guard_runs}")
-    _write_file_package(
-        repo_root,
-        package_id="app",
-        package_guard=f"printf package >> {guard_runs}",
-        targets=[
-            (
-                "config",
-                "~/.config/app/config.txt",
-                f"printf target >> {guard_runs}; test ! -e {blocked} || exit 100",
-                None,
-            )
-        ],
-    )
-    engine = _engine(tmp_path, repo_root)
-
-    operation_plan = engine.plan_push_query("fixture:app@default")
-    session = build_execution_session(operation_plan, operation="push")
-
-    assert all(not step.action.startswith("guard_") for repo in session.repos for step in repo.steps)
-    blocked.write_text("changed\n", encoding="utf-8")
-    live_parent = home / ".config" / "app"
-    live_parent.parent.mkdir(parents=True)
-    live_parent.write_text("not a directory\n", encoding="utf-8")
-
-    result = execute_session(session, stream_output=False)
-
-    assert result.status == "failed"
-    assert guard_runs.read_text(encoding="utf-8") == "repopackagetarget"
 
 
 def test_capture_exit_100_is_a_visible_unapproved_failure(
