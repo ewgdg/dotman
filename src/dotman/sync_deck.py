@@ -21,7 +21,7 @@ from textual.widgets import DataTable, OptionList, RichLog, Static
 
 from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
-from dotman.cli_style import render_sync_term, render_package_label
+from dotman.cli_style import render_payload_section_label, render_sync_term, render_package_label
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
@@ -308,6 +308,16 @@ class CommandDeck:
             lines.extend(f"    {additional_label(item, use_color=self.use_color)}" for item in additional)
         lines += ["", "  ↑/↓ scroll  Space Approval  E edit  T retry  Esc return to workset"]
         return "\n".join(lines)
+
+
+def unit_label(row, *, use_color: bool) -> str:
+    identity = row.observation.identity
+    label = render_package_label(
+        repo_name=identity.repo, package_id=identity.package_id,
+        target_name=identity.target_name, bound_profile=identity.bound_profile,
+        use_color=use_color,
+    )
+    return label if identity.child_path is None else f"{label}/{identity.child_path}"
 
 
 def row_resolution(row) -> str:
@@ -627,15 +637,8 @@ class SyncDeckApp(App[bool]):
             if isinstance(row, AuxiliaryRow):
                 table.add_workset_row(row.row_id, Text.from_ansi(auxiliary_label(row.scope, row.kind, row.directions, use_color=self.deck.use_color)), "")
                 continue
-            identity = row.observation.identity
-            label = render_package_label(
-                repo_name=identity.repo, package_id=identity.package_id,
-                target_name=identity.target_name, bound_profile=identity.bound_profile,
-                use_color=self.deck.use_color,
-            )
-            if identity.child_path is not None:
-                label += "/" + identity.child_path
-            table.add_workset_row(row.row_id, Text.from_ansi(label), row.observation.effective_policy)
+            table.add_workset_row(row.row_id, Text.from_ansi(unit_label(row, use_color=self.deck.use_color)),
+                                  row.observation.effective_policy)
         table.move_cursor(row=self.deck.focus)
 
     def update_workset(self) -> None:
@@ -677,20 +680,21 @@ class SyncDeckApp(App[bool]):
 
     def update_detail(self) -> None:
         row = self.deck.focused_row
+        use_color = self.deck.use_color
         if row is None:
-            detail = "No drifted work."
+            lines = [render_payload_section_label("No drifted work.", use_color=use_color)]
         elif isinstance(row, AdditionalRow):
-            detail = additional_label(row, use_color=self.deck.use_color)
+            lines = [additional_label(row, use_color=use_color)]
         elif isinstance(row, AuxiliaryRow):
-            detail = auxiliary_label(row.scope, row.kind, row.directions)
-            detail += "\n" + "\n".join(item.message for item in row_diagnostics(row))
+            lines = [auxiliary_label(row.scope, row.kind, row.directions, use_color=use_color)]
         else:
-            diagnostics = row_diagnostics(row)
-            detail = "\n".join(item.message for item in diagnostics)
+            lines = [unit_label(row, use_color=use_color)]
             if row.fallback_reason:
-                detail += f"\nFallback: {row.fallback_reason}"
-            detail = f"{row.row_id}\n{detail}" if detail else row.row_id
-        self.query_one("#detail", Static).update(detail)
+                lines.append(f"  {render_sync_term('Fallback', use_color=use_color)}: {row.fallback_reason}")
+        if row is not None:
+            lines[1:1] = [f"  {render_sync_term(item.severity, use_color=use_color)}: {item.message}"
+                          for item in row_diagnostics(row)]
+        self.query_one("#detail", Static).update(Text.from_ansi("\n".join(lines)))
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         if not self.busy and not self.deck.reviewing and not self.deck.confirming:

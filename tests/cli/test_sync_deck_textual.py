@@ -178,11 +178,29 @@ def test_both_fallback_is_distinct_from_observation_failure(tmp_path, monkeypatc
                 table = app.query_one(DataTable)
                 assert "Use live" in table.render_line(1).text
                 assert "Observation failed" in table.render_line(2).text
-                assert "Fallback: absent" in str(app.query_one("#detail", Static).render())
+                assert str(app.query_one("#detail", Static).render()) == "main:app.both\n  Fallback: absent"
                 await pilot.press("space", "a")
                 assert [row.approved for row in session.view.rows] == [True, False]
                 await pilot.press("down")
-                assert "regular file" in str(app.query_one("#detail", Static).render())
+                assert str(app.query_one("#detail", Static).render()) == (
+                    "main:app.bad\n  error: endpoint must be a regular file"
+                )
+        run(interact())
+
+
+def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("bad", "push-only", b"repo", b"live", "")])
+    live = tmp_path / "live/bad"
+    live.unlink()
+    live.mkdir()
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=True))
+
+        async def interact():
+            async with app.run_test(size=(110, 24)):
+                detail = app.query_one("#detail", Static).render()
+                styled = {detail.plain[span.start:span.end] for span in detail.spans}
+                assert {"main", "bad", "error"} <= styled
         run(interact())
 
 
