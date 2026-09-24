@@ -23,7 +23,7 @@ def test_auxiliary_selection_and_review():
         assert deck.review_text() == ""
         deck.select_all(True)
         assert all(row.included for row in session.view.rows)
-        assert "2 selected auxiliary" in deck.confirmation_text()
+        assert "auxiliary: 2" in deck.confirmation_text()
         deck.select_all(False)
         assert not any(row.included for row in session.view.rows)
 
