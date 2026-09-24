@@ -7,7 +7,7 @@ from typing import Literal
 import stat
 
 from dotman.command_runtime import CommandRuntime
-from dotman.models import ResolvedSyncTarget, package_ref_text
+from dotman.models import GuardSkip, ResolvedSyncTarget, package_ref_text
 from dotman.planning import PackagePlanningInput
 from dotman.projection import run_probe_command
 from dotman.progress import ProgressSink
@@ -18,12 +18,25 @@ from dotman.sync_publication import PublicationMetadata
 @dataclass(frozen=True)
 class AuxiliaryRow:
     row_id: str
-    kind: Literal["probe", "hook", "directory-root"]
+    kind: Literal["probe", "hook", "directory-root", "guard-skip"]
     included: bool
     scope: str
     directions: tuple[str, ...]
     allowed_commands: tuple[Literal["set-included"], ...] = ("set-included",)
     diagnostics: tuple[Diagnostic, ...] = ()
+    guard_skip: GuardSkip | None = None
+
+
+def guard_skip_rows(skips: tuple[tuple[str, GuardSkip], ...]) -> tuple[AuxiliaryRow, ...]:
+    """Explain omitted work in the workset; it can never be selected."""
+    return tuple(
+        AuxiliaryRow(
+            f"{skip.scope_label} (guard_{direction})"
+            + (f" (path rule: {skip.path_rule_pattern})" if skip.path_rule_pattern is not None else ""),
+            "guard-skip", False, skip.scope_label, (direction,), allowed_commands=(), guard_skip=skip,
+        )
+        for direction, skip in skips
+    )
 
 
 def _package_scope(repo: str, package_id: str, profile: str | None) -> str:

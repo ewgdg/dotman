@@ -57,10 +57,12 @@ def row_diagnostics(row):
 
 
 def auxiliary_resolution(kind: str) -> str:
-    return {"probe": "Probe Work", "hook": "Hook Work", "directory-root": "Directory Root Work"}[kind]
+    return {"probe": "Probe Work", "hook": "Hook Work", "directory-root": "Directory Root Work",
+            "guard-skip": "Guard skipped"}[kind]
 
 
-def auxiliary_label(scope: str, kind: str, directions, *, use_color: bool = False) -> str:
+def auxiliary_label(scope: str, kind: str, directions, *, path_rule_pattern: str | None = None,
+                    use_color: bool = False) -> str:
     if use_color:
         if ":" in scope:
             identity = _parse_scope_selector(scope)
@@ -71,8 +73,21 @@ def auxiliary_label(scope: str, kind: str, directions, *, use_color: bool = Fals
             )
         else:
             scope = style_text(scope, *MENU_REPO_STYLE)
-    annotations = " ".join(f"({direction}-hooks)" for direction in directions) if kind == "hook" else ""
+    if kind == "hook":
+        annotations = " ".join(f"({direction}-hooks)" for direction in directions)
+    elif kind == "guard-skip":
+        annotations = " ".join(f"(guard_{direction})" for direction in directions)
+        if path_rule_pattern is not None:
+            annotations += f" (path rule: {path_rule_pattern})"
+    else:
+        annotations = ""
     return f"{scope} {annotations}".rstrip()
+
+
+def guard_skip_explanation(row) -> str:
+    """Guard exit 100 omits work by design; say which Guard and why."""
+    reason = f" ({row.guard_skip.reason})" if row.guard_skip.reason else ""
+    return f"guard_{row.directions[0]} exited 100{reason}"
 
 
 def review(session: SyncSession, row_id: str):
@@ -261,6 +276,12 @@ class SyncDeckCommandRunner:
                 print(f"      {render_sync_term(term, use_color=self._use_color)}")
                 for item in work["diagnostics"]:
                     print(f"      {item['message']}")
+        for skip in payload["guard_skips"]:
+            label = auxiliary_label(skip["identity"], "guard-skip", (skip["direction"],),
+                                    path_rule_pattern=skip["path_rule_pattern"], use_color=self._use_color)
+            reason = f": {skip['reason']}" if skip["reason"] else ""
+            print(f"  [{render_sync_term('skipped', use_color=self._use_color)}] {label}")
+            print(f"      {render_sync_term('Guard skipped', use_color=self._use_color)}{reason}")
         summary = payload["summary"]
         stats = summary_stats(
             (("approved", summary["approved_units"]), ("repos", summary["repository_changes"])),
@@ -386,6 +407,11 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
                 ] if row.row_id in additional_outcomes else [],
             }
             for row in additional
+        ],
+        "guard_skips": [
+            {"identity": row.scope, "direction": row.directions[0], "scope_kind": row.guard_skip.scope_kind,
+             "path_rule_pattern": row.guard_skip.path_rule_pattern, "reason": row.guard_skip.reason}
+            for row in auxiliary if row.kind == "guard-skip"
         ],
         "probe_work": auxiliary_work("probe"),
         "directory_root_work": auxiliary_work("directory-root"),

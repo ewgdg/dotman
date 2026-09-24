@@ -23,7 +23,7 @@ from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
 from dotman.cli_style import render_key_hints, render_payload_section_label, render_sync_term, render_package_label
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
-from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
+from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
 
 
@@ -311,6 +311,11 @@ class CommandDeck:
         hints = (("↑/↓", "scroll"), ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("Esc", "return to workset"))
         lines += ["", f"  {render_key_hints(hints, use_color=self.use_color)}"]
         return "\n".join(lines)
+
+
+def auxiliary_row_label(row: AuxiliaryRow, *, use_color: bool) -> str:
+    pattern = row.guard_skip.path_rule_pattern if row.guard_skip is not None else None
+    return auxiliary_label(row.scope, row.kind, row.directions, path_rule_pattern=pattern, use_color=use_color)
 
 
 def unit_label(row, *, use_color: bool) -> str:
@@ -638,7 +643,7 @@ class SyncDeckApp(App[bool]):
                 table.add_workset_row(row.row_id, Text.from_ansi(additional_label(row, use_color=self.deck.use_color)), "")
                 continue
             if isinstance(row, AuxiliaryRow):
-                table.add_workset_row(row.row_id, Text.from_ansi(auxiliary_label(row.scope, row.kind, row.directions, use_color=self.deck.use_color)), "")
+                table.add_workset_row(row.row_id, Text.from_ansi(auxiliary_row_label(row, use_color=self.deck.use_color)), "")
                 continue
             table.add_workset_row(row.row_id, Text.from_ansi(unit_label(row, use_color=self.deck.use_color)),
                                   row.observation.effective_policy)
@@ -691,7 +696,9 @@ class SyncDeckApp(App[bool]):
         elif isinstance(row, AdditionalRow):
             lines = [additional_label(row, use_color=use_color)]
         elif isinstance(row, AuxiliaryRow):
-            lines = [auxiliary_label(row.scope, row.kind, row.directions, use_color=use_color)]
+            lines = [auxiliary_row_label(row, use_color=use_color)]
+            if row.guard_skip is not None:
+                lines.append(f"  {render_sync_term('Guard skipped', use_color=use_color)}: {guard_skip_explanation(row)}")
         else:
             lines = [unit_label(row, use_color=use_color)]
             if row.fallback_reason:

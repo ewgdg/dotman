@@ -16,7 +16,7 @@ from dotman.atomic_files import default_created_file_mode
 from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
 from dotman.sync_observation import _identity
-from dotman.sync_auxiliary import AuxiliaryRow, plan_auxiliary, retain_directional_hooks
+from dotman.sync_auxiliary import AuxiliaryRow, guard_skip_rows, plan_auxiliary, retain_directional_hooks
 from dotman.sync_reconciliation import reconcile, ReconciliationConflict, ReconciliationFailed
 from dotman.projection import project_file_view
 from dotman.models import ResolvedSyncScope, package_ref_text, repo_qualified_target_text
@@ -584,7 +584,7 @@ class ProposalSession:
                      "push": publication_metadata},
                     dir_symlink_mode=context.config.dir_symlink_mode,
                     command_runtime=context.projection.command_runtime, run_noop=run_noop, sink=sink,
-                )
+                ) + guard_skip_rows(observed.guard_skips)
                 try:
                     obsolete_bases = cls._freeze_obsolete_bases(context, observed) if not preview else ()
                 except (KeyboardInterrupt, InterruptedError):

@@ -87,7 +87,8 @@ def test_package_guard_exit_100_omits_package_before_host_projection(
     if operation == "pull":
         with open_tracked_pull_session(engine, tmp_path, entries=[("app", "default")]) as session:
             assert session.view.observations == ()
-            assert session.view.rows == ()
+            skip, = session.view.rows
+            assert (skip.kind, skip.scope, skip.guard_skip.reason) == ("guard-skip", "fixture:app", "not for this host")
         assert not projection_marker.exists()
         return
 

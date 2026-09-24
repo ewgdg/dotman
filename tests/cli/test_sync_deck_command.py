@@ -32,7 +32,7 @@ def test_unattended_preview_selects_defaults_without_writes_or_content_leaks(tmp
     payload = json.loads(output)
     assert set(payload) == {
         "operation", "mode", "status", "scope", "summary", "sync_units",
-        "additional_source_changes", "probe_work", "directory_root_work", "hook_work", "stages",
+        "additional_source_changes", "guard_skips", "probe_work", "directory_root_work", "hook_work", "stages",
     }
     assert payload["mode"] == "dry-run"
     unit = payload["sync_units"][0]

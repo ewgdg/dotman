@@ -437,6 +437,11 @@ Merge choice and never publishes to live paths.
   `--run-noop` retains eligible auxiliary hook work. Active Probes and retained
   hook work start selected and can be opted out in the deck.
 - Only pull Guards and hooks run. Guard exit 100 omits its scope before Observation.
+  The deck keeps one unselectable **Guard skipped** row per omitted scope, e.g.
+  `main:app.unit (guard_pull)`, whose detail names the Guard and its first output
+  line. Result output prints `[skipped] <scope> (guard_pull)`, and JSON lists
+  `guard_skips` with identity, direction, scope kind, Path Rule pattern and
+  reason, never command text.
   Apply is fail-fast and nontransactional: completed writes survive later failure,
   and remaining work is reported skipped. Pull creates no live snapshot.
 - Directly agreeing eligible observations may establish a Base. Changed Pull does

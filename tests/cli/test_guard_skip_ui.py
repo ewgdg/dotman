@@ -1,0 +1,50 @@
+import asyncio
+from types import SimpleNamespace
+
+from dotman.sync_deck import CommandDeck, SyncDeckApp, WorksetTable
+from dotman.sync_deck_command import PullDeckCommandRunner, sync_document
+from tests.engine.test_sync_session import make_engine
+
+GUARD = '[targets.unit.hooks]\nguard_pull = "echo offline >&2; exit 100"'
+
+
+def guarded_engine(tmp_path, monkeypatch):
+    return make_engine(tmp_path, monkeypatch, [("unit", "both", b"repo", b"live", GUARD)])
+
+
+def test_guard_skip_json_names_scope_direction_and_reason(tmp_path, monkeypatch):
+    engine = guarded_engine(tmp_path, monkeypatch)
+    with engine.open_pull_session(engine.resolve_sync_scope(), preview=True) as session:
+        document = sync_document(SimpleNamespace(dry_run=True, scopes=[]), session, None)
+    assert document["guard_skips"] == [{
+        "identity": "main:app.unit", "direction": "pull", "scope_kind": "target",
+        "path_rule_pattern": None, "reason": "offline",
+    }]
+    assert document["summary"]["selected_auxiliary"] == 0
+
+
+def test_guard_skip_human_result_explains_omission(tmp_path, monkeypatch, capsys):
+    engine = guarded_engine(tmp_path, monkeypatch)
+    args = SimpleNamespace(config=engine.config.config_path, scopes=[], dry_run=True,
+                           unattended=True, json_output=False, run_noop=False, command="pull")
+    assert PullDeckCommandRunner(engine_factory=lambda _: engine, use_color=False).run(args) == 0
+    output = capsys.readouterr().out
+    assert "[skipped] main:app.unit (guard_pull)" in output
+    assert "Guard skipped: offline" in output
+
+
+def test_guard_skip_deck_row_is_marked_unselectable_with_reason(tmp_path, monkeypatch):
+    engine = guarded_engine(tmp_path, monkeypatch)
+    asyncio.run(asyncio.wait_for(guard_skip_deck(engine), timeout=5))
+
+
+async def guard_skip_deck(engine):
+    with engine.open_pull_session(engine.resolve_sync_scope(), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+        async with app.run_test() as pilot:
+            table = app.query_one(WorksetTable)
+            marker, target, _policy, resolution = (str(cell) for cell in table.get_row_at(0))
+            assert (marker, target, resolution) == ("[-]", "main:app.unit (guard_pull)", "Guard skipped")
+            await pilot.press("space")
+            assert not session.view.rows[0].included
+            assert "guard_pull exited 100 (offline)" in str(app.query_one("#detail").render())

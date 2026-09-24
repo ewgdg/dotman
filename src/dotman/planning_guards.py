@@ -421,6 +421,7 @@ def evaluate_hierarchical_guards(
 class DirectionalEligibility:
     inputs: list["PackagePlanningInput"]
     hook_scopes: frozenset[str]
+    guard_skips: tuple[GuardSkip, ...] = ()
 
 
 def evaluate_directional_guards(
@@ -432,12 +433,14 @@ def evaluate_directional_guards(
     """Narrow both families scope-first, never granting an absent capability."""
     survivors = dict(directional)
     scopes = {direction: set() for direction in directional}
+    skips = {direction: [] for direction in directional}
     for evaluate in (_evaluate_repo_guards, _evaluate_package_guards, _evaluate_target_guards):
         for direction, inputs in survivors.items():
             kwargs = {} if evaluate is _evaluate_target_guards else {"run_noop": run_noop}
-            survivors[direction], _skips = evaluate(
+            survivors[direction], scope_skips = evaluate(
                 inputs, command_runtime=command_runtime, operation=direction, **kwargs,
             )
+            skips[direction].extend(scope_skips)
             # Lower-scope removals must not suppress independently retained
             # noop hooks at an already admitted ancestor scope.
             for item in survivors[direction]:
@@ -458,6 +461,6 @@ def evaluate_directional_guards(
                         for target in item.target_metadata
                     )
     return {
-        direction: DirectionalEligibility(inputs, frozenset(scopes[direction]))
+        direction: DirectionalEligibility(inputs, frozenset(scopes[direction]), tuple(skips[direction]))
         for direction, inputs in survivors.items()
     }

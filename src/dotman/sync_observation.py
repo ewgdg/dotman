@@ -13,7 +13,7 @@ from dotman.sync_path_policy import SyncPathError
 from dotman import planning, projection
 from dotman.file_access import read_bytes
 from dotman.manifest import resolve_sync_policy, sync_policy_allows_operation
-from dotman.models import ResolvedSyncScope, ResolvedSyncTarget, target_path_rule_matches
+from dotman.models import GuardSkip, ResolvedSyncScope, ResolvedSyncTarget, target_path_rule_matches
 from dotman.planning_guards import evaluate_directional_guards, evaluate_directory_path_rule_guards
 from dotman.progress import ProgressSink
 from dotman.sync_directory import census_directory, child_metadata
@@ -330,6 +330,9 @@ class ObservedScope:
     hook_scopes: dict[str, frozenset[str]]
     inputs: _ResolvedInputs
     directory_censuses: tuple = ()
+    # Only operations that omit Guard-skipped work report it here; Sync keeps
+    # the unit and shows the narrowed policy instead.
+    guard_skips: tuple[tuple[str, GuardSkip], ...] = ()
 
 
 def _discard_ineligible_bases(
@@ -423,6 +426,7 @@ def observe_scope(
         directional, command_runtime=context.projection.command_runtime, run_noop=run_noop,
     )
     directional = {direction: value.inputs for direction, value in eligibility.items()}
+    guard_skips = [(direction, skip) for direction, value in eligibility.items() for skip in value.guard_skips]
     admitted = {
         direction: {_identity(metadata) for item in survivors for metadata in item.target_metadata}
         for direction, survivors in directional.items()
@@ -448,13 +452,14 @@ def observe_scope(
                 if identity in admitted[direction] and sync_policy_allows_operation(
                     resolve_sync_policy(package=child.package, target=child.target), operation=direction)
             }
-            child_admitted[direction], _skips = evaluate_directory_path_rule_guards(
+            child_admitted[direction], child_skips = evaluate_directory_path_rule_guards(
                 command_runtime=context.projection.command_runtime, path_rules=metadata.path_rules,
                 candidate_paths=candidates, operation=direction, context=item.package_context.context,
                 target_env={**metadata.command_env, "DOTMAN_OPERATION": direction},
                 repo_name=identity.repo, package_id=identity.package_id,
                 bound_profile=identity.bound_profile, target_name=identity.target_name,
             )
+            guard_skips.extend((direction, skip) for skip in child_skips)
         for relative, (child_identity, child, failures) in children.items():
             child_topology[child_identity] = (census.blockers(relative, repository=True), census.blockers(relative, repository=False), tuple(path for path, failures in census.entries if not failures))
             expanded_inputs[child_identity] = (item, child)
@@ -560,4 +565,4 @@ def observe_scope(
         observations.sort(key=lambda unit: (order[replace(unit.identity, child_path=None)], unit.identity.child_path or ""))
         return ObservedScope(tuple(observations), directional, {
             direction: value.hook_scopes for direction, value in eligibility.items()
-        }, expanded_inputs, tuple(directory_censuses))
+        }, expanded_inputs, tuple(directory_censuses), tuple(guard_skips) if omit_no_route else ())
