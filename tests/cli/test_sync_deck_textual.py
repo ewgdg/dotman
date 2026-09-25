@@ -743,3 +743,24 @@ def test_review_colors_sections_and_diff_lines(tmp_path, monkeypatch):
                 assert styles["repo-line"].color.number == 2  # ANSI green
                 assert styles["Approval:"].dim
         run(interact())
+
+
+def test_copy_key_copies_mouse_selected_review_text(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo", b"live", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.press("enter")
+                await pilot.pause()
+                body = app.query_one("#review-body")
+                row, start = 0, body.render_line(0).text.index("main:app.one")
+                await pilot.mouse_down(body, offset=(start, row))
+                await pilot.hover(body, offset=(start + len("main:app.one"), row))
+                await pilot.mouse_up(body, offset=(start + len("main:app.one"), row))
+                await pilot.press("y")
+                assert app.clipboard == "main:app.one"
+        run(interact())

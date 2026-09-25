@@ -23,6 +23,8 @@ from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.errors import NoWidget
+from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import DataTable, OptionList, Static
 
 from dotman.diff_review import display_review_path
@@ -510,6 +512,30 @@ def elide_middle(label: Text, width: int) -> Text:
     return Text.assemble(label[:head], "…", label[len(label) - (kept - head):])
 
 
+class ReviewBody(Widget):
+    """Review text laid out at the current width, then shown as plain styled lines.
+
+    Textual selects individual characters only in text content; a Rich table
+    (which provides the hanging indents) would select only as a whole block.
+    """
+
+    DEFAULT_CSS = "ReviewBody { height: auto; }"
+    document: reactive[ReviewDocument | None] = reactive(None, layout=True)
+
+    def render(self) -> Text:
+        if self.document is None:
+            return Text()
+        console = self.app.console
+        options = console.options.update_width(max(self.content_size.width, 1))
+        lines = []
+        for segments in console.render_lines(self.document.renderable(), options, pad=False):
+            line = Text.assemble(*((segment.text, segment.style) for segment in segments))
+            # Strip grid padding so copied text has no trailing blanks.
+            line.rstrip()
+            lines.append(line)
+        return Text("\n").join(lines)
+
+
 class WorksetTable(DataTable):
     """Render native cells; the app input boundary owns row actions."""
 
@@ -786,7 +812,7 @@ class SyncDeckApp(App[bool]):
         yield OptionList(id="resolution")
         # Review wraps instead of scrolling sideways; a Static re-wraps on resize, unlike a RichLog.
         with VerticalScroll(id="review"):
-            yield Static(id="review-body", markup=False)
+            yield ReviewBody(id="review-body")
         yield Static(id="confirmation", markup=False)
         yield Static(id="notice", markup=False)
         yield Static(id="help", markup=False)
@@ -963,7 +989,7 @@ class SyncDeckApp(App[bool]):
         self.query_one("#workset").display = False
         self.query_one("#detail").display = False
         log.display = True
-        self.query_one("#review-body", Static).update(self.deck.review_document().renderable())
+        self.query_one(ReviewBody).document = self.deck.review_document()
         self.query_one("#title", Static).update(":: Additional Source Review" if isinstance(self.deck.focused_row, AdditionalRow) else ":: Proposal Review")
         log.focus()
         self.call_after_refresh(log.scroll_to, *position, animate=False)
@@ -1099,15 +1125,18 @@ class SyncDeckApp(App[bool]):
         self.materialize(retry)
 
     def action_copy(self) -> None:
-        """Copy the full Target identity, or the whole review, via the terminal clipboard (OSC 52)."""
+        """Copy the full Target identity, or the review selection or whole review, via the terminal clipboard (OSC 52)."""
         if self.busy or self.deck.confirming or self.query_one(OptionList).display:
             return
         self.sync_focus()
         row = self.deck.focused_row
         if row is None:
             return
-        if self.deck.reviewing:
-            # The review shows only a viewport and cannot be selected in-app.
+        if self.deck.reviewing and (selected := self.screen.get_selected_text()):
+            # Ctrl+C is Abort, so Y also copies a mouse selection.
+            text, subject = selected, "selection"
+            self.screen.clear_selection()
+        elif self.deck.reviewing:
             text, subject = Text.from_ansi(self.deck.review_text()).plain, "review"
         else:
             # The Target cell may be elided; copy the untruncated identity.
