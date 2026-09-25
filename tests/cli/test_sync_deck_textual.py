@@ -29,6 +29,21 @@ def run(coroutine):
     return asyncio.run(asyncio.wait_for(coroutine, timeout=5))
 
 
+def detail_strips(app):
+    body = app.query_one("#detail-body")
+    return [body.render_line(y) for y in range(body.size.height)]
+
+
+def detail_lines(app):
+    """All detail rows as rendered, without the ring or scroll clipping."""
+    return [strip.text.rstrip() for strip in detail_strips(app)]
+
+
+def detail_facts(app):
+    """Whitespace-normalized rows, so grid column padding does not matter."""
+    return [" ".join(line.split()) for line in detail_lines(app)]
+
+
 def test_rendered_columns_align_across_variable_identities_and_resize(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
         ("a", "push-only", b"r", b"l", ""),
@@ -100,7 +115,7 @@ def test_long_target_identities_shrink_so_all_columns_fit_the_terminal(tmp_path,
                 assert "Use repository" in long_row
                 # The focused detail still names the full canonical identity.
                 await pilot.press("down")
-                assert f"main:app.{long_name}" in str(app.query_one("#detail", Static).render())
+                assert f"main:app.{long_name}" in "".join(detail_lines(app))
                 await pilot.resize_terminal(200, 24)
                 await pilot.pause()
                 assert f"main:app.{long_name}" in table.render_line(2).text
@@ -197,17 +212,15 @@ def test_both_fallback_is_distinct_from_observation_failure(tmp_path, monkeypatc
                 table = app.query_one(DataTable)
                 assert "Use repository" in table.render_line(1).text
                 assert "Observation failed" in table.render_line(2).text
-                assert str(app.query_one("#detail", Static).render()).startswith("main:app.both\n  Fallback: absent\n")
+                assert detail_facts(app)[:2] == ["main:app.both", "Fallback: absent"]
                 await pilot.press("space", "a")
                 assert [row.approved for row in session.view.rows] == [True, False]
                 await pilot.press("down")
-                assert str(app.query_one("#detail", Static).render()).startswith(
-                    "main:app.bad\n  error: endpoint must be a regular file\n"
-                )
+                assert detail_facts(app)[:2] == ["main:app.bad", "error: endpoint must be a regular file"]
         run(interact())
 
 
-def test_detail_ring_shows_full_paths_and_state_and_wraps(tmp_path, monkeypatch):
+def test_detail_ring_shows_full_paths_and_state_with_hanging_indent(tmp_path, monkeypatch):
     long_name = "very_long_target_name_that_needs_wrapping_inside_the_detail_ring"
     engine = make_engine(tmp_path, monkeypatch, [(long_name, "push-only", b"repo", b"live", "")])
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
@@ -215,20 +228,56 @@ def test_detail_ring_shows_full_paths_and_state_and_wraps(tmp_path, monkeypatch)
         observation = session.view.rows[0].observation
 
         async def interact():
-            async with app.run_test(size=(60, 30)) as pilot:
+            async with app.run_test(size=(60, 40)) as pilot:
                 await pilot.pause()
-                detail = app.query_one("#detail", Static)
-                text = str(detail.render())
-                assert text.splitlines()[0] == f"main:app.{long_name}"
-                assert f"Live path: {observation.live_path}" in text
-                assert f"Repository path: {observation.repository_path}" in text
-                assert "Observation: drifted" in text
-                assert "Sync Base:" in text
-                assert detail.styles.border_top[0] == "round"
-                # Long identities and paths wrap inside the ring instead of being cropped.
-                assert detail.content_size.height > len(text.splitlines())
-                wrapped = "".join(detail.render_line(y).text.strip(" │╭╮╰╯─") for y in range(detail.size.height))
-                assert str(observation.live_path).replace(" ", "") in wrapped.replace(" ", "")
+                assert app.query_one("#detail").styles.border_top[0] == "round"
+                lines = detail_lines(app)
+                assert "".join(lines[:2]) == f"main:app.{long_name}"
+                live = next(index for index, line in enumerate(lines) if line.startswith("  Live path:"))
+                value_column = len(lines[live]) - len(lines[live][len("  Live path:"):].lstrip())
+                # Wrapped values continue under their value column, not at the ring edge.
+                continuations = []
+                for line in lines[live + 1:]:
+                    if not line[:value_column].isspace():
+                        break
+                    continuations.append(line)
+                assert continuations and all(not line[value_column].isspace() for line in continuations)
+                assert "".join(line[value_column:] for line in [lines[live], *continuations]) == str(observation.live_path)
+                facts = detail_facts(app)
+                assert any(fact.startswith("Repository path:") for fact in facts)
+                assert "Observation: drifted · Sync Base: " + observation.base.status in facts
+        run(interact())
+
+
+def test_tab_focuses_detail_for_keyboard_scrolling_and_esc_returns(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        (f"target_with_a_long_name_{index}", "push-only", b"repo", b"live", "") for index in range(2)
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(40, 16)) as pilot:
+                await pilot.pause()
+                table, detail = app.query_one(WorksetTable), app.query_one("#detail")
+                assert detail.max_scroll_y > 0
+                assert "Tab detail" in str(app.query_one("#help", Static).render())
+                await pilot.press("tab")
+                assert app.focused is detail
+                await pilot.press("down", "down")
+                await pilot.wait_for_animation()
+                assert table.cursor_row == 0 and detail.scroll_y > 0
+                # Row commands still act on the row the detail describes.
+                await pilot.press("space")
+                assert [row.approved for row in session.view.rows] == [True, False]
+                await pilot.press("escape")
+                assert app.is_running and app.focused is table
+                await pilot.press("tab")
+                await pilot.press("tab")
+                assert app.focused is table
+                await pilot.press("down")
+                await pilot.pause()
+                assert table.cursor_row == 1 and detail.scroll_y == 0
         run(interact())
 
 
@@ -242,8 +291,9 @@ def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monke
 
         async def interact():
             async with app.run_test(size=(110, 24)):
-                detail = app.query_one("#detail", Static).render()
-                styled = {detail.plain[span.start:span.end] for span in detail.spans}
+                strips = detail_strips(app)
+                plain = list(strips[1])[-1].style
+                styled = {segment.text.strip() for strip in strips for segment in strip if segment.style != plain}
                 assert {"main", "bad", "error"} <= styled
                 hints = app.query_one("#help", Static).render()
                 assert hints.plain.startswith("Esc abort · X confirm")
@@ -287,7 +337,7 @@ def test_empty_workset_can_cancel_without_a_cursor_target(tmp_path, monkeypatch)
 
         async def interact():
             async with app.run_test() as pilot:
-                assert "No drifted work" in str(app.query_one("#detail", Static).render())
+                assert "No drifted work" in detail_lines(app)[0]
                 await pilot.press("down", "space", "enter", "a", "u", "escape")
                 assert app.return_value is False
                 assert session.view.rows == ()
@@ -326,8 +376,8 @@ def test_long_workset_scrolls_without_losing_focused_row(tmp_path, monkeypatch):
 @pytest.mark.parametrize("navigation,start,expected", [
     ("down", 0, 1),
     ("up", 1, 0),
-    ("pagedown", 0, 7),
-    ("pageup", 14, 7),
+    ("pagedown", 0, "page"),
+    ("pageup", 14, "page"),
     ("ctrl+end", 0, 24),
     ("ctrl+home", 24, 0),
     ("home", 7, 7),
@@ -349,25 +399,30 @@ def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, s
         app = SyncDeckApp(CommandDeck(session, use_color=False))
 
         async def interact():
-            # Page geometry: the detail ring shares height with the workset; 15 rows keeps a 7-row page.
-            async with app.run_test(size=(80, 15)) as pilot:
+            async with app.run_test(size=(80, 12)) as pilot:
                 await pilot.press(*(["down"] * start))
+                target = expected
+                if expected == "page":
+                    # A page is the table's visible row count, which depends on the surrounding layout.
+                    table = app.query_one(DataTable)
+                    page = table.scrollable_content_region.height - table.header_height
+                    target = start + page if navigation == "pagedown" else start - page
                 # Unlike Pilot.press, post without yielding between terminal keys.
                 app.post_message(events.Key(navigation, None))
                 app.post_message(events.Key(command, " " if command == "space" else None))
                 await pilot.pause()
                 table = app.query_one(DataTable)
-                assert table.cursor_row == expected
-                assert app.deck.focused_row.row_id == f"main:app.unit_{expected:02}"
+                assert table.cursor_row == target
+                assert app.deck.focused_row.row_id == f"main:app.unit_{target:02}"
                 if command == "space":
                     assert [row.row_id for row in session.view.rows if row.approved] == [
-                        f"main:app.unit_{expected:02}"
+                        f"main:app.unit_{target:02}"
                     ]
                 else:
                     assert app.deck.reviewing
                     # Opening review queues its resize after the input batch settles.
                     await pilot.pause()
-                    assert f"Proposal Review — main:app.unit_{expected:02}" in "\n".join(
+                    assert f"Proposal Review — main:app.unit_{target:02}" in "\n".join(
                         line.text for line in app.query_one(RichLog).lines
                     )
                     assert not any(row.approved for row in session.view.rows)
@@ -449,7 +504,7 @@ def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
         async def interact():
             async with app.run_test() as pilot:
                 assert session.view.rows[0].intent == 'use-repository'
-                assert 'Fallback' in str(app.query_one('#detail', Static).render())
+                assert any(line.startswith('Fallback:') for line in detail_facts(app))
                 await pilot.press('r')
                 menu = app.query_one(OptionList)
                 assert menu.display

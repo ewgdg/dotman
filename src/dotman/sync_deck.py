@@ -10,12 +10,16 @@ from difflib import unified_diff
 import signal
 import time
 
+from rich.console import Group
+from rich.padding import Padding
 from rich.spinner import Spinner
+from rich.table import Table
 
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
+from textual.containers import VerticalScroll
 from textual.errors import NoWidget
 from textual.widgets import DataTable, OptionList, RichLog, Static
 
@@ -329,16 +333,27 @@ def unit_label(row, *, use_color: bool) -> str:
     return label if identity.child_path is None else f"{label}/{identity.child_path}"
 
 
-def unit_detail_facts(observation) -> list[str]:
+def unit_detail_facts(observation) -> list[tuple[str, str]]:
     """Surface what the workset columns cannot fit; labels match Proposal Review."""
-    state = f"  Observation: {observation.state} · Sync Base: {observation.base.status}"
+    state = f"{observation.state} · Sync Base: {observation.base.status}"
     if observation.configured_policy != observation.effective_policy:
         state += f" · Configured policy: {observation.configured_policy}"
     # Full paths: the ring wraps them, so compaction would only hide identity.
-    paths = [f"  {label}: {display_review_path(path, compact=False)}"
+    paths = [(label, display_review_path(path, compact=False))
              for label, path in (("Live path", observation.live_path), ("Repository path", observation.repository_path))
              if path is not None]
-    return [*paths, state]
+    return [*paths, ("Observation", state)]
+
+
+def detail_renderable(identity: str, facts: list[tuple[str, str]]) -> Group:
+    """Label/value grid: wrapped values keep a hanging indent under their column."""
+    grid = Table.grid(padding=(0, 1))
+    grid.add_column(no_wrap=True)
+    # Paths have no spaces to break at; fold them at the column edge.
+    grid.add_column(ratio=1, overflow="fold")
+    for label, value in facts:
+        grid.add_row(Text.from_ansi(f"{label}:"), Text.from_ansi(value))
+    return Group(Text.from_ansi(identity, overflow="fold"), Padding(grid, (0, 0, 0, 2)))
 
 
 def row_resolution(row) -> str:
@@ -431,7 +446,8 @@ class SyncDeckApp(App[bool]):
     #title { height: auto; padding: 0 1; text-style: bold; color: $accent; }
     #workset { height: 1fr; }
     /* No side margin: a margined sibling narrows the workset table in Textual's vertical layout. */
-    #detail { height: auto; max-height: 35%; border: round $accent; padding: 0 1; overflow-y: auto; }
+    #detail { height: auto; max-height: 35%; border: round $foreground 30%; padding: 0 1; overflow-y: auto; }
+    #detail:focus { border: round $accent; }
     #resolution { height: auto; max-height: 5; border: round $accent; margin: 0 1; }
     #review { height: 1fr; }
     #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
@@ -460,6 +476,7 @@ class SyncDeckApp(App[bool]):
         # Lowercase l is vim-style right; authorization needs the deliberate Shift+L.
         Binding("L", "authorize_link", "Authorize link replacement", priority=True),
         Binding("e,E", "editor", "Editor", priority=True),
+        Binding("tab,shift+tab", "toggle_detail_focus", "Detail", priority=True),
         Binding("space", "approve", "Select", priority=True),
         Binding("a,A", "approve_all", "Select all", priority=True),
         Binding("u,U", "clear_all", "Clear all", priority=True),
@@ -477,6 +494,7 @@ class SyncDeckApp(App[bool]):
         self.deck = deck
         self.review_positions: dict[str, tuple[float, float]] = {}
         self._workset_mouse_down = False
+        self._detail_row_id: str | None = None
         self._lane = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sync-materialization")
         self._materialization: asyncio.Task | None = None
         self._aborting = False
@@ -636,7 +654,9 @@ class SyncDeckApp(App[bool]):
     def compose(self) -> ComposeResult:
         yield Static(f":: {self.deck.session.view.operation.title()} Command Deck", id="title", markup=False)
         yield WorksetTable(id="workset", cursor_type="row", zebra_stripes=True)
-        yield Static(id="detail", markup=False)
+        # A scroll container: a bare Static cannot scroll, so overflowing details would be unreachable.
+        with VerticalScroll(id="detail"):
+            yield Static(id="detail-body", markup=False)
         yield OptionList(id="resolution")
         yield RichLog(id="review", wrap=False, auto_scroll=False, min_width=1)
         yield Static(id="confirmation", markup=False)
@@ -685,6 +705,13 @@ class SyncDeckApp(App[bool]):
         table.fit_targets()
         self.update_detail()
         self.query_one("#notice", Static).update(self.deck.notice)
+        self.update_hints()
+
+    @property
+    def detail_focused(self) -> bool:
+        return self.focused is self.query_one("#detail")
+
+    def update_hints(self) -> None:
         review_scroll = ("↑/↓/j/k/PgUp/PgDn", "scroll")
         if self.query_one(OptionList).display:
             hints = [("↑/↓/j/k", "choose Resolution"), ("Enter", "select"), ("Esc", "dismiss")]
@@ -695,8 +722,12 @@ class SyncDeckApp(App[bool]):
         elif self.deck.reviewing:
             hints = [("Esc", "return"), ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("Y", "copy"),
                      review_scroll, ("Ctrl+C", "abort")]
+        elif self.detail_focused:
+            hints = [("Tab/Esc", "return to workset"), review_scroll, ("Space", "mark"), ("Enter", "view"),
+                     ("E", "edit"), ("T", "retry")]
         else:
-            hints = [("Esc", "abort"), ("X", "confirm"), ("Space", "mark"), ("Enter", "view"), ("E", "edit"), ("T", "retry")]
+            hints = [("Esc", "abort"), ("X", "confirm"), ("Space", "mark"), ("Enter", "view"), ("E", "edit"), ("T", "retry"),
+                     ("Tab", "detail")]
         row = self.deck.focused_row
         if row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming:
             hints.append(("Shift+L", "authorize link replacement"))
@@ -707,23 +738,27 @@ class SyncDeckApp(App[bool]):
     def update_detail(self) -> None:
         row = self.deck.focused_row
         use_color = self.deck.use_color
+        detail, body = self.query_one("#detail"), self.query_one("#detail-body", Static)
         if row is None:
-            lines = [render_payload_section_label("No drifted work.", use_color=use_color)]
-        elif isinstance(row, AdditionalRow):
-            lines = [additional_label(row, use_color=use_color)]
+            body.update(Text.from_ansi(render_payload_section_label("No drifted work.", use_color=use_color)))
+            return
+        facts = [(render_sync_term(item.severity, use_color=use_color), item.message) for item in row_diagnostics(row)]
+        if isinstance(row, AdditionalRow):
+            identity = additional_label(row, use_color=use_color)
         elif isinstance(row, AuxiliaryRow):
-            lines = [auxiliary_row_label(row, use_color=use_color)]
+            identity = auxiliary_row_label(row, use_color=use_color)
             if row.guard_skip is not None:
-                lines.append(f"  {render_sync_term('Guard skipped', use_color=use_color)}: {guard_skip_explanation(row)}")
+                facts.append((render_sync_term('Guard skipped', use_color=use_color), guard_skip_explanation(row)))
         else:
-            lines = [unit_label(row, use_color=use_color)]
+            identity = unit_label(row, use_color=use_color)
             if row.fallback_reason:
-                lines.append(f"  {render_sync_term('Fallback', use_color=use_color)}: {row.fallback_reason}")
-            lines += unit_detail_facts(row.observation)
-        if row is not None:
-            lines[1:1] = [f"  {render_sync_term(item.severity, use_color=use_color)}: {item.message}"
-                          for item in row_diagnostics(row)]
-        self.query_one("#detail", Static).update(Text.from_ansi("\n".join(lines)))
+                facts.append((render_sync_term('Fallback', use_color=use_color), row.fallback_reason))
+            facts += unit_detail_facts(row.observation)
+        if row.row_id != self._detail_row_id:
+            # A newly focused row starts from its identity, not the old scroll offset.
+            self._detail_row_id = row.row_id
+            detail.scroll_home(animate=False)
+        body.update(detail_renderable(identity, facts))
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if not self.busy and not self.deck.reviewing and not self.deck.confirming:
@@ -753,6 +788,8 @@ class SyncDeckApp(App[bool]):
             return
         if self.deck.reviewing:
             await self.query_one(RichLog).run_action(review_action)
+        elif self.detail_focused:
+            await self.query_one("#detail").run_action(review_action)
         else:
             table = self.query_one(WorksetTable)
             if table.row_count:
@@ -835,6 +872,9 @@ class SyncDeckApp(App[bool]):
     def action_back(self) -> None:
         if self.busy:
             return
+        if self.detail_focused:
+            self.query_one(WorksetTable).focus()
+            return
         if self.query_one(OptionList).display:
             self.close_resolution()
             self.update_workset()
@@ -846,6 +886,15 @@ class SyncDeckApp(App[bool]):
             self.exit(False)
         else:
             self.show_workset()
+
+    def action_toggle_detail_focus(self) -> None:
+        if self.busy or self.deck.reviewing or self.deck.confirming or self.query_one(OptionList).display:
+            return
+        (self.query_one(WorksetTable) if self.detail_focused else self.query_one("#detail")).focus()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        # Keyboard toggles and mouse clicks both move focus; hints follow either.
+        self.update_hints()
 
     def close_resolution(self) -> None:
         self.query_one(OptionList).display = False

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from dotman.sync_deck import CommandDeck, SyncDeckApp, WorksetTable
 from dotman.sync_deck_command import PullDeckCommandRunner, sync_document
 from tests.engine.test_sync_session import make_engine
+from tests.cli.test_sync_deck_textual import detail_facts
 
 GUARD = '[targets.unit.hooks]\nguard_pull = "echo offline >&2; exit 100"'
 
@@ -48,7 +49,7 @@ async def guard_skip_deck(engine):
             assert (marker, target, resolution) == ("[-]", "main:app.unit (guard_pull)", "Guard skipped")
             await pilot.press("space")
             assert not session.view.rows[0].included
-            assert "guard_pull exited 100 (offline)" in str(app.query_one("#detail").render())
+            assert any("guard_pull exited 100 (offline)" in fact for fact in detail_facts(app))
 
 
 def test_guard_skip_deck_row_is_dimmed(tmp_path, monkeypatch):

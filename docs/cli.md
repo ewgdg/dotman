@@ -146,8 +146,11 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   restoration finish before the deck resumes; **E** can start a fresh attempt.
   Terminal Editors take terminal ownership temporarily and return to the same
   focused deck. No Editor runs automatically or under `--unattended`.
+- **Tab** focuses the ringed detail panel below the table so arrow, vim and page
+  keys scroll it; **Tab** or **Esc** returns to the workset. Row commands keep
+  acting on the focused row. The mouse wheel scrolls it without moving focus.
 - **Observation failed** and **Proposal failed** retain their diagnostic details
-  below the table. Directory scopes discover independent canonical child rows.
+  in the detail panel. Directory scopes discover independent canonical child rows.
   Their **Selection** grants opt-in Approval, just like file targets. Each child
   has its own policy-allowed Resolution, Proposal, effects and completion result.
   Review shows child executable changes with Git mode lines. Exact Path Rule
