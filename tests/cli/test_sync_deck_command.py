@@ -94,6 +94,8 @@ def test_confirmation_freezes_selection_and_cancel_restores_workset(tmp_path, mo
         assert session.view == frozen
         assert "approved: 1" in deck.confirmation_text()
         assert "live: 1" in deck.confirmation_text()
+        # Key hints belong to the help bar alone; the body must not repeat them.
+        assert "Esc" not in deck.confirmation_text()
         deck.back()
         assert not deck.confirming
         assert session.view == frozen

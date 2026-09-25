@@ -285,8 +285,7 @@ class CommandDeck:
              ("auxiliary", auxiliary_count), ("repos", repository_changes)),
             writes=writes, deletions=deletions, trailing=(("modes", modes),), use_color=self.use_color,
         )
-        hints = render_key_hints((("Enter", "confirm"), ("Esc", "return")), use_color=self.use_color)
-        return f":: {verb}? — {stats}\n\n  {hints}"
+        return f":: {verb}? — {stats}"
 
     def review_text(self) -> str:
         document = self.review_document()
