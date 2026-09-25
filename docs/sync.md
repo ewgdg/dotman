@@ -196,8 +196,10 @@ The persistent Textual Command Deck shows drift, auxiliary work and diagnostics,
 not directly agreeing units. Its aligned table uses canonical target identities
 and a **Selection** column. Selection authorizes Proposals and canonical Additional Source Changes through
 independent Approval and directly includes auxiliary work. Unsupported resolution capability is labeled separately
-from Observation and Proposal failures; focused diagnostic details explain the
-current row. Directory child rows use the same opt-in Approval as file targets. The deck and
+from Observation and Proposal failures. A ringed detail panel below the table
+describes the focused row: its full canonical identity, diagnostics, and for units
+the full live and repository paths, Observation state, Sync Base status and any
+differing configured policy. Long lines wrap inside the ring. Directory child rows use the same opt-in Approval as file targets. The deck and
 output adapter also recognize semantic **Directory Root Work** as direct Auxiliary
 inclusion, without Proposal or Approval. Root work uses the same selection styling
 and canonical target identity as other auxiliary work.

@@ -45,7 +45,7 @@ def test_rendered_columns_align_across_variable_identities_and_resize(tmp_path, 
                 assert lines[2].index("push-only") == lines[0].index("Policy")
                 assert lines[1].index("main:app.a") == lines[0].index("Target")
                 assert lines[2].index("main:app.longer_target") == lines[0].index("Target")
-                await pilot.resize_terminal(42, 12)
+                await pilot.resize_terminal(42, 16)
                 assert table.size.width == 42
                 await pilot.press("end")
                 await pilot.pause()
@@ -197,13 +197,38 @@ def test_both_fallback_is_distinct_from_observation_failure(tmp_path, monkeypatc
                 table = app.query_one(DataTable)
                 assert "Use repository" in table.render_line(1).text
                 assert "Observation failed" in table.render_line(2).text
-                assert str(app.query_one("#detail", Static).render()) == "main:app.both\n  Fallback: absent"
+                assert str(app.query_one("#detail", Static).render()).startswith("main:app.both\n  Fallback: absent\n")
                 await pilot.press("space", "a")
                 assert [row.approved for row in session.view.rows] == [True, False]
                 await pilot.press("down")
-                assert str(app.query_one("#detail", Static).render()) == (
-                    "main:app.bad\n  error: endpoint must be a regular file"
+                assert str(app.query_one("#detail", Static).render()).startswith(
+                    "main:app.bad\n  error: endpoint must be a regular file\n"
                 )
+        run(interact())
+
+
+def test_detail_ring_shows_full_paths_and_state_and_wraps(tmp_path, monkeypatch):
+    long_name = "very_long_target_name_that_needs_wrapping_inside_the_detail_ring"
+    engine = make_engine(tmp_path, monkeypatch, [(long_name, "push-only", b"repo", b"live", "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+        observation = session.view.rows[0].observation
+
+        async def interact():
+            async with app.run_test(size=(60, 30)) as pilot:
+                await pilot.pause()
+                detail = app.query_one("#detail", Static)
+                text = str(detail.render())
+                assert text.splitlines()[0] == f"main:app.{long_name}"
+                assert f"Live path: {observation.live_path}" in text
+                assert f"Repository path: {observation.repository_path}" in text
+                assert "Observation: drifted" in text
+                assert "Sync Base:" in text
+                assert detail.styles.border_top[0] == "round"
+                # Long identities and paths wrap inside the ring instead of being cropped.
+                assert detail.content_size.height > len(text.splitlines())
+                wrapped = "".join(detail.render_line(y).text.strip(" │╭╮╰╯─") for y in range(detail.size.height))
+                assert str(observation.live_path).replace(" ", "") in wrapped.replace(" ", "")
         run(interact())
 
 
@@ -324,7 +349,8 @@ def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, s
         app = SyncDeckApp(CommandDeck(session, use_color=False))
 
         async def interact():
-            async with app.run_test(size=(80, 12)) as pilot:
+            # Page geometry: the detail ring shares height with the workset; 15 rows keeps a 7-row page.
+            async with app.run_test(size=(80, 15)) as pilot:
                 await pilot.press(*(["down"] * start))
                 # Unlike Pilot.press, post without yielding between terminal keys.
                 app.post_message(events.Key(navigation, None))

@@ -329,6 +329,18 @@ def unit_label(row, *, use_color: bool) -> str:
     return label if identity.child_path is None else f"{label}/{identity.child_path}"
 
 
+def unit_detail_facts(observation) -> list[str]:
+    """Surface what the workset columns cannot fit; labels match Proposal Review."""
+    state = f"  Observation: {observation.state} · Sync Base: {observation.base.status}"
+    if observation.configured_policy != observation.effective_policy:
+        state += f" · Configured policy: {observation.configured_policy}"
+    # Full paths: the ring wraps them, so compaction would only hide identity.
+    paths = [f"  {label}: {display_review_path(path, compact=False)}"
+             for label, path in (("Live path", observation.live_path), ("Repository path", observation.repository_path))
+             if path is not None]
+    return [*paths, state]
+
+
 def row_resolution(row) -> str:
     """Capability absence is not a failed filesystem observation."""
     if isinstance(row, AuxiliaryRow):
@@ -418,7 +430,8 @@ class SyncDeckApp(App[bool]):
     Screen { background: $surface; }
     #title { height: auto; padding: 0 1; text-style: bold; color: $accent; }
     #workset { height: 1fr; }
-    #detail { height: auto; max-height: 5; padding: 0 1; overflow-y: auto; }
+    /* No side margin: a margined sibling narrows the workset table in Textual's vertical layout. */
+    #detail { height: auto; max-height: 35%; border: round $accent; padding: 0 1; overflow-y: auto; }
     #resolution { height: auto; max-height: 5; border: round $accent; margin: 0 1; }
     #review { height: 1fr; }
     #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
@@ -706,6 +719,7 @@ class SyncDeckApp(App[bool]):
             lines = [unit_label(row, use_color=use_color)]
             if row.fallback_reason:
                 lines.append(f"  {render_sync_term('Fallback', use_color=use_color)}: {row.fallback_reason}")
+            lines += unit_detail_facts(row.observation)
         if row is not None:
             lines[1:1] = [f"  {render_sync_term(item.severity, use_color=use_color)}: {item.message}"
                           for item in row_diagnostics(row)]
