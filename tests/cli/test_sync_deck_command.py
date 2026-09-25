@@ -238,13 +238,18 @@ def test_interactive_abort_emits_final_summary_and_releases_session(tmp_path, mo
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     sessions = []
     def abort(session, **kwargs):
+        from dotman.sync_deck_command import set_all_selected
         sessions.append(session)
+        set_all_selected(session, True)
         if interrupt:
             raise KeyboardInterrupt()
         return False
     monkeypatch.setattr(sync_deck, "run_command_deck", abort)
     assert runner_for(engine).run(arguments(dry_run=False, unattended=False, json_output=False)) == 130
-    assert "Sync" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    # Nothing ran, so the log must not echo the dismissed rows back as pending.
+    assert captured.out.splitlines() == [":: Sync", ":: aborted — no changes made"]
+    assert "Sync aborted" in captured.err
     assert sessions[0].view.terminal
     assert (tmp_path / "live/unit").read_bytes() == b"live"
 

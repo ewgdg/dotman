@@ -386,11 +386,15 @@ Resolution and effects, skipped work listed rather than counted, unselected
 entries led by `[unselected]`, and guard and no-Base skips (then omitted above
 the timeline).
 
-Preview, abort and pre-execution failures print the entry log instead: each
+Preview and pre-execution failures print the entry log instead: each
 entry leads with its outcome (`ok`, `failed`, `interrupted`, `skipped`,
 `would-apply` in preview, `pending` when execution never started) followed by
 its Resolution and effects. Unselected entries are omitted unless they carry
 diagnostics. JSON never includes progress.
+
+Aborting the Deck prints only `:: aborted — no changes made`: nothing ran, and
+the entries would only echo the dismissed rows as `pending`. `--report` and JSON
+still carry every entry.
 
 A failed Guard or Probe is summarized by the first non-empty line of its stderr,
 else stdout. Command output is untrusted and may contain managed content, so

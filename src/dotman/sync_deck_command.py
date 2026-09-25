@@ -208,7 +208,7 @@ class SyncDeckCommandRunner:
                         aborted = session.abort()
                         self._emit(args, session, aborted.result, diagnostic={
                             "code": "interrupted", "message": f"{self.operation.title()} aborted",
-                        })
+                        }, deck_dismissed=True)
                         return 130
                 elif args.unattended:
                     self._select_defaults(session)
@@ -277,7 +277,7 @@ class SyncDeckCommandRunner:
         print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""), flush=True)
 
     def _emit(self, args, session: SyncSession | None, result, *, diagnostic=None, output_line=None,
-              timeline: SyncTimelineRenderer | None = None) -> None:
+              timeline: SyncTimelineRenderer | None = None, deck_dismissed: bool = False) -> None:
         payload = sync_document(args, session, result, diagnostic=diagnostic)
         if args.json_output:
             print(json.dumps(payload))
@@ -288,6 +288,11 @@ class SyncDeckCommandRunner:
         # --report prints every entry; otherwise, after a timeline, the log is a
         # recap of only what the timeline could not show.
         report = getattr(args, "report", False)
+        if deck_dismissed and not report:
+            # Nothing ran; every entry would only echo a dismissed Deck row as pending.
+            print(f":: {term(payload['status'])} — no changes made")
+            print(diagnostic["message"], file=sys.stderr)
+            return
         recap = timeline is not None and not report
         timeline_errors = timeline.shown_errors if recap else set()
         # Work stopped by an earlier failure is counted, not listed, so the failure
