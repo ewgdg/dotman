@@ -33,7 +33,7 @@ from dotman.ui_context import current_ui_config
 from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
-from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession, conflict_outcome
+from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession, conflict_diagnostic
 
 
 @dataclass(frozen=True)
@@ -396,7 +396,9 @@ class CommandDeck:
         if primary:
             annotation = render_annotation_parentheses("authorized by Proposal Approval", use_color=color)
             primary_value = f"{primary['kind']} · {display_path(primary['path'])}{annotation}"
-        capture = (presence(proposal.capture) if proposal and proposal.capture is not None
+        conflicted = conflict_diagnostic(row)
+        captured = proposal.capture if proposal else conflicted.capture if conflicted else None
+        capture = (presence(captured) if captured is not None
                    else term("pending") if capture_required else "not required")
         state = [
             ReviewFact("Observation", term(observation.state)),
@@ -410,12 +412,13 @@ class CommandDeck:
         state += [
             ReviewFact("Primary Source Change", primary_value),
             ReviewFact("Capture", capture),
-            ReviewFact("Reconciliation", proposal.reconciliation if proposal else term("pending")),
+            ReviewFact("Reconciliation", proposal.reconciliation if proposal
+                       else term("conflict") if conflicted else term("pending")),
         ]
         if proposal and observation.configured_policy in ("pull-only", "both"):
             state.append(ReviewFact("Checkpoint qualified", "yes" if proposal.checkpoint_qualified else "no"))
         sections.append(ReviewSection("State", tuple(state)))
-        conflict = conflict_outcome(row)
+        conflict = conflicted.conflict if conflicted else None
         if isinstance(conflict, (FilePresent, DirectoryChildPresent)):
             sections.append(ReviewSection("Merge conflicts", (
                 ReviewNote(render_payload_section_label("Resolve in the Editor (E); it opens with this merge output",

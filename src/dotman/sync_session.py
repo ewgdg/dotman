@@ -55,19 +55,22 @@ class PublicationEffect:
 
 @dataclass(frozen=True)
 class ConflictDiagnostic(Diagnostic):
-    """A reconciliation conflict with its zdiff3 merge output, if any, for Review and the Editor."""
+    """A reconciliation conflict with the Capture it merged and its zdiff3 merge output, if any."""
 
     conflict: SyncBasePayload | None = None
+    capture: SyncBasePayload | None = None
 
 
-def reconciliation_diagnostic(exc: ReconciliationConflict | ReconciliationFailed) -> Diagnostic:
+def reconciliation_diagnostic(
+    exc: ReconciliationConflict | ReconciliationFailed, capture: SyncBasePayload | None,
+) -> Diagnostic:
     if isinstance(exc, ReconciliationConflict):
-        return ConflictDiagnostic("reconciliation-conflict", str(exc), conflict=exc.conflict)
+        return ConflictDiagnostic("reconciliation-conflict", str(exc), conflict=exc.conflict, capture=capture)
     return Diagnostic("reconciliation-failed", str(exc))
 
 
-def conflict_outcome(row: SessionRow) -> SyncBasePayload | None:
-    return next((item.conflict for item in row.diagnostics if isinstance(item, ConflictDiagnostic)), None)
+def conflict_diagnostic(row: SessionRow) -> ConflictDiagnostic | None:
+    return next((item for item in row.diagnostics if isinstance(item, ConflictDiagnostic)), None)
 
 
 @dataclass(frozen=True)
@@ -862,7 +865,7 @@ class ProposalSession:
                     diagnostics = (Diagnostic("capture-failed", str(exc)),)
                     approved = False
                 except (ReconciliationConflict, ReconciliationFailed) as exc:
-                    diagnostics = (reconciliation_diagnostic(exc),)
+                    diagnostics = (reconciliation_diagnostic(exc, self._captures.get(row.observation.identity)),)
                     approved = False
                 except (ValueError, OSError) as exc:
                     diagnostics = (Diagnostic(exc.code if isinstance(exc, SyncPathError) else "materialization-failed", str(exc)),)
@@ -986,7 +989,8 @@ class ProposalSession:
                     row = replace(row, approved=False, proposal=None,
                                   diagnostics=(Diagnostic("interrupted", "Materialization interrupted"),))
                 except (ReconciliationConflict, ReconciliationFailed) as exc:
-                    row = replace(row, approved=False, proposal=None, diagnostics=(reconciliation_diagnostic(exc),))
+                    row = replace(row, approved=False, proposal=None, diagnostics=(
+                        reconciliation_diagnostic(exc, self._captures.get(row.observation.identity)),))
                 except (CaptureError, ValueError, OSError) as exc:
                     code = ("capture-failed" if isinstance(exc, CaptureError) else
                             exc.code if isinstance(exc, SyncPathError) else "materialization-failed")
@@ -1046,7 +1050,8 @@ class ProposalSession:
                 if row.observation.identity in self._editor_input_errors:
                     raise ValueError(self._editor_input_errors[row.observation.identity])
                 output = edit_sources(
-                    observation=row.observation, proposal=row.proposal, conflict=conflict_outcome(row),
+                    observation=row.observation, proposal=row.proposal,
+                    conflict=conflict.conflict if (conflict := conflict_diagnostic(row)) else None,
                     metadata=metadata, repo_root=item.repo.root,
                     additional=prior_additional,
                     preimages=self._editor_preimages[row.observation.identity],

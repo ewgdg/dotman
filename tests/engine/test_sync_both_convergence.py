@@ -307,6 +307,7 @@ def test_conflict_keeps_zdiff3_merge_output_as_evidence(tmp_path, monkeypatch):
         diagnostic = session.view.rows[0].diagnostics[0]
         assert diagnostic.code == "reconciliation-conflict"
         assert diagnostic.conflict == FilePresent(ZDIFF3_CONFLICT)
+        assert diagnostic.capture == FilePresent(b"conflict\nmiddle\nlast\n")
 
 
 def test_editor_starts_from_conflict_output(tmp_path, monkeypatch):

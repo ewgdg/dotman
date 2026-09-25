@@ -167,10 +167,13 @@ def test_conflict_review_shows_zdiff3_blocks_colored_by_side(tmp_path, monkeypat
                            b'theirs\n>>>>>>> Capture\n' + context)
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as opened:
         row = replace(opened.view.rows[0], intent='merge', diagnostics=(ConflictDiagnostic(
-            'reconciliation-conflict', 'Repository and Capture contain conflicting changes', conflict=conflict),))
+            'reconciliation-conflict', 'Repository and Capture contain conflicting changes',
+            conflict=conflict, capture=FilePresent(b'theirs\n')),))
         session = SimpleNamespace(view=replace(opened.view, rows=(row,)))
         plain = CommandDeck(session, use_color=False).review_text()
         section = plain.split(':: Merge conflicts', 1)[1]
+        # The Capture ran and the merge conflicted; State must not report them as pending.
+        assert 'Capture: present' in plain and 'Reconciliation: conflict' in plain
         # Three context lines around each block; farther lines are elided.
         assert 'line 6' not in section and 'line 7' in section and 'line 2' in section and 'line 3' not in section
         assert '<<<<<<< repository' in section and '>>>>>>> Capture' in section
