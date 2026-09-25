@@ -38,3 +38,24 @@ def test_deck_authorization_is_explicit_and_separate_from_selection(tmp_path, mo
                 assert session.view.rows[0].approved
                 assert path.is_symlink()
         asyncio.run(asyncio.wait_for(interact(), timeout=5))
+
+
+def test_workset_hints_list_bulk_selection_and_copy_within_two_rows_at_80_columns(tmp_path, monkeypatch):
+    # A link row adds Shift+L, the longest workset hint bar.
+    engine, _path, _referent = linked_file(tmp_path, monkeypatch)
+    with open_session(engine) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+        async def interact():
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                for focus in ("workset", "detail"):
+                    help_widget = app.query_one("#help")
+                    rendered = " ".join(
+                        help_widget.render_line(y).text for y in range(help_widget.size.height)
+                    )
+                    assert help_widget.size.height <= 2
+                    for hint in ("A/U all/none", "Y copy", "Shift+L authorize link replacement"):
+                        assert hint in rendered, (focus, rendered)
+                    await pilot.press("tab")
+                    await pilot.pause()
+        asyncio.run(asyncio.wait_for(interact(), timeout=5))

@@ -874,6 +874,7 @@ class SyncDeckApp(App[bool]):
 
     def update_hints(self) -> None:
         review_scroll = ("↑/↓/j/k/PgUp/PgDn", "scroll")
+        bulk_selection = ("A/U", "all/none")
         if self.query_one(OptionList).display:
             hints = [("↑/↓/j/k", "choose Resolution"), ("Enter", "select"), ("Esc", "dismiss")]
         elif self.deck.confirming:
@@ -884,11 +885,11 @@ class SyncDeckApp(App[bool]):
             hints = [("Esc", "return"), ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("Y", "copy"),
                      review_scroll, ("Ctrl+C", "abort")]
         elif self.detail_focused:
-            hints = [("Tab/Esc", "return to workset"), review_scroll, ("Space", "mark"), ("Enter", "view"),
-                     ("E", "edit"), ("T", "retry")]
+            hints = [("Tab/Esc", "return"), review_scroll, ("Space", "mark"), bulk_selection,
+                     ("Enter", "view"), ("E", "edit"), ("T", "retry"), ("Y", "copy")]
         else:
-            hints = [("Esc", "abort"), ("X", "confirm"), ("Space", "mark"), ("Enter", "view"), ("E", "edit"), ("T", "retry"),
-                     ("Tab", "detail")]
+            hints = [("Esc", "abort"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
+                     ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming:
             hints.append(("Shift+L", "authorize link replacement"))
@@ -1147,7 +1148,6 @@ class SyncDeckApp(App[bool]):
             text, subject = Text.from_ansi(self.deck.review_text()).plain, "review"
         else:
             # The Target cell may be elided; copy the untruncated identity.
-            # Not listed in workset help: it would wrap at 80 columns and cost a row.
             text, subject = self.query_one(WorksetTable).full_targets[row.row_id].plain, "Target"
         self.copy_to_clipboard(text)
         self.deck.notice = f"Copied {subject} to clipboard."
