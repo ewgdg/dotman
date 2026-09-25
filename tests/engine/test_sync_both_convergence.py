@@ -49,11 +49,13 @@ def test_merge_default_is_lazy_and_executes_frozen_three_way_outcome(tmp_path, m
         assert session.view.observations[0].base.record.payload == FilePresent(MERGED)
 
 
-def test_without_base_live_fallback_and_disallowed_merge_are_visible(tmp_path, monkeypatch):
-    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"repo", b"live", "")])
+@pytest.mark.parametrize("repo,live", [(b"repo", b"live"), (b"repo", None), (None, b"live")])
+def test_without_base_repository_fallback_and_disallowed_merge_are_visible(tmp_path, monkeypatch, repo, live):
+    # One consistent no-Base default, even when a side is Missing.
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", repo, live, "")])
     with open_session(engine) as session:
         row = session.view.rows[0]
-        assert row.intent == "use-live" and row.fallback_reason == "absent"
+        assert row.intent == "use-repository" and row.fallback_reason == "absent"
         assert set(row.allowed_intents) == {"use-live", "use-repository"}
         before = session.view
         assert command(session, SetResolutionIntent, row.row_id, "merge").reason == "disallowed"
@@ -119,6 +121,7 @@ def test_use_live_checkpoints_final_repository_after_publication(tmp_path, monke
         return complete(self, frozen, proposal)
     monkeypatch.setattr(SyncBaseLifecycle, "complete", record_fact)
     with open_session(engine, preview=False) as session:
+        command(session, SetResolutionIntent, "main:app.unit", "use-live")
         command(session, SetApproval, "main:app.unit", True)
         proposal = session.view.rows[0].proposal
         assert proposal.repository == FilePresent(b"repository")

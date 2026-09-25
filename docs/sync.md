@@ -180,8 +180,12 @@ Preview freezes Guard and Probe results but executes no hooks.
 Drifted push-only and push-only-delete files offer **Use repository**; pull-only files offer only
 **Use live**. Both-policy files offer **Use repository**, **Use live**, and
 **Merge** when a usable Sync Base exists. Their default is Merge with a usable
-Base; otherwise Use live is an explicit fallback, with the Base reason shown in
-the focused detail, review, and command output. Proposal Approval starts off;
+Base; otherwise Use repository is an explicit fallback, with the Base reason shown in
+the focused detail, review, and command output. Without a Base, nothing shows
+which side changed. The repository is the declared configuration, and live writes
+are snapshotted while repository writes are not, so the fallback is the same for
+every case, including a Missing side. Unattended Sync does not guess and skips
+this drift (see [Result log](#result-log)). Proposal Approval starts off;
 opening a review does not approve it. Review or Approval materializes the
 Proposal from frozen Observation, retaining the repository representation,
 policy-derived live outcome, exclusive Primary Source Change, and exact
@@ -372,11 +376,15 @@ shown are not repeated.
 
 Guard skips are planning results, not execution steps, so they appear where work
 is reviewed and are always dimmed: as unselectable rows in the Command Deck, or,
-without a Deck (unattended), above the timeline.
+without a Deck (unattended), above the timeline. Unattended Sync prints
+no-Base skips in the same place, `[skipped] <identity> (no Base)` with a
+first-review hint, undimmed because they need action. They are never folded
+into the `skipped: N` count.
 
 `--report` replaces the recap with the full entry log below: every entry with its
 Resolution and effects, skipped work listed rather than counted, unselected
-entries led by `[unselected]`, and guard skips (then omitted above the timeline).
+entries led by `[unselected]`, and guard and no-Base skips (then omitted above
+the timeline).
 
 Preview, abort and pre-execution failures print the entry log instead: each
 entry leads with its outcome (`ok`, `failed`, `interrupted`, `skipped`,

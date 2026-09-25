@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from dotman import sync_publication as publication
-from dotman.sync_session import SetApproval
+from dotman.sync_session import SetApproval, SetResolutionIntent
 from tests.engine.test_sync_convergence import command
 from tests.engine.test_sync_publication import prepare, execute
 from tests.engine.test_sync_session import make_engine, open_session
@@ -36,6 +36,7 @@ def test_repository_success_then_push_pre_failure_is_not_skipped(tmp_path, monke
          '[targets.unit.hooks]\npre_push = "exit 7"'),
     ])
     with open_session(engine, preview=False) as session:
+        command(session, SetResolutionIntent, "main:app.unit", "use-live")
         command(session, SetApproval, "main:app.unit", True)
         result = session.execute().result
     assert result.units[0].status == "not-converged"
@@ -86,6 +87,7 @@ def test_complete_repository_stage_precedes_publication_and_keeps_frozen_bytes(t
     ])
     with open_session(engine, preview=False) as session:
         for row in session.view.rows:
+            command(session, SetResolutionIntent, row.row_id, "use-live")
             command(session, SetApproval, row.row_id, True)
         def forbidden(*args, **kwargs):
             pytest.fail("execution must not rematerialize frozen work")
@@ -107,6 +109,7 @@ def test_repository_partial_success_is_retained_when_later_repository_work_fails
     ])
     with open_session(engine, preview=False) as session:
         for row in session.view.rows:
+            command(session, SetResolutionIntent, row.row_id, "use-live")
             command(session, SetApproval, row.row_id, True)
         result = session.execute().result
     assert [u.status for u in result.units] == ["not-converged", "skipped"]

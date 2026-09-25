@@ -176,7 +176,7 @@ def test_both_fallback_is_distinct_from_observation_failure(tmp_path, monkeypatc
         async def interact():
             async with app.run_test(size=(110, 24)) as pilot:
                 table = app.query_one(DataTable)
-                assert "Use live" in table.render_line(1).text
+                assert "Use repository" in table.render_line(1).text
                 assert "Observation failed" in table.render_line(2).text
                 assert str(app.query_one("#detail", Static).render()) == "main:app.both\n  Fallback: absent"
                 await pilot.press("space", "a")
@@ -407,7 +407,7 @@ def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
 
         async def interact():
             async with app.run_test() as pilot:
-                assert session.view.rows[0].intent == 'use-live'
+                assert session.view.rows[0].intent == 'use-repository'
                 assert 'Fallback' in str(app.query_one('#detail', Static).render())
                 await pilot.press('r')
                 menu = app.query_one(OptionList)

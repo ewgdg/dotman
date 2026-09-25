@@ -98,6 +98,8 @@ chmod = "0700"
     commit(tmp_path)
     with open_directory(engine, preview=False) as session:
         row, = session.view.rows
+        if policy == "both":
+            command(session, SetResolutionIntent, row.row_id, "use-live")
         command(session, SetApproval, row.row_id, True)
         row, = session.view.rows
         assert row.proposal.repository == DirectoryChildPresent(b"live", False)
@@ -121,7 +123,7 @@ def test_rename_has_independent_missing_and_present_proposals_and_ancestry(tmp_p
         new, old = session.view.rows
         assert new.observation.base.status == "unavailable"
         assert old.observation.base.status == "usable"
-        assert new.intent == "use-live" and old.intent == "merge"
+        assert new.intent == "use-repository" and old.intent == "merge"
         command(session, SetApproval, old.row_id, True)
         new, old = session.view.rows
         assert old.proposal.repository == Missing() and old.approved and not new.approved
@@ -251,6 +253,7 @@ compare = {{ repo = "raw", live = "raw" }}
         put(repo, name, b"repo"); put(live, name, b"live")
     with open_directory(engine, preview=False) as session:
         for row in session.view.rows:
+            command(session, SetResolutionIntent, row.row_id, "use-live")
             command(session, SetApproval, row.row_id, True)
         for name in ("a", "b"):
             (repo / name).write_bytes(b"external")

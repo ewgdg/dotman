@@ -32,7 +32,7 @@ def test_unattended_preview_selects_defaults_without_writes_or_content_leaks(tmp
     payload = json.loads(output)
     assert set(payload) == {
         "operation", "mode", "status", "scope", "summary", "sync_units",
-        "additional_source_changes", "guard_skips", "probe_work", "directory_root_work", "hook_work", "stages",
+        "additional_source_changes", "guard_skips", "no_base_skips", "probe_work", "directory_root_work", "hook_work", "stages",
     }
     assert payload["mode"] == "dry-run"
     unit = payload["sync_units"][0]
@@ -254,7 +254,7 @@ def test_json_reports_actual_failed_hook_without_leaking_captured_output(tmp_pat
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
-def test_unattended_both_fallback_reports_reason(tmp_path, monkeypatch, capsys, dry_run):
+def test_unattended_both_fallback_reports_reason_and_skips(tmp_path, monkeypatch, capsys, dry_run):
     engine = make_engine(tmp_path, monkeypatch, [
         ("push", "push-only", b"repo", b"live", ""),
         ("both", "both", b"repo", b"live", ""),
@@ -262,10 +262,12 @@ def test_unattended_both_fallback_reports_reason(tmp_path, monkeypatch, capsys, 
     assert runner_for(engine).run(arguments(dry_run=dry_run)) == 0
     payload = json.loads(capsys.readouterr().out)
     unit = next(unit for unit in payload["sync_units"] if unit["policy"] == "both")
-    assert unit["resolution_intent"] == "use-live"
+    assert unit["resolution_intent"] == "use-repository"
     assert unit["fallback_reason"] == "absent"
     assert unit["allowed_intents"] == ["use-repository", "use-live"]
-    assert (tmp_path / "repo/packages/app/both").read_bytes() == (b"repo" if dry_run else b"live")
+    assert not unit["selected"]
+    assert (tmp_path / "repo/packages/app/both").read_bytes() == b"repo"
+    assert (tmp_path / "live/both").read_bytes() == b"live"
     assert (tmp_path / "live/push").read_bytes() == (b"live" if dry_run else b"repo")
 
 
@@ -337,8 +339,10 @@ def test_results_omit_directly_in_sync_units_and_count_them(tmp_path, monkeypatc
     'compare = { repo = "cat $DOTMAN_SOURCE >&2; printf \'%s\' $DOTMAN_SOURCE >&2; exit 7", live = "raw" }',
 ])
 def test_failed_projection_json_never_exposes_command_output_or_workspace(tmp_path, monkeypatch, capsys, projection):
+    # Render runs only for push work; Capture and repo comparison for pull work.
+    policy = "push-only" if projection.startswith("render") else "pull-only"
     engine = make_engine(tmp_path, monkeypatch, [
-        ("unit", "both", b"repo-private-content", b"live-private-content", projection),
+        ("unit", policy, b"repo-private-content", b"live-private-content", projection),
     ])
     assert runner_for(engine).run(arguments()) == 1
     output = capsys.readouterr().out
@@ -385,10 +389,8 @@ def test_failed_planning_commands_do_not_copy_output_into_json(tmp_path, monkeyp
 
 def test_unattended_sync_propagates_mode_to_both_hook_families(tmp_path, monkeypatch, capsys):
     engine = make_engine(tmp_path, monkeypatch, [
-        ("unit", "both", b"repo", b"live",
-         'render = "sed s/live/published/ $DOTMAN_SOURCE"\ncompare = { repo = "raw", live = "raw" }\n'
-         '[targets.unit.hooks]\npre_pull = "test \\"$DOTMAN_UNATTENDED\\" = 1"\n'
-         'pre_push = "test \\"$DOTMAN_UNATTENDED\\" = 1"'),
+        ("in", "pull-only", b"repo", b"live", '[targets.in.hooks]\npre_pull = "test \\"$DOTMAN_UNATTENDED\\" = 1"'),
+        ("out", "push-only", b"repo", b"live", '[targets.out.hooks]\npre_push = "test \\"$DOTMAN_UNATTENDED\\" = 1"'),
     ])
     assert runner_for(engine).run(arguments(dry_run=False)) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -397,10 +399,9 @@ def test_unattended_sync_propagates_mode_to_both_hook_families(tmp_path, monkeyp
 
 @pytest.mark.parametrize("hook", ["pre_pull", "pre_push"])
 def test_interrupted_hook_json_keeps_exit_evidence_without_output(tmp_path, monkeypatch, capsys, hook):
+    policy = "pull-only" if hook == "pre_pull" else "push-only"
     engine = make_engine(tmp_path, monkeypatch, [
-        ("unit", "both", b"repo", b"live",
-         'render = "sed s/live/published/ $DOTMAN_SOURCE"\ncompare = { repo = "raw", live = "raw" }\n'
-         f'[targets.unit.hooks]\n{hook} = "printf SECRET_PAYLOAD >&2; exit 130"'),
+        ("unit", policy, b"repo", b"live", f'[targets.unit.hooks]\n{hook} = "printf SECRET_PAYLOAD >&2; exit 130"'),
     ])
     assert runner_for(engine).run(arguments(dry_run=False)) == 130
     output = capsys.readouterr().out
@@ -580,3 +581,35 @@ def test_report_lists_skipped_work_instead_of_counting(tmp_path, monkeypatch, ca
     out, _ = _human_execution(tmp_path, monkeypatch, capsys, suffix=FAILING_PRE_PUSH, report=True)
     assert _in_order(out, "failed", "[skipped] main:app.unit", ":: failed")
     assert "skipped: 1" not in out
+
+
+def no_base_engine(tmp_path, monkeypatch):
+    # Fresh host: both-policy sources exist, live is Missing, no Base yet.
+    return make_engine(tmp_path, monkeypatch, [
+        ("fresh", "both", b"repo", None, ""), ("owned", "push-only", b"repo", b"live", ""),
+    ])
+
+
+def test_unattended_sync_skips_no_base_drift_and_keeps_repository_sources(tmp_path, monkeypatch, capsys):
+    engine = no_base_engine(tmp_path, monkeypatch)
+    assert runner_for(engine).run(arguments(dry_run=False, json_output=False)) == 0
+    output = capsys.readouterr().out
+    assert (tmp_path / "repo/packages/app/fresh").read_bytes() == b"repo"
+    assert not (tmp_path / "live/fresh").exists()
+    # Work with a determined direction still runs.
+    assert (tmp_path / "live/owned").read_bytes() == b"repo"
+    assert "[skipped] main:app.fresh (no Base)" in output
+    assert "Needs a first review: run dotman sync, or push/pull to choose a side" in output
+    assert output.count("main:app.fresh") == 1
+    with engine.open_sync_session(engine.resolve_sync_scope(), preview=True) as session:
+        fresh = next(unit for unit in session.view.observations if unit.identity.canonical == "main:app.fresh")
+        assert fresh.base.status != "usable"
+
+
+def test_unattended_sync_json_lists_no_base_skips(tmp_path, monkeypatch, capsys):
+    engine = no_base_engine(tmp_path, monkeypatch)
+    assert runner_for(engine).run(arguments()) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["no_base_skips"] == [{"identity": "main:app.fresh", "reason": "absent"}]
+    units = {unit["identity"]: unit for unit in payload["sync_units"]}
+    assert not units["main:app.fresh"]["selected"] and units["main:app.owned"]["selected"]

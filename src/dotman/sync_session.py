@@ -173,7 +173,9 @@ def default_intent(unit: Observation) -> ResolutionIntent | None:
     if not supports_proposal(unit):
         return None
     if unit.effective_policy == "both":
-        return "merge" if unit.base.status == "usable" else "use-live"
+        # Without Base evidence the repository is the declared config, and live
+        # writes are snapshotted while repository writes are not.
+        return "merge" if unit.base.status == "usable" else "use-repository"
     return allowed_intents(unit)[0]
 
 

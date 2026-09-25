@@ -92,7 +92,7 @@ Probe Work, Directory Root Work, and retained hook-only work. It supports
 push-only and deletion-only files with **Use repository**, pull-only files with
 **Use live**, and both-policy files with **Use repository**, **Use live**, or
 Base-backed **Merge**. Both-policy drift defaults to **Merge** with a usable Base;
-otherwise **Use live** is the visible fallback and Merge is unavailable.
+otherwise **Use repository** is the visible fallback and Merge is unavailable.
 
 - Interactive Sync opens a persistent Command Deck with Approval initially off.
   Its Textual table aligns Selection (headed `✓`), Target, Policy, and Resolution columns.
@@ -152,6 +152,12 @@ otherwise **Use live** is the visible fallback and Merge is unavailable.
   chmod affects live publication only; it is not repository or Merge ancestry.
   Controls and exclusions apply symmetrically even for an exact child scope.
 - `--unattended` uses policy defaults, selects every eligible Proposal, Additional Source Change and auxiliary row, materializes that set, and confirms execution.
+  Both-policy drift without a usable Base is the exception: nothing shows which
+  side changed, so it stays unselected and prints
+  `[skipped] <identity> (no Base)` with a first-review hint. JSON lists it in
+  `no_base_skips` with the Base reason, and the exit status is unaffected. To
+  bootstrap a host unattended, run `dotman --unattended push` (or `pull`) once.
+  The next Sync sees both sides agree and records a Base.
   Missing terminals and `--json` do not grant consent. Required interactive
   decisions without a terminal fail rather than selecting work implicitly.
   Ambiguity, unsafe symlink decisions, conflicts, Observation or materialization

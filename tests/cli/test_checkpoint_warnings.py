@@ -37,7 +37,9 @@ def test_committed_checkpoint_reports_durability_warning_without_losing_acknowle
     from dotman.cli import main
     from dotman.sync_base_store import SyncBaseStoreDurabilityError
 
-    engine = make_engine(tmp_path, monkeypatch, [('unit', 'both', b'repo', b'repo' if direct else b'live', '')])
+    # Unattended Sync skips no-Base both-policy drift, so drifted Sync uses pull-only.
+    policy = 'pull-only' if operation == 'sync' and not direct else 'both'
+    engine = make_engine(tmp_path, monkeypatch, [('unit', policy, b'repo', b'repo' if direct else b'live', '')])
     replace_record = SyncBaseStore.replace
 
     def fail_after_commit(store, record):

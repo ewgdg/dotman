@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.sync_session import CommandRejected, SetApproval, SetIncluded, SyncSession, SessionOpenFailed
+from dotman.sync_session import CommandRejected, SetApproval, SetResolutionIntent, SetIncluded, SyncSession, SessionOpenFailed
 from tests.engine.test_sync_session import make_engine, open_session
 
 
@@ -247,6 +247,9 @@ def test_mixed_policy_execution_keeps_frozen_target_order(tmp_path, monkeypatch,
                 include(session, row)
             else:
                 view = session.view
+                if row.observation.effective_policy == 'both':
+                    session.dispatch(SetResolutionIntent(view.session_id, view.revision, row.row_id, 'use-live'))
+                    view = session.view
                 session.dispatch(SetApproval(view.session_id, view.revision, row.row_id, True))
         result = session.execute().result
         assert result.status == 'completed'

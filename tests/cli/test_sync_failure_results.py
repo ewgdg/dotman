@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from dotman.cli_style import render_sync_term
 from dotman.sync_deck_command import sync_document
-from dotman.sync_session import SetApproval
+from dotman.sync_session import SetApproval, SetResolutionIntent
 from tests.engine.test_sync_convergence import command
 from tests.engine.test_sync_session import make_engine, open_session
 
@@ -14,6 +14,7 @@ def test_failure_document_preserves_partial_unit_and_unattempted_effects(tmp_pat
          '[targets.unit.hooks]\npre_push = "exit 7"'),
     ])
     with open_session(engine, preview=False) as session:
+        command(session, SetResolutionIntent, "main:app.unit", "use-live")
         command(session, SetApproval, "main:app.unit", True)
         result = session.execute().result
         document = sync_document(SimpleNamespace(dry_run=False, scopes=[]), session, result)

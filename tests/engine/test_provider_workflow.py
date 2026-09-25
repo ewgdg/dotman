@@ -4,7 +4,7 @@ import json
 import pytest
 
 from dotman.engine import DotmanEngine
-from dotman.sync_session import CommandAccepted, EditProposal, SetApproval, SetIncluded
+from dotman.sync_session import CommandAccepted, EditProposal, SetApproval, SetIncluded, SetResolutionIntent
 from tests.engine.test_sync_session import make_engine
 from tests.engine.test_sync_directory_observation import directory_engine, put
 
@@ -40,6 +40,8 @@ def test_frozen_projections_and_capture_use_workflow_identity(tmp_path, monkeypa
             operation.encode() if live_view == "capture" else f"{operation}-live".encode()
         )
         assert row.observation.comparison_live.content == expected_live_view
+        if operation == "sync":
+            send(session, SetResolutionIntent, row.row_id, "use-live")
         send(session, SetApproval, row.row_id, True)
         assert session.view.rows[0].proposal.repository.content == operation.encode()
         assert session.execute().result.status == "completed"

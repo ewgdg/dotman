@@ -16,7 +16,7 @@ from dotman.sync_scope import _parse_scope_selector, split_scope_child_path
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_session import (
     AdditionalRow, BatchSetApproval, PrepareSourceReview, AuxiliaryRow, CommandRejected, EditProposal, PrepareProposalReview, Preview, SessionOpenFailed,
-    SetApproval, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession, has_errors,
+    SessionRow, SetApproval, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession, has_errors,
 )
 from dotman.ui_context import ui_config_scope
 
@@ -124,6 +124,12 @@ class SyncDeckCommandRunner:
 
     def _select_defaults(self, session):
         set_all_selected(session, True)
+        # No Base means no evidence of which side changed; unattended runs
+        # leave that drift for a first review instead of guessing a side.
+        for row in session.view.rows:
+            if needs_first_review(row):
+                view = session.view
+                session.dispatch(SetApproval(view.session_id, view.revision, row.row_id, False))
 
     def _resolve_scope_inputs(self, engine, scopes, *, interaction: Interaction | None) -> list[str]:
         """Resolve shorthand or ambiguous scopes to the canonical identities Sync requires."""
@@ -237,8 +243,9 @@ class SyncDeckCommandRunner:
                         # the Deck when interactive, otherwise above the timeline.
                         # A report carries them itself.
                         if not interactive and not getattr(args, "report", False):
-                            self._print_guard_skips(guard_skip_summaries(
-                                row for row in session.view.rows if isinstance(row, AuxiliaryRow)))
+                            self._print_planning_skips(
+                                guard_skip_summaries(row for row in session.view.rows if isinstance(row, AuxiliaryRow)),
+                                no_base_skip_summaries(args, session.view.rows))
                     dispatched = session.execute()
                 if isinstance(dispatched, CommandRejected):
                     self._emit(args, session, None, diagnostic={
@@ -249,12 +256,16 @@ class SyncDeckCommandRunner:
                 self._emit(args, session, dispatched.result, timeline=timeline)
                 return dispatched.result.exit_code
 
-    def _print_guard_skips(self, guard_skips) -> None:
+    def _print_planning_skips(self, guard_skips, no_base_skips) -> None:
         for skip in guard_skips:
             label = guard_skip_label(skip["identity"], skip["direction"], skip["path_rule_pattern"], use_color=False)
             reason = f": {skip['reason']}" if skip["reason"] else ""
             print(f"  {dim_when(f'[skipped] {label}', use_color=self._use_color)}")
             print(f"      {dim_when(f'Guard skipped{reason}', use_color=self._use_color)}")
+        # Unlike Guard skips these need action, so they stay undimmed.
+        for skip in no_base_skips:
+            print(f"  [{render_sync_term('skipped', use_color=self._use_color)}] {skip['identity']} (no Base)")
+            print(f"      {NO_BASE_SKIP_HINT}")
 
     def _print_header(self, args) -> None:
         print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""), flush=True)
@@ -292,7 +303,10 @@ class SyncDeckCommandRunner:
                 return None
             return lead, messages
 
+        no_base_skipped = {skip["identity"] for skip in payload["no_base_skips"]}
         for unit in payload["sync_units"]:
+            if unit["identity"] in no_base_skipped:
+                continue
             entry = visible_entry(unit["selected"], entry_outcome(unit["result"], unit["diagnostics"]), unit["diagnostics"])
             if entry is None:
                 continue
@@ -337,7 +351,7 @@ class SyncDeckCommandRunner:
         shown = timeline_errors | {item["message"] for entry in (*payload["sync_units"], *payload["additional_source_changes"])
                                    for item in entry["diagnostics"]}
         if not recap:
-            self._print_guard_skips(payload["guard_skips"])
+            self._print_planning_skips(payload["guard_skips"], payload["no_base_skips"])
         summary = payload["summary"]
         stats = summary_stats(
             (("approved", summary["approved_units"]), ("repos", summary["repository_changes"])),
@@ -400,6 +414,21 @@ def guard_skip_label(scope: str, direction: str, path_rule_pattern: str | None, 
     """Guard-skipped work is recessive everywhere: omitted, never actionable."""
     label = auxiliary_label(scope, "guard-skip", (direction,), path_rule_pattern=path_rule_pattern)
     return dim_when(label, use_color=use_color)
+
+
+NO_BASE_SKIP_HINT = "Needs a first review: run dotman sync, or push/pull to choose a side"
+
+
+def needs_first_review(row) -> bool:
+    """Both-policy drift without a usable Base: no evidence of which side changed."""
+    return isinstance(row, SessionRow) and row.fallback_reason is not None
+
+
+def no_base_skip_summaries(args, rows) -> list[dict]:
+    if not getattr(args, "unattended", False):
+        return []
+    return [{"identity": row.row_id, "reason": row.fallback_reason}
+            for row in rows if needs_first_review(row) and not row.approved]
 
 
 def guard_skip_summaries(auxiliary) -> list[dict]:
@@ -526,6 +555,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             for row in additional
         ],
         "guard_skips": guard_skip_summaries(auxiliary),
+        "no_base_skips": no_base_skip_summaries(args, view.rows if view else ()),
         "probe_work": auxiliary_work("probe"),
         "directory_root_work": auxiliary_work("directory-root"),
         "hook_work": auxiliary_work("hook"),
