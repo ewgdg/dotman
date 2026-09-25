@@ -192,7 +192,9 @@ class SyncDeckCommandRunner:
                 }, output_line=opened.output_line)
                 return 130 if opened.diagnostic.code == "interrupted" else 1
             with opened as session:
-                if interactive:
+                # Clean in-sync units never become rows, so an empty workset has
+                # nothing to review; log the result instead of opening the Deck.
+                if interactive and session.view.rows:
                     from dotman.sync_deck import run_command_deck
                     try:
                         confirmed = run_command_deck(session, use_color=self._use_color)

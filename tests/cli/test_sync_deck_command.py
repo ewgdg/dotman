@@ -153,6 +153,23 @@ def test_interactive_preview_hides_unselected_healthy_work(tmp_path, monkeypatch
     assert (tmp_path / "live/unit").read_bytes() == b"live"
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_interactive_sync_logs_directly_when_everything_is_in_sync(tmp_path, monkeypatch, capsys, dry_run):
+    from dotman import sync_deck
+    import sys
+
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"same", b"same", "")])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    def forbidden(session, *, use_color):
+        raise AssertionError("nothing to review must not open the Deck")
+
+    monkeypatch.setattr(sync_deck, "run_command_deck", forbidden)
+    assert runner_for(engine).run(arguments(dry_run=dry_run, unattended=False, json_output=False)) == 0
+    assert "in-sync: 1" in capsys.readouterr().out
+
+
 def test_failed_materialization_stops_unattended_publication(tmp_path, monkeypatch, capsys):
     engine = make_engine(tmp_path, monkeypatch, [
         ("one", "push-only", b"repo", b"live", ""),

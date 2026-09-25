@@ -94,7 +94,8 @@ push-only and deletion-only files with **Use repository**, pull-only files with
 Base-backed **Merge**. Both-policy drift defaults to **Merge** with a usable Base;
 otherwise **Use repository** is the visible fallback and Merge is unavailable.
 
-- Interactive Sync opens a persistent Command Deck with Approval initially off.
+- Interactive Sync opens a persistent Command Deck with Approval initially off. When nothing needs review
+  (every target in sync, no warnings, hooks, probes or skips), it skips the Deck and logs the summary directly.
   Its Textual table aligns Selection (headed `✓`), Target, Policy, and Resolution columns.
   `Space` toggles Selection, `A` selects eligible rows, and `U` clears Selection.
   Selection means independent Proposal or Additional Source Change Approval,
