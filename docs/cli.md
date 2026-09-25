@@ -113,7 +113,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   `Esc` returns to the same workset. Source Change Review shows the preimage diff,
   referencing Proposals and independent Approval; Proposal Review lists source
   references without a duplicate Additional Approval control. Proposal Review
-  groups facts under `::` section headers: Decision (Approval, Resolution, effective
+  opens with the target and groups facts under full-width titled rules
+  (`── Decision ───`; copied text uses `:: Decision`): Decision (Approval, Resolution, effective
   policy, and configured policy only when it differs), Paths, State (Observation,
   Base availability, Capture, Reconciliation, Primary Source Change authorization),
   then Base and Capture evidence, frozen Pull Views, exact Publication Effects and

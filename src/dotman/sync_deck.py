@@ -14,6 +14,7 @@ import time
 
 from rich.console import Group
 from rich.padding import Padding
+from rich.rule import Rule
 from rich.spinner import Spinner
 from rich.table import Table
 
@@ -90,7 +91,7 @@ class ReviewDocument:
     def renderable(self) -> Group:
         parts: list = [Text.from_ansi(self.subject, overflow="fold")]
         for section in self.sections:
-            parts += [Text(), Text.from_ansi(render_info_section_header(section.title, use_color=self.use_color))]
+            parts += [Text(), self._section_rule(section.title)]
             # Consecutive facts share one grid so their values align.
             for kind, items in groupby(section.items, type):
                 items = list(items)
@@ -103,6 +104,12 @@ class ReviewDocument:
                     body = Group(*(self._diff_grid(item.lines) for item in items))
                 parts.append(Padding(body, (0, 0, 0, REVIEW_ITEM_INDENT)))
         return Group(*parts)
+
+    def _section_rule(self, title: str) -> Rule:
+        # On screen a full-width rule separates sections without costing an extra row.
+        lead = style_text("──", *MENU_HEADER_MARKER_STYLE) if self.use_color else "──"
+        heading = style_text(title, "1") if self.use_color else title
+        return Rule(Text.from_ansi(f"{lead} {heading}"), align="left", style="dim" if self.use_color else "")
 
     def _diff_grid(self, lines: tuple[str, ...]) -> Table:
         # A marker column keeps wrapped content hanging right of the +/- sign.

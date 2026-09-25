@@ -764,3 +764,23 @@ def test_copy_key_copies_mouse_selected_review_text(tmp_path, monkeypatch):
                 await pilot.press("y")
                 assert app.clipboard == "main:app.one"
         run(interact())
+
+
+def test_review_sections_open_with_full_width_titled_rules(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo", b"live", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(60, 40)) as pilot:
+                await pilot.press("enter")
+                await pilot.pause()
+                body = app.query_one("#review-body")
+                [rule] = [line for line in review_text(app).splitlines() if "Paths" in line]
+                assert rule.startswith("── Paths ─")
+                assert len(rule) == body.content_size.width and rule.endswith("─")
+                # Copied text keeps the compact header form.
+                assert "  :: Paths" in app.deck.review_text()
+        run(interact())
