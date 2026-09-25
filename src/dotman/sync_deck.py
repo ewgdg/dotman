@@ -60,15 +60,20 @@ REVIEW_ITEM_INDENT = 4
 
 @dataclass(frozen=True)
 class ReviewDocument:
-    """One review, laid out as styled wrapping renderables or as copyable text."""
+    """One review, laid out as styled wrapping renderables or as copyable text.
+
+    On screen the Deck title already names the review, so the body opens with
+    the subject alone; copied text keeps the full heading for context.
+    """
 
     heading: str
+    subject: str
     sections: tuple[ReviewSection, ...]
     use_color: bool
 
     def text(self) -> str:
         indent = " " * REVIEW_ITEM_INDENT
-        lines = [self.heading]
+        lines = [f"{self.heading} — {self.subject}"]
         for section in self.sections:
             lines += ["", render_info_section_header(section.title, use_color=self.use_color)]
             for item in section.items:
@@ -81,7 +86,7 @@ class ReviewDocument:
         return "\n".join(lines)
 
     def renderable(self) -> Group:
-        parts: list = [Text.from_ansi(self.heading, overflow="fold")]
+        parts: list = [Text.from_ansi(self.subject, overflow="fold")]
         for section in self.sections:
             parts += [Text(), Text.from_ansi(render_info_section_header(section.title, use_color=self.use_color))]
             # Consecutive facts share one grid so their values align.
@@ -278,10 +283,10 @@ class CommandDeck:
         document = self.review_document()
         return document.text() if document else ""
 
-    def review_heading(self, title: str, subject: str) -> str:
+    def review_heading(self, title: str) -> str:
         if not self.use_color:
-            return f"{MENU_HEADER_MARKER} {title} — {subject}"
-        return f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} {style_text(title, '1')} — {subject}"
+            return f"{MENU_HEADER_MARKER} {title}"
+        return f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} {style_text(title, '1')}"
 
     def review_document(self) -> ReviewDocument | None:
         row = self.focused_row
@@ -293,7 +298,8 @@ class CommandDeck:
         approval = ReviewFact("Approval", term("approved" if row.approved else "unapproved"))
         if isinstance(row, AdditionalRow):
             return ReviewDocument(
-                heading=self.review_heading("Additional Source Review", additional_label(row, use_color=color)),
+                heading=self.review_heading("Additional Source Review"),
+                subject=additional_label(row, use_color=color),
                 sections=(
                     ReviewSection("Decision", (approval, ReviewFact("References", ", ".join(row.references)))),
                     ReviewSection("Source Change", tuple(difference(
@@ -426,7 +432,8 @@ class CommandDeck:
                 tuple(ReviewNote(additional_label(item, use_color=color)) for item in additional),
             ))
         return ReviewDocument(
-            heading=self.review_heading("Proposal Review", unit_label(row, use_color=color)),
+            heading=self.review_heading("Proposal Review"),
+            subject=unit_label(row, use_color=color),
             sections=tuple(sections), use_color=color,
         )
 

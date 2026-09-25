@@ -48,6 +48,10 @@ def review_text(app):
     return "\n".join(strip.text.rstrip() for strip in review_strips(app))
 
 
+def title_text(app):
+    return str(app.query_one("#title", Static).render())
+
+
 def detail_facts(app):
     """Whitespace-normalized rows, so grid column padding does not matter."""
     return [" ".join(line.split()) for line in detail_lines(app)]
@@ -431,7 +435,7 @@ def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, s
                     assert app.deck.reviewing
                     # Opening review queues its resize after the input batch settles.
                     await pilot.pause()
-                    assert f"Proposal Review — main:app.unit_{target:02}" in review_text(app)
+                    assert review_text(app).splitlines()[0].strip() == f"main:app.unit_{target:02}"
                     assert not any(row.approved for row in session.view.rows)
         run(interact())
 
@@ -461,7 +465,9 @@ def test_batched_mouse_and_keyboard_share_target(tmp_path, monkeypatch, column, 
                 assert [row.approved for row in session.view.rows] == approvals
                 if keys[-1] == "enter":
                     await pilot.pause()
-                    assert "Proposal Review — main:app.two" in review_text(app)
+                    # The title already names the review; the body opens with the target only.
+                    assert title_text(app) == ":: Proposal Review"
+                    assert review_text(app).splitlines()[0].strip() == "main:app.two"
         run(interact())
 
 
