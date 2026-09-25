@@ -25,6 +25,10 @@ def post_cell_click(app, offset):
         ))
 
 
+# Short enough to keep the copy-notice test fast.
+COPY_NOTICE_SECONDS = 0.5
+
+
 def run(coroutine):
     return asyncio.run(asyncio.wait_for(coroutine, timeout=5))
 
@@ -165,6 +169,7 @@ def test_keyboard_review_scroll_return_approval_and_confirmation(tmp_path, monke
 
 
 def test_copy_key_copies_full_target_identity_and_review_text(tmp_path, monkeypatch):
+    monkeypatch.setattr("dotman.sync_deck.COPY_NOTICE_SECONDS", COPY_NOTICE_SECONDS)
     engine = make_engine(tmp_path, monkeypatch, [
         ("one", "push-only", b"repo", b"live", ""),
     ])
@@ -180,6 +185,9 @@ def test_copy_key_copies_full_target_identity_and_review_text(tmp_path, monkeypa
                 assert app.clipboard.startswith(":: Proposal Review — main:app.one")
                 assert "\x1b[" not in app.clipboard
                 assert "Copied" in str(app.query_one("#notice", Static).render())
+                await asyncio.sleep(COPY_NOTICE_SECONDS)
+                await pilot.pause()
+                assert str(app.query_one("#notice", Static).render()) == ""
         run(interact())
 
 

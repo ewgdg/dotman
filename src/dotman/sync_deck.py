@@ -593,6 +593,8 @@ class WorksetTable(DataTable):
 
 PROGRESS_REVEAL_DELAY_SECONDS = 0.3
 PROGRESS_FRAME_SECONDS = 0.1
+# Copy confirmation is transient; other notices report state and stay until the next command.
+COPY_NOTICE_SECONDS = 2.0
 
 
 class SyncDeckApp(App[bool]):
@@ -1149,8 +1151,15 @@ class SyncDeckApp(App[bool]):
             # The Target cell may be elided; copy the untruncated identity.
             text, subject = self.query_one(WorksetTable).full_targets[row.row_id].plain, "Target"
         self.copy_to_clipboard(text)
-        self.deck.notice = f"Copied {subject} to clipboard."
+        notice = self.deck.notice = f"Copied {subject} to clipboard."
         self.update_workset()
+        self.set_timer(COPY_NOTICE_SECONDS, lambda: self.dismiss_notice(notice))
+
+    def dismiss_notice(self, notice: str) -> None:
+        # A later command may have replaced the notice; leave that one alone.
+        if self.deck.notice == notice:
+            self.deck.notice = ""
+            self.query_one("#notice", Static).update("")
 
     def action_abort(self) -> None:
         if self._editing:
