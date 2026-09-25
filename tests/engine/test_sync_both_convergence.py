@@ -322,3 +322,39 @@ def test_editor_starts_from_conflict_output(tmp_path, monkeypatch):
         assert seen.read_bytes() == ZDIFF3_CONFLICT
         row = session.view.rows[0]
         assert row.diagnostics == () and row.proposal.repository == FilePresent(b"resolved")
+
+
+def test_saved_edit_with_unresolved_conflict_stays_blocked_without_reopening(tmp_path, monkeypatch):
+    runs = tmp_path / "editor-runs"
+    engine = established(tmp_path, monkeypatch,
+        f'editor = {{ run = "echo run >> {runs}; printf \'kept\\\\n\' >> \\"$DOTMAN_SOURCE\\"", io = "pipe" }}')
+    (tmp_path / "live/unit").write_bytes(b"conflict\nmiddle\nlast\n")
+    with open_session(engine) as session:
+        command(session, SetApproval, "main:app.unit", True)
+        result = command(session, EditProposal, "main:app.unit")
+        row = session.view.rows[0]
+        assert result.result.status == "unresolved-conflict"
+        assert not row.approved and row.proposal is None
+        # The saved text becomes the evidence, so the next Editor run resumes from it.
+        assert row.diagnostics[0].code == "reconciliation-conflict"
+        assert row.diagnostics[0].conflict == FilePresent(ZDIFF3_CONFLICT + b"kept\n")
+        assert runs.read_text().splitlines() == ["run"]
+        # Approval rechecks the saved edit instead of re-merging over it.
+        command(session, SetApproval, "main:app.unit", True)
+        row = session.view.rows[0]
+        assert not row.approved and row.diagnostics[0].conflict == FilePresent(ZDIFF3_CONFLICT + b"kept\n")
+
+
+@pytest.mark.parametrize("source", [
+    # Present in the frozen repository source, so intentional.
+    b"<<<<<<< repository\nx\n||||||| Sync Base\ny\n=======\nz\n>>>>>>> Capture\n",
+    # Not dotman's labels.
+    b"<<<<<<< mine\nx\n=======\nz\n>>>>>>> theirs\n",
+])
+def test_saved_edit_keeps_intentional_conflict_markers(tmp_path, monkeypatch, source):
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", source, b"live", 'editor = { run = "true", io = "pipe" }')])
+    with open_session(engine) as session:
+        command(session, SetApproval, "main:app.unit", True)
+        result = command(session, EditProposal, "main:app.unit")
+        assert result.result.status == "saved"
+        assert session.view.rows[0].approved

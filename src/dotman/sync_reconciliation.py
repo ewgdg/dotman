@@ -5,6 +5,35 @@ from dotman.sync_base_store import FilePresent, DirectoryChildPresent, SyncBaseP
 from dotman.text_merge import TextMergeFailed, merge_text
 
 
+MERGE_LABELS = ("repository", "Sync Base", "Capture")
+# Git's default 7-character markers carrying the labels above, in zdiff3 order.
+CONFLICT_MARKER_LINES = tuple(
+    f"{marker} {label}".encode() for marker, label in zip(("<<<<<<<", "|||||||", ">>>>>>>"), MERGE_LABELS)
+)
+
+
+def unresolved_conflict_blocks(content: bytes, *, known_sources: tuple[bytes, ...]) -> tuple[bytes, ...]:
+    """Complete conflict blocks this merge would write that none of `known_sources` already contains.
+
+    Blocks already present in a frozen source, or using other labels, are intentional content.
+    """
+    start, base, end = CONFLICT_MARKER_LINES
+    expected = (start, base, b"=======", end)
+    blocks, current = [], None
+    for line in content.splitlines(keepends=True):
+        stripped = line.rstrip(b"\r\n")
+        if stripped == start:
+            current, stage = [], 0
+        if current is not None:
+            current.append(line)
+            if stage < len(expected) and stripped == expected[stage]:
+                stage += 1
+                if stage == len(expected):
+                    blocks.append(b"".join(current))
+                    current = None
+    return tuple(block for block in blocks if not any(block in source for source in known_sources))
+
+
 class ReconciliationConflict(ValueError):
     """The frozen sides require an explicit resolution decision.
 
@@ -55,7 +84,7 @@ def reconcile(
     try:
         merged = merge_text(
             repository.content, base.content, captured.content,
-            labels=("repository", "Sync Base", "Capture"), command_runtime=command_runtime,
+            labels=MERGE_LABELS, command_runtime=command_runtime,
         )
     except TextMergeFailed as exc:
         raise ReconciliationFailed(f"Reconciliation failed with {exc}") from exc

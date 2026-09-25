@@ -256,7 +256,11 @@ Sync.
 
 The Editor starts from the current Proposal's repository outcome. After a merge
 conflict it starts from Git's `zdiff3` merge output, conflict blocks included, so
-the user resolves them in place. If no Proposal exists otherwise, including after
+the user resolves them in place. A saved edit that still contains a complete
+conflict block with Dotman's labels (`repository`, `Sync Base`, `Capture`) stays a
+blocked conflict without Approval, and the Editor never reopens on its own; the saved
+text becomes the evidence the next Editor run starts from. Blocks already present in
+the frozen repository source or Capture, and markers with other labels, are content. If no Proposal exists otherwise, including after
 a Capture failure, it starts from frozen repository sources without requiring Capture. The configured/default Editor
 receives isolated Primary and permitted Additional Source copies and read-only
 review evidence, not writable tracked paths. Cancelling discards the attempted

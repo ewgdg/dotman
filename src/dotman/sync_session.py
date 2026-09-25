@@ -17,7 +17,7 @@ from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
 from dotman.sync_observation import _identity
 from dotman.sync_auxiliary import AuxiliaryRow, guard_skip_rows, plan_auxiliary, retain_directional_hooks
-from dotman.sync_reconciliation import reconcile, ReconciliationConflict, ReconciliationFailed
+from dotman.sync_reconciliation import reconcile, unresolved_conflict_blocks, ReconciliationConflict, ReconciliationFailed
 from dotman.projection import ProbeCommandError, project_file_view
 from dotman.models import GuardSkip, ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
@@ -350,7 +350,7 @@ class EditProposal:
 @dataclass(frozen=True)
 class ProposalEdit:
     row_id: str
-    status: Literal["saved", "cancelled", "command-failed", "materialization-failed"]
+    status: Literal["saved", "cancelled", "command-failed", "materialization-failed", "unresolved-conflict"]
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
@@ -1015,6 +1015,10 @@ class ProposalSession:
             return self._qualify_checkpoint(observation, replace(proposal, generation=self._next_generation(row.row_id), additional_changes=self._row_additional(row)))
         repository, generation = self._edited_outcomes[row.row_id]
         observation = row.observation
+        if self._unresolved_conflict(row, repository):
+            # Blocked like the merge conflict it came from; the saved text stays the
+            # conflict evidence, so the next Editor run resumes from it.
+            raise ReconciliationConflict("Saved edit still contains unresolved conflict blocks", repository)
         if observation.effective_policy in ("push-only", "both"):
             live = self._render(observation, repository)
         elif observation.effective_policy == "push-only-delete":
@@ -1029,6 +1033,15 @@ class ProposalSession:
             proposal, primary_source_change=repository if repository != observation.repository else None,
             intent="editor", generation=generation, reconciliation="edited repository outcome",
             additional_changes=self._row_additional(row),
+        ))
+
+    def _unresolved_conflict(self, row: SessionRow, repository: SyncBasePayload) -> bool:
+        present = (FilePresent, DirectoryChildPresent)
+        if not isinstance(repository, present):
+            return False
+        sources = (row.observation.repository, self._captures.get(row.observation.identity))
+        return bool(unresolved_conflict_blocks(
+            repository.content, known_sources=tuple(source.content for source in sources if isinstance(source, present)),
         ))
 
     def _edit_proposal(self, row: SessionRow) -> CommandAccepted:
@@ -1106,6 +1119,9 @@ class ProposalSession:
             self._view = prior_view
             self._captures, self._renders = prior_captures, prior_renders
             self._proposal_generations = prior_generations
+        except ReconciliationConflict as exc:
+            status = "unresolved-conflict"
+            diagnostics = (reconciliation_diagnostic(exc, self._captures.get(row.observation.identity)),)
         except EditorCommandFailed as exc:
             status = "command-failed"
             diagnostics = (Diagnostic("editor-command-failed", str(exc)),)
