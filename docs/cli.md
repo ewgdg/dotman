@@ -117,7 +117,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   (`── Decision ───`; copied text uses `:: Decision`): Decision (Approval, Resolution, effective
   policy, and configured policy only when it differs), Paths, State (Observation,
   Base availability, Capture, Reconciliation, Primary Source Change authorization),
-  then exact Publication Effects, the repository and live old-vs-new effect previews,
+  Merge conflicts when a merge conflicted (Git `zdiff3` blocks with three context
+  lines, repository side green, Capture side blue, Sync Base dimmed), then exact Publication Effects, the repository and live old-vs-new effect previews,
   and last the frozen Pull Views (drift evidence). Base and Capture appear only as
   State facts, without diffs of their own. Fact labels are dimmed with values aligned in one column; diffs
   color removed, added and hunk lines. Long lines wrap to the terminal width, with

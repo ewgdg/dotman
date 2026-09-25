@@ -30,10 +30,10 @@ from textual.widgets import DataTable, OptionList, Static
 
 from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
-from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text
+from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
-from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
+from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession, conflict_outcome
 
 
 @dataclass(frozen=True)
@@ -53,9 +53,14 @@ class ReviewDiff:
 
 
 @dataclass(frozen=True)
+class ReviewConflict:
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ReviewSection:
     title: str
-    items: tuple[ReviewFact | ReviewNote | ReviewDiff, ...]
+    items: tuple[ReviewFact | ReviewNote | ReviewDiff | ReviewConflict, ...]
 
 
 REVIEW_ITEM_INDENT = 4
@@ -84,6 +89,8 @@ class ReviewDocument:
                     lines.append(f"{indent}{render_payload_section_label(item.label + ':', use_color=self.use_color)} {item.value}")
                 elif isinstance(item, ReviewNote):
                     lines.append(f"{indent}{item.text}")
+                elif isinstance(item, ReviewConflict):
+                    lines.extend(indent + line for line in render_conflict_lines(item.lines, use_color=self.use_color))
                 else:
                     lines.extend(indent + "".join(render_diff_line(line, use_color=self.use_color)) for line in item.lines)
         return "\n".join(lines)
@@ -100,6 +107,9 @@ class ReviewDocument:
                                       for item in items])
                 elif kind is ReviewNote:
                     body = Group(*(Text.from_ansi(item.text, overflow="fold") for item in items))
+                elif kind is ReviewConflict:
+                    body = Group(*(Text.from_ansi(line, overflow="fold") for item in items
+                                   for line in render_conflict_lines(item.lines, use_color=self.use_color)))
                 else:
                     body = Group(*(self._diff_grid(item.lines) for item in items))
                 parts.append(Padding(body, (0, 0, 0, REVIEW_ITEM_INDENT)))
@@ -120,6 +130,37 @@ class ReviewDocument:
             marker, content = render_diff_line(line, use_color=self.use_color)
             grid.add_row(Text.from_ansi(marker), Text.from_ansi(content))
         return grid
+
+
+CONFLICT_CONTEXT_LINES = 3
+CONFLICT_ELISION = "⋯"
+
+
+def conflict_excerpt(content: bytes, *, description: str) -> ReviewConflict | ReviewNote:
+    """zdiff3 conflict blocks with surrounding context, like unified-diff hunks."""
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return ReviewNote(f"Binary {description}: {len(content)} bytes")
+    in_block, block_lines = False, []
+    for index, line in enumerate(lines):
+        if line.startswith("<<<<<<<"):
+            in_block = True
+        if in_block:
+            block_lines.append(index)
+        if line.startswith(">>>>>>>"):
+            in_block = False
+    kept = sorted({index for block_index in block_lines
+                   for index in range(block_index - CONFLICT_CONTEXT_LINES, block_index + CONFLICT_CONTEXT_LINES + 1)
+                   if 0 <= index < len(lines)})
+    excerpt = []
+    for previous, index in zip([-1, *kept], kept):
+        if index - previous > 1:
+            excerpt.append(CONFLICT_ELISION)
+        excerpt.append(lines[index])
+    if kept and kept[-1] < len(lines) - 1:
+        excerpt.append(CONFLICT_ELISION)
+    return ReviewConflict(tuple(excerpt))
 
 
 def _frozen_difference(
@@ -374,6 +415,13 @@ class CommandDeck:
         if proposal and observation.configured_policy in ("pull-only", "both"):
             state.append(ReviewFact("Checkpoint qualified", "yes" if proposal.checkpoint_qualified else "no"))
         sections.append(ReviewSection("State", tuple(state)))
+        conflict = conflict_outcome(row)
+        if isinstance(conflict, (FilePresent, DirectoryChildPresent)):
+            sections.append(ReviewSection("Merge conflicts", (
+                ReviewNote(render_payload_section_label("Resolve in the Editor (E); it opens with this merge output",
+                                                        use_color=color)),
+                conflict_excerpt(conflict.content, description="merge output"),
+            )))
 
         if proposal is not None:
             effects = []

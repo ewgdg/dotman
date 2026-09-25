@@ -157,3 +157,22 @@ def test_merge_review_reports_capture_reconciliation_and_both_outcomes(tmp_path,
         assert unit['reconciliation'] == 'three-way merge'
         assert unit['fallback_reason'] is None
         assert 'captured' not in str(unit)
+
+
+def test_conflict_review_shows_zdiff3_blocks_colored_by_side(tmp_path, monkeypatch):
+    from dotman.sync_session import ConflictDiagnostic
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'both', b'repo', b'live', '')])
+    context = b''.join(b'line %d\n' % index for index in range(10))
+    conflict = FilePresent(context + b'<<<<<<< repository\nours\n||||||| Sync Base\nbase\n=======\n'
+                           b'theirs\n>>>>>>> Capture\n' + context)
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as opened:
+        row = replace(opened.view.rows[0], intent='merge', diagnostics=(ConflictDiagnostic(
+            'reconciliation-conflict', 'Repository and Capture contain conflicting changes', conflict=conflict),))
+        session = SimpleNamespace(view=replace(opened.view, rows=(row,)))
+        plain = CommandDeck(session, use_color=False).review_text()
+        section = plain.split(':: Merge conflicts', 1)[1]
+        # Three context lines around each block; farther lines are elided.
+        assert 'line 6' not in section and 'line 7' in section and 'line 2' in section and 'line 3' not in section
+        assert '<<<<<<< repository' in section and '>>>>>>> Capture' in section
+        colored = CommandDeck(session, use_color=True).review_text()
+        assert '\x1b[32mours' in colored and '\x1b[2mbase' in colored and '\x1b[34mtheirs' in colored

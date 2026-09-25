@@ -509,6 +509,28 @@ DIFF_LINE_STYLE_BY_PREFIX: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+# zdiff3 conflict regions, colored like common merge editors (e.g. VS Code): current
+# (repository) side green, incoming (Capture) side blue, common ancestor dimmed.
+CONFLICT_REGION_BY_MARKER = {"<<<<<<<": "repository", "|||||||": "base", "=======": "capture", ">>>>>>>": None}
+CONFLICT_STYLE_BY_REGION = {"repository": ("32",), "base": ("2",), "capture": ("34",), None: ()}
+
+
+def render_conflict_lines(lines: Sequence[str], *, use_color: bool) -> list[str]:
+    """Style zdiff3 merge output by conflict side; marker lines are bold in their side's color."""
+    if not use_color:
+        return list(lines)
+    rendered, region = [], None
+    for line in lines:
+        marker = line[:7]
+        if marker in CONFLICT_REGION_BY_MARKER and line[7:8] in ("", " "):
+            codes = ("1", *CONFLICT_STYLE_BY_REGION[region if marker == ">>>>>>>" else CONFLICT_REGION_BY_MARKER[marker]])
+            region = CONFLICT_REGION_BY_MARKER[marker]
+            rendered.append(style_text(line, *codes))
+        else:
+            rendered.append(style_text(line, *CONFLICT_STYLE_BY_REGION[region]))
+    return rendered
+
+
 def render_diff_line(line: str, *, use_color: bool) -> tuple[str, str]:
     """Split a unified-diff line into its one-column marker and styled content."""
     marker, content = line[:1], line[1:]
