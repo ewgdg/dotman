@@ -30,7 +30,7 @@ def test_directory_root_is_auxiliary_selection_not_proposal_approval():
         assert not session.view.rows[0].included
 
 
-def test_review_keeps_pull_and_base_evidence_when_using_repository(tmp_path, monkeypatch):
+def test_review_keeps_pull_evidence_and_base_only_as_facts(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"repo", b"live", "")])
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as opened:
         original = opened.view.rows[0]
@@ -42,10 +42,10 @@ def test_review_keeps_pull_and_base_evidence_when_using_repository(tmp_path, mon
         row = replace(original, observation=observation, intent="use-repository")
         session = SimpleNamespace(view=replace(opened.view, rows=(row,)))
         text = CommandDeck(session, use_color=False).review_text()
-        assert "Frozen Pull Views" in text
+        assert "+++ frozen live Pull View" in text.split(":: Frozen Pull Views", 1)[1]
+        # Sync Base stays summarized as facts; its payload gets no diff of its own.
         assert "Base fingerprint: " + "b" * 64 in text
-        assert "Base vs frozen repository" in text
-        assert "-ancestor" in text and "+repo" in text
+        assert "ancestor" not in text
         assert "Capture: not required" in text
 
 

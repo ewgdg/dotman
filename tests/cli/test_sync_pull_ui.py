@@ -118,8 +118,7 @@ def test_no_write_review_separates_frozen_pull_views_from_repository_effect(tmp_
         assert not session.view.rows[0].approved
         assert session.view.rows[0].proposal.primary_source_change is None
         text = deck.review_text()
-        evidence, outcome = text.split(':: Repository effect preview', 1)
-        assert 'Frozen Pull Views' in evidence
+        outcome, evidence = text.split(':: Frozen Pull Views', 1)
         assert '--- frozen repository Pull View' in evidence
         assert '+++ frozen live Pull View' in evidence
         assert ('-compared-repo' if projected else '-repo') in evidence
@@ -147,7 +146,7 @@ def test_merge_review_reports_capture_reconciliation_and_both_outcomes(tmp_path,
         session = SimpleNamespace(view=replace(opened.view, rows=(row,)))
         review = CommandDeck(session, use_color=False).review_text()
         assert 'Resolution: Merge' in review
-        assert 'Capture result' in review and '+captured' in review
+        assert 'Capture: present' in review and 'captured' not in review
         assert 'Reconciliation: three-way merge' in review
         assert '+merged' in review
         assert '+rendered' in review

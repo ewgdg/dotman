@@ -375,29 +375,6 @@ class CommandDeck:
             state.append(ReviewFact("Checkpoint qualified", "yes" if proposal.checkpoint_qualified else "no"))
         sections.append(ReviewSection("State", tuple(state)))
 
-        if base.record:
-            sections.append(ReviewSection("Base vs frozen repository", tuple(difference(
-                base.record.payload, observation.repository,
-                before_label="Sync Base", after_label="frozen repository", description="Base",
-            ))))
-        if proposal and proposal.capture is not None:
-            sections.append(ReviewSection("Capture result vs frozen repository", tuple(difference(
-                observation.repository, proposal.capture,
-                before_label="frozen repository", after_label="Capture result", description="Capture",
-            ))))
-        # Pull Views are frozen Observation evidence, independent of the chosen intent.
-        if observation.effective_policy in ("both", "pull-only"):
-            views = [ReviewFact("Repository comparison", observation.compare_repo),
-                     ReviewFact("Live comparison", observation.compare_live)]
-            for label, view_state in (("Repository", observation.comparison_repository),
-                                      ("Live", observation.comparison_live)):
-                views.append(ReviewFact(f"{label} Pull View", term("unavailable") if view_state is None else presence(view_state)))
-            views.extend(difference(
-                observation.comparison_repository, observation.comparison_live,
-                before_label="frozen repository Pull View",
-                after_label="frozen live Pull View", description="Pull Views",
-            ))
-            sections.append(ReviewSection("Frozen Pull Views", tuple(views)))
         if proposal is not None:
             effects = []
             for effect in proposal.publication_effects:
@@ -432,6 +409,20 @@ class CommandDeck:
                     before_label="frozen live", after_label="approved live outcome",
                     description="live outcome",
                 ))))
+        # Drift evidence follows the outcome diffs: Pull Views are frozen Observation
+        # evidence, independent of the chosen intent.
+        if observation.effective_policy in ("both", "pull-only"):
+            views = [ReviewFact("Repository comparison", observation.compare_repo),
+                     ReviewFact("Live comparison", observation.compare_live)]
+            for label, view_state in (("Repository", observation.comparison_repository),
+                                      ("Live", observation.comparison_live)):
+                views.append(ReviewFact(f"{label} Pull View", term("unavailable") if view_state is None else presence(view_state)))
+            views.extend(difference(
+                observation.comparison_repository, observation.comparison_live,
+                before_label="frozen repository Pull View",
+                after_label="frozen live Pull View", description="Pull Views",
+            ))
+            sections.append(ReviewSection("Frozen Pull Views", tuple(views)))
         additional = [item for item in self.session.view.rows
                       if isinstance(item, AdditionalRow) and row.row_id in item.references]
         if additional:

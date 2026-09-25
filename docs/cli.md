@@ -117,11 +117,13 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   (`── Decision ───`; copied text uses `:: Decision`): Decision (Approval, Resolution, effective
   policy, and configured policy only when it differs), Paths, State (Observation,
   Base availability, Capture, Reconciliation, Primary Source Change authorization),
-  then Base and Capture evidence, frozen Pull Views, exact Publication Effects and
-  effect previews. Fact labels are dimmed with values aligned in one column; diffs
+  then exact Publication Effects, the repository and live old-vs-new effect previews,
+  and last the frozen Pull Views (drift evidence). Base and Capture appear only as
+  State facts, without diffs of their own. Fact labels are dimmed with values aligned in one column; diffs
   color removed, added and hunk lines. Long lines wrap to the terminal width, with
   continuations hanging under their value or after the diff marker, and rewrap on
-  resize.
+  resize. The `Y` copy confirmation clears itself after a moment; other notices stay
+  until the next command.
   `X` opens one compact confirmation with selected units, repository changes,
   live writes, and live deletions; cancelling returns without
   changing Approval, inclusion or focus. Real execution is offered only for valid,
