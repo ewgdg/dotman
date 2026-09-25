@@ -39,9 +39,9 @@ def test_edited_push_review_shows_deliberate_repository_change_and_live_effect(t
         assert row_resolution(row) == "Edited"
         text = deck.review_text()
         assert "Resolution: Edited" in text
-        assert "Repository effect preview:" in text
+        assert "Repository effect preview" in text
         assert "-repository-before" in text and "+edited-source" in text
-        assert "Live effect preview:" in text
+        assert "Live effect preview" in text
         assert "-live-before" in text and "+rendered-edit" in text
         unit = sync_document(SimpleNamespace(dry_run=True, scopes=[]), session, None)["sync_units"][0]
         assert unit["resolution_intent"] == "use-repository"
@@ -52,7 +52,7 @@ def test_edited_push_review_shows_deliberate_repository_change_and_live_effect(t
 def test_editor_key_saves_in_place_and_is_disabled_after_confirmation(tmp_path, monkeypatch):
     import asyncio
 
-    from textual.widgets import DataTable, RichLog, Static
+    from textual.widgets import DataTable, Static
 
     from dotman.sync_base_store import FilePresent
     from dotman.sync_deck import CommandDeck, SyncDeckApp
@@ -84,9 +84,10 @@ def test_editor_key_saves_in_place_and_is_disabled_after_confirmation(tmp_path, 
                 assert row.proposal.repository == FilePresent(b"edited")
                 assert row.approved
                 assert app.deck.reviewing
-                assert "Resolution: Edited" in "\n".join(
-                    line.text for line in app.query_one(RichLog).lines
-                )
+                body = app.query_one("#review-body")
+                rendered = " ".join(body.render_line(y).text for y in range(body.size.height))
+                # Rendered facts are column-aligned; normalize the padding.
+                assert "Resolution: Edited" in " ".join(rendered.split())
                 assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"repo"
                 assert (tmp_path / "live/unit").read_bytes() == b"live"
                 await pilot.press("escape")
@@ -277,7 +278,7 @@ def test_edited_pull_review_does_not_claim_capture_is_pending(tmp_path, monkeypa
         text = CommandDeck(session, use_color=False).review_text()
         assert "Capture: not required" in text
         assert "Live remains unchanged" in text
-        assert "Frozen Pull Views:" in text
+        assert "Frozen Pull Views" in text
 
 
 def test_additional_edits_have_independent_canonical_review_and_json(tmp_path, monkeypatch):

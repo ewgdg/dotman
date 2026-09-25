@@ -118,8 +118,8 @@ def test_no_write_review_separates_frozen_pull_views_from_repository_effect(tmp_
         assert not session.view.rows[0].approved
         assert session.view.rows[0].proposal.primary_source_change is None
         text = deck.review_text()
-        evidence, outcome = text.split('  Repository effect preview:', 1)
-        assert 'Frozen Pull Views:' in evidence
+        evidence, outcome = text.split(':: Repository effect preview', 1)
+        assert 'Frozen Pull Views' in evidence
         assert '--- frozen repository Pull View' in evidence
         assert '+++ frozen live Pull View' in evidence
         assert ('-compared-repo' if projected else '-repo') in evidence

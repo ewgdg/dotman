@@ -42,9 +42,9 @@ def test_review_keeps_pull_and_base_evidence_when_using_repository(tmp_path, mon
         row = replace(original, observation=observation, intent="use-repository")
         session = SimpleNamespace(view=replace(opened.view, rows=(row,)))
         text = CommandDeck(session, use_color=False).review_text()
-        assert "Frozen Pull Views:" in text
+        assert "Frozen Pull Views" in text
         assert "Base fingerprint: " + "b" * 64 in text
-        assert "Base vs frozen repository:" in text
+        assert "Base vs frozen repository" in text
         assert "-ancestor" in text and "+repo" in text
         assert "Capture: not required" in text
 

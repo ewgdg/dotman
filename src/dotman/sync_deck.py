@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from contextvars import copy_context
 from contextlib import ExitStack
+from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 from difflib import unified_diff
+from itertools import groupby
 import signal
 import time
 
@@ -21,14 +23,89 @@ from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.errors import NoWidget
-from textual.widgets import DataTable, OptionList, RichLog, Static
+from textual.widgets import DataTable, OptionList, Static
 
 from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
-from dotman.cli_style import render_key_hints, render_payload_section_label, render_sync_term, render_package_label
+from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession
+
+
+@dataclass(frozen=True)
+class ReviewFact:
+    label: str
+    value: str
+
+
+@dataclass(frozen=True)
+class ReviewNote:
+    text: str
+
+
+@dataclass(frozen=True)
+class ReviewDiff:
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReviewSection:
+    title: str
+    items: tuple[ReviewFact | ReviewNote | ReviewDiff, ...]
+
+
+REVIEW_ITEM_INDENT = 4
+
+
+@dataclass(frozen=True)
+class ReviewDocument:
+    """One review, laid out as styled wrapping renderables or as copyable text."""
+
+    heading: str
+    sections: tuple[ReviewSection, ...]
+    use_color: bool
+
+    def text(self) -> str:
+        indent = " " * REVIEW_ITEM_INDENT
+        lines = [self.heading]
+        for section in self.sections:
+            lines += ["", render_info_section_header(section.title, use_color=self.use_color)]
+            for item in section.items:
+                if isinstance(item, ReviewFact):
+                    lines.append(f"{indent}{render_payload_section_label(item.label + ':', use_color=self.use_color)} {item.value}")
+                elif isinstance(item, ReviewNote):
+                    lines.append(f"{indent}{item.text}")
+                else:
+                    lines.extend(indent + "".join(render_diff_line(line, use_color=self.use_color)) for line in item.lines)
+        return "\n".join(lines)
+
+    def renderable(self) -> Group:
+        parts: list = [Text.from_ansi(self.heading, overflow="fold")]
+        for section in self.sections:
+            parts += [Text(), Text.from_ansi(render_info_section_header(section.title, use_color=self.use_color))]
+            # Consecutive facts share one grid so their values align.
+            for kind, items in groupby(section.items, type):
+                items = list(items)
+                if kind is ReviewFact:
+                    body = fact_grid([(render_payload_section_label(item.label + ":", use_color=self.use_color), item.value)
+                                      for item in items])
+                elif kind is ReviewNote:
+                    body = Group(*(Text.from_ansi(item.text, overflow="fold") for item in items))
+                else:
+                    body = Group(*(self._diff_grid(item.lines) for item in items))
+                parts.append(Padding(body, (0, 0, 0, REVIEW_ITEM_INDENT)))
+        return Group(*parts)
+
+    def _diff_grid(self, lines: tuple[str, ...]) -> Table:
+        # A marker column keeps wrapped content hanging right of the +/- sign.
+        grid = Table.grid()
+        grid.add_column(width=1, no_wrap=True)
+        grid.add_column(ratio=1, overflow="fold")
+        for line in lines:
+            marker, content = render_diff_line(line, use_color=self.use_color)
+            grid.add_row(Text.from_ansi(marker), Text.from_ansi(content))
+        return grid
 
 
 def _frozen_difference(
@@ -38,9 +115,10 @@ def _frozen_difference(
     before_label: str,
     after_label: str,
     description: str,
-) -> list[str]:
+    use_color: bool,
+) -> list[ReviewNote | ReviewDiff]:
     if before is None or after is None:
-        return ["    Comparison evidence unavailable"]
+        return [ReviewNote("Comparison evidence unavailable")]
     present_types = (FilePresent, DirectoryChildPresent)
     before_bytes = before.content if isinstance(before, present_types) else b""
     after_bytes = after.content if isinstance(after, present_types) else b""
@@ -50,7 +128,7 @@ def _frozen_difference(
         and before.executable != after.executable
     )
     if before_bytes == after_bytes and not mode_changed:
-        return ["    No content difference"]
+        return [ReviewNote(render_payload_section_label("No content difference", use_color=use_color))]
 
     lines: list[str] = []
     if mode_changed:
@@ -75,8 +153,11 @@ def _frozen_difference(
                 if not line.endswith("\n"):
                     lines.append("\\ No newline at end of file")
         except UnicodeDecodeError:
-            lines.append(f"  Binary {description}: {len(before_bytes)} → {len(after_bytes)} bytes")
-    return lines
+            binary = ReviewNote(f"Binary {description}: {len(before_bytes)} → {len(after_bytes)} bytes")
+            return [ReviewDiff(tuple(lines)), binary] if lines else [binary]
+    return [ReviewDiff(tuple(lines))]
+
+
 
 
 class CommandDeck:
@@ -194,127 +275,160 @@ class CommandDeck:
         return f":: {verb}? — {stats}\n\n  {hints}"
 
     def review_text(self) -> str:
+        document = self.review_document()
+        return document.text() if document else ""
+
+    def review_heading(self, title: str, subject: str) -> str:
+        if not self.use_color:
+            return f"{MENU_HEADER_MARKER} {title} — {subject}"
+        return f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} {style_text(title, '1')} — {subject}"
+
+    def review_document(self) -> ReviewDocument | None:
         row = self.focused_row
         if row is None or isinstance(row, AuxiliaryRow):
-            return ""
+            return None
+        color = self.use_color
+        term = lambda value: render_sync_term(value, use_color=color)
+        difference = lambda *args, **kwargs: _frozen_difference(*args, **kwargs, use_color=color)
+        approval = ReviewFact("Approval", term("approved" if row.approved else "unapproved"))
         if isinstance(row, AdditionalRow):
-            lines = [f":: Additional Source Review — {additional_label(row, use_color=self.use_color)}",
-                     f"  Approval: {'approved' if row.approved else 'unapproved'}",
-                     "  References: " + ", ".join(row.references)]
-            lines.extend(_frozen_difference(
-                FilePresent(row.change.before), FilePresent(row.change.candidate),
-                before_label="frozen Additional Source",
-                after_label="candidate Additional Source",
-                description="Additional Source",
-            ))
-            hints = (("↑/↓", "scroll"), ("Space", "Approval"), ("Esc", "return to workset"))
-            lines += ["", f"  {render_key_hints(hints, use_color=self.use_color)}"]
-            return "\n".join(lines)
+            return ReviewDocument(
+                heading=self.review_heading("Additional Source Review", additional_label(row, use_color=color)),
+                sections=(
+                    ReviewSection("Decision", (approval, ReviewFact("References", ", ".join(row.references)))),
+                    ReviewSection("Source Change", tuple(difference(
+                        FilePresent(row.change.before), FilePresent(row.change.candidate),
+                        before_label="frozen Additional Source",
+                        after_label="candidate Additional Source",
+                        description="Additional Source",
+                    ))),
+                ),
+                use_color=color,
+            )
         proposal = row.proposal
         intent = row.intent
+        observation = row.observation
+        base = observation.base
         pull = self.session.view.operation == "pull" or intent in ("use-live", "merge")
         capture_required = pull and not (proposal and proposal.intent == "editor")
         ui = current_ui_config()
         display_path = lambda path: display_review_path(path, compact=not (ui and ui.full_paths))
-        primary = primary_change_summary(proposal, row.observation.repository_path)
-        lines = [f":: Proposal Review — {row.row_id}",
-                 f"  Approval: {'approved' if row.approved else 'unapproved'}",
-                 f"  Observation: {row.observation.state}",
-                 f"  Policy: {row.observation.effective_policy}",
-                 f"  Configured policy: {row.observation.configured_policy}",
-                 f"  Repository path: {display_path(row.observation.repository_path)}",
-                 f"  Live path: {display_path(row.observation.live_path)}",
-                 f"  Resolution: {render_sync_term(row_resolution(row), use_color=self.use_color) if intent or self.session.view.operation == 'pull' else 'blocked'}",
-                 f"  Sync Base: {row.observation.base.status}",
-                 f"  Primary Source Change: {primary['kind'] if primary else 'none'}",
-                 f"  Capture: {('missing' if isinstance(proposal.capture, Missing) else 'present') if proposal and proposal.capture is not None else 'pending' if capture_required else 'not required'}",
-                 f"  Reconciliation: {proposal.reconciliation if proposal else 'pending'}"]
+        primary = primary_change_summary(proposal, observation.repository_path)
+        presence = lambda state: "missing" if isinstance(state, Missing) else "present"
+
+        decision = [
+            approval,
+            ReviewFact("Resolution", term(row_resolution(row)) if intent or self.session.view.operation == "pull" else term("blocked")),
+            ReviewFact("Policy", observation.effective_policy),
+        ]
+        if observation.configured_policy != observation.effective_policy:
+            decision.append(ReviewFact("Configured policy", observation.configured_policy))
         if "authorize-symlink-replacement" in row.allowed_commands:
-            term = "Link replacement authorized" if row.symlink_authorized else "Link replacement requires authorization"
-            lines.append(f"  {render_sync_term(term, use_color=self.use_color)} (L)")
-        base = row.observation.base
-        if base.reason:
-            lines.append(f"  Base reason: {base.reason}")
-        if base.record:
-            lines += [
-                f"  Base fingerprint: {base.record.envelope.fingerprint}",
-                f"  Base payload: {'missing' if isinstance(base.record.payload, Missing) else 'present'}",
-                "  Base vs frozen repository:",
-            ]
-            lines.extend(_frozen_difference(
-                base.record.payload, row.observation.repository,
-                before_label="Sync Base", after_label="frozen repository",
-                description="Base",
-            ))
+            link = "Link replacement authorized" if row.symlink_authorized else "Link replacement requires authorization"
+            decision.append(ReviewNote(f"{term(link)} (L)"))
         if row.fallback_reason:
-            lines.append(f"  {render_sync_term('Fallback', use_color=self.use_color)}: {row.fallback_reason}")
-        if proposal and proposal.capture is not None:
-            lines.append("  Capture result vs frozen repository:")
-            lines.extend(_frozen_difference(
-                row.observation.repository, proposal.capture,
-                before_label="frozen repository", after_label="Capture result",
-                description="Capture",
-            ))
+            decision.append(ReviewNote(f"{term('Fallback')}: {row.fallback_reason}"))
+        decision.extend(ReviewNote(f"{term(item.severity)}: {item.message}") for item in row_diagnostics(row))
+        sections = [
+            ReviewSection("Decision", tuple(decision)),
+            ReviewSection("Paths", (
+                ReviewFact("Repository path", display_path(observation.repository_path)),
+                ReviewFact("Live path", display_path(observation.live_path)),
+            )),
+        ]
+
+        primary_value = "none"
         if primary:
-            lines.append(f"    {display_path(primary['path'])} (authorized by Proposal Approval)")
-        if proposal and row.observation.configured_policy in ("pull-only", "both"):
-            lines.append(f"  Checkpoint qualified: {'yes' if proposal.checkpoint_qualified else 'no'}")
-        lines.extend(f"  {item.severity}: {item.message}" for item in row_diagnostics(row))
+            annotation = render_annotation_parentheses("authorized by Proposal Approval", use_color=color)
+            primary_value = f"{primary['kind']} · {display_path(primary['path'])}{annotation}"
+        capture = (presence(proposal.capture) if proposal and proposal.capture is not None
+                   else term("pending") if capture_required else "not required")
+        state = [
+            ReviewFact("Observation", term(observation.state)),
+            ReviewFact("Sync Base", term(base.status)),
+        ]
+        if base.reason:
+            state.append(ReviewFact("Base reason", base.reason))
+        if base.record:
+            state += [ReviewFact("Base fingerprint", base.record.envelope.fingerprint),
+                      ReviewFact("Base payload", presence(base.record.payload))]
+        state += [
+            ReviewFact("Primary Source Change", primary_value),
+            ReviewFact("Capture", capture),
+            ReviewFact("Reconciliation", proposal.reconciliation if proposal else term("pending")),
+        ]
+        if proposal and observation.configured_policy in ("pull-only", "both"):
+            state.append(ReviewFact("Checkpoint qualified", "yes" if proposal.checkpoint_qualified else "no"))
+        sections.append(ReviewSection("State", tuple(state)))
+
+        if base.record:
+            sections.append(ReviewSection("Base vs frozen repository", tuple(difference(
+                base.record.payload, observation.repository,
+                before_label="Sync Base", after_label="frozen repository", description="Base",
+            ))))
+        if proposal and proposal.capture is not None:
+            sections.append(ReviewSection("Capture result vs frozen repository", tuple(difference(
+                observation.repository, proposal.capture,
+                before_label="frozen repository", after_label="Capture result", description="Capture",
+            ))))
         # Pull Views are frozen Observation evidence, independent of the chosen intent.
-        if row.observation.effective_policy in ("both", "pull-only"):
-            observation = row.observation
-            lines += ["", "  Frozen Pull Views:",
-                      f"    Repository comparison: {observation.compare_repo}",
-                      f"    Live comparison: {observation.compare_live}"]
-            for label, state in (("Repository", observation.comparison_repository),
-                                 ("Live", observation.comparison_live)):
-                kind = "unavailable" if state is None else "missing" if isinstance(state, Missing) else "present"
-                lines.append(f"    {label} Pull View: {kind}")
-            lines.extend(_frozen_difference(
+        if observation.effective_policy in ("both", "pull-only"):
+            views = [ReviewFact("Repository comparison", observation.compare_repo),
+                     ReviewFact("Live comparison", observation.compare_live)]
+            for label, view_state in (("Repository", observation.comparison_repository),
+                                      ("Live", observation.comparison_live)):
+                views.append(ReviewFact(f"{label} Pull View", term("unavailable") if view_state is None else presence(view_state)))
+            views.extend(difference(
                 observation.comparison_repository, observation.comparison_live,
                 before_label="frozen repository Pull View",
                 after_label="frozen live Pull View", description="Pull Views",
             ))
+            sections.append(ReviewSection("Frozen Pull Views", tuple(views)))
         if proposal is not None:
-            lines += ["", "  Frozen Publication Effects:"]
+            effects = []
             for effect in proposal.publication_effects:
                 summary = effect_summary(effect)
-                detail = f"    {effect.kind} {display_path(summary['path'])}"
+                detail = f"{render_payload_action(effect.kind, use_color=color)} {display_path(summary['path'])}"
                 if "bytes" in summary:
-                    detail += f" ({summary['bytes']} bytes)"
+                    detail += render_annotation_parentheses(f"{summary['bytes']} bytes", use_color=color)
                 if "mode" in summary:
                     detail += f" → {summary['mode']}"
-                lines.append(detail)
-            if not proposal.publication_effects:
-                lines.append("    none (Approval still required)")
-            repository_effect = pull or row.observation.effective_policy == "both" or proposal.intent == "editor"
+                effects.append(ReviewNote(detail))
+            if not effects:
+                effects.append(ReviewNote(render_payload_section_label("none (Approval still required)", use_color=color)))
+            sections.append(ReviewSection("Frozen Publication Effects", tuple(effects)))
+
+            repository_effect = pull or observation.effective_policy == "both" or proposal.intent == "editor"
             side = "repository" if repository_effect else "live"
-            before = row.observation.repository if repository_effect else row.observation.live
+            before = observation.repository if repository_effect else observation.live
             after = proposal.repository if repository_effect else proposal.live
-            if row.observation.effective_policy == "pull-only":
-                lines.append("  Live remains unchanged")
-            lines.append(f"  {side.capitalize()} effect preview:")
-            lines.extend(_frozen_difference(
+            preview = []
+            if observation.effective_policy == "pull-only":
+                preview.append(ReviewNote("Live remains unchanged"))
+            preview += [ReviewFact(f"Frozen {side}", presence(before)),
+                        ReviewFact(f"{side.capitalize()} outcome", presence(after))]
+            preview.extend(difference(
                 before, after, before_label=f"frozen {side}",
                 after_label=f"approved {side} outcome", description=f"{side} outcome",
             ))
-            if repository_effect and row.observation.effective_policy != "pull-only":
-                lines.append("  Live effect preview:")
-                lines.extend(_frozen_difference(
-                    row.observation.live, proposal.live,
+            sections.append(ReviewSection(f"{side.capitalize()} effect preview", tuple(preview)))
+            if repository_effect and observation.effective_policy != "pull-only":
+                sections.append(ReviewSection("Live effect preview", tuple(difference(
+                    observation.live, proposal.live,
                     before_label="frozen live", after_label="approved live outcome",
                     description="live outcome",
-                ))
-            lines.append(f"  Frozen {side}: {'missing' if isinstance(before, Missing) else 'present'}")
-            lines.append(f"  {side.capitalize()} outcome: {'missing' if isinstance(after, Missing) else 'present'}")
+                ))))
         additional = [item for item in self.session.view.rows
                       if isinstance(item, AdditionalRow) and row.row_id in item.references]
         if additional:
-            lines += ["", "  Additional Source Changes (independent Approval and Review):"]
-            lines.extend(f"    {additional_label(item, use_color=self.use_color)}" for item in additional)
-        hints = (("↑/↓", "scroll"), ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("Esc", "return to workset"))
-        lines += ["", f"  {render_key_hints(hints, use_color=self.use_color)}"]
-        return "\n".join(lines)
+            sections.append(ReviewSection(
+                "Additional Source Changes (independent Approval and Review)",
+                tuple(ReviewNote(additional_label(item, use_color=color)) for item in additional),
+            ))
+        return ReviewDocument(
+            heading=self.review_heading("Proposal Review", unit_label(row, use_color=color)),
+            sections=tuple(sections), use_color=color,
+        )
 
 
 def auxiliary_row_label(row: AuxiliaryRow, *, use_color: bool) -> str:
@@ -345,15 +459,20 @@ def unit_detail_facts(observation) -> list[tuple[str, str]]:
     return [*paths, ("Observation", state)]
 
 
-def detail_renderable(identity: str, facts: list[tuple[str, str]]) -> Group:
+def fact_grid(facts: list[tuple[str, str]]) -> Table:
     """Label/value grid: wrapped values keep a hanging indent under their column."""
     grid = Table.grid(padding=(0, 1))
     grid.add_column(no_wrap=True)
     # Paths have no spaces to break at; fold them at the column edge.
     grid.add_column(ratio=1, overflow="fold")
     for label, value in facts:
-        grid.add_row(Text.from_ansi(f"{label}:"), Text.from_ansi(value))
-    return Group(Text.from_ansi(identity, overflow="fold"), Padding(grid, (0, 0, 0, 2)))
+        grid.add_row(Text.from_ansi(label), Text.from_ansi(value))
+    return grid
+
+
+def detail_renderable(identity: str, facts: list[tuple[str, str]]) -> Group:
+    return Group(Text.from_ansi(identity, overflow="fold"),
+                 Padding(fact_grid([(f"{label}:", value) for label, value in facts]), (0, 0, 0, 2)))
 
 
 def row_resolution(row) -> str:
@@ -449,7 +568,7 @@ class SyncDeckApp(App[bool]):
     #detail { height: auto; max-height: 35%; border: round $foreground 30%; padding: 0 1; overflow-y: auto; }
     #detail:focus { border: round $accent; }
     #resolution { height: auto; max-height: 5; border: round $accent; margin: 0 1; }
-    #review { height: 1fr; }
+    #review { height: 1fr; overflow-x: hidden; }
     #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
     #notice { height: auto; padding: 0 1; color: $warning; }
     #help { dock: bottom; height: auto; max-height: 2; padding: 0 1; color: $text-muted; }
@@ -658,7 +777,9 @@ class SyncDeckApp(App[bool]):
         with VerticalScroll(id="detail"):
             yield Static(id="detail-body", markup=False)
         yield OptionList(id="resolution")
-        yield RichLog(id="review", wrap=False, auto_scroll=False, min_width=1)
+        # Review wraps instead of scrolling sideways; a Static re-wraps on resize, unlike a RichLog.
+        with VerticalScroll(id="review"):
+            yield Static(id="review-body", markup=False)
         yield Static(id="confirmation", markup=False)
         yield Static(id="notice", markup=False)
         yield Static(id="help", markup=False)
@@ -787,7 +908,7 @@ class SyncDeckApp(App[bool]):
                 await self.query_one(OptionList).run_action(menu_action)
             return
         if self.deck.reviewing:
-            await self.query_one(RichLog).run_action(review_action)
+            await self.query_one("#review").run_action(review_action)
         elif self.detail_focused:
             await self.query_one("#detail").run_action(review_action)
         else:
@@ -828,15 +949,14 @@ class SyncDeckApp(App[bool]):
         return tuple(row.row_id for row in self.deck.session.view.rows)
 
     def show_review(self) -> None:
-        log = self.query_one("#review", RichLog)
+        log = self.query_one("#review", VerticalScroll)
         position = self.review_positions.get(self.deck.focused_row.row_id, (0, 0))
         if log.display:
             position = (log.scroll_x, log.scroll_y)
         self.query_one("#workset").display = False
         self.query_one("#detail").display = False
         log.display = True
-        log.clear()
-        log.write(Text.from_ansi(self.deck.review_text()), scroll_end=False)
+        self.query_one("#review-body", Static).update(self.deck.review_document().renderable())
         self.query_one("#title", Static).update(":: Additional Source Review" if isinstance(self.deck.focused_row, AdditionalRow) else ":: Proposal Review")
         log.focus()
         self.call_after_refresh(log.scroll_to, *position, animate=False)
@@ -880,7 +1000,7 @@ class SyncDeckApp(App[bool]):
             self.update_workset()
             return
         if self.deck.reviewing:
-            log = self.query_one("#review", RichLog)
+            log = self.query_one("#review", VerticalScroll)
             self.review_positions[self.deck.focused_row.row_id] = (log.scroll_x, log.scroll_y)
         if not self.deck.back():
             self.exit(False)
@@ -980,7 +1100,7 @@ class SyncDeckApp(App[bool]):
         if row is None:
             return
         if self.deck.reviewing:
-            # The RichLog shows only a viewport and cannot be selected in-app.
+            # The review shows only a viewport and cannot be selected in-app.
             text, subject = Text.from_ansi(self.deck.review_text()).plain, "review"
         else:
             # The Target cell may be elided; copy the untruncated identity.

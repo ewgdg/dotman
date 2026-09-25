@@ -6,7 +6,7 @@ from textual.widgets import DataTable
 from dotman.cli import main
 from dotman.sync_base_store import DirectoryChildPresent
 from dotman.sync_session import Proposal
-from dotman.sync_deck import CommandDeck, SyncDeckApp, _frozen_difference
+from dotman.sync_deck import CommandDeck, SyncDeckApp, ReviewDiff, _frozen_difference
 from dotman.sync_deck_command import primary_change_summary, selection_uses_inclusion
 from tests.engine.test_sync_directory_observation import directory_engine, open_directory, put
 
@@ -76,8 +76,9 @@ def test_child_review_diff_shows_bytes_and_executable_only_changes():
         before_label="frozen child",
         after_label="approved child",
         description="child",
+        use_color=False,
     )
-    assert lines == ["old mode 100644", "new mode 100755"]
+    assert lines == [ReviewDiff(("old mode 100644", "new mode 100755"))]
 
     changed = _frozen_difference(
         DirectoryChildPresent(b"old", executable=False),
@@ -85,7 +86,10 @@ def test_child_review_diff_shows_bytes_and_executable_only_changes():
         before_label="frozen child",
         after_label="approved child",
         description="child",
+        use_color=False,
     )
+    [diff] = changed
+    changed = diff.lines
     assert "-old" in changed and "+new" in changed
     assert "old mode 100644" in changed
     assert "new mode 100755" in changed

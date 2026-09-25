@@ -462,6 +462,8 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "aborted": ("1", "31"),
     "converged": ("1", "32"),
     "directly-in-sync": ("2", "32"),
+    "drifted": ("33",),
+    "observation-failed": ("1", "31"),
     "diagnostic": ("1", "31"),
     "error": ("1", "31"),
     "warning": ("33",),
@@ -482,6 +484,7 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "usable": ("1", "32"),
     "unavailable": ("33",),
     "not applicable": ("2",),
+    "not-applicable": ("2",),
     "reset": ("1", "32"),
     "already_absent": ("2",),
     "unattempted": ("2",),
@@ -491,3 +494,25 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
 
 def render_sync_term(term: str, *, use_color: bool) -> str:
     return style_text(term, *SYNC_TERM_STYLE_BY_NAME.get(term, ())) if use_color else term
+
+
+# Unified-diff line kinds keyed by prefix; longer prefixes are checked first.
+DIFF_LINE_STYLE_BY_PREFIX: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("+++", ("1",)),
+    ("---", ("1",)),
+    ("@@", ("36",)),
+    ("old mode", ("2",)),
+    ("new mode", ("2",)),
+    ("\\", ("2",)),
+    ("+", ("32",)),
+    ("-", ("31",)),
+)
+
+
+def render_diff_line(line: str, *, use_color: bool) -> tuple[str, str]:
+    """Split a unified-diff line into its one-column marker and styled content."""
+    marker, content = line[:1], line[1:]
+    if not use_color:
+        return marker, content
+    codes = next((codes for prefix, codes in DIFF_LINE_STYLE_BY_PREFIX if line.startswith(prefix)), ())
+    return (style_text(marker, *codes), style_text(content, *codes)) if codes else (marker, content)

@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from textual import events
 
-from textual.widgets import DataTable, RichLog, Static
+from textual.widgets import DataTable, Static
 
 from dotman.sync_deck import CommandDeck, SyncDeckApp, WorksetTable
 
@@ -37,6 +37,15 @@ def detail_strips(app):
 def detail_lines(app):
     """All detail rows as rendered, without the ring or scroll clipping."""
     return [strip.text.rstrip() for strip in detail_strips(app)]
+
+
+def review_strips(app):
+    body = app.query_one("#review-body")
+    return [body.render_line(y) for y in range(body.size.height)]
+
+
+def review_text(app):
+    return "\n".join(strip.text.rstrip() for strip in review_strips(app))
 
 
 def detail_facts(app):
@@ -133,7 +142,7 @@ def test_keyboard_review_scroll_return_approval_and_confirmation(tmp_path, monke
         async def interact():
             async with app.run_test() as pilot:
                 await pilot.press("down", "enter", "down", "down")
-                log = app.query_one(RichLog)
+                log = app.query_one("#review")
                 await pilot.pause()
                 assert log.scroll_y > 0
                 position = log.scroll_y
@@ -314,7 +323,7 @@ def test_pull_review_keeps_frozen_evidence_and_never_approves_on_open(tmp_path, 
             async with app.run_test(size=(100, 24)) as pilot:
                 assert "Use live" in app.query_one(DataTable).render_line(1).text
                 await pilot.press("enter")
-                text = "\n".join(line.text for line in app.query_one(RichLog).lines)
+                text = review_text(app)
                 assert "Frozen Pull Views" in text
                 assert "+live" in text and "external change" not in text
                 assert "Live remains unchanged" in text
@@ -422,9 +431,7 @@ def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, s
                     assert app.deck.reviewing
                     # Opening review queues its resize after the input batch settles.
                     await pilot.pause()
-                    assert f"Proposal Review — main:app.unit_{target:02}" in "\n".join(
-                        line.text for line in app.query_one(RichLog).lines
-                    )
+                    assert f"Proposal Review — main:app.unit_{target:02}" in review_text(app)
                     assert not any(row.approved for row in session.view.rows)
         run(interact())
 
@@ -454,9 +461,7 @@ def test_batched_mouse_and_keyboard_share_target(tmp_path, monkeypatch, column, 
                 assert [row.approved for row in session.view.rows] == approvals
                 if keys[-1] == "enter":
                     await pilot.pause()
-                    assert "Proposal Review — main:app.two" in "\n".join(
-                        line.text for line in app.query_one(RichLog).lines
-                    )
+                    assert "Proposal Review — main:app.two" in review_text(app)
         run(interact())
 
 
@@ -685,4 +690,50 @@ def test_abort_waits_for_materialization_before_terminalizing_and_stops_batch(tm
             terminal = session.view
             await asyncio.sleep(0)
             assert session.view == terminal
+        run(interact())
+
+
+def test_review_wraps_long_lines_under_their_column_and_reflows(tmp_path, monkeypatch):
+    long_line = "word " * 30
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", f"{long_line}\n".encode(), b"live\n", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(60, 40)) as pilot:
+                await pilot.press("enter")
+                await pilot.pause()
+                review = app.query_one("#review")
+                assert review.virtual_size.width <= review.scrollable_content_region.width
+                lines = review_text(app).splitlines()
+                start = next(i for i, line in enumerate(lines) if line.strip().startswith("+word"))
+                marker_column = lines[start].index("+")
+                # Continuations hang under the content, right of the +/- marker.
+                assert lines[start + 1].startswith(" " * (marker_column + 1) + "word")
+                wrapped_rows = sum("word" in line for line in lines)
+                await pilot.resize_terminal(120, 40)
+                await pilot.pause()
+                assert sum("word" in line for line in review_text(app).splitlines()) < wrapped_rows
+        run(interact())
+
+
+def test_review_colors_sections_and_diff_lines(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo-line\n", b"live-line\n", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=True))
+
+        async def interact():
+            async with app.run_test(size=(100, 40)) as pilot:
+                await pilot.press("enter")
+                await pilot.pause()
+                styles = {segment.text.strip(): segment.style
+                          for strip in review_strips(app) for segment in strip if segment.text.strip()}
+                assert styles["Paths"].bold
+                assert styles["live-line"].color.number == 1  # ANSI red
+                assert styles["repo-line"].color.number == 2  # ANSI green
+                assert styles["Approval:"].dim
         run(interact())
