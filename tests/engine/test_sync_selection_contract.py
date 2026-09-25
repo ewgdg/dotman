@@ -51,8 +51,9 @@ def test_mixed_batch_selection_keeps_approval_and_inclusion_distinct(tmp_path, m
         rows = {row.row_id: row for row in session.view.rows}
         assert rows['main:app.drift'].approved
         assert not rows['main:app.blocked'].approved
-        auxiliary = [row for row in rows.values() if isinstance(row, AuxiliaryRow)]
+        auxiliary = [row for row in rows.values() if isinstance(row, AuxiliaryRow) and row.kind != 'guard-skip']
         assert {row.kind for row in auxiliary} == {'probe', 'hook'}
+        assert not rows['main:app.blocked (guard_push)'].included
         assert all(row.included and not hasattr(row, 'approved') for row in auxiliary)
         before = session.view
         assert isinstance(command(session, SetApproval, auxiliary[0], approved=True), CommandRejected)

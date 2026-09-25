@@ -14,6 +14,7 @@ capabilities from its Path Rules. Each exit-100 outcome removes only that family
 Sync Policy and Base eligibility remain unchanged. Configured one-sided Sync file work without
 a surviving route remains a non-approvable diagnostic. In the explicit one-sided
 Push and Pull commands, denial by the operation's Guard instead omits its scoped
-work. Independently retained
+work. Both workflows report each exit-100 scope as Guard-skipped work, so Sync's
+narrowed units stay explained. Independently retained
 ancestor noop hooks survive lower-scope exclusions. Probe activity is evaluated
 once after Guards and never creates a file Observation or Proposal.

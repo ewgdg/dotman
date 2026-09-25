@@ -77,6 +77,7 @@ def test_no_push_capability_does_not_enforce_file_chmod(tmp_path, monkeypatch, p
         observation, = session.view.observations
         assert observation.effective_policy == "pull-only"
         assert observation.state == "directly-in-sync"
-        assert session.view.rows == ()
+        # Only the Guard's own row may explain the narrowed policy.
+        assert [row.kind for row in session.view.rows] == (["guard-skip"] if guard else [])
 
     assert live.stat().st_mode & 0o777 == 0o644

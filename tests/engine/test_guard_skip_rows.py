@@ -48,10 +48,15 @@ def test_package_guard_skip_reports_one_row_for_the_scope(tmp_path, monkeypatch)
         assert row.guard_skip.scope_kind == "package"
 
 
-def test_sync_represents_guard_narrowing_without_skip_rows(tmp_path, monkeypatch):
+@pytest.mark.parametrize("direction,remaining", [("push", "pull-only"), ("pull", "push-only")])
+def test_sync_guard_narrowing_reports_the_removed_direction(tmp_path, monkeypatch, direction, remaining):
     engine = make_engine(tmp_path, monkeypatch, [
-        ("unit", "both", b"repo", b"live", '[targets.unit.hooks]\nguard_push = "exit 100"'),
+        ("unit", "both", b"repo", b"live", f'[targets.unit.hooks]\nguard_{direction} = "echo offline >&2; exit 100"'),
     ])
     with engine.open_sync_session(engine.resolve_sync_scope(), preview=True) as session:
-        assert guard_skip_rows(session) == []
-        assert session.view.observations[0].effective_policy == "pull-only"
+        # Sync keeps the unit on its remaining route; the Guard row says why.
+        unit, = session.view.observations
+        assert unit.effective_policy == remaining
+        row, = guard_skip_rows(session)
+        assert (row.scope, row.directions, row.guard_skip.reason) == ("main:app.unit", (direction,), "offline")
+        assert not row.included and row.allowed_commands == ()

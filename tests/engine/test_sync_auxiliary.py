@@ -33,8 +33,9 @@ pre_push = "echo push >> {log}"
     scope = engine.resolve_sync_scope(['main:app.check'])
     with engine.open_sync_session(scope) as session:
         assert session.view.observations == ()
-        row, = session.view.rows
+        row, guard = session.view.rows
         assert (row.kind, row.scope, row.directions, row.included) == ('probe', 'main:app.check', ('push',), False)
+        assert (guard.kind, guard.directions) == ('guard-skip', ('pull',))
         assert not any(hasattr(row, name) for name in ('observation', 'proposal', 'intent', 'approved'))
         rejected = session.dispatch(SetApproval(session.view.session_id, session.view.revision, row.row_id, True))
         assert isinstance(rejected, CommandRejected)
@@ -50,7 +51,8 @@ pre_push = "echo push >> {log}"
 
 @pytest.mark.parametrize('command,guard,expected_rows,failed', [
     ('exit 100', 'exit 0', 0, False),
-    ('exit 9', 'exit 100', 0, False),
+    # The Guard row explains why the probe is gone.
+    ('exit 9', 'exit 100', 1, False),
     ('exit 9', 'exit 0', 0, True),
 ])
 def test_probe_runs_only_with_surviving_capability(tmp_path, monkeypatch, command, guard, expected_rows, failed):
@@ -124,8 +126,9 @@ probe = "exit 9"
 sync_policy = "push-only"
 ''', repo_hooks=f'pre_push = {{run = "echo repo >> {log}", run_noop = true}}\n')
     with open_session(engine, preview=False) as session:
-        row, = session.view.rows
+        row, guard = session.view.rows
         assert (row.scope, row.kind, row.directions) == ('main', 'hook', ('push',))
+        assert (guard.scope, guard.kind) == ('main:app', 'guard-skip')
         include(session, row)
         assert session.execute().result.status == 'completed'
     assert log.read_text().splitlines() == ['repo']
@@ -173,7 +176,8 @@ pre_push = "exit 9"
 def test_removed_one_sided_route_is_visible_nonapprovable(tmp_path, monkeypatch, policy, direction):
     engine = make_engine(tmp_path, monkeypatch, [('unit', policy, b'repo', b'live', f'[targets.unit.hooks]\nguard_{direction} = "exit 100"')])
     with open_session(engine) as session:
-        row, = session.view.rows
+        row, guard = session.view.rows
+        assert guard.kind == 'guard-skip'
         assert row.observation.configured_policy == policy
         assert row.observation.effective_policy == 'no-route'
         assert row.observation.base.status == ('unavailable' if policy == 'pull-only' else 'not-applicable')

@@ -332,8 +332,8 @@ class ObservedScope:
     hook_scopes: dict[str, frozenset[str]]
     inputs: _ResolvedInputs
     directory_censuses: tuple = ()
-    # Only operations that omit Guard-skipped work report it here; Sync keeps
-    # the unit and shows the narrowed policy instead.
+    # Push/Pull omit Guard-skipped work; Sync keeps the unit on its remaining
+    # route. Both report the skip so a narrowed policy never goes unexplained.
     guard_skips: tuple[tuple[str, GuardSkip], ...] = ()
 
 
@@ -578,4 +578,4 @@ def observe_scope(
         observations.sort(key=lambda unit: (order[replace(unit.identity, child_path=None)], unit.identity.child_path or ""))
         return ObservedScope(tuple(observations), directional, {
             direction: value.hook_scopes for direction, value in eligibility.items()
-        }, expanded_inputs, tuple(directory_censuses), tuple(guard_skips) if omit_no_route else ())
+        }, expanded_inputs, tuple(directory_censuses), tuple(guard_skips))

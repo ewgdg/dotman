@@ -82,6 +82,8 @@ def test_single_resolution_is_static_and_blocked_rows_remain_visible(tmp_path, m
             async with app.run_test() as pilot:
                 table = app.query_one(WorksetTable)
                 for index, row in enumerate(session.view.rows):
+                    if row.kind == "guard-skip":
+                        continue
                     table.move_cursor(row=index)
                     app.action_resolution()
                     assert not app.query_one(OptionList).display
@@ -89,7 +91,7 @@ def test_single_resolution_is_static_and_blocked_rows_remain_visible(tmp_path, m
                         assert str(table.get_row_at(index)[0]) == "[-]"
                         assert row.observation.diagnostics or row.diagnostics
                 app.deck.select_all(True)
-                assert sum(row.approved for row in session.view.rows) == 1
+                assert sum(getattr(row, "approved", False) for row in session.view.rows) == 1
                 await pilot.pause()
 
         asyncio.run(asyncio.wait_for(interact(), timeout=5))

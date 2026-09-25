@@ -48,8 +48,9 @@ See [Sync lifecycle](sync.md) for convergence semantics and
   capabilities. For `both`, `guard_push = 100` leaves pull-only capability;
   for `push-only`, the same outcome leaves a visible non-approvable no-route
   diagnostic, not a successful omission. Guards never grant the opposite route.
-  Sync reports these diagnostics in its unit/work rows, not as
-  `guard_skips`. Unattended Sync rejects a no-route blocker before
+  Sync also lists each exit-100 scope as the same unselectable Guard-skipped
+  row and JSON `guard_skips` entry, so a narrowed policy names its Guard.
+  Unattended Sync rejects a no-route blocker before
   mutation; interactive execution may retain unrelated approved work but still
   reports failure. Configured policy continues to determine Base eligibility.
 

@@ -21,6 +21,9 @@ census and child policy resolution, active named Path Rule Guards run by priorit
 then name, once per rule and directional family.
 Exit 0 retains capability, 100 removes that direction within the Guard's scope,
 and other non-zero exits abort planning. Review and execution never rerun Guards.
+Each removed direction appears once per Guard scope as a dimmed, unselectable
+**Guard skipped** row, e.g. `main (guard_push)`, while the scope's units stay on
+their remaining route.
 Configured Sync Policy remains the upper bound; narrowing never changes Base
 eligibility (configured `pull-only` or `both`). Observation retains the resolved
 scope order, effective projections, typed endpoint bytes and live mode/link
