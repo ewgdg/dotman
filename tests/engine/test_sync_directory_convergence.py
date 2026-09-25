@@ -350,4 +350,7 @@ def test_child_merge_conflict_clears_only_affected_standing_approval(tmp_path, m
         a, b = session.view.rows
         assert a.intent == "merge" and not a.approved and a.proposal is None
         assert a.diagnostics[0].code == "reconciliation-conflict"
+        # Child conflict evidence keeps the child shape so the Editor restores its mode.
+        assert isinstance(a.diagnostics[0].conflict, DirectoryChildPresent)
+        assert a.diagnostics[0].conflict.content.startswith(b"<<<<<<< repository\n")
         assert b.approved and b.proposal is not None

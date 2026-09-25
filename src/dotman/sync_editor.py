@@ -73,8 +73,10 @@ def repository_workspace(*, metadata, repo_root, preimages):
                       command_cwd=staged(metadata.command_cwd), command_env=env), staged, root.parent
 
 
-def edit_sources(*, observation, proposal, metadata, repo_root, preimages, additional=()):
-    initial = proposal.repository if proposal is not None else observation.repository
+def edit_sources(*, observation, proposal, metadata, repo_root, preimages, additional=(), conflict=None):
+    # A merge conflict has no Proposal; its zdiff3 output is what the user resolves.
+    initial = (proposal.repository if proposal is not None
+               else conflict if conflict is not None else observation.repository)
     sources = tuple(preimages)
     retained = {change.path: change for change in additional}
     with repository_workspace(metadata=metadata, repo_root=repo_root, preimages=preimages) as (staged_metadata, staged, directory):

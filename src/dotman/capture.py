@@ -134,10 +134,10 @@ def apply_review_patch(
         raise
     except (TextMergeFailed, OSError) as exc:
         raise CaptureError(path=repo_path, detail=f"patch merge failed: {exc}") from exc
-    if merged is None:
+    if merged.conflicted:
         raise CaptureError(path=repo_path, detail="live edits overlap template-generated output")
     candidate_text = _convert_line_endings(
-        _decode_utf8(merged, label="merged source", path=repo_path), review_line_ending, source_line_ending,
+        _decode_utf8(merged.content, label="merged source", path=repo_path), review_line_ending, source_line_ending,
     )
     if protect_template_syntax:
         _require_same_template_syntax(raw_text, candidate_text, path=repo_path)

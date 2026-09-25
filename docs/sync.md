@@ -254,9 +254,10 @@ flow in the forbidden direction. Observation failures and Guard-blocked units
 have no Editor. Dotman never launches an Editor automatically or in unattended
 Sync.
 
-The Editor starts from the current Proposal's repository outcome. If no Proposal
-exists, including after a Capture failure or conflict, it starts from frozen
-repository sources without requiring Capture. The configured/default Editor
+The Editor starts from the current Proposal's repository outcome. After a merge
+conflict it starts from Git's `zdiff3` merge output, conflict blocks included, so
+the user resolves them in place. If no Proposal exists otherwise, including after
+a Capture failure, it starts from frozen repository sources without requiring Capture. The configured/default Editor
 receives isolated Primary and permitted Additional Source copies and read-only
 review evidence, not writable tracked paths. Cancelling discards the attempted
 transaction and preserves the previous Proposal and Approval. Saving produces
@@ -410,7 +411,8 @@ exception: they are the Guard's declared explanation and appear in both.
 Merge lazily reconciles the usable Base payload, frozen repository representation,
 and frozen Capture result. Equal sides agree; when one side still equals the Base,
 the other side wins. Otherwise present file contents use Git's three-way
-`merge-file` through Command Runtime. Conflicts and provider failures remain
+`merge-file --zdiff3` through Command Runtime. A conflict keeps that merge output
+as evidence for Proposal Review and the Editor. Conflicts and provider failures remain
 distinct typed, blocked, retryable diagnostics. They clear the affected Approval,
 not its Resolution Intent; Dotman never selects another intent or opens an Editor
 automatically. Successful Capture and Render results are reused for unchanged

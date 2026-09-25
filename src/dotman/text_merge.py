@@ -1,5 +1,6 @@
 """Three-way text merge through `git merge-file`."""
 
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -12,6 +13,14 @@ class TextMergeFailed(ValueError):
     """Git could not perform the merge; this is not a content conflict."""
 
 
+@dataclass(frozen=True)
+class TextMerge:
+    """Merged bytes; when conflicted, they hold zdiff3 conflict blocks for resolution."""
+
+    content: bytes
+    conflicted: bool
+
+
 def merge_text(
     current: bytes,
     base: bytes,
@@ -19,8 +28,8 @@ def merge_text(
     *,
     labels: tuple[str, str, str],
     command_runtime: CommandRuntime,
-) -> bytes | None:
-    """Return merged bytes, or None when the changes conflict.
+) -> TextMerge:
+    """Merge `other` into `current`; conflicts stay in the content as zdiff3 blocks.
 
     Launch failures propagate as OSError so callers keep their own error types.
     """
@@ -30,7 +39,7 @@ def merge_text(
             (root / name).write_bytes(content)
         current_label, base_label, other_label = labels
         result = command_runtime.run(CommandRequest(
-            ArgvCommand(("git", "merge-file", "--stdout",
+            ArgvCommand(("git", "merge-file", "--stdout", "--zdiff3",
                          "-L", current_label, "-L", base_label, "-L", other_label,
                          "current", "base", "other")),
             cwd=root,
@@ -38,11 +47,9 @@ def merge_text(
         raise_for_command_interruption(result)
         # Git returns a conflict count (capped at 127); errors return negative
         # status, represented as 255 by a normal process exit.
-        if 1 <= result.exit_code <= 127:
-            return None
-        if result.exit_code:
+        if result.exit_code > 127:
             raise TextMergeFailed(
                 f"exit {result.exit_code}: "
                 + result.stderr.decode(errors="replace").strip().replace(str(root), "<merge>")
             )
-        return result.stdout
+        return TextMerge(result.stdout, conflicted=result.exit_code > 0)

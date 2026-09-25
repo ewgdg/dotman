@@ -1,7 +1,7 @@
 import pytest
 
 from dotman.sync_base_store import FilePresent
-from dotman.sync_session import PrepareProposalReview, SetApproval, SetResolutionIntent, RetryMaterialization
+from dotman.sync_session import EditProposal, PrepareProposalReview, SetApproval, SetResolutionIntent, RetryMaterialization
 from tests.engine.test_sync_convergence import command
 from tests.engine.test_sync_session import make_engine, open_session
 
@@ -293,3 +293,31 @@ def test_earlier_published_base_commits_before_later_publication_failure(tmp_pat
         assert after[0].payload == FilePresent(MERGED)
         assert before[0].payload == FilePresent(BASE)
         assert after[1] == before[1]
+
+
+ZDIFF3_CONFLICT = (b"<<<<<<< repository\nrepository\n||||||| Sync Base\nfirst\n=======\nconflict\n"
+                   b">>>>>>> Capture\nmiddle\nlast\n")
+
+
+def test_conflict_keeps_zdiff3_merge_output_as_evidence(tmp_path, monkeypatch):
+    engine = established(tmp_path, monkeypatch)
+    (tmp_path / "live/unit").write_bytes(b"conflict\nmiddle\nlast\n")
+    with open_session(engine) as session:
+        command(session, SetApproval, "main:app.unit", True)
+        diagnostic = session.view.rows[0].diagnostics[0]
+        assert diagnostic.code == "reconciliation-conflict"
+        assert diagnostic.conflict == FilePresent(ZDIFF3_CONFLICT)
+
+
+def test_editor_starts_from_conflict_output(tmp_path, monkeypatch):
+    seen = tmp_path / "seen"
+    engine = established(tmp_path, monkeypatch,
+        f'editor = {{ run = "cp \\"$DOTMAN_SOURCE\\" {seen}; printf resolved > \\"$DOTMAN_SOURCE\\"", io = "pipe" }}')
+    (tmp_path / "live/unit").write_bytes(b"conflict\nmiddle\nlast\n")
+    with open_session(engine) as session:
+        command(session, SetApproval, "main:app.unit", True)
+        assert session.view.rows[0].diagnostics[0].code == "reconciliation-conflict"
+        command(session, EditProposal, "main:app.unit")
+        assert seen.read_bytes() == ZDIFF3_CONFLICT
+        row = session.view.rows[0]
+        assert row.diagnostics == () and row.proposal.repository == FilePresent(b"resolved")
