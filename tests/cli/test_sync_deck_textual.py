@@ -47,13 +47,32 @@ def test_rendered_columns_align_across_variable_identities_and_resize(tmp_path, 
                 assert lines[2].index("main:app.longer_target") == lines[0].index("Target")
                 await pilot.resize_terminal(42, 12)
                 assert table.size.width == 42
-                await pilot.press("right", "right", "right")
+                await pilot.press("end")
                 await pilot.pause()
                 assert table.scroll_x > 0
                 assert "Use repository" in table.render_line(1).text
                 await pilot.resize_terminal(100, 24)
-                await pilot.press("left", "left", "left")
+                await pilot.press("home")
                 assert not any(row.approved for row in session.view.rows)
+        run(interact())
+
+
+def test_focused_row_highlight_spans_the_whole_row(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("a", "push-only", b"r", b"l", ""),
+        ("b", "push-only", b"r", b"l", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(100, 24)) as pilot:
+                await pilot.press("down")
+                table = app.query_one(DataTable)
+                cursor_background = table.get_component_rich_style("datatable--cursor").bgcolor
+                focused_line = table.render_line(2)
+                assert "main:app.b" in focused_line.text
+                assert {segment.style.bgcolor for segment in focused_line} == {cursor_background}
         run(interact())
 
 
@@ -307,16 +326,12 @@ def test_batched_navigation_targets_new_row(tmp_path, monkeypatch, navigation, s
         async def interact():
             async with app.run_test(size=(80, 12)) as pilot:
                 await pilot.press(*(["down"] * start))
-                if navigation in ("home", "left"):
-                    await pilot.press("right")
                 # Unlike Pilot.press, post without yielding between terminal keys.
                 app.post_message(events.Key(navigation, None))
                 app.post_message(events.Key(command, " " if command == "space" else None))
                 await pilot.pause()
                 table = app.query_one(DataTable)
                 assert table.cursor_row == expected
-                if navigation in ("home", "end", "left", "right"):
-                    assert table.cursor_column == {"home": 0, "end": 3, "left": 0, "right": 1}[navigation]
                 assert app.deck.focused_row.row_id == f"main:app.unit_{expected:02}"
                 if command == "space":
                     assert [row.row_id for row in session.view.rows if row.approved] == [

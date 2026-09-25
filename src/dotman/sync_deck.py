@@ -622,7 +622,7 @@ class SyncDeckApp(App[bool]):
 
     def compose(self) -> ComposeResult:
         yield Static(f":: {self.deck.session.view.operation.title()} Command Deck", id="title", markup=False)
-        yield WorksetTable(id="workset", cursor_type="cell", zebra_stripes=True)
+        yield WorksetTable(id="workset", cursor_type="row", zebra_stripes=True)
         yield Static(id="detail", markup=False)
         yield OptionList(id="resolution")
         yield RichLog(id="review", wrap=False, auto_scroll=False, min_width=1)
@@ -711,7 +711,7 @@ class SyncDeckApp(App[bool]):
                           for item in row_diagnostics(row)]
         self.query_one("#detail", Static).update(Text.from_ansi("\n".join(lines)))
 
-    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if not self.busy and not self.deck.reviewing and not self.deck.confirming:
             self.sync_focus()
             self.update_detail()
@@ -746,7 +746,7 @@ class SyncDeckApp(App[bool]):
             self.sync_focus()
 
     def sync_focus(self) -> None:
-        # A following key may arrive before CellHighlighted is delivered (paste/PTY).
+        # A following key may arrive before RowHighlighted is delivered (paste/PTY).
         # Read the widget cursor at the action boundary, not the queued notification.
         if not self.deck.reviewing and not self.deck.confirming:
             self.deck.focus = self.query_one(WorksetTable).cursor_row
