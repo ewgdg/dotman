@@ -95,7 +95,8 @@ Base-backed **Merge**. Both-policy drift defaults to **Merge** with a usable Bas
 otherwise **Use repository** is the visible fallback and Merge is unavailable.
 
 - Interactive Sync opens a persistent Command Deck with Approval initially off. When nothing needs review
-  (every target in sync, no warnings, hooks, probes or skips), it skips the Deck and logs the summary directly.
+  (every target in sync, no warnings, hooks or probes; Guard skips alone do not count), it skips the Deck and
+  logs directly, printing any Guard skips above the summary.
   Its Textual table aligns Selection (headed `✓`), Target, Policy, and Resolution columns.
   `Space` toggles Selection, `A` selects eligible rows, and `U` clears Selection.
   Selection means independent Proposal or Additional Source Change Approval,

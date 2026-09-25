@@ -192,9 +192,13 @@ class SyncDeckCommandRunner:
                 }, output_line=opened.output_line)
                 return 130 if opened.diagnostic.code == "interrupted" else 1
             with opened as session:
-                # Clean in-sync units never become rows, so an empty workset has
-                # nothing to review; log the result instead of opening the Deck.
-                if interactive and session.view.rows:
+                # Clean in-sync units never become rows and Guard skips are never
+                # selectable; without a row to decide, log instead of opening the Deck.
+                deck_review = interactive and any(
+                    not (isinstance(row, AuxiliaryRow) and row.kind == "guard-skip")
+                    for row in session.view.rows
+                )
+                if deck_review:
                     from dotman.sync_deck import run_command_deck
                     try:
                         confirmed = run_command_deck(session, use_color=self._use_color)
@@ -242,9 +246,9 @@ class SyncDeckCommandRunner:
                     if timeline is not None:
                         self._print_header(args)
                         # Guard skips are planning results shown where work is reviewed:
-                        # the Deck when interactive, otherwise above the timeline.
+                        # the Deck when it opened, otherwise above the timeline.
                         # A report carries them itself.
-                        if not interactive and not getattr(args, "report", False):
+                        if not deck_review and not getattr(args, "report", False):
                             self._print_planning_skips(
                                 guard_skip_summaries(row for row in session.view.rows if isinstance(row, AuxiliaryRow)),
                                 no_base_skip_summaries(args, session.view.rows))

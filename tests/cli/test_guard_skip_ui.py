@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from types import SimpleNamespace
 
 from dotman.sync_deck import CommandDeck, SyncDeckApp, WorksetTable
@@ -86,6 +87,24 @@ def test_sync_guard_narrowing_is_reported_in_human_output(tmp_path, monkeypatch,
     args = SimpleNamespace(config=engine.config.config_path, scopes=[], dry_run=True,
                            unattended=True, json_output=False, run_noop=False, command="sync")
     SyncDeckCommandRunner(engine_factory=lambda _: engine, use_color=False).run(args)
+    output = capsys.readouterr().out
+    assert "[skipped] main:app.unit (guard_pull)" in output
+    assert "Guard skipped: offline" in output
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_guard_skips_alone_log_directly_without_the_deck(tmp_path, monkeypatch, capsys, dry_run):
+    engine = guarded_engine(tmp_path, monkeypatch)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    def forbidden(session, *, use_color):
+        raise AssertionError("Guard skips alone have nothing to decide in the Deck")
+
+    monkeypatch.setattr("dotman.sync_deck.run_command_deck", forbidden)
+    args = SimpleNamespace(config=engine.config.config_path, scopes=[], dry_run=dry_run,
+                           unattended=False, json_output=False, run_noop=False, command="pull")
+    assert PullDeckCommandRunner(engine_factory=lambda _: engine, use_color=False).run(args) == 0
     output = capsys.readouterr().out
     assert "[skipped] main:app.unit (guard_pull)" in output
     assert "Guard skipped: offline" in output
