@@ -662,6 +662,8 @@ class SyncDeckApp(App[bool]):
     ENABLE_COMMAND_PALETTE = False
     CSS = """
     Screen { background: $surface; }
+    /* Textual's 2-cell default steals width from the dense deck; match the 1-cell horizontal bar. */
+    * { scrollbar-size-vertical: 1; }
     #title { height: auto; padding: 0 1; text-style: bold; color: $accent; }
     #workset { height: 1fr; }
     /* No side margin: a margined sibling narrows the workset table in Textual's vertical layout. */
