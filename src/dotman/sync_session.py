@@ -166,7 +166,7 @@ def materialize(
             effects.insert(0, PublicationEffect("write", path, content=live.content))
     return Proposal(repository, live, primary, tuple(effects), intent, captured,
                     "three-way merged repository outcome" if intent == "merge" else
-                    "captured repository outcome" if intent == "use-live" else "frozen repository outcome")
+                    "captured repository outcome" if intent == "use-live" else "kept repository outcome")
 
 
 def has_errors(diagnostics: tuple[Diagnostic, ...]) -> bool:

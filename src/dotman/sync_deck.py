@@ -163,7 +163,7 @@ def conflict_excerpt(content: bytes, *, description: str) -> ReviewConflict | Re
     return ReviewConflict(tuple(excerpt))
 
 
-def _frozen_difference(
+def _review_difference(
     before: FilePresent | DirectoryChildPresent | Missing | None,
     after: FilePresent | DirectoryChildPresent | Missing | None,
     *,
@@ -182,10 +182,17 @@ def _frozen_difference(
         and isinstance(after, DirectoryChildPresent)
         and before.executable != after.executable
     )
-    if before_bytes == after_bytes and not mode_changed:
+    # Missing compares as empty bytes, so existence changes need their own Git-style
+    # header; otherwise creating or deleting an empty file reads as no difference.
+    existence_change = (
+        ["new file"] if isinstance(before, Missing) and not isinstance(after, Missing)
+        else ["deleted file"] if isinstance(after, Missing) and not isinstance(before, Missing)
+        else []
+    )
+    if before_bytes == after_bytes and not mode_changed and not existence_change:
         return [ReviewNote(render_payload_section_label("No content difference", use_color=use_color))]
 
-    lines: list[str] = []
+    lines: list[str] = existence_change
     if mode_changed:
         # Directory children carry Git's executable bit, so use the same mode
         # evidence as Git diffs instead of presenting host-specific permissions.
@@ -343,7 +350,7 @@ class CommandDeck:
             return None
         color = self.use_color
         term = lambda value: render_sync_term(value, use_color=color)
-        difference = lambda *args, **kwargs: _frozen_difference(*args, **kwargs, use_color=color)
+        difference = lambda *args, **kwargs: _review_difference(*args, **kwargs, use_color=color)
         approval = ReviewFact("Approval", term("approved" if row.approved else "unapproved"))
         if isinstance(row, AdditionalRow):
             return ReviewDocument(
@@ -353,7 +360,7 @@ class CommandDeck:
                     ReviewSection("Decision", (approval, ReviewFact("References", ", ".join(row.references)))),
                     ReviewSection("Source Change", tuple(difference(
                         FilePresent(row.change.before), FilePresent(row.change.candidate),
-                        before_label="frozen Additional Source",
+                        before_label="Additional Source",
                         after_label="candidate Additional Source",
                         description="Additional Source",
                     ))),
@@ -438,29 +445,21 @@ class CommandDeck:
                 effects.append(ReviewNote(detail))
             if not effects:
                 effects.append(ReviewNote(render_payload_section_label("none (Approval still required)", use_color=color)))
-            sections.append(ReviewSection("Frozen Publication Effects", tuple(effects)))
+            sections.append(ReviewSection("Publication Effects", tuple(effects)))
 
             repository_effect = pull or observation.effective_policy == "both" or proposal.intent == "editor"
-            side = "repository" if repository_effect else "live"
-            before = observation.repository if repository_effect else observation.live
-            after = proposal.repository if repository_effect else proposal.live
-            preview = []
-            if observation.effective_policy == "pull-only":
-                preview.append(ReviewNote("Live remains unchanged"))
-            preview += [ReviewFact(f"Frozen {side}", presence(before)),
-                        ReviewFact(f"{side.capitalize()} outcome", presence(after))]
-            preview.extend(difference(
-                before, after, before_label=f"frozen {side}",
-                after_label=f"approved {side} outcome", description=f"{side} outcome",
-            ))
-            sections.append(ReviewSection(f"{side.capitalize()} effect preview", tuple(preview)))
-            if repository_effect and observation.effective_policy != "pull-only":
-                sections.append(ReviewSection("Live effect preview", tuple(difference(
-                    observation.live, proposal.live,
-                    before_label="frozen live", after_label="approved live outcome",
-                    description="live outcome",
-                ))))
-        # Drift evidence follows the outcome diffs: Pull Views are frozen Observation
+            effect_preview = lambda side, before, after, notes=(): ReviewSection(
+                f"{side.capitalize()} effect preview", (*notes, *difference(
+                    before, after, before_label=side,
+                    after_label=f"{side} outcome", description=f"{side} outcome",
+                )))
+            pull_only = observation.effective_policy == "pull-only"
+            notes = (ReviewNote("Live remains unchanged"),) if pull_only else ()
+            if repository_effect:
+                sections.append(effect_preview("repository", observation.repository, proposal.repository, notes))
+            if not pull_only:
+                sections.append(effect_preview("live", observation.live, proposal.live))
+        # Drift evidence follows the outcome diffs: Pull Views are Observation
         # evidence, independent of the chosen intent.
         if observation.effective_policy in ("both", "pull-only"):
             views = [ReviewFact("Repository comparison", observation.compare_repo),
@@ -470,10 +469,10 @@ class CommandDeck:
                 views.append(ReviewFact(f"{label} Pull View", term("unavailable") if view_state is None else presence(view_state)))
             views.extend(difference(
                 observation.comparison_repository, observation.comparison_live,
-                before_label="frozen repository Pull View",
-                after_label="frozen live Pull View", description="Pull Views",
+                before_label="repository Pull View",
+                after_label="live Pull View", description="Pull Views",
             ))
-            sections.append(ReviewSection("Frozen Pull Views", tuple(views)))
+            sections.append(ReviewSection("Pull Views", tuple(views)))
         additional = [item for item in self.session.view.rows
                       if isinstance(item, AdditionalRow) and row.row_id in item.references]
         if additional:

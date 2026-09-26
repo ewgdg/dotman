@@ -315,7 +315,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser = subparsers.add_parser(
         "sync",
         help="Review file convergence and select auxiliary work",
-        description="Inspect frozen file state, approve Proposals, and select Probe or hook work",
+        description="Inspect file state, approve Proposals, and select Probe or hook work",
     )
     sync_parser.add_argument(
         "scopes", nargs="*", metavar="<repo:package.target>",

@@ -101,7 +101,7 @@ def test_mixed_cli_reports_repository_and_live_effects(tmp_path, monkeypatch, ca
 
 
 @pytest.mark.parametrize('projected', [False, True])
-def test_no_write_review_separates_frozen_pull_views_from_repository_effect(tmp_path, monkeypatch, projected):
+def test_no_write_review_separates_pull_views_from_repository_effect(tmp_path, monkeypatch, projected):
     marker = tmp_path / 'capture-count'
     comparison = ('{ repo = "printf compared-repo", live = "printf compared-live" }'
                   if projected else '{ repo = "raw", live = "raw" }')
@@ -118,9 +118,9 @@ def test_no_write_review_separates_frozen_pull_views_from_repository_effect(tmp_
         assert not session.view.rows[0].approved
         assert session.view.rows[0].proposal.primary_source_change is None
         text = deck.review_text()
-        outcome, evidence = text.split(':: Frozen Pull Views', 1)
-        assert '--- frozen repository Pull View' in evidence
-        assert '+++ frozen live Pull View' in evidence
+        outcome, evidence = text.split(':: Pull Views', 1)
+        assert '--- repository Pull View' in evidence
+        assert '+++ live Pull View' in evidence
         assert ('-compared-repo' if projected else '-repo') in evidence
         assert ('+compared-live' if projected else '+live-drift') in evidence
         assert 'No content difference' in outcome

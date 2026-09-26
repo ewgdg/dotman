@@ -49,6 +49,33 @@ def test_edited_push_review_shows_deliberate_repository_change_and_live_effect(t
         assert "edited-source" not in str(unit)
 
 
+def test_review_shows_existence_changes_even_without_content_difference(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from dotman.sync_base_store import FilePresent
+    from dotman.sync_deck import CommandDeck
+    from dotman.sync_session import Proposal, PublicationEffect
+    from tests.engine.test_sync_session import make_engine
+
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"", None, "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as opened:
+        row = opened.view.rows[0]
+        proposal = Proposal(
+            repository=FilePresent(b""), live=FilePresent(b""),
+            primary_source_change=None,
+            publication_effects=(PublicationEffect("write", row.observation.live_path, b""),),
+            intent="editor", reconciliation="edited repository outcome",
+        )
+        row = replace(row, proposal=proposal, approved=True)
+        deck = CommandDeck(SimpleNamespace(view=replace(opened.view, rows=(row,))), use_color=False)
+        text = deck.review_text()
+        repository, live = text.split("Live effect preview", 1)
+        assert "No content difference" in repository
+        assert "new file" in live and "No content difference" not in live
+        assert "frozen" not in text.lower()
+
+
 def test_editor_key_saves_in_place_and_is_disabled_after_confirmation(tmp_path, monkeypatch):
     import asyncio
 
@@ -278,7 +305,7 @@ def test_edited_pull_review_does_not_claim_capture_is_pending(tmp_path, monkeypa
         text = CommandDeck(session, use_color=False).review_text()
         assert "Capture: not required" in text
         assert "Live remains unchanged" in text
-        assert "Frozen Pull Views" in text
+        assert "Pull Views" in text
 
 
 def test_additional_edits_have_independent_canonical_review_and_json(tmp_path, monkeypatch):

@@ -42,7 +42,7 @@ def test_review_keeps_pull_evidence_and_base_only_as_facts(tmp_path, monkeypatch
         row = replace(original, observation=observation, intent="use-repository")
         session = SimpleNamespace(view=replace(opened.view, rows=(row,)))
         text = CommandDeck(session, use_color=False).review_text()
-        assert "+++ frozen live Pull View" in text.split(":: Frozen Pull Views", 1)[1]
+        assert "+++ live Pull View" in text.split(":: Pull Views", 1)[1]
         # Sync Base stays summarized as facts; its payload gets no diff of its own.
         assert "Base fingerprint: " + "b" * 64 in text
         assert "ancestor" not in text

@@ -504,6 +504,8 @@ DIFF_LINE_STYLE_BY_PREFIX: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("@@", ("36",)),
     ("old mode", ("2",)),
     ("new mode", ("2",)),
+    ("new file", ("2",)),
+    ("deleted file", ("2",)),
     ("\\", ("2",)),
     ("+", ("32",)),
     ("-", ("31",)),
