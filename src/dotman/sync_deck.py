@@ -664,6 +664,9 @@ class SyncDeckApp(App[bool]):
     Screen { background: $surface; }
     /* Textual's 2-cell default steals width from the dense deck; match the 1-cell horizontal bar. */
     * { scrollbar-size-vertical: 1; }
+    /* Textual's ANSI header puts default text on bright blue, a pastel in many dark palettes;
+       bright black stays a darker fill under light text and differs from the light row cursor. */
+    WorksetTable:ansi > .datatable--header { background: ansi_bright_black; color: ansi_default; }
     #title { height: auto; padding: 0 1; text-style: bold; color: $accent; }
     #workset { height: 1fr; }
     /* No side margin: a margined sibling narrows the workset table in Textual's vertical layout. */
