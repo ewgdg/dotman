@@ -33,7 +33,7 @@ from dotman.ui_context import current_ui_config
 from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
-from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SyncSession, conflict_diagnostic
+from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SessionRow, SyncSession, conflict_diagnostic
 
 
 @dataclass(frozen=True)
@@ -222,6 +222,9 @@ def _review_difference(
 
 
 
+NOOP_NOTICE = "Nothing to do: Approval would neither write nor record a Sync Base"
+
+
 class CommandDeck:
     def __init__(self, session: SyncSession, *, use_color: bool) -> None:
         self.session = session
@@ -283,7 +286,12 @@ class CommandDeck:
             return
         selected = row.included if selection_uses_inclusion(row) else row.approved
         result = set_selected(self.session, row, not selected if approved is None else approved)
-        self.notice = result.reason if isinstance(result, CommandRejected) else ""
+        # Selecting may materialize the Proposal and only then reveal it as a no-op.
+        focused = self.focused_row
+        if isinstance(focused, SessionRow) and focused.proposal is not None and focused.proposal.noop:
+            self.notice = NOOP_NOTICE
+        else:
+            self.notice = result.reason if isinstance(result, CommandRejected) else ""
 
     def select_all(self, approved: bool) -> None:
         if self.reviewing or self.confirming:
@@ -351,7 +359,9 @@ class CommandDeck:
         color = self.use_color
         term = lambda value: render_sync_term(value, use_color=color)
         difference = lambda *args, **kwargs: _review_difference(*args, **kwargs, use_color=color)
-        approval = ReviewFact("Approval", term("approved" if row.approved else "unapproved"))
+        approval = ReviewFact("Approval", term(
+            "not needed" if isinstance(row, SessionRow) and row.proposal is not None and row.proposal.noop
+            else "approved" if row.approved else "unapproved"))
         if isinstance(row, AdditionalRow):
             return ReviewDocument(
                 heading=self.review_heading("Additional Source Review"),
@@ -465,7 +475,12 @@ class CommandDeck:
             proposal.primary_source_change is None and not proposal.publication_effects)
         if (observation.effective_policy in ("both", "pull-only")
                 and observation.state == "drifted" and writes_nothing):
-            drift = [ReviewNote("Nothing will be written, but the compared copies differ; Approval completes the sync")] if proposal else []
+            drift = [
+                ReviewNote(NOOP_NOTICE if proposal.noop else "Nothing will be written; Approval records the Sync Base"),
+                # No write means Capture already reproduces the repository, so only the
+                # compare projection sees drift; that is a configuration mismatch.
+                ReviewNote("compare does not match Capture, so this unit keeps appearing; align them to stop it"),
+            ] if proposal else []
             drift += [ReviewFact("Repository comparison", observation.compare_repo),
                       ReviewFact("Live comparison", observation.compare_live)]
             drift.extend(difference(
@@ -542,6 +557,8 @@ def row_resolution(row) -> str:
         return "Observation failed"
     if row.diagnostics:
         return "Proposal failed"
+    if row.proposal is not None and row.proposal.noop:
+        return "Nothing to do"
     if "prepare-proposal-review" not in row.allowed_commands:
         # In-sync units appear only to surface their warnings.
         return "In sync" if row.observation.state == "directly-in-sync" else "Unsupported"
@@ -897,7 +914,9 @@ class SyncDeckApp(App[bool]):
         for row in self.deck.session.view.rows:
             auxiliary = selection_uses_inclusion(row)
             selected = row.included if auxiliary else row.approved
-            marker = "[x]" if selected else "[ ]" if {"set-included", "set-approval"}.intersection(row.allowed_commands) else "[-]"
+            selectable = row.approvable if isinstance(row, SessionRow) else bool(
+                {"set-included", "set-approval"}.intersection(row.allowed_commands))
+            marker = "[x]" if selected else "[ ]" if selectable else "[-]"
             term = ("selected" if selected else "unselected") if auxiliary else ("approved" if selected else "unapproved")
             table.update_cell(row.row_id, table.ordered_columns[0].key,
                               Text.from_ansi(render_sync_term(term, use_color=self.deck.use_color).replace(term, marker)),

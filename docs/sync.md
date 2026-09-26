@@ -325,7 +325,9 @@ replanning. Selected Probe and retained noop-hook work activate only their
 surviving directional families.
 
 Every approved no-write Proposal has its normal Repository Apply completion
-position, even when Base-ineligible. Repository-only units complete there;
+position. A no-write Proposal whose completion could not record a new Sync Base
+(ineligible, unqualified, or Base already current) is a **No-op Proposal**: it
+offers no Approval and reports `noop`. Repository-only units complete there;
 units requiring live effects wait for their own publication. Qualifying eligible
 completion saves the unit's Base before target post-hooks. Post-hook success is not a
 condition of convergence.
@@ -534,7 +536,8 @@ either side, including repository changes made by switching or resetting Git.
 | Successful eligible Push or Sync publication | Save the final repository outcome after every required unit effect succeeds; no extra Render |
 | Permanent Pull or repository-only Sync | Reuse agreement evidence or freeze forward validation before Apply; save a qualifying candidate after required effects succeed |
 | Approved no-write resolution | Still needs Approval and the same agreement evidence; no write alone proves nothing |
-| Ineligible completion, including no-write | Complete without a Base or substitute receipt |
+| No-op Proposal (no-write, and no new Base to record) | Offers no Approval; reports `noop` without completion |
+| Ineligible completion with writes | Complete without a Base or substitute receipt |
 
 Direct agreement is **Directly InSync**, not an approved drift resolution.
 A drifted unit is **Converged** after its required effects succeed, independently

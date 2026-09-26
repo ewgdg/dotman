@@ -101,7 +101,9 @@ def test_direct_agreement_distinct_from_approved_drift_no_write(tmp_path, monkey
     with open_session(engine, preview=False) as session:
         command(session, SetApproval, observation.identity.canonical, True)
         assert session.view.rows[0].proposal.publication_effects == ()
-        assert session.execute().result.units[0].status == "converged"
+        # Drift with nothing to write or acknowledge is a no-op, not a completed Approval.
+        assert not session.view.rows[0].approved
+        assert session.execute().result.units[0].status == "noop"
 
 
 def test_guard_narrowed_both_exposes_only_repository_intent(tmp_path, monkeypatch):

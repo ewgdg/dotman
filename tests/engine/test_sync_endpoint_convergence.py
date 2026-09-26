@@ -146,7 +146,7 @@ def test_qualified_no_write_requires_approval_but_checkpoint_failure_only_warns(
 
 
 @pytest.mark.parametrize("policy", ["push-only", "push-only-delete"])
-def test_ineligible_drift_no_write_needs_approval_but_no_receipt(
+def test_ineligible_drift_no_write_is_a_noop_without_approval(
     policy, tmp_path, monkeypatch
 ):
     live = b"repo" if policy == "push-only" else None
@@ -161,14 +161,13 @@ def test_ineligible_drift_no_write_needs_approval_but_no_receipt(
         return replace(result, observations=(replace(result.observations[0], state="drifted"),))
     monkeypatch.setattr(sync_session, "observe_scope", drifted)
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    with open_session(engine, preview=False) as unapproved:
-        assert unapproved.execute().result.units[0].status == "pending"
-    with open_session(engine, preview=False) as approved:
-        command(approved, SetApproval, observation.identity.canonical, True)
-        proposal = approved.view.rows[0].proposal
-        assert proposal.primary_source_change is None
-        assert proposal.publication_effects == ()
-        result = approved.execute().result
-        assert result.units[0].status == "converged"
+    with open_session(engine, preview=False) as unreviewed:
+        assert unreviewed.execute().result.units[0].status == "pending"
+    with open_session(engine, preview=False) as session:
+        command(session, SetApproval, observation.identity.canonical, True)
+        row = session.view.rows[0]
+        assert row.proposal.noop and not row.approved
+        result = session.execute().result
+        assert result.units[0].status == "noop"
         assert result.steps == ()
     assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before

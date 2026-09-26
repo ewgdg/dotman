@@ -42,11 +42,16 @@ CASES = (
              shows="+theme = dark"),
     DemoCase("pull-capture", "pull-only", b"alias ll='ls -l'\n", b"alias ll='ls -la'\nalias gs='git status'\n",
              shows="+alias gs='git status'"),
-    # Capture drops the volatile line, so nothing is written, but raw comparison still
-    # sees drift; the review explains it in the Drift section.
-    DemoCase("pull-no-write", "pull-only", b"window = 1200x800\n", b"window = 1200x800\nopened-at = 2026-09-25T10:00\n",
+    # Capture drops the volatile line, so nothing is written, and Render cannot reproduce
+    # live, so no Sync Base can be recorded either: a [-] "Nothing to do" row.
+    DemoCase("pull-noop", "pull-only", b"window = 1200x800\n", b"window = 1200x800\nopened-at = 2026-09-25T10:00\n",
              extra="""capture = '''grep -v '^opened-at' "$DOTMAN_LIVE_PATH"'''\ncompare = { repo = "raw", live = "raw" }""",
-             shows=":: Drift"),
+             shows="Nothing to do: Approval would neither write nor record a Sync Base"),
+    # Capture and Render fold case, so nothing is written, but Approval records the Sync Base.
+    DemoCase("pull-records-base", "pull-only", b"editor = vim\n", b"EDITOR = VIM\n",
+             extra='render = "tr a-z A-Z < $DOTMAN_SOURCE"\ncapture = "tr A-Z a-z < $DOTMAN_LIVE_PATH"\n'
+                   'compare = { repo = "raw", live = "raw" }',
+             shows="Nothing will be written; Approval records the Sync Base"),
     DemoCase("live-missing-empty", "push-only", b"", None, shows="new file"),
     DemoCase("repo-deleted", "push-only-delete", None, b"stale\n", shows="deleted file"),
     DemoCase("merge-clean", "both", b"repository\nmiddle\nlast\n", b"first\nmiddle\nlive\n",

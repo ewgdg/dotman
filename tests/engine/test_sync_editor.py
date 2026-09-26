@@ -262,7 +262,8 @@ def test_editor_primary_activates_pull_hooks_only_for_repository_write(tmp_path,
         assert dispatch(session, EditProposal).result.status == "saved"
     dispatch(session, SetApproval, approved=True)
     result = session.execute()
-    assert result.result.units[0].status == "converged"
+    # An identical pull-only edit writes nothing and cannot record a Sync Base.
+    assert result.result.units[0].status == ("noop" if edited == "identical" and policy == "pull-only" else "converged")
     repository_write = edited is True or (not edited and policy == "pull-only")
     assert (log.read_text().splitlines() if log.exists() else []) == (
         ["pre", "post"] if repository_write else [])

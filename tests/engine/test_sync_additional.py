@@ -179,7 +179,9 @@ def test_additional_only_does_not_activate_hooks_or_snapshot(tmp_path, monkeypat
 
 def test_unapproved_additional_does_not_gate_eligible_convergence(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
-        ('a', 'pull-only', b'repo', b'live',
+        # Render reproduces live, so Approval records a Sync Base rather than being a no-op.
+        ('a', 'pull-only', b'repo', b'REPO',
+         'render = "tr a-z A-Z < $DOTMAN_SOURCE"\ncompare = { repo = "raw", live = "raw" }\n'
          'editor = { run = "printf candidate > \\"$DOTMAN_EDITOR_ADDITIONAL_SOURCE_PATHS\\"", io = "pipe", additional_sources = ["shared"] }'),
     ])
     shared = tmp_path / 'repo/packages/app/shared'

@@ -44,7 +44,7 @@ class PullSession(ProposalSession):
         observation = row.observation
         edited = self._edited_outcomes.get(row.row_id)
         repository = edited[0] if edited else self._capture(observation)
-        return self._qualify_checkpoint(observation, Proposal(
+        return self._finalize_proposal(observation, Proposal(
             repository, observation.live,
             repository if repository != observation.repository else None,
             (), intent="editor" if edited else None,

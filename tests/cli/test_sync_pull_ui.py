@@ -40,7 +40,7 @@ def test_pull_review_and_document_show_repository_effect(tmp_path, monkeypatch, 
         elif kind == "delete":
             assert "+++ /dev/null" in review
         else:
-            assert "Nothing will be written, but the compared copies differ; Approval completes the sync" in review
+            assert "Nothing will be written; Approval records the Sync Base" in review
         # Approval status lives in Decision; the Publication Effects section only lists effects.
         assert "Approval still required" not in review
         deck.confirming = True
@@ -123,7 +123,7 @@ def test_no_write_review_explains_drift_separately_from_repository_effect(tmp_pa
         assert session.view.rows[0].proposal.primary_source_change is None
         text = deck.review_text()
         outcome, evidence = text.split(':: Drift', 1)
-        assert 'Nothing will be written' in evidence
+        assert 'Nothing to do: Approval would neither write nor record a Sync Base' in evidence
         assert '--- compared repository' in evidence
         assert '+++ compared live' in evidence
         assert ('-compared-repo' if projected else '-repo') in evidence
@@ -133,8 +133,9 @@ def test_no_write_review_explains_drift_separately_from_repository_effect(tmp_pa
         assert 'Live remains unchanged' in text
         assert 'external-' not in text
         deck.select(True)
-        assert session.view.rows[0].approved
-        assert deck.review_text().replace('approved', 'unapproved') == text
+        assert not session.view.rows[0].approved
+        assert deck.notice.startswith('Nothing to do')
+        assert deck.review_text() == text
         assert marker.read_text().splitlines() == ['capture']
 
 
@@ -184,3 +185,56 @@ def test_conflict_review_shows_zdiff3_blocks_colored_by_side(tmp_path, monkeypat
         assert '<<<<<<< repository' in section and '>>>>>>> Capture' in section
         colored = CommandDeck(session, use_color=True).review_text()
         assert '\x1b[32mours' in colored and '\x1b[2mbase' in colored and '\x1b[34mtheirs' in colored
+
+
+# Raw comparison drifts (a vs A), but Capture folds live back to the repository: nothing is written.
+FOLDING_CAPTURE = 'capture = "tr A-Z a-z < $DOTMAN_LIVE_PATH"\ncompare = { repo = "raw", live = "raw" }'
+
+
+def test_noop_row_is_unselectable_and_review_explains_why(tmp_path, monkeypatch):
+    import asyncio
+
+    from textual.widgets import Static
+
+    from dotman.sync_deck import SyncDeckApp, WorksetTable
+
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'a\n', b'A\n', FOLDING_CAPTURE)])
+
+    async def interact():
+        with engine.open_pull_session(engine.resolve_sync_scope()) as session:
+            app = SyncDeckApp(CommandDeck(session, use_color=False))
+            async with app.run_test() as pilot:
+                marker, _target, _policy, resolution = (str(cell) for cell in app.query_one(WorksetTable).get_row_at(0))
+                assert (marker, resolution) == ('[-]', 'Nothing to do')
+                await pilot.press('space')
+                assert not session.view.rows[0].approved
+                assert 'Nothing to do' in str(app.query_one('#notice', Static).render())
+            deck = CommandDeck(session, use_color=False)
+            deck.open_review()
+            review = deck.review_text()
+            assert 'Approval: not needed' in review
+            assert 'Nothing to do: Approval would neither write nor record a Sync Base' in review
+            assert 'compare does not match Capture' in review
+
+    asyncio.run(asyncio.wait_for(interact(), timeout=10))
+
+
+def test_no_write_review_says_approval_records_the_sync_base(tmp_path, monkeypatch):
+    # Render reproduces live, so Approval can record a Sync Base even though nothing is written.
+    extra = 'render = "tr a-z A-Z < $DOTMAN_SOURCE"\n' + FOLDING_CAPTURE
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'a\n', b'A\n', extra)])
+    with engine.open_pull_session(engine.resolve_sync_scope()) as session:
+        assert session.view.rows[0].approved
+        review = CommandDeck(session, use_color=False).review_text()
+        assert 'Nothing will be written; Approval records the Sync Base' in review
+
+
+@pytest.mark.parametrize('report', [False, True])
+def test_unattended_noop_is_reported_as_noop_only_on_request(tmp_path, monkeypatch, capsys, report):
+    from dotman.sync_deck_command import PullDeckCommandRunner
+
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'a\n', b'A\n', FOLDING_CAPTURE)])
+    args = SimpleNamespace(config=engine.config.config_path, scopes=[], dry_run=True, unattended=True,
+                           json_output=False, run_noop=False, command='pull', report=report)
+    assert PullDeckCommandRunner(engine_factory=lambda _: engine, use_color=False).run(args) == 0
+    assert ('[noop] main:app.unit' in capsys.readouterr().out) == report

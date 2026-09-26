@@ -305,12 +305,13 @@ class SyncDeckCommandRunner:
             if not (selected or diagnostics or report):
                 # Unselected entries only matter when they explain a problem.
                 return None
-            lead = outcome if selected or diagnostics else "unselected"
+            # A no-op offers no Approval, so "unselected" would misreport a user choice.
+            lead = outcome if selected or diagnostics or outcome == "noop" else "unselected"
             messages = [item["message"] for item in diagnostics if item["message"] not in timeline_errors]
             if recap and not messages and outcome == "skipped":
                 skipped_count += 1
                 return None
-            if recap and not messages and outcome in ("ok", "failed", "interrupted"):
+            if recap and not messages and outcome in ("ok", "noop", "failed", "interrupted"):
                 return None
             return lead, messages
 
@@ -394,6 +395,7 @@ ENTRY_OUTCOME_BY_STATUS = {
     "skipped": "skipped",
     "pending": "pending",
     "excluded": "pending",
+    "noop": "noop",
 }
 
 

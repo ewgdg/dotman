@@ -86,6 +86,8 @@ class Proposal:
     additional_changes: tuple[AdditionalEdit, ...] = ()
     checkpoint_qualified: bool = False
     checkpoint_warnings: tuple[Diagnostic, ...] = ()
+    noop: bool = False
+    """Approval would change nothing: no writes, and no new Sync Base to record."""
 
 
 def materialize(
@@ -215,6 +217,11 @@ class SessionRow:
     intent: ResolutionIntent | None = None
     fallback_reason: str | None = None
     diagnostics: tuple[Diagnostic, ...] = ()
+
+    @property
+    def approvable(self) -> bool:
+        """A no-op Proposal keeps the row visible as evidence but offers no Approval."""
+        return "set-approval" in self.allowed_commands and not (self.proposal and self.proposal.noop)
 
 
 @dataclass(frozen=True)
@@ -379,7 +386,7 @@ class InclusionChanged:
 @dataclass(frozen=True)
 class SyncUnitResult:
     identity: str
-    status: Literal["directly-in-sync", "pending", "excluded", "observation-failed", "converged", "would-converge", "applied", "would-apply", "execution-failed", "interrupted", "skipped", "not-converged"]
+    status: Literal["directly-in-sync", "pending", "noop", "excluded", "observation-failed", "converged", "would-converge", "applied", "would-apply", "execution-failed", "interrupted", "skipped", "not-converged"]
     diagnostics: tuple[Diagnostic, ...] = ()
     acknowledged: bool = False
 
@@ -758,7 +765,7 @@ class ProposalSession:
                     self._clear_input_cache(row)
             rows = tuple(
                 replace(row, approved=command.approved, proposal=None)
-                if isinstance(row, SessionRow) and "set-approval" in row.allowed_commands
+                if isinstance(row, SessionRow) and row.approvable
                 else replace(row, approved=command.approved)
                 if isinstance(row, AdditionalRow)
                 else replace(row, included=command.approved)
@@ -837,7 +844,7 @@ class ProposalSession:
                 SetApproval: "set-approval", PrepareProposalReview: "prepare-proposal-review",
                 SetResolutionIntent: "set-resolution-intent", RetryMaterialization: "retry-materialization",
             }[type(command)]
-            if name not in row.allowed_commands:
+            if name not in row.allowed_commands or (isinstance(command, SetApproval) and not row.approvable):
                 return CommandRejected(view, "disallowed")
             if isinstance(command, AuthorizeSymlinkReplacement):
                 row = replace(row, symlink_authorized=True, proposal=None, diagnostics=())
@@ -870,7 +877,8 @@ class ProposalSession:
                 except (ValueError, OSError) as exc:
                     diagnostics = (Diagnostic(exc.code if isinstance(exc, SyncPathError) else "materialization-failed", str(exc)),)
                     approved = False
-            updated = replace(row, approved=approved, proposal=proposal, diagnostics=diagnostics)
+            updated = replace(row, approved=approved and not (proposal and proposal.noop),
+                              proposal=proposal, diagnostics=diagnostics)
             self._view = replace(view, revision=view.revision + 1, rows=tuple(
                 updated if item.row_id == row.row_id else item for item in view.rows
             ))
@@ -983,7 +991,8 @@ class ProposalSession:
             if row.approved:
                 try:
                     self.check_cancelled()
-                    row = replace(row, proposal=self._materialize_row(row), diagnostics=())
+                    proposal = self._materialize_row(row)
+                    row = replace(row, approved=not proposal.noop, proposal=proposal, diagnostics=())
                     self.check_cancelled()
                 except (KeyboardInterrupt, InterruptedError):
                     row = replace(row, approved=False, proposal=None,
@@ -1012,7 +1021,8 @@ class ProposalSession:
                 observation, intent=row.intent, capture=self._capture,
                 render=self._render, merge=self._merge, symlink_authorized=row.symlink_authorized,
             )
-            return self._qualify_checkpoint(observation, replace(proposal, generation=self._next_generation(row.row_id), additional_changes=self._row_additional(row)))
+            return self._finalize_proposal(observation, replace(
+                proposal, generation=self._next_generation(row.row_id), additional_changes=self._row_additional(row)))
         repository, generation = self._edited_outcomes[row.row_id]
         observation = row.observation
         if self._unresolved_conflict(row, repository):
@@ -1029,7 +1039,7 @@ class ProposalSession:
             replace(observation, repository=repository, comparison_repository=live),
             intent="use-repository", render=lambda *_: live, symlink_authorized=row.symlink_authorized,
         )
-        return self._qualify_checkpoint(observation, replace(
+        return self._finalize_proposal(observation, replace(
             proposal, primary_source_change=repository if repository != observation.repository else None,
             intent="editor", generation=generation, reconciliation="edited repository outcome",
             additional_changes=self._row_additional(row),
@@ -1106,8 +1116,8 @@ class ProposalSession:
                     else:
                         proposal = self._materialize_row(row)
                     operation.check_cancelled()
-                    updated = replace(row, proposal=proposal, diagnostics=(),
-                                      additional_changes=output.additional)
+                    updated = replace(row, approved=row.approved and not proposal.noop, proposal=proposal,
+                                      diagnostics=(), additional_changes=output.additional)
         except (KeyboardInterrupt, InterruptedError):
             status = "cancelled"
             diagnostics = (Diagnostic("editor-cancelled", "Editor cancelled"),)
@@ -1160,7 +1170,8 @@ class ProposalSession:
             if status == "drifted":
                 row = rows[identity]
                 diagnostics += row.diagnostics
-                status = "excluded" if not row.included else "pending"
+                status = ("excluded" if not row.included
+                          else "noop" if row.proposal is not None and row.proposal.noop else "pending")
                 if row.included and row.approved and row.proposal is not None and not aborted:
                     if preview:
                         status = "would-converge"
@@ -1265,6 +1276,20 @@ class ProposalSession:
             return replace(proposal, checkpoint_warnings=(Diagnostic(
                 "base-validation-failed", str(exc), severity="warning"),))
         return replace(proposal, checkpoint_qualified=rendered == observation.live)
+
+    def _finalize_proposal(self, observation: Observation, proposal: Proposal) -> Proposal:
+        """Every materialized Proposal settles its checkpoint proof, then whether Approval matters."""
+        return self._settle_noop(observation, self._qualify_checkpoint(observation, proposal))
+
+    def _settle_noop(self, observation: Observation, proposal: Proposal) -> Proposal:
+        # Without writes, Approval's only effect is the Sync Base acknowledgment at
+        # completion; when that cannot record anything new, Approval changes nothing.
+        if proposal.primary_source_change is not None or proposal.publication_effects:
+            return proposal
+        frozen = self._frozen_bases.get(observation.identity)
+        records_base = proposal.checkpoint_qualified and frozen is not None and frozen.unit.eligible
+        base_current = records_base and observation.base.record == replace(frozen, payload=proposal.repository).record()
+        return replace(proposal, noop=not records_base or base_current)
 
     def _acknowledge(self, row: SessionRow) -> None:
         observation = row.observation

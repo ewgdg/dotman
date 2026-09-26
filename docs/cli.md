@@ -189,9 +189,15 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   without restoring a Guard-removed capability.
 - Pull-only review lazily Captures live, shows the repository
   outcome and leaves live unchanged. Confirmation counts repository changes
-  separately from live effects. Even a no-write drift resolution requires Approval
-  and completion at its normal ordered position to become Converged. Checkpoint
-  qualification and persistence are separate from successful completion.
+  separately from live effects. A no-write drift resolution requires Approval
+  and completion at its normal ordered position to become Converged when it can
+  record a new Sync Base. Checkpoint qualification and persistence are separate
+  from successful completion.
+- A No-op Proposal (nothing to write and no new Sync Base to record) keeps its
+  row as evidence but offers no Approval: the row shows `[-]` with Resolution
+  `Nothing to do`, Space explains why, Review shows `Approval: not needed` plus a
+  hint that `compare` does not match Capture, and results report `noop`
+  (listed only with `--report`).
 - JSON emits one clean final document with `operation`, `mode`, `status`,
   `scope`, `summary`, `sync_units`, `additional_source_changes`, `probe_work`,
   `directory_root_work`, `hook_work`, and `stages`. Hook output is captured

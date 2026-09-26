@@ -2,7 +2,7 @@ import pytest
 
 from dotman.pull_session import PullSession
 from dotman.sync_base_store import FilePresent, SyncBaseStore, SyncBaseStoreError
-from dotman.sync_session import SetApproval
+from dotman.sync_session import CommandRejected, PrepareProposalReview, SetApproval
 from tests.engine.test_sync_convergence import command
 from tests.engine.test_sync_session import make_engine, open_session
 
@@ -179,3 +179,35 @@ def test_repository_only_qualification_tracks_approved_dependency_inputs(tmp_pat
         assert session.view.rows[0].proposal.checkpoint_qualified
         assert session.execute().result.units[0].acknowledged
     assert shared.read_bytes() == b'live'
+
+
+# Raw comparison drifts (a vs A) while Capture reproduces the repository, so nothing is written;
+# Render reproduces live, so Approval can still record a Sync Base.
+CASE_FOLDING = ('render = "tr a-z A-Z < $DOTMAN_SOURCE"\ncapture = "tr A-Z a-z < $DOTMAN_LIVE_PATH"\n'
+                'compare = { repo = "raw", live = "raw" }')
+
+
+def test_no_write_approval_is_disabled_once_the_sync_base_is_current(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'a\n', b'A\n', CASE_FOLDING)])
+    with open_session(engine, preview=False) as session:
+        command(session, SetApproval, 'main:app.unit', True)
+        row = session.view.rows[0]
+        assert row.approved and row.approvable and not row.proposal.noop
+        assert session.execute().result.units[0].acknowledged
+    with open_session(engine, preview=False) as session:
+        command(session, PrepareProposalReview, 'main:app.unit')
+        row = session.view.rows[0]
+        assert row.proposal.noop and not row.approvable and not row.approved
+        assert isinstance(command(session, SetApproval, 'main:app.unit', True), CommandRejected)
+        assert session.execute().result.units[0].status == 'noop'
+
+
+def test_no_write_approval_that_cannot_record_a_base_is_a_noop(tmp_path, monkeypatch):
+    # Without Render, the repository does not reproduce live, so no Sync Base can be recorded.
+    no_render = 'capture = "tr A-Z a-z < $DOTMAN_LIVE_PATH"\ncompare = { repo = "raw", live = "raw" }'
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'a\n', b'A\n', no_render)])
+    # Pull approves drift by default; a no-op Proposal must come back unapproved.
+    with engine.open_pull_session(engine.resolve_sync_scope()) as session:
+        row = session.view.rows[0]
+        assert row.proposal.noop and not row.approved
+        assert session.execute().result.units[0].status == 'noop'

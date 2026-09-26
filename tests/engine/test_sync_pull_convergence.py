@@ -51,7 +51,7 @@ def test_capture_reads_files_beside_the_live_endpoint(tmp_path, monkeypatch):
         assert observation.comparison_live == FilePresent(b'from sibling')
 
 
-def test_lossy_pull_no_write_requires_approval_without_acknowledgment(tmp_path, monkeypatch):
+def test_lossy_pull_no_write_is_a_noop_without_acknowledgment(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
         ('unit', 'pull-only', b'repo', b'live',
          'capture = "printf repo"\ncompare = { repo = "raw", live = "raw" }'),
@@ -61,11 +61,11 @@ def test_lossy_pull_no_write_requires_approval_without_acknowledgment(tmp_path, 
     with open_session(engine, preview=False) as session:
         assert session.view.observations[0].base.record is None
         command(session, SetApproval, 'main:app.unit', True)
-        proposal = session.view.rows[0].proposal
-        assert proposal.primary_source_change is None
-        assert proposal.publication_effects == ()
+        row = session.view.rows[0]
+        assert row.proposal.primary_source_change is None
+        assert row.proposal.noop and not row.approved
         result = session.execute().result
-        assert result.units[0].status == 'converged'
+        assert result.units[0].status == 'noop'
         assert result.steps == ()
     with open_session(engine) as later:
         record = later.view.observations[0].base.record
@@ -96,7 +96,8 @@ def test_acknowledgment_failure_does_not_prevent_convergence(tmp_path, monkeypat
         monkeypatch.setattr(SyncBaseStore, 'replace', fail)
         result = session.execute().result
         assert result.status == 'completed'
-        assert result.units[0].status == 'converged'
+        # The lossy no-write Capture cannot record a Sync Base, so it is a no-op.
+        assert result.units[0].status == ('noop' if no_write else 'converged')
         assert not result.units[0].acknowledged
         if not no_write:
             assert result.units[0].diagnostics[0].code == 'base-acknowledgment-failed'
