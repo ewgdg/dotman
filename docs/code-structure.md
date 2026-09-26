@@ -221,6 +221,14 @@ Before adding more logic to `cli.py` or `engine.py`, ask:
 
 Prefer the dedicated module unless there is a strong reason not to.
 
+## Manual Sync demo scene
+
+`uv run python -m tests.demo_scene` rebuilds a throwaway scene under the system temp dir
+(or `--dir PATH`) and opens `dotman sync` in it for hands-on review of the Command Deck.
+HOME and the XDG directories point into the scene. Each case in `tests/demo_scene.py`
+declares the text its Proposal Review must show, and `tests/cli/test_demo_scene.py` keeps
+those claims true. Add a case there when a review behavior is worth trying by hand.
+
 ## Session orchestration boundary
 
 Static resolution belongs to `sync_scope.py`: tracked selectors, profile and
