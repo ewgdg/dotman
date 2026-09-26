@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextvars import copy_context
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from concurrent.futures import ThreadPoolExecutor
 from difflib import unified_diff
 from itertools import groupby
@@ -64,6 +64,9 @@ class ReviewSection:
 
 
 REVIEW_ITEM_INDENT = 4
+# Invisible style metadata marking changed lines, so Full View can open at the first one.
+REVIEW_CHANGE_KEY = "review_change"
+REVIEW_CHANGE_META = {REVIEW_CHANGE_KEY: True}
 
 
 @dataclass(frozen=True)
@@ -108,7 +111,7 @@ class ReviewDocument:
                 elif kind is ReviewNote:
                     body = Group(*(Text.from_ansi(item.text, overflow="fold") for item in items))
                 elif kind is ReviewConflict:
-                    body = Group(*(Text.from_ansi(line, overflow="fold") for item in items
+                    body = Group(*(self._conflict_line(line) for item in items
                                    for line in render_conflict_lines(item.lines, use_color=self.use_color)))
                 else:
                     body = Group(*(self._diff_grid(item.lines) for item in items))
@@ -121,6 +124,13 @@ class ReviewDocument:
         heading = style_text(title, "1") if self.use_color else title
         return Rule(Text.from_ansi(f"{lead} {heading}"), align="left", style="dim" if self.use_color else "")
 
+    @staticmethod
+    def _conflict_line(line: str) -> Text:
+        text = Text.from_ansi(line, overflow="fold")
+        if text.plain.startswith("<<<<<<<"):
+            text.apply_meta(REVIEW_CHANGE_META)
+        return text
+
     def _diff_grid(self, lines: tuple[str, ...]) -> Table:
         # A marker column keeps wrapped content hanging right of the +/- sign.
         grid = Table.grid()
@@ -128,15 +138,19 @@ class ReviewDocument:
         grid.add_column(ratio=1, overflow="fold")
         for line in lines:
             marker, content = render_diff_line(line, use_color=self.use_color)
-            grid.add_row(Text.from_ansi(marker), Text.from_ansi(content))
+            marker_text = Text.from_ansi(marker)
+            if line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+                marker_text.apply_meta(REVIEW_CHANGE_META)
+            grid.add_row(marker_text, Text.from_ansi(content))
         return grid
 
 
-CONFLICT_CONTEXT_LINES = 3
+# Matches unified_diff's default hunk context; Full View widens both to the whole file.
+REVIEW_CONTEXT_LINES = 3
 CONFLICT_ELISION = "⋯"
 
 
-def conflict_excerpt(content: bytes, *, description: str) -> ReviewConflict | ReviewNote:
+def conflict_excerpt(content: bytes, *, description: str, full_context: bool = False) -> ReviewConflict | ReviewNote:
     """zdiff3 conflict blocks with surrounding context, like unified-diff hunks."""
     try:
         lines = content.decode("utf-8").splitlines()
@@ -150,8 +164,9 @@ def conflict_excerpt(content: bytes, *, description: str) -> ReviewConflict | Re
             block_lines.append(index)
         if line.startswith(">>>>>>>"):
             in_block = False
+    context = len(lines) if full_context else REVIEW_CONTEXT_LINES
     kept = sorted({index for block_index in block_lines
-                   for index in range(block_index - CONFLICT_CONTEXT_LINES, block_index + CONFLICT_CONTEXT_LINES + 1)
+                   for index in range(block_index - context, block_index + context + 1)
                    if 0 <= index < len(lines)})
     excerpt = []
     for previous, index in zip([-1, *kept], kept):
@@ -171,6 +186,7 @@ def _review_difference(
     after_label: str,
     description: str,
     use_color: bool,
+    full_context: bool = False,
 ) -> list[ReviewNote | ReviewDiff]:
     if before is None or after is None:
         return [ReviewNote("Comparison evidence unavailable")]
@@ -202,11 +218,13 @@ def _review_difference(
         ])
     if before_bytes != after_bytes:
         try:
+            before_lines = before_bytes.decode("utf-8").splitlines(keepends=True)
+            after_lines = after_bytes.decode("utf-8").splitlines(keepends=True)
             diff = unified_diff(
-                before_bytes.decode("utf-8").splitlines(keepends=True),
-                after_bytes.decode("utf-8").splitlines(keepends=True),
+                before_lines, after_lines,
                 fromfile="/dev/null" if isinstance(before, Missing) else before_label,
                 tofile="/dev/null" if isinstance(after, Missing) else after_label,
+                n=max(len(before_lines), len(after_lines)) if full_context else REVIEW_CONTEXT_LINES,
                 lineterm="\n",
             )
             for line in diff:
@@ -232,6 +250,8 @@ class CommandDeck:
         self.focus = 0
         self.reviewing = False
         self.confirming = False
+        # Title of the review section shown whole in Full View, over the unchanged review.
+        self.full_view: str | None = None
         self.notice = ""
 
     @property
@@ -247,6 +267,8 @@ class CommandDeck:
         """Return False only when Escape requests abort from the workset."""
         if self.confirming:
             self.confirming = False
+        elif self.full_view is not None:
+            self.full_view = None
         elif self.reviewing:
             self.reviewing = False
         else:
@@ -344,21 +366,39 @@ class CommandDeck:
         return f":: {verb}? — {stats}"
 
     def review_text(self) -> str:
-        document = self.review_document()
+        document = self.displayed_document()
         return document.text() if document else ""
+
+    def full_view_titles(self) -> list[str]:
+        """Review sections with diff or conflict evidence that Full View can widen."""
+        document = self.review_document()
+        return [section.title for section in document.sections
+                if any(isinstance(item, (ReviewDiff, ReviewConflict)) for item in section.items)]
+
+    def open_full_view(self, title: str) -> None:
+        if self.reviewing and title in self.full_view_titles():
+            self.full_view = title
+
+    def displayed_document(self) -> ReviewDocument | None:
+        if self.full_view is None:
+            return self.review_document()
+        document = self.review_document(full_context=True)
+        [section] = [section for section in document.sections if section.title == self.full_view]
+        return replace(document, heading=self.review_heading("Full View"), sections=(section,))
 
     def review_heading(self, title: str) -> str:
         if not self.use_color:
             return f"{MENU_HEADER_MARKER} {title}"
         return f"{style_text(MENU_HEADER_MARKER, *MENU_HEADER_MARKER_STYLE)} {style_text(title, '1')}"
 
-    def review_document(self) -> ReviewDocument | None:
+    def review_document(self, *, full_context: bool = False) -> ReviewDocument | None:
         row = self.focused_row
         if row is None or isinstance(row, AuxiliaryRow):
             return None
         color = self.use_color
         term = lambda value: render_sync_term(value, use_color=color)
-        difference = lambda *args, **kwargs: _review_difference(*args, **kwargs, use_color=color)
+        difference = lambda *args, **kwargs: _review_difference(*args, **kwargs, use_color=color,
+                                                                full_context=full_context)
         approval = ReviewFact("Approval", term(
             "not needed" if isinstance(row, SessionRow) and row.proposal is not None and row.proposal.noop
             else "approved" if row.approved else "unapproved"))
@@ -440,7 +480,7 @@ class CommandDeck:
             sections.append(ReviewSection("Merge conflicts", (
                 ReviewNote(render_payload_section_label("Resolve in the Editor (E); it opens with this merge output",
                                                         use_color=color)),
-                conflict_excerpt(conflict.content, description="merge output"),
+                conflict_excerpt(conflict.content, description="merge output", full_context=full_context),
             )))
 
         if proposal is not None:
@@ -586,14 +626,19 @@ class ReviewBody(Widget):
 
     DEFAULT_CSS = "ReviewBody { height: auto; }"
     document: reactive[ReviewDocument | None] = reactive(None, layout=True)
+    first_change_row: int | None = None
 
     def render(self) -> Text:
+        self.first_change_row = None
         if self.document is None:
             return Text()
         console = self.app.console
         options = console.options.update_width(max(self.content_size.width, 1))
         lines = []
         for segments in console.render_lines(self.document.renderable(), options, pad=False):
+            if self.first_change_row is None and any(
+                    segment.style and segment.style.meta.get(REVIEW_CHANGE_KEY) for segment in segments):
+                self.first_change_row = len(lines)
             line = Text.assemble(*((segment.text, segment.style) for segment in segments))
             # Strip grid padding so copied text has no trailing blanks.
             line.rstrip()
@@ -654,6 +699,8 @@ PROGRESS_REVEAL_DELAY_SECONDS = 0.3
 PROGRESS_FRAME_SECONDS = 0.1
 # Copy confirmation is transient; other notices report state and stay until the next command.
 COPY_NOTICE_SECONDS = 2.0
+# Full View opens with a few unchanged lines above the first change for orientation.
+FULL_VIEW_LEAD_LINES = 3
 
 
 class SyncDeckApp(App[bool]):
@@ -700,6 +747,7 @@ class SyncDeckApp(App[bool]):
         # Lowercase l is vim-style right; authorization needs the deliberate Shift+L.
         Binding("L", "authorize_link", "Authorize link replacement", priority=True),
         Binding("e,E", "editor", "Editor", priority=True),
+        Binding("v,V", "full_view", "Full view", priority=True),
         Binding("tab,shift+tab", "toggle_detail_focus", "Detail", priority=True),
         Binding("space", "approve", "Select", priority=True),
         Binding("a,A", "approve_all", "Select all", priority=True),
@@ -723,6 +771,11 @@ class SyncDeckApp(App[bool]):
         self._materialization: asyncio.Task | None = None
         self._aborting = False
         self._editing = False
+        # One OptionList serves the Resolution and Full View menus.
+        self._menu_choose = None
+        self._menu_hint = ""
+        # Full View reuses the review scroller; the review offset is restored on return.
+        self._review_position_before_full_view = (0.0, 0.0)
 
     @property
     def busy(self) -> bool:
@@ -867,7 +920,7 @@ class SyncDeckApp(App[bool]):
                         self.deck.focus = row
                         if column == 0:
                             self.materialize(self.deck.select)
-                        self.close_resolution()
+                        self.close_menu()
                         self.update_workset()
                         if column == 3:
                             self.action_resolution()
@@ -943,14 +996,17 @@ class SyncDeckApp(App[bool]):
         review_scroll = ("↑/↓/j/k/PgUp/PgDn", "scroll")
         bulk_selection = ("A/U", "all/none")
         if self.query_one(OptionList).display:
-            hints = [("↑/↓/j/k", "choose Resolution"), ("Enter", "select"), ("Esc", "dismiss")]
+            hints = [("↑/↓/j/k", self._menu_hint), ("Enter", "select"), ("Esc", "dismiss")]
         elif self.deck.confirming:
             hints = [("Enter", "confirm"), ("Esc", "return"), ("Ctrl+C", "abort")]
+        elif self.deck.full_view is not None:
+            hints = [("Esc", "return"), ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            hints = [("Esc", "return"), ("Space", "Approval"), ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
+            hints = [("Esc", "return"), ("Space", "Approval"), ("V", "full view"), ("Y", "copy"), review_scroll,
+                     ("Ctrl+C", "abort")]
         elif self.deck.reviewing:
-            hints = [("Esc", "return"), ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("Y", "copy"),
-                     review_scroll, ("Ctrl+C", "abort")]
+            hints = [("Esc", "return"), ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("V", "full view"),
+                     ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.detail_focused:
             hints = [("Tab/Esc", "return"), review_scroll, ("Space", "mark"), bulk_selection,
                      ("Enter", "view"), ("E", "edit"), ("T", "retry"), ("Y", "copy")]
@@ -958,7 +1014,8 @@ class SyncDeckApp(App[bool]):
             hints = [("Esc", "abort"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
                      ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
-        if row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming:
+        if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
+                and self.deck.full_view is None):
             hints.append(("Shift+L", "authorize link replacement"))
         if self.deck.session.view.operation == "sync" and not self.deck.reviewing and not self.query_one(OptionList).display and not self.deck.confirming:
             hints.append(("R", "intent"))
@@ -1032,7 +1089,7 @@ class SyncDeckApp(App[bool]):
             self.deck.focus = self.query_one(WorksetTable).cursor_row
 
     def action_approve(self) -> None:
-        if self.busy:
+        if self.busy or self.deck.full_view is not None:
             return
         if self.query_one(OptionList).display:
             return
@@ -1040,14 +1097,14 @@ class SyncDeckApp(App[bool]):
         self.materialize(self.deck.select)
 
     def action_approve_all(self) -> None:
-        if self.busy:
+        if self.busy or self.deck.full_view is not None:
             return
         if self.query_one(OptionList).display:
             return
         self.materialize(lambda: self.deck.select_all(True), row_ids=self.all_row_ids())
 
     def action_clear_all(self) -> None:
-        if self.busy:
+        if self.busy or self.deck.full_view is not None:
             return
         if self.query_one(OptionList).display:
             return
@@ -1056,11 +1113,12 @@ class SyncDeckApp(App[bool]):
     def all_row_ids(self) -> tuple[str, ...]:
         return tuple(row.row_id for row in self.deck.session.view.rows)
 
-    def show_review(self) -> None:
+    def show_review(self, position: tuple[float, float] | None = None) -> None:
         log = self.query_one("#review", VerticalScroll)
-        position = self.review_positions.get(self.deck.focused_row.row_id, (0, 0))
-        if log.display:
-            position = (log.scroll_x, log.scroll_y)
+        if position is None:
+            position = self.review_positions.get(self.deck.focused_row.row_id, (0, 0))
+            if log.display:
+                position = (log.scroll_x, log.scroll_y)
         self.query_one("#workset").display = False
         self.query_one("#detail").display = False
         log.display = True
@@ -1075,7 +1133,7 @@ class SyncDeckApp(App[bool]):
         menu = self.query_one(OptionList)
         if menu.display:
             if menu.highlighted is not None:
-                self.choose_resolution(menu.highlighted)
+                self._menu_choose(menu.highlighted)
             return
         self.sync_focus()
         if self.deck.confirming:
@@ -1086,7 +1144,7 @@ class SyncDeckApp(App[bool]):
     def action_confirm(self) -> None:
         if self.busy:
             return
-        self.close_resolution()
+        self.close_menu()
         self.deck.confirm()
         if self.deck.confirming:
             self.query_one("#workset").display = False
@@ -1097,14 +1155,48 @@ class SyncDeckApp(App[bool]):
             self.set_focus(None)
         self.update_workset()
 
+    def action_full_view(self) -> None:
+        if self.busy or not self.deck.reviewing or self.deck.full_view is not None or self.query_one(OptionList).display:
+            return
+        titles = self.deck.full_view_titles()
+        if not titles:
+            self.deck.notice = "No diff to show in Full View."
+            self.update_workset()
+        elif len(titles) == 1:
+            self.open_full_view(titles[0])
+        else:
+            self.open_menu([Text(title) for title in titles], highlighted=0, hint="choose Full View",
+                           choose=lambda index: self.open_full_view(titles[index]))
+            self.update_hints()
+
+    def open_full_view(self, title: str) -> None:
+        self.close_menu()
+        log = self.query_one("#review", VerticalScroll)
+        self._review_position_before_full_view = (log.scroll_x, log.scroll_y)
+        self.deck.open_full_view(title)
+        body = self.query_one(ReviewBody)
+        body.document = self.deck.displayed_document()
+        self.query_one("#title", Static).update(":: Full View")
+        self.update_hints()
+
+        def scroll_to_first_change() -> None:
+            row = body.first_change_row or 0
+            log.scroll_to(0, max(0, row - FULL_VIEW_LEAD_LINES), animate=False)
+        self.call_after_refresh(scroll_to_first_change)
+
     def action_back(self) -> None:
         if self.busy:
+            return
+        if self.deck.full_view is not None:
+            self.deck.back()
+            self.show_review(self._review_position_before_full_view)
+            self.update_hints()
             return
         if self.detail_focused:
             self.query_one(WorksetTable).focus()
             return
         if self.query_one(OptionList).display:
-            self.close_resolution()
+            self.close_menu()
             self.update_workset()
             return
         if self.deck.reviewing:
@@ -1124,9 +1216,19 @@ class SyncDeckApp(App[bool]):
         # Keyboard toggles and mouse clicks both move focus; hints follow either.
         self.update_hints()
 
-    def close_resolution(self) -> None:
+    def open_menu(self, labels: list[Text], *, highlighted: int, hint: str, choose) -> None:
+        # Set before focusing: the focus event refreshes the hints.
+        self._menu_choose, self._menu_hint = choose, hint
+        menu = self.query_one(OptionList)
+        menu.clear_options()
+        menu.add_options(labels)
+        menu.highlighted = highlighted
+        menu.display = True
+        menu.focus()
+
+    def close_menu(self) -> None:
         self.query_one(OptionList).display = False
-        self.query_one(WorksetTable).focus()
+        self.query_one("#review" if self.deck.reviewing else WorksetTable).focus()
 
     def action_resolution(self) -> None:
         if self.busy:
@@ -1137,13 +1239,10 @@ class SyncDeckApp(App[bool]):
         row = self.deck.focused_row
         if row is None or "set-resolution-intent" not in row.allowed_commands or len(row.allowed_intents) < 2:
             return
-        menu = self.query_one(OptionList)
-        menu.clear_options()
-        menu.add_options([Text.from_ansi(render_sync_term(resolution_label(intent), use_color=self.deck.use_color))
-                          for intent in row.allowed_intents])
-        menu.highlighted = row.allowed_intents.index(row.intent)
-        menu.display = True
-        menu.focus()
+        self.open_menu([Text.from_ansi(render_sync_term(resolution_label(intent), use_color=self.deck.use_color))
+                        for intent in row.allowed_intents],
+                       highlighted=row.allowed_intents.index(row.intent), hint="choose Resolution",
+                       choose=self.choose_resolution)
         self.update_workset()
 
     def choose_resolution(self, index: int) -> None:
@@ -1151,7 +1250,7 @@ class SyncDeckApp(App[bool]):
             return
         row = self.deck.focused_row
         intent = row.allowed_intents[index]
-        self.close_resolution()
+        self.close_menu()
         def change():
             result = set_resolution_intent(self.deck.session, row.row_id, intent)
             self.deck.notice = result.reason if isinstance(result, CommandRejected) else ""
@@ -1161,10 +1260,10 @@ class SyncDeckApp(App[bool]):
         if self.busy:
             return
         if self.query_one(OptionList).display:
-            self.choose_resolution(event.option_index)
+            self._menu_choose(event.option_index)
 
     def action_editor(self) -> None:
-        if self.busy or self.deck.confirming or self.query_one(OptionList).display:
+        if self.busy or self.deck.confirming or self.deck.full_view is not None or self.query_one(OptionList).display:
             return
         self.sync_focus()
         row = self.deck.focused_row
@@ -1173,7 +1272,7 @@ class SyncDeckApp(App[bool]):
         self.materialize(self.deck.edit, editor_io=row.editor_io)
 
     def action_authorize_link(self) -> None:
-        if self.busy or self.deck.confirming or self.query_one(OptionList).display:
+        if self.busy or self.deck.confirming or self.deck.full_view is not None or self.query_one(OptionList).display:
             return
         self.sync_focus()
         row = self.deck.focused_row
@@ -1188,7 +1287,7 @@ class SyncDeckApp(App[bool]):
     def action_retry(self) -> None:
         if self.busy:
             return
-        if self.deck.confirming:
+        if self.deck.confirming or self.deck.full_view is not None:
             return
         self.sync_focus()
         row = self.deck.focused_row

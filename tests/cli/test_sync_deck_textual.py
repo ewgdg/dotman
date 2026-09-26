@@ -791,3 +791,76 @@ def test_review_sections_open_with_full_width_titled_rules(tmp_path, monkeypatch
                 # Copied text keeps the compact header form.
                 assert "  :: Paths" in app.deck.review_text()
         run(interact())
+
+
+@pytest.mark.parametrize("use_color", [False, True])
+def test_full_view_shows_whole_diff_at_first_change_and_returns_to_review_position(tmp_path, monkeypatch, use_color):
+    repo = b"".join(b"row-%02d\n" % index for index in range(60))
+    live = repo.replace(b"row-45\n", b"live-45\n")
+    engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", repo, live, "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=use_color))
+
+        async def interact():
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.press("enter", "down", "down")
+                await pilot.pause()
+                log = app.query_one("#review")
+                review_position = log.scroll_y
+                assert review_position > 0
+                assert "row-00" not in review_text(app)
+                # The only diff opens directly, without a menu.
+                await pilot.press("v")
+                await pilot.pause()
+                assert title_text(app) == ":: Full View"
+                lines = review_text(app).splitlines()
+                assert "row-00" in review_text(app) and "row-59" in review_text(app)
+                change = next(index for index, line in enumerate(lines) if "live-45" in line)
+                assert log.scroll_y <= change < log.scroll_y + log.scrollable_content_region.height
+                # Full View is read-only evidence.
+                await pilot.press("space")
+                assert not session.view.rows[0].approved
+                await pilot.press("y")
+                assert "row-00" in app.clipboard
+                await pilot.press("escape")
+                await pilot.pause()
+                assert title_text(app) == ":: Proposal Review"
+                assert log.scroll_y == review_position
+                assert "row-00" not in review_text(app)
+        run(interact())
+
+
+def test_full_view_menu_offers_each_diff_and_shows_whole_merge_output(tmp_path, monkeypatch):
+    from textual.widgets import OptionList
+    from tests.engine.test_sync_both_convergence import established
+
+    engine = established(tmp_path, monkeypatch)
+    context = b"".join(b"ctx-%d\n" % index for index in range(10))
+    (tmp_path / "repo/packages/app/unit").write_bytes(b"repository\n" + context)
+    (tmp_path / "live/unit").write_bytes(b"conflict\n" + context)
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 40)) as pilot:
+                await pilot.press("enter")
+                await pilot.pause()
+                assert "ctx-9" not in app.deck.review_text()
+                await pilot.press("v")
+                menu = app.query_one(OptionList)
+                assert menu.display
+                assert [str(menu.get_option_at_index(index).prompt) for index in range(menu.option_count)] == [
+                    "Merge conflicts", "Drift"]
+                # Dismissing the menu stays in review.
+                await pilot.press("escape")
+                assert not menu.display and title_text(app) == ":: Proposal Review"
+                await pilot.press("v", "home", "enter")
+                await pilot.pause()
+                assert title_text(app) == ":: Full View"
+                text = app.deck.review_text()
+                assert "<<<<<<< repository" in text and "ctx-9" in text and "⋯" not in text
+                await pilot.press("escape")
+                assert title_text(app) == ":: Proposal Review"
+                await pilot.press("escape")
+                assert app.query_one(WorksetTable).display
+        run(interact())
