@@ -444,7 +444,7 @@ class CommandDeck:
                     detail += f" → {summary['mode']}"
                 effects.append(ReviewNote(detail))
             if not effects:
-                effects.append(ReviewNote(render_payload_section_label("none (Approval still required)", use_color=color)))
+                effects.append(ReviewNote(render_payload_section_label("none", use_color=color)))
             sections.append(ReviewSection("Publication Effects", tuple(effects)))
 
             repository_effect = pull or observation.effective_policy == "both" or proposal.intent == "editor"
@@ -465,7 +465,7 @@ class CommandDeck:
             proposal.primary_source_change is None and not proposal.publication_effects)
         if (observation.effective_policy in ("both", "pull-only")
                 and observation.state == "drifted" and writes_nothing):
-            drift = [ReviewNote("Nothing will be written, but the compared copies differ")] if proposal else []
+            drift = [ReviewNote("Nothing will be written, but the compared copies differ; Approval completes the sync")] if proposal else []
             drift += [ReviewFact("Repository comparison", observation.compare_repo),
                       ReviewFact("Live comparison", observation.compare_live)]
             drift.extend(difference(

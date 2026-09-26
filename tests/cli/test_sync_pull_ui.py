@@ -40,7 +40,9 @@ def test_pull_review_and_document_show_repository_effect(tmp_path, monkeypatch, 
         elif kind == "delete":
             assert "+++ /dev/null" in review
         else:
-            assert "Approval still required" in review
+            assert "Nothing will be written, but the compared copies differ; Approval completes the sync" in review
+        # Approval status lives in Decision; the Publication Effects section only lists effects.
+        assert "Approval still required" not in review
         deck.confirming = True
         assert f"repos: {int(kind is not None)} · live: 0" in deck.confirmation_text()
         document = sync_document(SimpleNamespace(dry_run=True, scopes=[]), session, None)
