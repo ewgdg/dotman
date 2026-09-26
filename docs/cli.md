@@ -195,7 +195,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   from successful completion.
 - A No-op Proposal (nothing to write and no new Sync Base to record) keeps its
   row as evidence but offers no Approval: the row shows `[-]` with Resolution
-  `Nothing to do`, Space explains why, Review shows `Approval: not needed` plus a
+  `No-op`, Space explains why, Review shows `Approval: not needed` plus a
   hint that `compare` does not match Capture, and results report `noop`
   (listed only with `--report`).
 - JSON emits one clean final document with `operation`, `mode`, `status`,

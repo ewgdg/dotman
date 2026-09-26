@@ -558,7 +558,7 @@ def row_resolution(row) -> str:
     if row.diagnostics:
         return "Proposal failed"
     if row.proposal is not None and row.proposal.noop:
-        return "Nothing to do"
+        return "No-op"
     if "prepare-proposal-review" not in row.allowed_commands:
         # In-sync units appear only to surface their warnings.
         return "In sync" if row.observation.state == "directly-in-sync" else "Unsupported"

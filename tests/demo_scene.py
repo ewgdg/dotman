@@ -43,7 +43,7 @@ CASES = (
     DemoCase("pull-capture", "pull-only", b"alias ll='ls -l'\n", b"alias ll='ls -la'\nalias gs='git status'\n",
              shows="+alias gs='git status'"),
     # Capture drops the volatile line, so nothing is written, and Render cannot reproduce
-    # live, so no Sync Base can be recorded either: a [-] "Nothing to do" row.
+    # live, so no Sync Base can be recorded either: a [-] "No-op" row.
     DemoCase("pull-noop", "pull-only", b"window = 1200x800\n", b"window = 1200x800\nopened-at = 2026-09-25T10:00\n",
              extra="""capture = '''grep -v '^opened-at' "$DOTMAN_LIVE_PATH"'''\ncompare = { repo = "raw", live = "raw" }""",
              shows="Nothing to do: Approval would neither write nor record a Sync Base"),

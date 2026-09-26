@@ -471,7 +471,7 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "conflict": ("1", "31"),
     "Unsupported": ("33",),
     "In sync": ("2", "32"),
-    "Nothing to do": ("2", "32"),
+    "No-op": ("2", "32"),
     "not needed": ("2",),
     "noop": ("2", "32"),
     "Observation failed": ("1", "31"),

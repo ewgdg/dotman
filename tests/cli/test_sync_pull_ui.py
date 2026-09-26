@@ -205,7 +205,7 @@ def test_noop_row_is_unselectable_and_review_explains_why(tmp_path, monkeypatch)
             app = SyncDeckApp(CommandDeck(session, use_color=False))
             async with app.run_test() as pilot:
                 marker, _target, _policy, resolution = (str(cell) for cell in app.query_one(WorksetTable).get_row_at(0))
-                assert (marker, resolution) == ('[-]', 'Nothing to do')
+                assert (marker, resolution) == ('[-]', 'No-op')
                 await pilot.press('space')
                 assert not session.view.rows[0].approved
                 assert 'Nothing to do' in str(app.query_one('#notice', Static).render())
