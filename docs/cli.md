@@ -127,10 +127,12 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   resize. The `Y` copy confirmation clears itself after a moment; other notices stay
   until the next command.
   `V` in review opens Full View: one diff or merge-conflict section with the whole
-  file as context instead of three lines, scrolled to its first change. With several
-  such sections (for example, repository and live effect previews, or Merge conflicts
-  and Drift) it first offers a menu; with one it opens directly. Full View is read-only:
-  it scrolls and copies with `Y`, and `Esc` returns to the review at its prior position.
+  file as context instead of three lines. With several such sections (for example,
+  repository and live effect previews, or Merge conflicts and Drift) it first offers a
+  menu; with one it opens directly. Full View opens at the top unless the first change
+  starts below the screen, in which case it lands on that change; `n` and `Shift+N`
+  step to the next and previous change block. Full View is read-only: it scrolls and
+  copies with `Y`, and `Esc` returns to the review at its prior position.
   `X` opens one compact confirmation with selected units, repository changes,
   live writes, and live deletions; cancelling returns without
   changing Approval, inclusion or focus. Real execution is offered only for valid,

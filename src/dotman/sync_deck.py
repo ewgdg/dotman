@@ -64,7 +64,7 @@ class ReviewSection:
 
 
 REVIEW_ITEM_INDENT = 4
-# Invisible style metadata marking changed lines, so Full View can open at the first one.
+# Invisible style metadata marking where each change block starts, for Full View navigation.
 REVIEW_CHANGE_KEY = "review_change"
 REVIEW_CHANGE_META = {REVIEW_CHANGE_KEY: True}
 
@@ -136,11 +136,15 @@ class ReviewDocument:
         grid = Table.grid()
         grid.add_column(width=1, no_wrap=True)
         grid.add_column(ratio=1, overflow="fold")
+        previous_changed = False
         for line in lines:
             marker, content = render_diff_line(line, use_color=self.use_color)
             marker_text = Text.from_ansi(marker)
-            if line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+            changed = line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+            # Tag only a block's first line, so change navigation stops once per block.
+            if changed and not previous_changed:
                 marker_text.apply_meta(REVIEW_CHANGE_META)
+            previous_changed = changed
             grid.add_row(marker_text, Text.from_ansi(content))
         return grid
 
@@ -626,23 +630,25 @@ class ReviewBody(Widget):
 
     DEFAULT_CSS = "ReviewBody { height: auto; }"
     document: reactive[ReviewDocument | None] = reactive(None, layout=True)
-    first_change_row: int | None = None
+    # Rows where change blocks start, as laid out at the current width.
+    change_rows: tuple[int, ...] = ()
 
     def render(self) -> Text:
-        self.first_change_row = None
+        change_rows = []
+        self.change_rows = ()
         if self.document is None:
             return Text()
         console = self.app.console
         options = console.options.update_width(max(self.content_size.width, 1))
         lines = []
         for segments in console.render_lines(self.document.renderable(), options, pad=False):
-            if self.first_change_row is None and any(
-                    segment.style and segment.style.meta.get(REVIEW_CHANGE_KEY) for segment in segments):
-                self.first_change_row = len(lines)
+            if any(segment.style and segment.style.meta.get(REVIEW_CHANGE_KEY) for segment in segments):
+                change_rows.append(len(lines))
             line = Text.assemble(*((segment.text, segment.style) for segment in segments))
             # Strip grid padding so copied text has no trailing blanks.
             line.rstrip()
             lines.append(line)
+        self.change_rows = tuple(change_rows)
         return Text("\n").join(lines)
 
 
@@ -699,7 +705,7 @@ PROGRESS_REVEAL_DELAY_SECONDS = 0.3
 PROGRESS_FRAME_SECONDS = 0.1
 # Copy confirmation is transient; other notices report state and stay until the next command.
 COPY_NOTICE_SECONDS = 2.0
-# Full View opens with a few unchanged lines above the first change for orientation.
+# Full View places a change block a few lines below the top, keeping context above it.
 FULL_VIEW_LEAD_LINES = 3
 
 
@@ -748,6 +754,8 @@ class SyncDeckApp(App[bool]):
         Binding("L", "authorize_link", "Authorize link replacement", priority=True),
         Binding("e,E", "editor", "Editor", priority=True),
         Binding("v,V", "full_view", "Full view", priority=True),
+        Binding("n", "change_block(1)", "Next change", priority=True),
+        Binding("N", "change_block(-1)", "Previous change", priority=True),
         Binding("tab,shift+tab", "toggle_detail_focus", "Detail", priority=True),
         Binding("space", "approve", "Select", priority=True),
         Binding("a,A", "approve_all", "Select all", priority=True),
@@ -1000,7 +1008,8 @@ class SyncDeckApp(App[bool]):
         elif self.deck.confirming:
             hints = [("Enter", "confirm"), ("Esc", "return"), ("Ctrl+C", "abort")]
         elif self.deck.full_view is not None:
-            hints = [("Esc", "return"), ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
+            hints = [("Esc", "return"), ("N/Shift+N", "next/previous change"), ("Y", "copy"), review_scroll,
+                     ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
             hints = [("Esc", "return"), ("Space", "Approval"), ("V", "full view"), ("Y", "copy"), review_scroll,
                      ("Ctrl+C", "abort")]
@@ -1178,11 +1187,27 @@ class SyncDeckApp(App[bool]):
         body.document = self.deck.displayed_document()
         self.query_one("#title", Static).update(":: Full View")
         self.update_hints()
+        log.scroll_home(animate=False)
 
-        def scroll_to_first_change() -> None:
-            row = body.first_change_row or 0
-            log.scroll_to(0, max(0, row - FULL_VIEW_LEAD_LINES), animate=False)
-        self.call_after_refresh(scroll_to_first_change)
+        def land_on_first_change() -> None:
+            # Stay at the top, with the target and section heading, unless the first
+            # change block starts below the screen.
+            if body.change_rows and body.change_rows[0] + FULL_VIEW_LEAD_LINES >= log.scrollable_content_region.height:
+                self.scroll_to_change_row(body.change_rows[0])
+        self.call_after_refresh(land_on_first_change)
+
+    def scroll_to_change_row(self, row: int) -> None:
+        self.query_one("#review").scroll_to(0, max(0, row - FULL_VIEW_LEAD_LINES), animate=False)
+
+    def action_change_block(self, direction: int) -> None:
+        if self.busy or self.deck.full_view is None:
+            return
+        anchor = self.query_one("#review").scroll_y + FULL_VIEW_LEAD_LINES
+        rows = self.query_one(ReviewBody).change_rows
+        target = (next((row for row in rows if row > anchor), None) if direction > 0
+                  else next((row for row in reversed(rows) if row < anchor), None))
+        if target is not None:
+            self.scroll_to_change_row(target)
 
     def action_back(self) -> None:
         if self.busy:

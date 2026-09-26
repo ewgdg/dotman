@@ -793,10 +793,17 @@ def test_review_sections_open_with_full_width_titled_rules(tmp_path, monkeypatch
         run(interact())
 
 
+def visible_review_text(app):
+    log = app.query_one("#review")
+    lines = review_text(app).splitlines()
+    return "\n".join(lines[int(log.scroll_y):int(log.scroll_y) + log.scrollable_content_region.height])
+
+
 @pytest.mark.parametrize("use_color", [False, True])
-def test_full_view_shows_whole_diff_at_first_change_and_returns_to_review_position(tmp_path, monkeypatch, use_color):
-    repo = b"".join(b"row-%02d\n" % index for index in range(60))
-    live = repo.replace(b"row-45\n", b"live-45\n")
+def test_full_view_lands_on_off_screen_change_and_steps_between_change_blocks(tmp_path, monkeypatch, use_color):
+    repo = b"".join(b"row-%02d\n" % index for index in range(80))
+    live = (repo.replace(b"row-20\nrow-21\nrow-22\n", b"live-20\nlive-21\nlive-22\n")
+            .replace(b"row-45\n", b"live-45\n"))
     engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", repo, live, "")])
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
         app = SyncDeckApp(CommandDeck(session, use_color=use_color))
@@ -813,10 +820,16 @@ def test_full_view_shows_whole_diff_at_first_change_and_returns_to_review_positi
                 await pilot.press("v")
                 await pilot.pause()
                 assert title_text(app) == ":: Full View"
-                lines = review_text(app).splitlines()
-                assert "row-00" in review_text(app) and "row-59" in review_text(app)
-                change = next(index for index, line in enumerate(lines) if "live-45" in line)
-                assert log.scroll_y <= change < log.scroll_y + log.scrollable_content_region.height
+                assert "row-00" in review_text(app) and "row-79" in review_text(app)
+                # The first change starts below the screen, so Full View lands on it.
+                assert "live-20" in visible_review_text(app) and "row-00" not in visible_review_text(app)
+                # A multi-line change block is one stop.
+                await pilot.press("n")
+                await pilot.pause()
+                assert "live-45" in visible_review_text(app) and "live-20" not in visible_review_text(app)
+                await pilot.press("N")
+                await pilot.pause()
+                assert "live-20" in visible_review_text(app)
                 # Full View is read-only evidence.
                 await pilot.press("space")
                 assert not session.view.rows[0].approved
@@ -857,6 +870,8 @@ def test_full_view_menu_offers_each_diff_and_shows_whole_merge_output(tmp_path, 
                 await pilot.press("v", "home", "enter")
                 await pilot.pause()
                 assert title_text(app) == ":: Full View"
+                # The first conflict is visible from the top, so nothing scrolls past the heading.
+                assert app.query_one("#review").scroll_y == 0
                 text = app.deck.review_text()
                 assert "<<<<<<< repository" in text and "ctx-9" in text and "⋯" not in text
                 await pilot.press("escape")
