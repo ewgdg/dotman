@@ -5,63 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from dotman.command_runtime import ArgvCommand, CommandRequest, current_command_runtime
 from dotman.engine import DotmanEngine
 from dotman.sync_session import SyncSession
 from dotman.sync_base_store import FilePresent, Missing
-from tests.helpers import write_named_manager_config, write_tracked_packages_state
+from tests.helpers import write_sync_repository
 
 
 def make_engine(tmp_path, monkeypatch, targets):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    repo = tmp_path / "repo"
-    package = repo / "packages" / "app"
-    package.mkdir(parents=True)
-    (repo / "profiles").mkdir()
-    (repo / "profiles" / "default.toml").write_text("")
-    lines = ['id = "app"']
-    for name, policy, source, live, extra in targets:
-        lines += [
-            f"[targets.{name}]",
-            f'source = "{name}"',
-            f'path = "{tmp_path / "live" / name}"',
-            'type = "file"',
-            f'sync_policy = "{policy}"',
-            extra,
-        ]
-        if source is not None:
-            (package / name).write_bytes(source)
-        if live is not None:
-            (tmp_path / "live").mkdir(exist_ok=True)
-            (tmp_path / "live" / name).write_bytes(live)
-    (package / "package.toml").write_text("\n".join(lines))
-    runtime = current_command_runtime()
-    for args in [
-        ("init", "-q"),
-        ("add", "."),
-        (
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.test",
-            "commit",
-            "-qm",
-            "fixture",
-        ),
-    ]:
-        result = runtime.run(CommandRequest(ArgvCommand(("git", *args)), cwd=repo))
-        assert result.exit_code == 0, result.stderr
-    write_tracked_packages_state(
-        tmp_path / "state", repo_name="main", entries=[("app", "default")]
-    )
-    for directory in (
-        tmp_path / "state/dotman",
-        tmp_path / "state/dotman/repos",
-        tmp_path / "state/dotman/repos/main",
-    ):
-        directory.chmod(0o700)
-    config = write_named_manager_config(tmp_path, {"main": repo})
-    return DotmanEngine.from_config_path(config)
+    return DotmanEngine.from_config_path(write_sync_repository(tmp_path, targets))
 
 
 def open_session(engine, *, preview=True, **kwargs):

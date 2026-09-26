@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from dotman.cli import build_parser
+from dotman.command_runtime import ArgvCommand, CommandRequest, current_command_runtime
 from dotman.models import PackagePlan, ResolvedPackageIdentity, ResolvedPackageSelection
 
 
@@ -135,6 +136,51 @@ def write_named_manager_config(tmp_path: Path, repos: dict[str, Path]) -> Path:
         write_example_local_override(tmp_path, repo_name=repo_name, repo_path=repo_path)
     config_path.write_text("\n".join(lines), encoding="utf-8")
     return config_path
+
+
+SyncTarget = tuple[str, str, bytes | None, bytes | None, str]
+"""(name, sync_policy, repository bytes or None, live bytes or None, extra target TOML)."""
+
+
+def write_sync_repository(root: Path, targets: list[SyncTarget] | tuple[SyncTarget, ...]) -> Path:
+    """Write a committed one-package repo, live files and tracked state; return the config path.
+
+    Tracked state lands in `root/state`, so callers point XDG_STATE_HOME there.
+    """
+    repo = root / "repo"
+    package = repo / "packages" / "app"
+    package.mkdir(parents=True)
+    (repo / "profiles").mkdir()
+    (repo / "profiles" / "default.toml").write_text("")
+    lines = ['id = "app"']
+    for name, policy, source, live, extra in targets:
+        lines += [
+            f"[targets.{name}]",
+            f'source = "{name}"',
+            f'path = "{root / "live" / name}"',
+            'type = "file"',
+            f'sync_policy = "{policy}"',
+            extra,
+        ]
+        if source is not None:
+            (package / name).write_bytes(source)
+        if live is not None:
+            (root / "live").mkdir(exist_ok=True)
+            (root / "live" / name).write_bytes(live)
+    (package / "package.toml").write_text("\n".join(lines))
+    runtime = current_command_runtime()
+    for args in [
+        ("init", "-q"),
+        ("add", "."),
+        ("-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-qm", "fixture"),
+    ]:
+        result = runtime.run(CommandRequest(ArgvCommand(("git", *args)), cwd=repo))
+        if result.exit_code != 0:
+            raise RuntimeError(f"git {args[0]} failed: {result.stderr}")
+    write_tracked_packages_state(root / "state", repo_name="main", entries=[("app", "default")])
+    for directory in (root / "state/dotman", root / "state/dotman/repos", root / "state/dotman/repos/main"):
+        directory.chmod(0o700)
+    return write_named_manager_config(root, {"main": repo})
 
 
 def write_manager_config(tmp_path: Path) -> Path:
