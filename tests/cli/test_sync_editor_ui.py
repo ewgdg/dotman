@@ -305,7 +305,7 @@ def test_edited_pull_review_does_not_claim_capture_is_pending(tmp_path, monkeypa
         text = CommandDeck(session, use_color=False).review_text()
         assert "Capture: not required" in text
         assert "Live remains unchanged" in text
-        assert "Pull Views" in text
+        assert "Drift" not in text
 
 
 def test_additional_edits_have_independent_canonical_review_and_json(tmp_path, monkeypatch):

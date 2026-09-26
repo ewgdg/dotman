@@ -336,7 +336,6 @@ def test_pull_review_keeps_frozen_evidence_and_never_approves_on_open(tmp_path, 
                 assert "Use live" in app.query_one(DataTable).render_line(1).text
                 await pilot.press("enter")
                 text = review_text(app)
-                assert "Pull Views" in text
                 assert "+live" in text and "external change" not in text
                 assert "Live remains unchanged" in text
                 assert not session.view.rows[0].approved

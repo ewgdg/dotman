@@ -33,6 +33,8 @@ def test_pull_review_and_document_show_repository_effect(tmp_path, monkeypatch, 
         assert "Reconciliation: replacement" in review
         assert f"Primary Source Change: {kind or 'none'}" in review
         assert "Live remains unchanged" in review
+        # Drift is shown only when the outcome previews cannot explain the drifted row.
+        assert (":: Drift" in review) == (kind is None)
         if kind == "write":
             assert "-repo" in review and "+captured" in review
         elif kind == "delete":
@@ -101,7 +103,7 @@ def test_mixed_cli_reports_repository_and_live_effects(tmp_path, monkeypatch, ca
 
 
 @pytest.mark.parametrize('projected', [False, True])
-def test_no_write_review_separates_pull_views_from_repository_effect(tmp_path, monkeypatch, projected):
+def test_no_write_review_explains_drift_separately_from_repository_effect(tmp_path, monkeypatch, projected):
     marker = tmp_path / 'capture-count'
     comparison = ('{ repo = "printf compared-repo", live = "printf compared-live" }'
                   if projected else '{ repo = "raw", live = "raw" }')
@@ -118,9 +120,10 @@ def test_no_write_review_separates_pull_views_from_repository_effect(tmp_path, m
         assert not session.view.rows[0].approved
         assert session.view.rows[0].proposal.primary_source_change is None
         text = deck.review_text()
-        outcome, evidence = text.split(':: Pull Views', 1)
-        assert '--- repository Pull View' in evidence
-        assert '+++ live Pull View' in evidence
+        outcome, evidence = text.split(':: Drift', 1)
+        assert 'Nothing will be written' in evidence
+        assert '--- compared repository' in evidence
+        assert '+++ compared live' in evidence
         assert ('-compared-repo' if projected else '-repo') in evidence
         assert ('+compared-live' if projected else '+live-drift') in evidence
         assert 'No content difference' in outcome

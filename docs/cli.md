@@ -119,8 +119,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   Base availability, Capture, Reconciliation, Primary Source Change authorization),
   Merge conflicts when a merge conflicted (Git `zdiff3` blocks with three context
   lines, repository side green, Capture side blue, Sync Base dimmed), then exact Publication Effects, the repository and live old-vs-new effect previews
-  (Git-style `new file` / `deleted file` headers mark existence changes), and last the Pull Views
-  (drift evidence). Base and Capture appear only as
+  (Git-style `new file` / `deleted file` headers mark existence changes), and last, only for a
+  drifted unit that writes nothing, a Drift section diffing the compared repository and live copies. Base and Capture appear only as
   State facts, without diffs of their own. Fact labels are dimmed with values aligned in one column; diffs
   color removed, added and hunk lines. Long lines wrap to the terminal width, with
   continuations hanging under their value or after the diff marker, and rewrap on

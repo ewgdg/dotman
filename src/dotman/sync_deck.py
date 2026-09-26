@@ -459,20 +459,21 @@ class CommandDeck:
                 sections.append(effect_preview("repository", observation.repository, proposal.repository, notes))
             if not pull_only:
                 sections.append(effect_preview("live", observation.live, proposal.live))
-        # Drift evidence follows the outcome diffs: Pull Views are Observation
-        # evidence, independent of the chosen intent.
-        if observation.effective_policy in ("both", "pull-only"):
-            views = [ReviewFact("Repository comparison", observation.compare_repo),
-                     ReviewFact("Live comparison", observation.compare_live)]
-            for label, view_state in (("Repository", observation.comparison_repository),
-                                      ("Live", observation.comparison_live)):
-                views.append(ReviewFact(f"{label} Pull View", term("unavailable") if view_state is None else presence(view_state)))
-            views.extend(difference(
+        # Drift explains a drifted row only when no outcome preview shows a change,
+        # e.g. Capture reproduces the repository while the compared copies differ.
+        writes_nothing = proposal is None or (
+            proposal.primary_source_change is None and not proposal.publication_effects)
+        if (observation.effective_policy in ("both", "pull-only")
+                and observation.state == "drifted" and writes_nothing):
+            drift = [ReviewNote("Nothing will be written, but the compared copies differ")] if proposal else []
+            drift += [ReviewFact("Repository comparison", observation.compare_repo),
+                      ReviewFact("Live comparison", observation.compare_live)]
+            drift.extend(difference(
                 observation.comparison_repository, observation.comparison_live,
-                before_label="repository Pull View",
-                after_label="live Pull View", description="Pull Views",
+                before_label="compared repository",
+                after_label="compared live", description="compared copies",
             ))
-            sections.append(ReviewSection("Pull Views", tuple(views)))
+            sections.append(ReviewSection("Drift", tuple(drift)))
         additional = [item for item in self.session.view.rows
                       if isinstance(item, AdditionalRow) and row.row_id in item.references]
         if additional:

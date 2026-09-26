@@ -145,7 +145,7 @@ An operation's persistent workset view. It combines row-level actions, selection
 _Avoid_: Standalone selection menu, Proposal list
 
 **Proposal Review**:
-The focused full-screen view for one Proposal that shows its repository and live effect previews, Pull Views, Sync Base and Capture facts, reconciliation evidence, Primary Source Change approval, and referenced Additional Source Changes without mutating repository sources.
+The focused full-screen view for one Proposal that shows its repository and live effect previews, Pull Views only when a drifted unit writes nothing, Sync Base and Capture facts, reconciliation evidence, Primary Source Change approval, and referenced Additional Source Changes without mutating repository sources.
 _Avoid_: Proposal window, Apply screen
 
 **Source Change Review**:

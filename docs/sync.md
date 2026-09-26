@@ -205,9 +205,9 @@ output adapter also recognize semantic **Directory Root Work** as direct Auxilia
 inclusion, without Proposal or Approval. Root work uses the same selection styling
 and canonical target identity as other auxiliary work.
 Focused review shows
-the frozen repository/live Pull Views separately from repository-effect and
-publication previews. A no-write Proposal still shows the observed drift even
-when Capture returns the unchanged repository representation. Returning preserves
+repository-effect and publication previews. When a drifted unit writes nothing,
+for example because Capture returns the unchanged repository representation, it
+adds a Drift section with the Pull View diff that explains the drifted state. Returning preserves
 the workset.
 Changing Resolution Intent preserves Approval, discards the prior Proposal, and
 rematerializes approved work. Review exposes Capture and Reconciliation evidence
