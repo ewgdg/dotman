@@ -135,8 +135,9 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   State facts, without diffs of their own. Fact labels are dimmed with values aligned in one column; diffs
   color removed, added and hunk lines. Long lines wrap to the terminal width, with
   continuations hanging under their value or after the diff marker, and rewrap on
-  resize. The `Y` copy confirmation and `No match for …` clear themselves after a
-  moment; other notices stay until the next command.
+  resize. A notice answers the previous key, so the next key press or click clears
+  it; clicking the notice dismisses it without other effects. The `Y` copy
+  confirmation and `No match for …` also clear themselves after a moment.
   `V` in review opens Full View: one diff or merge-conflict section with the whole
   file as context instead of three lines. With several such sections (for example,
   repository and live effect previews, or Merge conflicts and Drift) it first offers a

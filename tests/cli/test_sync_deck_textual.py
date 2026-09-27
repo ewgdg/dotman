@@ -1194,3 +1194,37 @@ def test_reader_search_box_recalls_only_reader_searches(tmp_path, monkeypatch):
                 await pilot.press("slash", "up")
                 assert box.value == "view"
         run(interact())
+
+
+def notice_text(app):
+    return str(app.query_one("#notice", Static).render())
+
+
+def test_notice_clears_on_the_next_key_press_or_click(tmp_path, monkeypatch):
+    # Long enough that only input, not the timer, can clear the notice here.
+    monkeypatch.setattr("dotman.sync_deck.TRANSIENT_NOTICE_SECONDS", 60)
+    engine = filter_engine(tmp_path, monkeypatch)
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(100, 20)) as pilot:
+                await pilot.press("slash", "0", "enter")
+                await pilot.pause()
+                assert notice_text(app) == "No match for 0."
+                # A notice answers one key; the next key makes it stale.
+                await pilot.press("down")
+                await pilot.pause()
+                assert notice_text(app) == ""
+                # A key that raises a notice still shows its own.
+                await pilot.press("slash", "0", "enter")
+                await pilot.pause()
+                assert notice_text(app) == "No match for 0."
+                # Clicking the notice dismisses it without other effects.
+                focused = app.deck.focused_row.row_id
+                await pilot.click("#notice")
+                await pilot.pause()
+                assert notice_text(app) == ""
+                assert app.deck.focused_row.row_id == focused
+                assert not any(row.approved for row in session.view.rows)
+        run(interact())

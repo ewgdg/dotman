@@ -808,8 +808,8 @@ class SearchInput(Input):
 
 PROGRESS_REVEAL_DELAY_SECONDS = 0.3
 PROGRESS_FRAME_SECONDS = 0.1
-# Feedback on a keystroke (a copy, a query without matches) is transient; other notices
-# report state and stay until the next command.
+# Every notice clears on the next input; pure feedback (a copy, a query without
+# matches) also clears on its own while the deck is idle.
 TRANSIENT_NOTICE_SECONDS = 2.0
 # Full View places a change block a few lines below the top, keeping context above it.
 FULL_VIEW_LEAD_LINES = 3
@@ -1023,6 +1023,11 @@ class SyncDeckApp(App[bool]):
             event.stop()
             event.prevent_default()
             return
+        # A notice answers the previous key or click. Clear it before this input's
+        # action runs, so a new notice from that action still shows.
+        if isinstance(event, (events.Key, events.MouseDown)) and self.deck.notice:
+            self.deck.notice = ""
+            self.query_one("#notice", Static).update("")
         # App receives terminal input in order, before forwarding mouse events to
         # widget queues. Resolve row clicks here alongside priority key actions;
         # neither input modality may overtake the other when bytes arrive together.
