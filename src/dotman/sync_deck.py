@@ -766,7 +766,7 @@ class SyncDeckApp(App[bool]):
         Binding("y,Y", "copy", "Copy", priority=True),
         Binding("escape", "back", "Back", priority=True),
         # Lowercase only, matching the q-to-quit convention of other TUIs.
-        Binding("q", "abort", "Abort", priority=True),
+        Binding("q", "quit_workset", "Abort", priority=True),
         Binding("ctrl+c", "abort", "Abort", priority=True),
     ]
 
@@ -1359,6 +1359,14 @@ class SyncDeckApp(App[bool]):
         if self.deck.notice == notice:
             self.deck.notice = ""
             self.query_one("#notice", Static).update("")
+
+    def action_quit_workset(self) -> None:
+        # q is a pager habit elsewhere, so only the idle workset treats it as Abort;
+        # Ctrl+C remains the abort from every screen.
+        if (self.busy or self.deck.reviewing or self.deck.confirming
+                or self.query_one(OptionList).display):
+            return
+        self.action_abort()
 
     def action_abort(self) -> None:
         if self._editing:

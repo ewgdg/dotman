@@ -900,8 +900,13 @@ def test_full_view_menu_offers_each_diff_and_shows_whole_merge_output(tmp_path, 
                 assert app.query_one("#review").scroll_y == 0
                 text = app.deck.review_text()
                 assert "<<<<<<< repository" in text and "ctx-9" in text and "⋯" not in text
+                # Pager habit: q in Full View or review must not discard the session.
+                await pilot.press("q")
+                assert app.is_running and title_text(app) == ":: Full View"
                 await pilot.press("escape")
                 assert title_text(app) == ":: Proposal Review"
+                await pilot.press("q")
+                assert app.is_running and title_text(app) == ":: Proposal Review"
                 await pilot.press("escape")
                 assert app.query_one(WorksetTable).display
         run(interact())
