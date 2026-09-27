@@ -934,3 +934,104 @@ def test_menus_open_at_the_bottom_above_help_in_workset_and_review(tmp_path, mon
                 assert menu.region.y > app.query_one("#review").region.y
                 assert menu.region.bottom <= help_line.region.y
         run(interact())
+
+
+def help_text(app):
+    return str(app.query_one("#help", Static).render())
+
+
+def search_repo_and_live():
+    repo = b"".join(b"view-%02d\n" % index for index in range(80))
+    live = (repo.replace(b"view-20\nview-21\nview-22\n", b"live-20\nlive-21\nlive-22\n")
+            .replace(b"view-45\n", b"live-45\n"))
+    return repo, live
+
+
+def test_review_search_box_keeps_deck_keys_out_of_the_query(tmp_path, monkeypatch):
+    repo, live = search_repo_and_live()
+    engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", repo, live, "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.press("enter")
+                await pilot.pause()
+                frozen = session.view
+                # Every typed key is also a deck key: edit, full view, approve, select all, confirm, quit.
+                await pilot.press("slash", "e", "v", "space", "a", "x", "q")
+                await pilot.pause()
+                assert app.query_one("#search").value == "ev ax" + "q"
+                assert session.view == frozen
+                assert title_text(app) == ":: Proposal Review"
+                assert app.is_running
+                # Esc while typing cancels the search without leaving the review.
+                await pilot.press("escape")
+                await pilot.pause()
+                assert not app.query_one("#search-bar").display
+                assert title_text(app) == ":: Proposal Review"
+                assert "/ev axq" not in help_text(app)
+        run(interact())
+
+
+@pytest.mark.parametrize("use_color", [False, True])
+def test_full_view_search_highlights_and_steps_matches_before_change_blocks(tmp_path, monkeypatch, use_color):
+    repo, live = search_repo_and_live()
+    engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", repo, live, "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=use_color))
+
+        async def interact():
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.press("enter", "v")
+                await pilot.pause()
+                assert "live-20" in visible_review_text(app)
+                await pilot.press("slash", "V", "i", "e", "w", "minus", "7", "enter")
+                await pilot.pause()
+                # Case-insensitive; lands on the first match below the current position.
+                assert "view-70" in visible_review_text(app)
+                assert "/View-7 1/10" in help_text(app)
+                match_line = next(strip for strip in review_strips(app) if "view-70" in strip.text)
+                assert any(segment.style and segment.style.reverse and segment.text == "view-7"
+                           for segment in match_line)
+                await pilot.press("n")
+                assert "/View-7 2/10" in help_text(app)
+                # Matches wrap around in both directions.
+                await pilot.press("N", "N")
+                assert "/View-7 10/10" in help_text(app)
+                await pilot.press("n")
+                assert "/View-7 1/10" in help_text(app)
+                # Esc clears the search first; n/N step change blocks again.
+                await pilot.press("escape")
+                await pilot.pause()
+                assert title_text(app) == ":: Full View"
+                assert "/View-7" not in help_text(app)
+                assert not any(segment.style and segment.style.reverse
+                               for strip in review_strips(app) for segment in strip if "view-7" in segment.text)
+                await pilot.press("N")
+                await pilot.pause()
+                assert "live-45" in visible_review_text(app)
+                await pilot.press("escape")
+                await pilot.pause()
+                assert title_text(app) == ":: Proposal Review"
+        run(interact())
+
+
+def test_full_view_search_without_matches_keeps_change_block_navigation(tmp_path, monkeypatch):
+    repo, live = search_repo_and_live()
+    engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", repo, live, "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.press("enter", "v")
+                await pilot.pause()
+                await pilot.press("slash", "z", "z", "z", "enter")
+                await pilot.pause()
+                assert "No match for zzz." in str(app.query_one("#notice", Static).render())
+                assert "/zzz" not in help_text(app)
+                await pilot.press("n")
+                await pilot.pause()
+                assert "live-45" in visible_review_text(app)
+        run(interact())

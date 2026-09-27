@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from concurrent.futures import ThreadPoolExecutor
 from difflib import unified_diff
 from itertools import groupby
+import re
 import signal
 import time
 
@@ -22,11 +23,11 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.errors import NoWidget
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import DataTable, OptionList, Static
+from textual.widgets import DataTable, Input, OptionList, Static
 
 from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
@@ -67,6 +68,24 @@ REVIEW_ITEM_INDENT = 4
 # Invisible style metadata marking where each change block starts, for Full View navigation.
 REVIEW_CHANGE_KEY = "review_change"
 REVIEW_CHANGE_META = {REVIEW_CHANGE_KEY: True}
+# Invisible style metadata numbering each search match, so a match wrapped over two rows counts once.
+REVIEW_MATCH_KEY = "review_match"
+
+
+class SearchMarks:
+    """Reverse-styles case-insensitive matches of one query, numbered in document order."""
+
+    def __init__(self, query: str) -> None:
+        self.pattern = re.compile(re.escape(query), re.IGNORECASE) if query else None
+        self.count = 0
+
+    def __call__(self, text: Text) -> Text:
+        if self.pattern is not None:
+            for match in self.pattern.finditer(text.plain):
+                text.stylize("reverse", *match.span())
+                text.apply_meta({REVIEW_MATCH_KEY: self.count}, *match.span())
+                self.count += 1
+        return text
 
 
 @dataclass(frozen=True)
@@ -98,40 +117,41 @@ class ReviewDocument:
                     lines.extend(indent + "".join(render_diff_line(line, use_color=self.use_color)) for line in item.lines)
         return "\n".join(lines)
 
-    def renderable(self) -> Group:
-        parts: list = [Text.from_ansi(self.subject, overflow="fold")]
+    def renderable(self, search: str = "") -> Group:
+        mark = SearchMarks(search)
+        parts: list = [mark(Text.from_ansi(self.subject, overflow="fold"))]
         for section in self.sections:
-            parts += [Text(), self._section_rule(section.title)]
+            parts += [Text(), self._section_rule(section.title, mark)]
             # Consecutive facts share one grid so their values align.
             for kind, items in groupby(section.items, type):
                 items = list(items)
                 if kind is ReviewFact:
                     body = fact_grid([(render_payload_section_label(item.label + ":", use_color=self.use_color), item.value)
-                                      for item in items])
+                                      for item in items], mark=mark)
                 elif kind is ReviewNote:
-                    body = Group(*(Text.from_ansi(item.text, overflow="fold") for item in items))
+                    body = Group(*(mark(Text.from_ansi(item.text, overflow="fold")) for item in items))
                 elif kind is ReviewConflict:
-                    body = Group(*(self._conflict_line(line) for item in items
+                    body = Group(*(self._conflict_line(line, mark) for item in items
                                    for line in render_conflict_lines(item.lines, use_color=self.use_color)))
                 else:
-                    body = Group(*(self._diff_grid(item.lines) for item in items))
+                    body = Group(*(self._diff_grid(item.lines, mark) for item in items))
                 parts.append(Padding(body, (0, 0, 0, REVIEW_ITEM_INDENT)))
         return Group(*parts)
 
-    def _section_rule(self, title: str) -> Rule:
+    def _section_rule(self, title: str, mark: SearchMarks) -> Rule:
         # On screen a full-width rule separates sections without costing an extra row.
         lead = style_text("──", *MENU_HEADER_MARKER_STYLE) if self.use_color else "──"
         heading = style_text(title, "1") if self.use_color else title
-        return Rule(Text.from_ansi(f"{lead} {heading}"), align="left", style="dim" if self.use_color else "")
+        return Rule(mark(Text.from_ansi(f"{lead} {heading}")), align="left", style="dim" if self.use_color else "")
 
     @staticmethod
-    def _conflict_line(line: str) -> Text:
-        text = Text.from_ansi(line, overflow="fold")
+    def _conflict_line(line: str, mark: SearchMarks) -> Text:
+        text = mark(Text.from_ansi(line, overflow="fold"))
         if text.plain.startswith("<<<<<<<"):
             text.apply_meta(REVIEW_CHANGE_META)
         return text
 
-    def _diff_grid(self, lines: tuple[str, ...]) -> Table:
+    def _diff_grid(self, lines: tuple[str, ...], mark: SearchMarks) -> Table:
         # A marker column keeps wrapped content hanging right of the +/- sign.
         grid = Table.grid()
         grid.add_column(width=1, no_wrap=True)
@@ -145,7 +165,7 @@ class ReviewDocument:
             if changed and not previous_changed:
                 marker_text.apply_meta(REVIEW_CHANGE_META)
             previous_changed = changed
-            grid.add_row(marker_text, Text.from_ansi(content))
+            grid.add_row(marker_text, mark(Text.from_ansi(content)))
         return grid
 
 
@@ -575,14 +595,14 @@ def unit_detail_facts(observation) -> list[tuple[str, str]]:
     return [*paths, ("Observation", state)]
 
 
-def fact_grid(facts: list[tuple[str, str]]) -> Table:
+def fact_grid(facts: list[tuple[str, str]], *, mark=lambda text: text) -> Table:
     """Label/value grid: wrapped values keep a hanging indent under their column."""
     grid = Table.grid(padding=(0, 1))
     grid.add_column(no_wrap=True)
     # Paths have no spaces to break at; fold them at the column edge.
     grid.add_column(ratio=1, overflow="fold")
     for label, value in facts:
-        grid.add_row(Text.from_ansi(label), Text.from_ansi(value))
+        grid.add_row(mark(Text.from_ansi(label)), mark(Text.from_ansi(value)))
     return grid
 
 
@@ -630,25 +650,34 @@ class ReviewBody(Widget):
 
     DEFAULT_CSS = "ReviewBody { height: auto; }"
     document: reactive[ReviewDocument | None] = reactive(None, layout=True)
+    search: reactive[str] = reactive("", layout=True)
     # Rows where change blocks start, as laid out at the current width.
     change_rows: tuple[int, ...] = ()
+    # Row where each search match starts, in match order.
+    match_rows: tuple[int, ...] = ()
 
     def render(self) -> Text:
         change_rows = []
-        self.change_rows = ()
+        match_rows: dict[int, int] = {}
+        self.change_rows = self.match_rows = ()
         if self.document is None:
             return Text()
         console = self.app.console
         options = console.options.update_width(max(self.content_size.width, 1))
         lines = []
-        for segments in console.render_lines(self.document.renderable(), options, pad=False):
-            if any(segment.style and segment.style.meta.get(REVIEW_CHANGE_KEY) for segment in segments):
+        for segments in console.render_lines(self.document.renderable(self.search), options, pad=False):
+            metas = [segment.style.meta for segment in segments if segment.style]
+            if any(meta.get(REVIEW_CHANGE_KEY) for meta in metas):
                 change_rows.append(len(lines))
+            for meta in metas:
+                if REVIEW_MATCH_KEY in meta:
+                    match_rows.setdefault(meta[REVIEW_MATCH_KEY], len(lines))
             line = Text.assemble(*((segment.text, segment.style) for segment in segments))
             # Strip grid padding so copied text has no trailing blanks.
             line.rstrip()
             lines.append(line)
         self.change_rows = tuple(change_rows)
+        self.match_rows = tuple(row for _, row in sorted(match_rows.items()))
         return Text("\n").join(lines)
 
 
@@ -729,6 +758,8 @@ class SyncDeckApp(App[bool]):
     #review { height: 1fr; overflow-x: hidden; }
     #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
     #notice { height: auto; padding: 0 1; color: $warning; }
+    #search-bar { height: 1; padding: 0 1; }
+    #search-prompt { width: 1; }
     #help { dock: bottom; height: auto; max-height: 2; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
@@ -754,8 +785,9 @@ class SyncDeckApp(App[bool]):
         Binding("L", "authorize_link", "Authorize link replacement", priority=True),
         Binding("e,E", "editor", "Editor", priority=True),
         Binding("v,V", "full_view", "Full view", priority=True),
-        Binding("n", "change_block(1)", "Next change", priority=True),
-        Binding("N", "change_block(-1)", "Previous change", priority=True),
+        Binding("slash", "open_search", "Search", priority=True),
+        Binding("n", "step(1)", "Next match or change", priority=True),
+        Binding("N", "step(-1)", "Previous match or change", priority=True),
         Binding("tab,shift+tab", "toggle_detail_focus", "Detail", priority=True),
         Binding("space", "approve", "Select", priority=True),
         Binding("a,A", "approve_all", "Select all", priority=True),
@@ -786,6 +818,9 @@ class SyncDeckApp(App[bool]):
         self._menu_hint = ""
         # Full View reuses the review scroller; the review offset is restored on return.
         self._review_position_before_full_view = (0.0, 0.0)
+        # A plain flag: Textual may ask check_action before the search box is composed.
+        self._search_open = False
+        self._match_index = 0
 
     @property
     def busy(self) -> bool:
@@ -951,10 +986,14 @@ class SyncDeckApp(App[bool]):
         # After the pages, so menus open at the bottom above notice and help in every view.
         yield OptionList(id="resolution")
         yield Static(id="notice", markup=False)
+        with Horizontal(id="search-bar"):
+            yield Static("/", id="search-prompt", markup=False)
+            yield Input(id="search", compact=True)
         yield Static(id="help", markup=False)
 
     def on_mount(self) -> None:
         self.query_one(OptionList).display = False
+        self.query_one("#search-bar").display = False
         table = self.query_one(WorksetTable)
         # The Selection header matches its narrow "[ ]" markers, leaving width for targets.
         table.add_columns("✓", "Target", "Policy", "Resolution")
@@ -1006,18 +1045,27 @@ class SyncDeckApp(App[bool]):
     def update_hints(self) -> None:
         review_scroll = ("↑/↓/j/k/PgUp/PgDn", "scroll")
         bulk_selection = ("A/U", "all/none")
-        if self.query_one(OptionList).display:
+        body = self.query_one(ReviewBody)
+        if body.search:
+            review_lead = [(f"/{body.search}", f"{self._match_index + 1}/{len(body.match_rows)}"),
+                           ("N/Shift+N", "next/previous match"), ("Esc", "clear")]
+        elif self.deck.full_view is not None:
+            review_lead = [("Esc", "return"), ("N/Shift+N", "next/previous change"), ("/", "search")]
+        else:
+            review_lead = [("Esc", "return"), ("/", "search")]
+        if self._search_open:
+            hints = [("Enter", "search"), ("Esc", "cancel")]
+        elif self.query_one(OptionList).display:
             hints = [("↑/↓/j/k", self._menu_hint), ("Enter", "select"), ("Esc", "dismiss")]
         elif self.deck.confirming:
             hints = [("Enter", "confirm"), ("Esc", "return"), ("Ctrl+C", "abort")]
         elif self.deck.full_view is not None:
-            hints = [("Esc", "return"), ("N/Shift+N", "next/previous change"), ("Y", "copy"), review_scroll,
-                     ("Ctrl+C", "abort")]
+            hints = [*review_lead, ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            hints = [("Esc", "return"), ("Space", "Approval"), ("V", "full view"), ("Y", "copy"), review_scroll,
+            hints = [*review_lead, ("Space", "Approval"), ("V", "full view"), ("Y", "copy"), review_scroll,
                      ("Ctrl+C", "abort")]
         elif self.deck.reviewing:
-            hints = [("Esc", "return"), ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("V", "full view"),
+            hints = [*review_lead, ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("V", "full view"),
                      ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.detail_focused:
             hints = [("Tab/Esc", "return"), review_scroll, ("Space", "mark"), bulk_selection,
@@ -1134,6 +1182,7 @@ class SyncDeckApp(App[bool]):
         self.query_one("#workset").display = False
         self.query_one("#detail").display = False
         log.display = True
+        self.clear_search()
         self.query_one(ReviewBody).document = self.deck.review_document()
         self.query_one("#title", Static).update(":: Additional Source Review" if isinstance(self.deck.focused_row, AdditionalRow) else ":: Proposal Review")
         log.focus()
@@ -1186,6 +1235,7 @@ class SyncDeckApp(App[bool]):
         log = self.query_one("#review", VerticalScroll)
         self._review_position_before_full_view = (log.scroll_x, log.scroll_y)
         self.deck.open_full_view(title)
+        self.clear_search()
         body = self.query_one(ReviewBody)
         body.document = self.deck.displayed_document()
         self.query_one("#title", Static).update(":: Full View")
@@ -1196,24 +1246,99 @@ class SyncDeckApp(App[bool]):
             # Stay at the top, with the target and section heading, unless the first
             # change block starts below the screen.
             if body.change_rows and body.change_rows[0] + FULL_VIEW_LEAD_LINES >= log.scrollable_content_region.height:
-                self.scroll_to_change_row(body.change_rows[0])
+                self.scroll_to_review_row(body.change_rows[0])
         self.call_after_refresh(land_on_first_change)
 
-    def scroll_to_change_row(self, row: int) -> None:
+    def scroll_to_review_row(self, row: int) -> None:
         self.query_one("#review").scroll_to(0, max(0, row - FULL_VIEW_LEAD_LINES), animate=False)
 
-    def action_change_block(self, direction: int) -> None:
-        if self.busy or self.deck.full_view is None:
+    def review_anchor(self) -> float:
+        return self.query_one("#review").scroll_y + FULL_VIEW_LEAD_LINES
+
+    def action_step(self, direction: int) -> None:
+        """Step search matches while a search is active, otherwise Full View change blocks."""
+        if self.busy or not self.deck.reviewing:
             return
-        anchor = self.query_one("#review").scroll_y + FULL_VIEW_LEAD_LINES
-        rows = self.query_one(ReviewBody).change_rows
+        body = self.query_one(ReviewBody)
+        if body.search:
+            # A key batched with Enter can arrive before the first render counts matches.
+            if not body.match_rows:
+                return
+            # Matches wrap around; an index, not the scroll anchor, because the last
+            # matches may sit below the furthest reachable scroll position.
+            self._match_index = (self._match_index + direction) % len(body.match_rows)
+            self.scroll_to_review_row(body.match_rows[self._match_index])
+            self.update_hints()
+            return
+        if self.deck.full_view is None:
+            return
+        anchor = self.review_anchor()
+        rows = body.change_rows
         target = (next((row for row in rows if row > anchor), None) if direction > 0
                   else next((row for row in reversed(rows) if row < anchor), None))
         if target is not None:
-            self.scroll_to_change_row(target)
+            self.scroll_to_review_row(target)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # Deck keys are priority bindings. While the search box is open a disabled
+        # action lets Textual forward the key to the box as text instead.
+        return not self._search_open or action in ("back", "abort")
+
+    def action_open_search(self) -> None:
+        if (self.busy or not self.deck.reviewing or self.deck.confirming
+                or self.query_one(OptionList).display):
+            return
+        self._search_open = True
+        box = self.query_one("#search", Input)
+        box.value = ""
+        self.query_one("#search-bar").display = True
+        box.focus()
+        self.update_hints()
+
+    def close_search_box(self) -> None:
+        self._search_open = False
+        self.query_one("#search-bar").display = False
+        self.query_one("#review").focus()
+        self.update_hints()
+
+    def clear_search(self) -> None:
+        self.query_one(ReviewBody).search = ""
+        self._match_index = 0
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        query = event.value
+        self.close_search_box()
+        if not query:
+            return
+        body = self.query_one(ReviewBody)
+        body.search = query
+
+        def land_on_first_match() -> None:
+            if not body.match_rows:
+                self.clear_search()
+                self.deck.notice = f"No match for {query}."
+                self.update_workset()
+                return
+            anchor = self.review_anchor()
+            self._match_index = next(
+                (index for index, row in enumerate(body.match_rows) if row >= anchor), 0)
+            self.scroll_to_review_row(body.match_rows[self._match_index])
+            self.update_hints()
+        self.call_after_refresh(land_on_first_match)
 
     def action_back(self) -> None:
         if self.busy:
+            return
+        if self._search_open:
+            self.close_search_box()
+            return
+        if self.query_one(OptionList).display:
+            self.close_menu()
+            self.update_workset()
+            return
+        if self.query_one(ReviewBody).search:
+            self.clear_search()
+            self.update_hints()
             return
         if self.deck.full_view is not None:
             self.deck.back()
@@ -1222,10 +1347,6 @@ class SyncDeckApp(App[bool]):
             return
         if self.detail_focused:
             self.query_one(WorksetTable).focus()
-            return
-        if self.query_one(OptionList).display:
-            self.close_menu()
-            self.update_workset()
             return
         if self.deck.reviewing:
             log = self.query_one("#review", VerticalScroll)
@@ -1241,6 +1362,9 @@ class SyncDeckApp(App[bool]):
         (self.query_one(WorksetTable) if self.detail_focused else self.query_one("#detail")).focus()
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        # A click elsewhere cancels an open search box: deck keys stay disabled only while it has focus.
+        if self._search_open and event.widget is not self.query_one("#search"):
+            self.close_search_box()
         # Keyboard toggles and mouse clicks both move focus; hints follow either.
         self.update_hints()
 

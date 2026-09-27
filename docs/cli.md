@@ -135,6 +135,13 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   starts below the screen, in which case it lands on that change; `n` and `Shift+N`
   step to the next and previous change block. Full View is read-only: it scrolls and
   copies with `Y`, and `Esc` returns to the review at its prior position.
+  `/` in review or Full View opens a search line above the help text; while it is open,
+  deck keys type into it. `Enter` highlights every case-insensitive match and lands on
+  the first one at or below the current position; `Esc` cancels. While a search is
+  active the help text shows it with the match count (`/zsh 3/12`), and `n`/`Shift+N`
+  step to the next and previous match, wrapping around, instead of change blocks.
+  `Esc` clears the search before it leaves the view, and leaving the view clears it too.
+  A search without matches reports `No match for …` and is not kept.
   `X` opens one compact confirmation with selected units, repository changes,
   live writes, and live deletions; cancelling returns without
   changing Approval, inclusion or focus. Real execution is offered only for valid,
