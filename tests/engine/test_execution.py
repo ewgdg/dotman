@@ -160,7 +160,7 @@ def test_read_bytes_uses_sudo_when_direct_read_is_denied(tmp_path: Path, monkeyp
         assert file_access.read_bytes(target_path) == b"payload\n"
 
 
-def test_request_sudo_emits_user_facing_reason_only_when_password_prompt_is_needed(monkeypatch, capsys) -> None:
+def test_request_sudo_skips_password_notice_while_sudo_ticket_is_valid(monkeypatch, capsys) -> None:
     runtime = MemoryCommandRuntime([CommandResult(exit_code=0), CommandResult(exit_code=0)])
     monkeypatch.setattr(file_access, "current_command_runtime", lambda: runtime)
 
@@ -169,12 +169,16 @@ def test_request_sudo_emits_user_facing_reason_only_when_password_prompt_is_need
         file_access.request_sudo("write protected path: /etc/sddm.conf")
 
     captured = capsys.readouterr()
-    assert captured.err == "[sudo] password required to list protected directory: /etc/sddm.conf.d\n"
+    assert captured.err == "[sudo] list protected directory: /etc/sddm.conf.d\n"
+    assert [request.io for request in runtime.requests] == ["pipe", "pipe"]
 
 
-def test_request_sudo_emits_user_facing_reason_again_when_cached_lease_expires(monkeypatch, capsys) -> None:
+def test_request_sudo_prompts_with_reason_when_sudo_ticket_is_missing_or_expired(monkeypatch, capsys) -> None:
     runtime = MemoryCommandRuntime(
-        [CommandResult(exit_code=0), CommandResult(exit_code=1), CommandResult(exit_code=0)]
+        [
+            CommandResult(exit_code=1), CommandResult(exit_code=0),
+            CommandResult(exit_code=1), CommandResult(exit_code=0),
+        ]
     )
     monkeypatch.setattr(file_access, "current_command_runtime", lambda: runtime)
 
@@ -187,6 +191,7 @@ def test_request_sudo_emits_user_facing_reason_again_when_cached_lease_expires(m
         "[sudo] password required to list protected directory: /etc/sddm.conf.d\n"
         "[sudo] password required to write protected path: /etc/sddm.conf\n"
     )
+    assert [request.io for request in runtime.requests] == ["pipe", "tty", "pipe", "tty"]
 
 
 def test_request_sudo_preserves_authentication_interruption(monkeypatch) -> None:
@@ -211,8 +216,8 @@ def test_request_sudo_without_operation_scope_does_not_reuse_a_stale_runtime(mon
     finally:
         file_access._cleanup_active_sudo_lease()
 
-    assert [request.command.arguments for request in first_runtime.requests] == [("sudo", "-v")]
-    assert [request.command.arguments for request in second_runtime.requests] == [("sudo", "-v")]
+    assert [request.command.arguments for request in first_runtime.requests] == [("sudo", "-n", "-v")]
+    assert [request.command.arguments for request in second_runtime.requests] == [("sudo", "-n", "-v")]
 
 
 def test_sudo_lease_keepalive_uses_runtime_captured_on_creation(monkeypatch) -> None:

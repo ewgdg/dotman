@@ -58,7 +58,7 @@ def test_elevation_broker_preserves_runtime_in_request_thread(monkeypatch) -> No
             assert elevation.request_elevation_from_env("install packages") == 0
 
         assert [request.command.arguments for request in runtime.requests] == [
-            ("sudo", "-v")
+            ("sudo", "-n", "-v")
         ]
     finally:
         broker.close()

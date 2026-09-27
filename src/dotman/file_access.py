@@ -46,29 +46,33 @@ class _SudoLease:
     def request(self, reason: str | None = None) -> None:
         if os.geteuid() == 0:
             return
-        if self._acquired:
-            result = self._runtime.run(_sudo_request("-n", "true"))
-            raise_for_command_interruption(result)
-            if result.exit_code == 0:
-                if self._keepalive_thread is None or not self._keepalive_thread.is_alive():
-                    self._keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True)
-                    self._keepalive_thread.start()
-                return
-            self.close()
+        # `-n -v` never prompts: it succeeds only while sudo's ticket (or a
+        # NOPASSWD rule) already grants root, so no password notice is due.
+        probe = self._runtime.run(_sudo_request("-n", "-v"))
+        raise_for_command_interruption(probe)
+        ticket_valid = probe.exit_code == 0
+        if ticket_valid and self._acquired:
+            self._ensure_keepalive()
+            return
+        self.close()
         unattended = unattended_enabled()
-        if not unattended:
-            _emit_sudo_notice(reason)
-        result = self._runtime.run(
-            _sudo_request(*(("-n", "-v") if unattended else ("-v",)), io="pipe" if unattended else "tty")
-        )
-        raise_for_command_interruption(result)
-        if result.exit_code != 0:
+        if not ticket_valid:
             if unattended:
                 raise ValueError("sudo authentication unavailable in unattended mode")
-            raise PermissionError("sudo authentication failed")
+            _emit_sudo_notice(reason, password_required=True)
+            result = self._runtime.run(_sudo_request("-v", io="tty"))
+            raise_for_command_interruption(result)
+            if result.exit_code != 0:
+                raise PermissionError("sudo authentication failed")
+        elif not unattended:
+            _emit_sudo_notice(reason, password_required=False)
         self._acquired = True
-        self._keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True)
-        self._keepalive_thread.start()
+        self._ensure_keepalive()
+
+    def _ensure_keepalive(self) -> None:
+        if self._keepalive_thread is None or not self._keepalive_thread.is_alive():
+            self._keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True)
+            self._keepalive_thread.start()
 
     def _keepalive_loop(self) -> None:
         while not self._stop_event.wait(_SUDO_KEEPALIVE_INTERVAL_SECONDS):
@@ -123,13 +127,13 @@ def sudo_session() -> Iterator[None]:
 
 
 
-def _emit_sudo_notice(reason: str | None) -> None:
+def _emit_sudo_notice(reason: str | None, *, password_required: bool) -> None:
     from dotman import cli_style
 
     detail = reason or "perform privileged operation"
     use_color = sys.stderr.isatty() and os.environ.get("NO_COLOR") is None
     badge = cli_style.render_sudo_badge(use_color=use_color)
-    print(f"{badge} password required to {detail}", file=sys.stderr)
+    print(f"{badge} {'password required to ' if password_required else ''}{detail}", file=sys.stderr)
 
 
 

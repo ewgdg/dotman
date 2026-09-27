@@ -64,7 +64,7 @@ def mock_sudo_for_tests() -> Iterator[None]:
             if not isinstance(command, ArgvCommand) or not command.arguments or command.arguments[0] != "sudo":
                 return production.run(request)
             arguments = command.arguments
-            if arguments[1:] == ("-v",) or arguments[1:3] == ("-n", "true"):
+            if arguments[1:] in {("-v",), ("-n", "-v")} or arguments[1:3] == ("-n", "true"):
                 return CommandResult(exit_code=0)
             if arguments[1:3] == ("-n", "/bin/cat") and len(arguments) >= 4:
                 return CommandResult(exit_code=0, stdout=Path(arguments[3]).read_bytes())
