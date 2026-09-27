@@ -808,8 +808,9 @@ class SearchInput(Input):
 
 PROGRESS_REVEAL_DELAY_SECONDS = 0.3
 PROGRESS_FRAME_SECONDS = 0.1
-# Copy confirmation is transient; other notices report state and stay until the next command.
-COPY_NOTICE_SECONDS = 2.0
+# Feedback on a keystroke (a copy, a query without matches) is transient; other notices
+# report state and stay until the next command.
+TRANSIENT_NOTICE_SECONDS = 2.0
 # Full View places a change block a few lines below the top, keeping context above it.
 FULL_VIEW_LEAD_LINES = 3
 
@@ -1418,8 +1419,8 @@ class SyncDeckApp(App[bool]):
         self.close_search_box()
         if not self.deck.reviewing:
             if query and not self.deck.visible_rows:
-                self.deck.notice = f"No match for {query}."
                 self.apply_filter("")
+                self.flash_notice(f"No match for {query}.")
             return
         if not query:
             return
@@ -1429,8 +1430,7 @@ class SyncDeckApp(App[bool]):
         def land_on_first_match() -> None:
             if not body.match_rows:
                 self.clear_search()
-                self.deck.notice = f"No match for {query}."
-                self.update_workset()
+                self.flash_notice(f"No match for {query}.")
                 return
             anchor = self.review_anchor()
             self._match_index = next(
@@ -1590,9 +1590,12 @@ class SyncDeckApp(App[bool]):
             # The Target cell may be elided; copy the untruncated identity.
             text, subject = self.query_one(WorksetTable).full_targets[row.row_id].plain, "Target"
         self.copy_to_clipboard(text)
-        notice = self.deck.notice = f"Copied {subject} to clipboard."
+        self.flash_notice(f"Copied {subject} to clipboard.")
+
+    def flash_notice(self, notice: str) -> None:
+        self.deck.notice = notice
         self.update_workset()
-        self.set_timer(COPY_NOTICE_SECONDS, lambda: self.dismiss_notice(notice))
+        self.set_timer(TRANSIENT_NOTICE_SECONDS, lambda: self.dismiss_notice(notice))
 
     def dismiss_notice(self, notice: str) -> None:
         # A later command may have replaced the notice; leave that one alone.

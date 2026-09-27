@@ -26,8 +26,8 @@ def post_cell_click(app, offset):
         ))
 
 
-# Short enough to keep the copy-notice test fast.
-COPY_NOTICE_SECONDS = 0.5
+# Short enough to keep the transient-notice tests fast.
+TRANSIENT_NOTICE_SECONDS = 0.5
 
 
 def run(coroutine):
@@ -170,7 +170,7 @@ def test_keyboard_review_scroll_return_approval_and_confirmation(tmp_path, monke
 
 
 def test_copy_key_copies_full_target_identity_and_review_text(tmp_path, monkeypatch):
-    monkeypatch.setattr("dotman.sync_deck.COPY_NOTICE_SECONDS", COPY_NOTICE_SECONDS)
+    monkeypatch.setattr("dotman.sync_deck.TRANSIENT_NOTICE_SECONDS", TRANSIENT_NOTICE_SECONDS)
     engine = make_engine(tmp_path, monkeypatch, [
         ("one", "push-only", b"repo", b"live", ""),
     ])
@@ -186,7 +186,7 @@ def test_copy_key_copies_full_target_identity_and_review_text(tmp_path, monkeypa
                 assert app.clipboard.startswith(":: Proposal Review — main:app.one")
                 assert "\x1b[" not in app.clipboard
                 assert "Copied" in str(app.query_one("#notice", Static).render())
-                await asyncio.sleep(COPY_NOTICE_SECONDS)
+                await asyncio.sleep(TRANSIENT_NOTICE_SECONDS)
                 await pilot.pause()
                 assert str(app.query_one("#notice", Static).render()) == ""
         run(interact())
@@ -1020,6 +1020,7 @@ def test_full_view_search_highlights_and_steps_matches_before_change_blocks(tmp_
 
 
 def test_full_view_search_without_matches_keeps_change_block_navigation(tmp_path, monkeypatch):
+    monkeypatch.setattr("dotman.sync_deck.TRANSIENT_NOTICE_SECONDS", TRANSIENT_NOTICE_SECONDS)
     repo, live = search_repo_and_live()
     engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", repo, live, "")])
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
@@ -1033,6 +1034,9 @@ def test_full_view_search_without_matches_keeps_change_block_navigation(tmp_path
                 await pilot.pause()
                 assert "No match for zzz." in str(app.query_one("#notice", Static).render())
                 assert "/zzz" not in help_text(app)
+                await asyncio.sleep(TRANSIENT_NOTICE_SECONDS)
+                await pilot.pause()
+                assert str(app.query_one("#notice", Static).render()) == ""
                 await pilot.press("n")
                 await pilot.pause()
                 assert "live-45" in visible_review_text(app)
@@ -1104,6 +1108,7 @@ def test_workset_filter_narrows_rows_and_scopes_bulk_selection(tmp_path, monkeyp
 
 
 def test_workset_filter_survives_review_and_cancel_restores_it(tmp_path, monkeypatch):
+    monkeypatch.setattr("dotman.sync_deck.TRANSIENT_NOTICE_SECONDS", TRANSIENT_NOTICE_SECONDS)
     engine = filter_engine(tmp_path, monkeypatch)
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
         app = SyncDeckApp(CommandDeck(session, use_color=False))
@@ -1134,6 +1139,9 @@ def test_workset_filter_survives_review_and_cancel_restores_it(tmp_path, monkeyp
                 await pilot.pause()
                 assert "No match for xxx." in str(app.query_one("#notice", Static).render())
                 assert table_row_ids(app) == [f"main:app.{name}" for name in FILTER_UNITS]
+                await asyncio.sleep(TRANSIENT_NOTICE_SECONDS)
+                await pilot.pause()
+                assert str(app.query_one("#notice", Static).render()) == ""
         run(interact())
 
 
