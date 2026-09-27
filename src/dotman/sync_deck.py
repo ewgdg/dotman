@@ -1132,7 +1132,7 @@ class SyncDeckApp(App[bool]):
         return self.focused is self.query_one("#detail")
 
     def update_hints(self) -> None:
-        review_scroll = ("↑/↓/j/k/PgUp/PgDn", "scroll")
+        review_scroll = ("↑/↓/j/k", "scroll")
         bulk_selection = ("A/U", "all/none")
         body = self.query_one(ReviewBody)
         if body.search:
