@@ -962,6 +962,7 @@ def test_review_search_box_keeps_deck_keys_out_of_the_query(tmp_path, monkeypatc
                 await pilot.press("slash", "e", "v", "space", "a", "x", "q")
                 await pilot.pause()
                 assert app.query_one("#search").value == "ev ax" + "q"
+                assert help_text(app) == "Enter search · Ctrl+U clear · Esc cancel · Ctrl+C abort"
                 assert session.view == frozen
                 assert title_text(app) == ":: Proposal Review"
                 assert app.is_running
@@ -1062,6 +1063,7 @@ def test_workset_filter_narrows_rows_and_scopes_bulk_selection(tmp_path, monkeyp
                 await pilot.pause()
                 # The table narrows while typing.
                 assert table_row_ids(app) == ["main:app.zsh_env", "main:app.zsh_rc"]
+                assert help_text(app) == "Enter filter · Ctrl+U clear · Esc cancel · Ctrl+C abort"
                 await pilot.press("enter")
                 await pilot.pause()
                 assert "/Zsh 2/4" in help_text(app)

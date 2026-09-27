@@ -104,7 +104,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   rematerializing dependent Proposals.
   `/` filters the workset: the search line opens with the current filter, deck keys type
   into it, and the table narrows to Targets containing the text, case-insensitively. `Enter` keeps the
-  filter and `Esc` restores the previous one. A filter without matches reports
+  filter, `Ctrl+U` clears the line, `Esc` restores the previous filter, and `Ctrl+C` still
+  aborts. A filter without matches reports
   `No match for …` and is dropped. While filtered, the help text shows the filter and
   its count (`/zsh 2/4`), `A`/`U` act only on visible rows, and the title reports
   selections the filter hides (`(3 selected hidden)`), since confirmation still
@@ -145,7 +146,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   copies with `Y`, and `Esc` returns to the review at its prior position.
   `/` in review or Full View opens a search line above the help text; while it is open,
   deck keys type into it. `Enter` highlights every case-insensitive match and lands on
-  the first one at or below the current position; `Esc` cancels. While a search is
+  the first one at or below the current position; `Ctrl+U` clears the line, `Esc` cancels,
+  and `Ctrl+C` still aborts. While a search is
   active the help text shows it with the match count (`/zsh 3/12`), and `n`/`Shift+N`
   step to the next and previous match, wrapping around, instead of change blocks.
   `Esc` clears the search before it leaves the view, and leaving the view clears it too.

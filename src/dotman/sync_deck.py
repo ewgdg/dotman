@@ -1094,7 +1094,9 @@ class SyncDeckApp(App[bool]):
         else:
             review_lead = [("Esc", "return"), ("/", "search")]
         if self._search_open:
-            hints = [("Enter", "search"), ("Esc", "cancel")]
+            # Deck keys type into the box, so only its own keys apply.
+            hints = [("Enter", "search" if self.deck.reviewing else "filter"), ("Ctrl+U", "clear"),
+                     ("Esc", "cancel"), ("Ctrl+C", "abort")]
         elif self.query_one(OptionList).display:
             hints = [("↑/↓/j/k", self._menu_hint), ("Enter", "select"), ("Esc", "dismiss")]
         elif self.deck.confirming:
@@ -1119,9 +1121,10 @@ class SyncDeckApp(App[bool]):
                      ("Enter", "view"), ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
-                and self.deck.full_view is None):
+                and not self._search_open and self.deck.full_view is None):
             hints.append(("Shift+L", "authorize link replacement"))
-        if self.deck.session.view.operation == "sync" and not self.deck.reviewing and not self.query_one(OptionList).display and not self.deck.confirming:
+        if (self.deck.session.view.operation == "sync" and not self.deck.reviewing and not self._search_open
+                and not self.query_one(OptionList).display and not self.deck.confirming):
             hints.append(("R", "intent"))
         self.query_one("#help", Static).update(Text.from_ansi(render_key_hints(hints, use_color=self.deck.use_color)))
 
