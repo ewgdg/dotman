@@ -879,3 +879,27 @@ def test_full_view_menu_offers_each_diff_and_shows_whole_merge_output(tmp_path, 
                 await pilot.press("escape")
                 assert app.query_one(WorksetTable).display
         run(interact())
+
+
+def test_menus_open_at_the_bottom_above_help_in_workset_and_review(tmp_path, monkeypatch):
+    from textual.widgets import OptionList
+    from tests.engine.test_sync_both_convergence import established
+
+    engine = established(tmp_path, monkeypatch)
+    (tmp_path / "live/unit").write_bytes(b"conflict\nmiddle\nlast\n")
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 40)) as pilot:
+                menu, help_line = app.query_one(OptionList), app.query_one("#help")
+                await pilot.press("r")
+                await pilot.pause()
+                assert menu.region.y > app.query_one("#detail").region.y
+                assert menu.region.bottom <= help_line.region.y
+                await pilot.press("escape", "enter", "v")
+                await pilot.pause()
+                assert menu.display
+                assert menu.region.y > app.query_one("#review").region.y
+                assert menu.region.bottom <= help_line.region.y
+        run(interact())

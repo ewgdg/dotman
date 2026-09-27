@@ -942,11 +942,12 @@ class SyncDeckApp(App[bool]):
         # A scroll container: a bare Static cannot scroll, so overflowing details would be unreachable.
         with VerticalScroll(id="detail"):
             yield Static(id="detail-body", markup=False)
-        yield OptionList(id="resolution")
         # Review wraps instead of scrolling sideways; a Static re-wraps on resize, unlike a RichLog.
         with VerticalScroll(id="review"):
             yield ReviewBody(id="review-body")
         yield Static(id="confirmation", markup=False)
+        # After the pages, so menus open at the bottom above notice and help in every view.
+        yield OptionList(id="resolution")
         yield Static(id="notice", markup=False)
         yield Static(id="help", markup=False)
 
