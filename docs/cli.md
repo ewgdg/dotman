@@ -109,6 +109,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   the terminal width; the focused detail line shows the full identity. Arrow keys
   and vim-style `h`/`j`/`k`/`l` navigate; terminals too narrow even for shortened targets scroll horizontally,
   and long worksets scroll vertically without losing column alignment.
+- `R`, or a click in the Resolution cell, changes the focused row's Resolution:
+  with two allowed intents it toggles between them; with Merge available it opens a menu.
 - `Enter` opens focused Proposal Review or canonical Source Change Review;
   `Esc` returns to the same workset. Source Change Review shows the preimage diff,
   referencing Proposals and independent Approval; Proposal Review lists source

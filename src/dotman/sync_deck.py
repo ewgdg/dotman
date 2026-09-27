@@ -1265,6 +1265,10 @@ class SyncDeckApp(App[bool]):
         row = self.deck.focused_row
         if row is None or "set-resolution-intent" not in row.allowed_commands or len(row.allowed_intents) < 2:
             return
+        if len(row.allowed_intents) == 2:
+            # With one alternative, a menu only adds a keystroke; toggling is visible in the Resolution cell.
+            self.set_resolution(row, next(intent for intent in row.allowed_intents if intent != row.intent))
+            return
         self.open_menu([Text.from_ansi(render_sync_term(resolution_label(intent), use_color=self.deck.use_color))
                         for intent in row.allowed_intents],
                        highlighted=row.allowed_intents.index(row.intent), hint="choose Resolution",
@@ -1275,8 +1279,10 @@ class SyncDeckApp(App[bool]):
         if self.busy:
             return
         row = self.deck.focused_row
-        intent = row.allowed_intents[index]
         self.close_menu()
+        self.set_resolution(row, row.allowed_intents[index])
+
+    def set_resolution(self, row: SessionRow, intent: str) -> None:
         def change():
             result = set_resolution_intent(self.deck.session, row.row_id, intent)
             self.deck.notice = result.reason if isinstance(result, CommandRejected) else ""

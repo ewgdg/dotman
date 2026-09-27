@@ -510,7 +510,7 @@ def test_help_area_click_cannot_authorize_after_clear_key(tmp_path, monkeypatch)
         run(interact())
 
 
-def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
+def test_resolution_key_toggles_between_two_intents_without_menu(tmp_path, monkeypatch):
     from textual.widgets import OptionList
 
     engine = make_engine(tmp_path, monkeypatch, [
@@ -523,6 +523,28 @@ def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
             async with app.run_test() as pilot:
                 assert session.view.rows[0].intent == 'use-repository'
                 assert any(line.startswith('Fallback:') for line in detail_facts(app))
+                await pilot.press('r')
+                await pilot.pause()
+                assert not app.query_one(OptionList).display
+                assert session.view.rows[0].intent == 'use-live'
+                assert not session.view.rows[0].approved
+                await pilot.press('r')
+                await pilot.pause()
+                assert session.view.rows[0].intent == 'use-repository'
+        run(interact())
+
+
+def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
+    from textual.widgets import OptionList
+    from tests.engine.test_sync_both_convergence import established
+
+    engine = established(tmp_path, monkeypatch)
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test() as pilot:
+                assert session.view.rows[0].intent == 'merge'
                 await pilot.press('r')
                 menu = app.query_one(OptionList)
                 assert menu.display
@@ -541,8 +563,9 @@ def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
 
 def test_resolution_cell_and_menu_support_mouse(tmp_path, monkeypatch):
     from textual.widgets import OptionList
+    from tests.engine.test_sync_both_convergence import established
 
-    engine = make_engine(tmp_path, monkeypatch, [('unit', 'both', b'repo', b'live', '')])
+    engine = established(tmp_path, monkeypatch)
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
         app = SyncDeckApp(CommandDeck(session, use_color=False))
 
