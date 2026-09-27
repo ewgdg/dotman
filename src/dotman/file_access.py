@@ -26,6 +26,16 @@ _SUDO_KEEPALIVE_INTERVAL_SECONDS = 30
 _PRIVILEGED_HELPER_MODULE = "dotman.privileged_ops"
 
 
+def _sudo_request(*sudo_arguments: str, **request_options) -> CommandRequest:
+    # sudo's default tty-scoped ticket is invisible to a child started in a new
+    # session, so every sudo call stays in the invoking terminal session.
+    return CommandRequest(
+        command=ArgvCommand(("sudo", *sudo_arguments)),
+        isolate_process_group=False,
+        **request_options,
+    )
+
+
 class _SudoLease:
     def __init__(self, runtime: CommandRuntime | None = None) -> None:
         self._runtime = runtime if runtime is not None else current_command_runtime()
@@ -37,9 +47,7 @@ class _SudoLease:
         if os.geteuid() == 0:
             return
         if self._acquired:
-            result = self._runtime.run(
-                CommandRequest(command=ArgvCommand(("sudo", "-n", "true")))
-            )
+            result = self._runtime.run(_sudo_request("-n", "true"))
             raise_for_command_interruption(result)
             if result.exit_code == 0:
                 if self._keepalive_thread is None or not self._keepalive_thread.is_alive():
@@ -51,10 +59,7 @@ class _SudoLease:
         if not unattended:
             _emit_sudo_notice(reason)
         result = self._runtime.run(
-            CommandRequest(
-                command=ArgvCommand(("sudo", "-n", "-v") if unattended else ("sudo", "-v")),
-                io="pipe" if unattended else "tty",
-            )
+            _sudo_request(*(("-n", "-v") if unattended else ("-v",)), io="pipe" if unattended else "tty")
         )
         raise_for_command_interruption(result)
         if result.exit_code != 0:
@@ -67,9 +72,7 @@ class _SudoLease:
 
     def _keepalive_loop(self) -> None:
         while not self._stop_event.wait(_SUDO_KEEPALIVE_INTERVAL_SECONDS):
-            self._runtime.run(
-                CommandRequest(command=ArgvCommand(("sudo", "-n", "true")))
-            )
+            self._runtime.run(_sudo_request("-n", "true"))
 
     def close(self) -> None:
         if not self._acquired:
@@ -185,12 +188,7 @@ def sudo_prefix_command(command: str) -> str:
 
 def _run_privileged_operation(*args: str, input: bytes | None = None) -> CommandResult:
     result = current_command_runtime().run(
-        CommandRequest(
-            command=ArgvCommand(
-                ("sudo", "-n", sys.executable, "-m", _PRIVILEGED_HELPER_MODULE, *args)
-            ),
-            input=input,
-        )
+        _sudo_request("-n", sys.executable, "-m", _PRIVILEGED_HELPER_MODULE, *args, input=input)
     )
     raise_for_command_interruption(result)
     return result
@@ -202,9 +200,7 @@ def read_bytes(path: Path) -> bytes:
         return path.read_bytes()
     except PermissionError:
         request_sudo(f"read protected path: {path}")
-        result = current_command_runtime().run(
-            CommandRequest(command=ArgvCommand(("sudo", "-n", "/bin/cat", str(path))))
-        )
+        result = current_command_runtime().run(_sudo_request("-n", "/bin/cat", str(path)))
         raise_for_command_interruption(result)
         if result.exit_code == 0:
             return result.stdout

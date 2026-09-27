@@ -64,6 +64,25 @@ def test_elevation_broker_preserves_runtime_in_request_thread(monkeypatch) -> No
         broker.close()
 
 
+def test_privileged_file_access_stays_in_the_terminal_session(monkeypatch, tmp_path) -> None:
+    # sudo's default tty-scoped ticket is invisible to a child started in a new
+    # session, so a detached `sudo -n` fails with "a password is required".
+    protected = tmp_path / "protected.conf"
+    protected.write_bytes(b"old")
+    protected.chmod(0)
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=0)] * 4)
+    monkeypatch.setattr(file_access.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(file_access, "needs_sudo_for_write", lambda path: True)
+
+    with file_access.sudo_session(), command_runtime_session(runtime):
+        file_access.write_bytes_atomic(protected, b"new")
+        file_access.read_bytes(protected)
+
+    sudo_requests = [request for request in runtime.requests if request.command.arguments[0] == "sudo"]
+    assert len(sudo_requests) == 4
+    assert [request for request in sudo_requests if request.isolate_process_group] == []
+
+
 def test_intercept_sudo_shim_fails_nonzero_when_broker_is_unreachable(monkeypatch) -> None:
     broker = elevation.ElevationBroker()
     monkeypatch.setattr(elevation.shutil, "which", lambda command: "/bin/true" if command == "sudo" else None)
