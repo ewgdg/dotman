@@ -765,6 +765,47 @@ class WorksetTable(DataTable):
             event.stop()
 
 
+# Enough to step back through a session's recent queries without scrolling a long list.
+SEARCH_HISTORY_LIMIT = 10
+
+
+class SearchInput(Input):
+    """The / box; Up and Down recall recent queries, newest first, as in a shell."""
+
+    BINDINGS = [
+        Binding("up", "recall(1)", "Older query", show=False),
+        Binding("down", "recall(-1)", "Newer query", show=False),
+    ]
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._history: list[str] = []
+        # Index 0 is the draft typed before recall, so Down past the newest query restores it.
+        self._recall: list[str] = [""]
+        self._recall_index = 0
+
+    def start(self, value: str, history: list[str]) -> None:
+        self._history = history
+        self._recall, self._recall_index = [value], 0
+        self.value = value
+        self.cursor_position = len(value)
+
+    def remember(self, query: str) -> None:
+        if query:
+            self._history[:] = [query, *(entry for entry in self._history if entry != query)][:SEARCH_HISTORY_LIMIT]
+
+    def action_recall(self, step: int) -> None:
+        # Editing a recalled query makes it the new draft.
+        if self.value != self._recall[self._recall_index]:
+            self._recall, self._recall_index = [self.value], 0
+        if self._recall_index == 0:
+            # A query equal to the draft would make the first Up look like a no-op.
+            self._recall = [self.value, *(entry for entry in self._history if entry != self.value)]
+        self._recall_index = min(max(self._recall_index + step, 0), len(self._recall) - 1)
+        self.value = self._recall[self._recall_index]
+        self.cursor_position = len(self.value)
+
+
 PROGRESS_REVEAL_DELAY_SECONDS = 0.3
 PROGRESS_FRAME_SECONDS = 0.1
 # Copy confirmation is transient; other notices report state and stay until the next command.
@@ -857,6 +898,8 @@ class SyncDeckApp(App[bool]):
         self._search_open = False
         self._filter_before_search = ""
         self._match_index = 0
+        # Filters name Targets and searches find file text, so each keeps its own history.
+        self._search_history: dict[str, list[str]] = {"filter": [], "search": []}
 
     @property
     def busy(self) -> bool:
@@ -1024,7 +1067,7 @@ class SyncDeckApp(App[bool]):
         yield Static(id="notice", markup=False)
         with Horizontal(id="search-bar"):
             yield Static("/", id="search-prompt", markup=False)
-            yield Input(id="search", compact=True, select_on_focus=False)
+            yield SearchInput(id="search", compact=True, select_on_focus=False)
         yield Static(id="help", markup=False)
 
     def on_mount(self) -> None:
@@ -1095,8 +1138,8 @@ class SyncDeckApp(App[bool]):
             review_lead = [("Esc", "return"), ("/", "search")]
         if self._search_open:
             # Deck keys type into the box, so only its own keys apply.
-            hints = [("Enter", "search" if self.deck.reviewing else "filter"), ("Ctrl+U", "clear"),
-                     ("Esc", "cancel"), ("Ctrl+C", "abort")]
+            hints = [("Enter", "search" if self.deck.reviewing else "filter"), ("↑/↓", "history"),
+                     ("Ctrl+U", "clear"), ("Esc", "cancel"), ("Ctrl+C", "abort")]
         elif self.query_one(OptionList).display:
             hints = [("↑/↓/j/k", self._menu_hint), ("Enter", "select"), ("Esc", "dismiss")]
         elif self.deck.confirming:
@@ -1337,10 +1380,10 @@ class SyncDeckApp(App[bool]):
         self._search_open = True
         # Esc in the box restores the workset filter from before it opened.
         self._filter_before_search = self.deck.filter
-        box = self.query_one("#search", Input)
         # A workset filter opens for refinement; a reader search starts afresh, as in less.
-        box.value = "" if self.deck.reviewing else self.deck.filter
-        box.cursor_position = len(box.value)
+        box = self.query_one(SearchInput)
+        box.start("" if self.deck.reviewing else self.deck.filter,
+                  self._search_history["search" if self.deck.reviewing else "filter"])
         self.query_one("#search-bar").display = True
         box.focus()
         self.update_hints()
@@ -1371,6 +1414,7 @@ class SyncDeckApp(App[bool]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         query = event.value
+        self.query_one(SearchInput).remember(query)
         self.close_search_box()
         if not self.deck.reviewing:
             if query and not self.deck.visible_rows:

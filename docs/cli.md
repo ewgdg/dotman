@@ -152,6 +152,9 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   step to the next and previous match, wrapping around, instead of change blocks.
   `Esc` clears the search before it leaves the view, and leaving the view clears it too.
   A search without matches reports `No match for …` and is not kept.
+  In both search lines `↑`/`↓` recall the last 10 queries, newest first; workset
+  filters and reader searches keep separate histories for the session, and `↓` past
+  the newest query restores the text typed before recalling.
   `X` opens one compact confirmation with selected units, repository changes,
   live writes, and live deletions; cancelling returns without
   changing Approval, inclusion or focus. Real execution is offered only for valid,

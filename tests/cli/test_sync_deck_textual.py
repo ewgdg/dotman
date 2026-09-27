@@ -7,6 +7,7 @@ from textual import events
 
 from textual.widgets import DataTable, Static
 
+from dotman import sync_deck
 from dotman.sync_deck import CommandDeck, SyncDeckApp, WorksetTable
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -962,7 +963,7 @@ def test_review_search_box_keeps_deck_keys_out_of_the_query(tmp_path, monkeypatc
                 await pilot.press("slash", "e", "v", "space", "a", "x", "q")
                 await pilot.pause()
                 assert app.query_one("#search").value == "ev ax" + "q"
-                assert help_text(app) == "Enter search · Ctrl+U clear · Esc cancel · Ctrl+C abort"
+                assert help_text(app) == "Enter search · ↑/↓ history · Ctrl+U clear · Esc cancel · Ctrl+C abort"
                 assert session.view == frozen
                 assert title_text(app) == ":: Proposal Review"
                 assert app.is_running
@@ -1063,7 +1064,7 @@ def test_workset_filter_narrows_rows_and_scopes_bulk_selection(tmp_path, monkeyp
                 await pilot.pause()
                 # The table narrows while typing.
                 assert table_row_ids(app) == ["main:app.zsh_env", "main:app.zsh_rc"]
-                assert help_text(app) == "Enter filter · Ctrl+U clear · Esc cancel · Ctrl+C abort"
+                assert help_text(app) == "Enter filter · ↑/↓ history · Ctrl+U clear · Esc cancel · Ctrl+C abort"
                 await pilot.press("enter")
                 await pilot.pause()
                 assert "/Zsh 2/4" in help_text(app)
@@ -1133,4 +1134,55 @@ def test_workset_filter_survives_review_and_cancel_restores_it(tmp_path, monkeyp
                 await pilot.pause()
                 assert "No match for xxx." in str(app.query_one("#notice", Static).render())
                 assert table_row_ids(app) == [f"main:app.{name}" for name in FILTER_UNITS]
+        run(interact())
+
+
+def test_workset_filter_box_recalls_recent_filters_with_up_and_down(tmp_path, monkeypatch):
+    monkeypatch.setattr(sync_deck, "SEARCH_HISTORY_LIMIT", 2)
+    engine = filter_engine(tmp_path, monkeypatch)
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(100, 20)) as pilot:
+                box = app.query_one("#search")
+                await pilot.press("slash", "z", "s", "h", "enter", "slash", "ctrl+u", "n", "v", "i", "enter")
+                await pilot.pause()
+                # The box opens with the current filter, so recall skips that same entry.
+                await pilot.press("slash", "up")
+                await pilot.pause()
+                assert box.value == "zsh"
+                assert table_row_ids(app) == ["main:app.zsh_env", "main:app.zsh_rc"]
+                await pilot.press("up")
+                assert box.value == "zsh"
+                # Down past the newest entry returns to the text typed before recall.
+                await pilot.press("down")
+                await pilot.pause()
+                assert box.value == "nvi"
+                assert table_row_ids(app) == ["main:app.nvim_init"]
+                await pilot.press("escape")
+                # Only the most recent filters are kept.
+                await pilot.press("slash", "ctrl+u", "g", "i", "t", "enter", "slash", "up", "up")
+                assert box.value == "nvi"
+        run(interact())
+
+
+def test_reader_search_box_recalls_only_reader_searches(tmp_path, monkeypatch):
+    repo, live = search_repo_and_live()
+    engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", repo, live, "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 24)) as pilot:
+                box = app.query_one("#search")
+                await pilot.press("slash", "o", "n", "e", "enter", "enter")
+                await pilot.pause()
+                # Workset filters name Targets; they are not offered as file searches.
+                await pilot.press("slash", "up")
+                assert box.value == ""
+                await pilot.press("v", "i", "e", "w", "enter")
+                await pilot.pause()
+                await pilot.press("slash", "up")
+                assert box.value == "view"
         run(interact())
