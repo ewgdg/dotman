@@ -123,7 +123,7 @@ def test_editor_key_saves_in_place_and_is_disabled_after_confirmation(tmp_path, 
                 frozen = session.view
                 await pilot.press("e")
                 assert session.view == frozen
-                await pilot.press("escape", "escape")
+                await pilot.press("escape", "q")
 
         asyncio.run(asyncio.wait_for(interact(), timeout=5))
 

@@ -268,7 +268,7 @@ class CommandDeck:
             self.focus = max(0, min(self.focus + offset, len(self.session.view.rows) - 1))
 
     def back(self) -> bool:
-        """Return False only when Escape requests abort from the workset."""
+        """Return False when already at the workset, where Escape has nothing to leave."""
         if self.confirming:
             self.confirming = False
         elif self.full_view is not None:
@@ -764,7 +764,9 @@ class SyncDeckApp(App[bool]):
         Binding("x,X", "confirm", "Preview / Execute", priority=True),
         # Ctrl+C stays Abort, so copying needs its own key (vim-style yank).
         Binding("y,Y", "copy", "Copy", priority=True),
-        Binding("escape", "back", "Back / Abort", priority=True),
+        Binding("escape", "back", "Back", priority=True),
+        # Lowercase only, matching the q-to-quit convention of other TUIs.
+        Binding("q", "abort", "Abort", priority=True),
         Binding("ctrl+c", "abort", "Abort", priority=True),
     ]
 
@@ -1021,7 +1023,7 @@ class SyncDeckApp(App[bool]):
             hints = [("Tab/Esc", "return"), review_scroll, ("Space", "mark"), bulk_selection,
                      ("Enter", "view"), ("E", "edit"), ("T", "retry"), ("Y", "copy")]
         else:
-            hints = [("Esc", "abort"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
+            hints = [("q", "abort"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
                      ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
@@ -1228,9 +1230,9 @@ class SyncDeckApp(App[bool]):
         if self.deck.reviewing:
             log = self.query_one("#review", VerticalScroll)
             self.review_positions[self.deck.focused_row.row_id] = (log.scroll_x, log.scroll_y)
-        if not self.deck.back():
-            self.exit(False)
-        else:
+        # At the workset Esc does nothing: repeated Esc presses out of review
+        # must not discard the session.
+        if self.deck.back():
             self.show_workset()
 
     def action_toggle_detail_focus(self) -> None:

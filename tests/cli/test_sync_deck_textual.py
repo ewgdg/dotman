@@ -212,7 +212,10 @@ def test_mouse_click_focuses_identity_and_toggles_only_approval(tmp_path, monkey
                 assert all(row.approved for row in session.view.rows)
                 await pilot.press("u")
                 assert not any(row.approved for row in session.view.rows)
+                # Esc only steps back, so an extra press at the workset must not abort.
                 await pilot.press("escape")
+                assert app.is_running
+                await pilot.press("q")
                 assert app.return_value is False
         run(interact())
 
@@ -317,9 +320,9 @@ def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monke
                 styled = {segment.text.strip() for strip in strips for segment in strip if segment.style != plain}
                 assert {"main", "bad", "error"} <= styled
                 hints = app.query_one("#help", Static).render()
-                assert hints.plain.startswith("Esc abort · X confirm")
+                assert hints.plain.startswith("q abort · X confirm")
                 bold = {hints.plain[span.start:span.end] for span in hints.spans if "bold" in str(span.style)}
-                assert {"Esc", "X", "Space"} <= bold and "confirm" not in bold
+                assert {"q", "X", "Space"} <= bold and "confirm" not in bold
         run(interact())
 
 
@@ -358,7 +361,7 @@ def test_empty_workset_can_cancel_without_a_cursor_target(tmp_path, monkeypatch)
         async def interact():
             async with app.run_test() as pilot:
                 assert "No drifted work" in detail_lines(app)[0]
-                await pilot.press("down", "space", "enter", "a", "u", "escape")
+                await pilot.press("down", "space", "enter", "a", "u", "q")
                 assert app.return_value is False
                 assert session.view.rows == ()
         run(interact())
@@ -506,7 +509,7 @@ def test_help_area_click_cannot_authorize_after_clear_key(tmp_path, monkeypatch)
                 rendered_help = " ".join(
                     help_widget.render_line(y).text for y in range(help_widget.size.height)
                 )
-                assert "Esc abort" in rendered_help and "X confirm" in rendered_help
+                assert "q abort" in rendered_help and "X confirm" in rendered_help
         run(interact())
 
 
