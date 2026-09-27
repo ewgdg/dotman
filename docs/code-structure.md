@@ -333,3 +333,11 @@ and [descriptor-relative file access](https://docs.python.org/3/library/os.html#
 `sync_deck_command.py` adapts Sync, Pull and Push to the shared Command Deck.
 The engine opens Pull through `open_pull_session` and Push through
 `open_push_session`.
+
+## Versioning and releases
+
+Git tags are the only version source. `hatch-vcs` derives the package version
+from the nearest tag at build time, and `dotman --version` reports it. A release is
+a pushed tag such as `0.10.1`; no file records the version. `uv sync` rebuilds the
+editable install when the commit or tags change. A build without `.git` or tags
+reports `0.0.0`.

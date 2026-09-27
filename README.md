@@ -40,6 +40,10 @@ It is currently intended for UNIX-like systems.
 uv tool install git+https://github.com/ewgdg/dotman.git
 ```
 
+`dotman --version` shows the installed build: a release tag such as `0.10.1`, or a
+development build past it such as `0.10.2.dev3+g1a2b3c4`. The version is fixed at
+install time, so reinstall to refresh it.
+
 ### Optional dependencies
 
 - `fzf` for long interactive selector lists

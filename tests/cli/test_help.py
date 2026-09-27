@@ -76,8 +76,9 @@ def test_removed_snapshot_command_is_rejected_instead_of_aliased(capsys) -> None
 
 def test_top_level_help_uses_command_placeholder_and_summaries(capsys) -> None:
     output = capture_parser_help(capsys)
-    assert "usage: dotman [-h] [--config <config-path>] [--json]" in output
-    assert "[--file-symlink-mode <mode>] [--dir-symlink-mode <mode>]" in output
+    assert "usage: dotman [-h] [--version] [--config <config-path>] [--json]" in output
+    assert "[--file-symlink-mode <mode>]" in output
+    assert "[--dir-symlink-mode <mode>]" in output
     assert "<command>" in output
     assert "commands:" in output
     assert "Track packages in manager state" in output
@@ -360,3 +361,12 @@ def test_legacy_top_level_cli_commands_are_not_available(command: str) -> None:
         parser.parse_args([command, "example:nvim@basic"])
 
     assert exc_info.value.code == 2
+
+
+def test_version_flag_prints_package_version(capsys) -> None:
+    from importlib.metadata import version
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--version"])
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out == f"dotman {version('dotman')}\n"

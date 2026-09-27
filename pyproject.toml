@@ -31,6 +31,8 @@ dotman = "dotman.cli:main"
 # Release tags are the only version source, so a release cannot ship a stale number.
 [tool.hatch.version]
 source = "vcs"
+# Source archives have no git history; build them as an unknown version instead of failing.
+fallback-version = "0.0.0"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dotman"]

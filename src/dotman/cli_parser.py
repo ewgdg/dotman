@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
+from dotman import __version__
+
 
 _EDIT_SUGAR_TOP_LEVEL_OPTIONS_WITH_VALUES = {"--config", "--file-symlink-mode", "--dir-symlink-mode"}
 
@@ -184,6 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Keep optional command flags present on every parsed namespace so command
     # dispatch can read a consistent attribute shape.
     parser.set_defaults(full_path=None)
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--config", metavar="<config-path>", help="Path to dotman config.toml")
     parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
     parser.add_argument("--unattended", action="store_true", help="Use policy defaults without menus, editors, pagers, or prompts")
