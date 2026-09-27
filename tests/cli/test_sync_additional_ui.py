@@ -36,7 +36,7 @@ def test_batch_selection_and_source_review_use_session_commands():
     deck.select_all(True)
     deck.open_review()
     assert commands == [
-        BatchSetApproval("session", 7, True),
+        BatchSetApproval("session", 7, True, (row.row_id,)),
         PrepareSourceReview("session", 7, row.row_id),
     ]
 

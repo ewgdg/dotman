@@ -241,6 +241,8 @@ class BatchSetApproval:
     session_id: str
     revision: int
     approved: bool
+    # The rows to select or clear, e.g. those a filtered Command Deck shows.
+    row_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -751,12 +753,17 @@ class ProposalSession:
         if command.revision != view.revision:
             return CommandRejected(view, "stale")
         if isinstance(command, BatchSetApproval):
-            if type(command.approved) is not bool:
+            if type(command.approved) is not bool or type(command.row_ids) is not tuple or not all(
+                type(row_id) is str for row_id in command.row_ids
+            ):
                 return CommandRejected(view, "invalid")
+            scope = set(command.row_ids)
+            if not scope <= {row.row_id for row in view.rows}:
+                return CommandRejected(view, "unknown-row")
             # Establish every final row state before any provider sees inputs.
             changed_references = set()
             for row in view.rows:
-                if isinstance(row, AdditionalRow):
+                if isinstance(row, AdditionalRow) and row.row_id in scope:
                     if row.approved != command.approved:
                         changed_references.update(row.references)
                     self._additional_approvals[row.change.path] = command.approved
@@ -764,7 +771,8 @@ class ProposalSession:
                 if isinstance(row, SessionRow) and row.row_id in changed_references:
                     self._clear_input_cache(row)
             rows = tuple(
-                replace(row, approved=command.approved, proposal=None)
+                row if row.row_id not in scope
+                else replace(row, approved=command.approved, proposal=None)
                 if isinstance(row, SessionRow) and row.approvable
                 else replace(row, approved=command.approved)
                 if isinstance(row, AdditionalRow)
@@ -774,7 +782,9 @@ class ProposalSession:
                 for row in view.rows
             )
             self._view = replace(view, rows=rows)
-            self._invalidate_inputs({row.row_id for row in rows if isinstance(row, SessionRow)}, clear_cache=False)
+            # Rows outside the scope keep their Proposal unless a changed shared source feeds it.
+            self._invalidate_inputs({row.row_id for row in rows if isinstance(row, SessionRow)}
+                                    & (scope | changed_references), clear_cache=False)
             self._view = replace(self.view, revision=view.revision + 1)
             self._emit(SessionChanged(self.view))
             return CommandAccepted(self.view, BatchApprovalChanged(command.approved))

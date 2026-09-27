@@ -8,6 +8,10 @@ from dotman.sync_session import (
 from tests.engine.test_sync_session import make_engine, open_session
 
 
+def all_row_ids(session):
+    return tuple(row.row_id for row in session.view.rows)
+
+
 def command(session, kind, row=None, **kwargs):
     args = (session.view.session_id, session.view.revision)
     return session.dispatch(kind(*args, row.row_id, **kwargs) if row else kind(*args, **kwargs))
@@ -52,10 +56,10 @@ def test_canonical_approval_aligns_eager_and_lazy_references(tmp_path, monkeypat
 
 def test_batch_uses_final_additional_set_and_unapproval_is_lazy(tmp_path, monkeypatch):
     session, _ = setup(tmp_path, monkeypatch)
-    result = command(session, BatchSetApproval, approved=True)
+    result = command(session, BatchSetApproval, approved=True, row_ids=all_row_ids(session))
     assert all(row.approved for row in result.view.rows)
     assert all(row.proposal.live == FilePresent(b'candidate') for row in result.view.rows[:2])
-    result = command(session, BatchSetApproval, approved=False)
+    result = command(session, BatchSetApproval, approved=False, row_ids=all_row_ids(session))
     assert all(not row.approved for row in result.view.rows)
     assert all(row.proposal is None for row in result.view.rows[:2])
 
@@ -83,7 +87,7 @@ def test_additional_executes_without_approved_proposals_once(tmp_path, monkeypat
 
 def test_approved_additional_failure_stops_later_effects_with_own_result(tmp_path, monkeypatch):
     session, shared = setup(tmp_path, monkeypatch, preview=False)
-    command(session, BatchSetApproval, approved=True)
+    command(session, BatchSetApproval, approved=True, row_ids=all_row_ids(session))
     shared.rename(shared.with_name('saved-shared'))
     shared.mkdir()
     result = session.execute().result
@@ -112,14 +116,14 @@ def test_batch_materializes_once_and_reference_failure_is_independent(tmp_path, 
     command(session, EditProposal, session.view.rows[0])
     before = len(log.read_text().splitlines())
     marker.touch()
-    result = command(session, BatchSetApproval, approved=True)
+    result = command(session, BatchSetApproval, approved=True, row_ids=all_row_ids(session))
     assert log.read_text().splitlines()[before:] == ['a', 'b']
     a, b, source = result.view.rows
     assert not a.approved and a.proposal is None and a.diagnostics
     assert b.approved and b.proposal.live == FilePresent(b'candidate')
     assert source.approved
     before = log.read_bytes()
-    command(session, BatchSetApproval, approved=False)
+    command(session, BatchSetApproval, approved=False, row_ids=all_row_ids(session))
     assert log.read_bytes() == before
 
 
@@ -146,7 +150,7 @@ def test_capture_uses_only_authorized_additional_inputs(tmp_path, monkeypatch):
 
 def test_frozen_publication_does_not_rerender_after_source_apply(tmp_path, monkeypatch):
     session, shared = setup(tmp_path, monkeypatch, preview=False)
-    command(session, BatchSetApproval, approved=True)
+    command(session, BatchSetApproval, approved=True, row_ids=all_row_ids(session))
     shared.write_bytes(b'external')
     result = session.execute().result
     assert result.status == 'completed'
@@ -291,7 +295,7 @@ def test_batch_unapproval_preserves_unresolved_capture_diagnostic(tmp_path, monk
     session = open_session(engine)
     failed = command(session, PrepareProposalReview, session.view.rows[0])
     assert failed.result.diagnostics[0].code == 'capture-failed'
-    result = command(session, BatchSetApproval, approved=False)
+    result = command(session, BatchSetApproval, approved=False, row_ids=all_row_ids(session))
     assert result.view.rows[0].diagnostics == failed.result.diagnostics
     assert result.view.rows[0].proposal is None
     assert command(session, Preview).result.status == 'failed'

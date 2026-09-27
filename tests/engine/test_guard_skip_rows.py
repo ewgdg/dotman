@@ -25,7 +25,8 @@ def test_one_sided_guard_skip_is_visible_and_not_selectable(tmp_path, monkeypatc
         assert row.guard_skip.reason == "offline"
         assert not row.included and row.allowed_commands == ()
         view = session.view
-        session.dispatch(BatchSetApproval(view.session_id, view.revision, True))
+        session.dispatch(BatchSetApproval(view.session_id, view.revision, True,
+                                          tuple(row.row_id for row in view.rows)))
         view = session.view
         session.dispatch(SetIncluded(view.session_id, view.revision, row.row_id, True))
         assert not guard_skip_rows(session)[0].included

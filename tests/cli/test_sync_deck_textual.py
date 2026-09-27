@@ -1035,3 +1035,100 @@ def test_full_view_search_without_matches_keeps_change_block_navigation(tmp_path
                 await pilot.pause()
                 assert "live-45" in visible_review_text(app)
         run(interact())
+
+
+FILTER_UNITS = ("git_config", "nvim_init", "zsh_env", "zsh_rc")
+
+
+def filter_engine(tmp_path, monkeypatch):
+    return make_engine(tmp_path, monkeypatch, [
+        (name, "push-only", b"repo", b"live", "") for name in FILTER_UNITS
+    ])
+
+
+def table_row_ids(app):
+    return [key.value for key in app.query_one(WorksetTable).rows]
+
+
+def test_workset_filter_narrows_rows_and_scopes_bulk_selection(tmp_path, monkeypatch):
+    engine = filter_engine(tmp_path, monkeypatch)
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(100, 20)) as pilot:
+                # h is also vim-left: the typed query must not navigate.
+                await pilot.press("slash", "Z", "s", "h")
+                await pilot.pause()
+                # The table narrows while typing.
+                assert table_row_ids(app) == ["main:app.zsh_env", "main:app.zsh_rc"]
+                await pilot.press("enter")
+                await pilot.pause()
+                assert "/Zsh 2/4" in help_text(app)
+                assert "q abort" not in help_text(app)
+                await pilot.press("a")
+                assert {row.row_id for row in session.view.rows if row.approved} == {
+                    "main:app.zsh_env", "main:app.zsh_rc"}
+                # Space and clicks act on the visible row, not the session row at that index.
+                post_cell_click(app, (2, 2))
+                await pilot.pause()
+                assert {row.row_id for row in session.view.rows if row.approved} == {"main:app.zsh_env"}
+                await pilot.press("space")
+                assert {row.row_id for row in session.view.rows if row.approved} == {
+                    "main:app.zsh_env", "main:app.zsh_rc"}
+                # The box reopens with the filter for refinement.
+                await pilot.press("slash", "backspace")
+                await pilot.pause()
+                assert app.query_one("#search").value == "Zs"
+                # A new filter reports selections it hides.
+                await pilot.press("ctrl+u", "g", "i", "t", "enter")
+                await pilot.pause()
+                assert table_row_ids(app) == ["main:app.git_config"]
+                assert "2 selected hidden" in title_text(app)
+                await pilot.press("u")
+                assert {row.row_id for row in session.view.rows if row.approved} == {
+                    "main:app.zsh_env", "main:app.zsh_rc"}
+                # q might be a stray query key, so a filtered workset does not abort.
+                await pilot.press("q")
+                await pilot.pause()
+                assert app.is_running
+                await pilot.press("escape")
+                await pilot.pause()
+                assert table_row_ids(app) == [f"main:app.{name}" for name in FILTER_UNITS]
+                assert "hidden" not in title_text(app)
+                assert "q abort" in help_text(app)
+        run(interact())
+
+
+def test_workset_filter_survives_review_and_cancel_restores_it(tmp_path, monkeypatch):
+    engine = filter_engine(tmp_path, monkeypatch)
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(100, 20)) as pilot:
+                await pilot.press("slash", "z", "s", "h", "enter", "down", "enter")
+                await pilot.pause()
+                assert title_text(app) == ":: Proposal Review"
+                assert app.deck.focused_row.row_id == "main:app.zsh_rc"
+                await pilot.press("escape")
+                await pilot.pause()
+                assert table_row_ids(app) == ["main:app.zsh_env", "main:app.zsh_rc"]
+                assert app.deck.focused_row.row_id == "main:app.zsh_rc"
+                # Esc while typing restores the filter from before the search box opened.
+                await pilot.press("slash", "ctrl+u", "n", "v", "i")
+                await pilot.pause()
+                assert table_row_ids(app) == ["main:app.nvim_init"]
+                await pilot.press("x")
+                await pilot.pause()
+                assert table_row_ids(app) == []
+                assert detail_lines(app)[0] == "No Target matches the filter."
+                await pilot.press("escape")
+                await pilot.pause()
+                assert table_row_ids(app) == ["main:app.zsh_env", "main:app.zsh_rc"]
+                # A filter without matches is reported and dropped.
+                await pilot.press("slash", "ctrl+u", "x", "x", "x", "enter")
+                await pilot.pause()
+                assert "No match for xxx." in str(app.query_one("#notice", Static).render())
+                assert table_row_ids(app) == [f"main:app.{name}" for name in FILTER_UNITS]
+        run(interact())

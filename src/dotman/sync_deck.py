@@ -277,15 +277,38 @@ class CommandDeck:
         # Title of the review section shown whole in Full View, over the unchanged review.
         self.full_view: str | None = None
         self.notice = ""
+        # Case-insensitive Target substring; focus indexes the rows it leaves visible.
+        self.filter = ""
+
+    @property
+    def visible_rows(self) -> tuple:
+        rows = self.session.view.rows
+        if not self.filter:
+            return rows
+        query = self.filter.casefold()
+        return tuple(row for row in rows
+                     if query in Text.from_ansi(workset_target_label(row, use_color=False)).plain.casefold())
+
+    @property
+    def hidden_selected_count(self) -> int:
+        visible = {row.row_id for row in self.visible_rows}
+        return sum(row_selected(row) for row in self.session.view.rows if row.row_id not in visible)
 
     @property
     def focused_row(self):
-        rows = self.session.view.rows
+        rows = self.visible_rows
         return rows[self.focus] if rows else None
+
+    def set_filter(self, query: str) -> None:
+        """Keep the focused row focused when it stays visible; otherwise start at the top."""
+        focused = self.focused_row
+        self.filter = query
+        row_ids = [row.row_id for row in self.visible_rows]
+        self.focus = row_ids.index(focused.row_id) if focused and focused.row_id in row_ids else 0
 
     def move(self, offset: int) -> None:
         if not self.confirming and not self.reviewing:
-            self.focus = max(0, min(self.focus + offset, len(self.session.view.rows) - 1))
+            self.focus = max(0, min(self.focus + offset, len(self.visible_rows) - 1))
 
     def back(self) -> bool:
         """Return False when already at the workset, where Escape has nothing to leave."""
@@ -342,7 +365,7 @@ class CommandDeck:
     def select_all(self, approved: bool) -> None:
         if self.reviewing or self.confirming:
             return
-        result = set_all_selected(self.session, approved)
+        result = set_all_selected(self.session, approved, tuple(row.row_id for row in self.visible_rows))
         self.notice = result.reason if isinstance(result, CommandRejected) else ""
 
     def open_review(self) -> None:
@@ -571,6 +594,18 @@ def auxiliary_row_label(row: AuxiliaryRow, *, use_color: bool) -> str:
     if row.guard_skip is not None:
         return guard_skip_label(row.scope, row.directions[0], row.guard_skip.path_rule_pattern, use_color=use_color)
     return auxiliary_label(row.scope, row.kind, row.directions, use_color=use_color)
+
+
+def workset_target_label(row, *, use_color: bool) -> str:
+    if isinstance(row, AdditionalRow):
+        return additional_label(row, use_color=use_color)
+    if isinstance(row, AuxiliaryRow):
+        return auxiliary_row_label(row, use_color=use_color)
+    return unit_label(row, use_color=use_color)
+
+
+def row_selected(row) -> bool:
+    return row.included if selection_uses_inclusion(row) else row.approved
 
 
 def unit_label(row, *, use_color: bool) -> str:
@@ -820,6 +855,7 @@ class SyncDeckApp(App[bool]):
         self._review_position_before_full_view = (0.0, 0.0)
         # A plain flag: Textual may ask check_action before the search box is composed.
         self._search_open = False
+        self._filter_before_search = ""
         self._match_index = 0
 
     @property
@@ -988,7 +1024,7 @@ class SyncDeckApp(App[bool]):
         yield Static(id="notice", markup=False)
         with Horizontal(id="search-bar"):
             yield Static("/", id="search-prompt", markup=False)
-            yield Input(id="search", compact=True)
+            yield Input(id="search", compact=True, select_on_focus=False)
         yield Static(id="help", markup=False)
 
     def on_mount(self) -> None:
@@ -1002,26 +1038,22 @@ class SyncDeckApp(App[bool]):
     def rebuild_workset(self) -> None:
         table = self.query_one(WorksetTable)
         table.clear()
-        self.deck.focus = max(0, min(self.deck.focus, len(self.deck.session.view.rows) - 1))
-        for row in self.deck.session.view.rows:
-            if isinstance(row, AdditionalRow):
-                table.add_workset_row(row.row_id, Text.from_ansi(additional_label(row, use_color=self.deck.use_color)), "")
-                continue
-            if isinstance(row, AuxiliaryRow):
-                table.add_workset_row(row.row_id, Text.from_ansi(auxiliary_row_label(row, use_color=self.deck.use_color)), "")
-                continue
-            table.add_workset_row(row.row_id, Text.from_ansi(unit_label(row, use_color=self.deck.use_color)),
-                                  row.observation.effective_policy)
+        rows = self.deck.visible_rows
+        self.deck.focus = max(0, min(self.deck.focus, len(rows) - 1))
+        for row in rows:
+            table.add_workset_row(row.row_id, Text.from_ansi(workset_target_label(row, use_color=self.deck.use_color)),
+                                  row.observation.effective_policy if isinstance(row, SessionRow) else "")
         table.move_cursor(row=self.deck.focus)
 
     def update_workset(self) -> None:
         table = self.query_one(WorksetTable)
-        # Editor saves can add or remove canonical source rows.
-        if tuple(key.value for key in table.rows) != tuple(row.row_id for row in self.deck.session.view.rows):
+        rows = self.deck.visible_rows
+        # Editor saves can add or remove canonical source rows; filtering changes the visible ones.
+        if tuple(key.value for key in table.rows) != tuple(row.row_id for row in rows):
             self.rebuild_workset()
-        for row in self.deck.session.view.rows:
+        for row in rows:
             auxiliary = selection_uses_inclusion(row)
-            selected = row.included if auxiliary else row.approved
+            selected = row_selected(row)
             selectable = row.approvable if isinstance(row, SessionRow) else bool(
                 {"set-included", "set-approval"}.intersection(row.allowed_commands))
             marker = "[x]" if selected else "[ ]" if selectable else "[-]"
@@ -1035,8 +1067,16 @@ class SyncDeckApp(App[bool]):
         # Resolution width varies with intent, so refit after every cell update.
         table.fit_targets()
         self.update_detail()
+        if not self.deck.reviewing and not self.deck.confirming:
+            self.query_one("#title", Static).update(self.workset_title())
         self.query_one("#notice", Static).update(self.deck.notice)
         self.update_hints()
+
+    def workset_title(self) -> str:
+        title = f":: {self.deck.session.view.operation.title()} Command Deck"
+        # Execution includes hidden selections, so a filter must never hide them silently.
+        hidden = self.deck.hidden_selected_count
+        return f"{title} ({hidden} selected hidden)" if hidden else title
 
     @property
     def detail_focused(self) -> bool:
@@ -1070,9 +1110,13 @@ class SyncDeckApp(App[bool]):
         elif self.detail_focused:
             hints = [("Tab/Esc", "return"), review_scroll, ("Space", "mark"), bulk_selection,
                      ("Enter", "view"), ("E", "edit"), ("T", "retry"), ("Y", "copy")]
-        else:
-            hints = [("q", "abort"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
+        elif self.deck.filter:
+            hints = [(f"/{self.deck.filter}", f"{len(self.deck.visible_rows)}/{len(self.deck.session.view.rows)}"),
+                     ("Esc", "clear"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
                      ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
+        else:
+            hints = [("q", "abort"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("/", "filter"),
+                     ("Enter", "view"), ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
                 and self.deck.full_view is None):
@@ -1086,7 +1130,8 @@ class SyncDeckApp(App[bool]):
         use_color = self.deck.use_color
         detail, body = self.query_one("#detail"), self.query_one("#detail-body", Static)
         if row is None:
-            body.update(Text.from_ansi(render_payload_section_label("No drifted work.", use_color=use_color)))
+            empty = "No Target matches the filter." if self.deck.filter else "No drifted work."
+            body.update(Text.from_ansi(render_payload_section_label(empty, use_color=use_color)))
             return
         facts = [(render_sync_term(item.severity, use_color=use_color), item.message) for item in row_diagnostics(row)]
         if isinstance(row, AdditionalRow):
@@ -1116,7 +1161,6 @@ class SyncDeckApp(App[bool]):
         self.query_one("#detail").display = True
         self.query_one("#review").display = False
         self.query_one("#confirmation").display = False
-        self.query_one("#title", Static).update(f":: {self.deck.session.view.operation.title()} Command Deck")
         self.update_workset()
         self.query_one(WorksetTable).focus()
 
@@ -1171,7 +1215,7 @@ class SyncDeckApp(App[bool]):
         self.materialize(lambda: self.deck.select_all(False), row_ids=self.all_row_ids())
 
     def all_row_ids(self) -> tuple[str, ...]:
-        return tuple(row.row_id for row in self.deck.session.view.rows)
+        return tuple(row.row_id for row in self.deck.visible_rows)
 
     def show_review(self, position: tuple[float, float] | None = None) -> None:
         log = self.query_one("#review", VerticalScroll)
@@ -1285,12 +1329,15 @@ class SyncDeckApp(App[bool]):
         return not self._search_open or action in ("back", "abort")
 
     def action_open_search(self) -> None:
-        if (self.busy or not self.deck.reviewing or self.deck.confirming
-                or self.query_one(OptionList).display):
+        if self.busy or self.deck.confirming or self.query_one(OptionList).display:
             return
         self._search_open = True
+        # Esc in the box restores the workset filter from before it opened.
+        self._filter_before_search = self.deck.filter
         box = self.query_one("#search", Input)
-        box.value = ""
+        # A workset filter opens for refinement; a reader search starts afresh, as in less.
+        box.value = "" if self.deck.reviewing else self.deck.filter
+        box.cursor_position = len(box.value)
         self.query_one("#search-bar").display = True
         box.focus()
         self.update_hints()
@@ -1298,8 +1345,22 @@ class SyncDeckApp(App[bool]):
     def close_search_box(self) -> None:
         self._search_open = False
         self.query_one("#search-bar").display = False
-        self.query_one("#review").focus()
+        self.query_one("#review" if self.deck.reviewing else WorksetTable).focus()
         self.update_hints()
+
+    def cancel_search_box(self) -> None:
+        self.close_search_box()
+        if not self.deck.reviewing:
+            self.apply_filter(self._filter_before_search)
+
+    def apply_filter(self, query: str) -> None:
+        self.deck.set_filter(query)
+        self.update_workset()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        # The workset narrows while typing; the reader highlights only on Enter.
+        if self._search_open and not self.deck.reviewing:
+            self.apply_filter(event.value)
 
     def clear_search(self) -> None:
         self.query_one(ReviewBody).search = ""
@@ -1308,6 +1369,11 @@ class SyncDeckApp(App[bool]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         query = event.value
         self.close_search_box()
+        if not self.deck.reviewing:
+            if query and not self.deck.visible_rows:
+                self.deck.notice = f"No match for {query}."
+                self.apply_filter("")
+            return
         if not query:
             return
         body = self.query_one(ReviewBody)
@@ -1330,7 +1396,7 @@ class SyncDeckApp(App[bool]):
         if self.busy:
             return
         if self._search_open:
-            self.close_search_box()
+            self.cancel_search_box()
             return
         if self.query_one(OptionList).display:
             self.close_menu()
@@ -1347,6 +1413,9 @@ class SyncDeckApp(App[bool]):
             return
         if self.detail_focused:
             self.query_one(WorksetTable).focus()
+            return
+        if self.deck.filter and not self.deck.reviewing and not self.deck.confirming:
+            self.apply_filter("")
             return
         if self.deck.reviewing:
             log = self.query_one("#review", VerticalScroll)
@@ -1486,8 +1555,9 @@ class SyncDeckApp(App[bool]):
 
     def action_quit_workset(self) -> None:
         # q is a pager habit elsewhere, so only the idle workset treats it as Abort;
-        # Ctrl+C remains the abort from every screen.
-        if (self.busy or self.deck.reviewing or self.deck.confirming
+        # Ctrl+C remains the abort from every screen. A filtered workset is not idle:
+        # q right after Enter may be meant for the query and would discard the session.
+        if (self.busy or self.deck.reviewing or self.deck.confirming or self.deck.filter
                 or self.query_one(OptionList).display):
             return
         self.action_abort()

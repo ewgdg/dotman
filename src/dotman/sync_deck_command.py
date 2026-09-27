@@ -33,9 +33,9 @@ def set_selected(session: SyncSession, row, selected: bool):
     return session.dispatch(command(view.session_id, view.revision, row.row_id, selected))
 
 
-def set_all_selected(session: SyncSession, selected: bool):
+def set_all_selected(session: SyncSession, selected: bool, row_ids: tuple[str, ...]):
     view = session.view
-    return session.dispatch(BatchSetApproval(view.session_id, view.revision, selected))
+    return session.dispatch(BatchSetApproval(view.session_id, view.revision, selected, row_ids))
 
 
 def additional_label(row, *, use_color: bool = False) -> str:
@@ -123,7 +123,7 @@ class SyncDeckCommandRunner:
                     event_sink=timeline, stream_output=timeline is not None)
 
     def _select_defaults(self, session):
-        set_all_selected(session, True)
+        set_all_selected(session, True, tuple(row.row_id for row in session.view.rows))
         # No Base means no evidence of which side changed; unattended runs
         # leave that drift for a first review instead of guessing a side.
         for row in session.view.rows:

@@ -242,7 +242,7 @@ def test_interactive_abort_emits_final_summary_and_releases_session(tmp_path, mo
     def abort(session, **kwargs):
         from dotman.sync_deck_command import set_all_selected
         sessions.append(session)
-        set_all_selected(session, True)
+        set_all_selected(session, True, tuple(row.row_id for row in session.view.rows))
         if interrupt:
             raise KeyboardInterrupt()
         return False

@@ -21,9 +21,11 @@ matters. Filtering the workset also enables "approve everything matching
   behaviour for tables (lazygit, k9s, fzf).
 - Safety of a filtered workset:
   - `A`/`U` act only on visible rows.
-  - While a filter hides approved rows, the title shows how many, e.g.
-    `12/80 shown · 3 approved hidden`, so `X` never runs rows the user
-    forgot about.
+  - While a filter hides selected rows, the title says how many
+    (`:: Sync Command Deck (3 selected hidden)`), so `X` never runs rows the
+    user forgot about. "Selected" covers Approval and auxiliary inclusion.
+  - The hint line shows the filter and its count (`/zsh 2/4 · Esc clear`),
+    the same place the reader shows its search.
 - Reader `n`/`N` depend on context (matrix 4.35 vs 4.15 for moving change
   blocks to `]`/`[`):
   - With a search active, `n`/`N` step through matches.
@@ -36,9 +38,13 @@ matters. Filtering the workset also enables "approve everything matching
   - Workset: review → filtered workset → full workset.
   - Reader: active search → view.
   - `q` still aborts only from the idle workset. A filtered workset is not
-    idle, so Esc clears the filter first.
+    idle: `q` right after Enter may be meant for the query, and aborting
+    would discard the session. Esc clears the filter first.
 - Workset filter lifetime: the filter survives opening a review and returning.
   A reader search is scoped to its view and cleared when leaving it.
+- The workset box reopens with the current filter so it can be refined, and
+  narrows live while typing; Esc restores the filter from before it opened.
+  The reader box starts empty and highlights on Enter, as in less.
 - Matching: case-insensitive substring. Workset matches against the plain
   canonical identity (`repo:package.target`). Reader matches against the plain
   text of each review leaf (subject, fact values, notes, diff and conflict
@@ -88,7 +94,7 @@ matters. Filtering the workset also enables "approve everything matching
       filtered rows, `A`/`U` scoped to visible rows, hidden-approval title,
       focus/click mapping under filter, filter kept across review, Esc
       layering, `q` behaviour.
-   2. Green: `CommandDeck.filter_query` and `visible_rows`, with `focus`
+   2. Green: `CommandDeck.filter` and `visible_rows`, with `focus`
       indexing visible rows; rebuild/click/update paths use visible rows;
       scoped `BatchSetApproval`.
    3. Update `docs/cli.md`; commit.
@@ -105,6 +111,8 @@ matters. Filtering the workset also enables "approve everything matching
 - 2026-09-26: layer 1 (reader search) done. Red on the missing `#search` and
   `n` not stepping matches; green with `tests/cli` at 583 passed. The search
   line gets a `/` prompt (Horizontal of Static `/` + compact Input).
+- 2026-09-26: layer 2 (workset filter) done. Red on the missing `row_ids`
+  field and the unfiltered table; green with the full suite at 1795 passed.
 
 ## Surprises & Discoveries
 
@@ -116,7 +124,16 @@ matters. Filtering the workset also enables "approve everything matching
   wrap around.
 - A key batched with Enter can arrive before the first render counts matches;
   `n`/`N` ignore that gap instead of dividing by zero.
+- Textual `Input` selects all text on focus by default; the prefilled filter
+  needs `select_on_focus=False`, or the first key replaces the whole query.
+- A scoped `BatchSetApproval` rematerializes only the scoped rows plus rows
+  fed by a changed Additional row. Before, every batch rematerialized all
+  session rows, which a filtered `A` must not do to hidden approved rows.
 
 ## Outcomes & Retrospective
 
-(pending)
+- Both layers shipped as planned; see Progress for commits.
+- Follow-up candidates (not done): unattended `_select_defaults` could pass
+  only rows not needing first review instead of approving all and then
+  clearing some; `↑`/`↓` could move the table cursor while the filter box is
+  open (fzf-style).

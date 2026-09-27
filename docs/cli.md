@@ -102,6 +102,14 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   Selection means independent Proposal or Additional Source Change Approval,
   or direct auxiliary inclusion. Batch actions establish all final states before
   rematerializing dependent Proposals.
+  `/` filters the workset: the search line opens with the current filter, deck keys type
+  into it, and the table narrows to Targets containing the text, case-insensitively. `Enter` keeps the
+  filter and `Esc` restores the previous one. A filter without matches reports
+  `No match for …` and is dropped. While filtered, the help text shows the filter and
+  its count (`/zsh 2/4`), `A`/`U` act only on visible rows, and the title reports
+  selections the filter hides (`(3 selected hidden)`), since confirmation still
+  executes them. `q` does not abort a filtered workset; `Esc` clears the filter first.
+  The filter survives opening and leaving a review.
   A single click in the Selection column toggles that row; other cells only focus it.
   The bottom help text lists keyboard shortcuts; it is not clickable. It adapts
   to workset, review, and confirmation, wrapping to two lines on narrow terminals.

@@ -10,7 +10,7 @@ from dotman.sync_session import (
     AdditionalRow, AuxiliaryRow, BatchSetApproval, CommandRejected,
     EditProposal, PrepareProposalReview, SetApproval, SetIncluded,
 )
-from tests.engine.test_sync_additional import command
+from tests.engine.test_sync_additional import all_row_ids, command
 from tests.engine.test_sync_session import make_engine, open_session
 
 
@@ -24,13 +24,13 @@ def test_batch_final_inputs_do_not_depend_on_proposal_order(tmp_path, monkeypatc
     (tmp_path / 'repo/packages/app/shared').write_bytes(b'original')
     with open_session(engine) as session:
         command(session, EditProposal, session.view.rows[0])
-        command(session, BatchSetApproval, approved=True)
+        command(session, BatchSetApproval, approved=True, row_ids=all_row_ids(session))
         proposals = [row for row in session.view.rows if not isinstance(row, AdditionalRow)]
         assert {row.row_id: row.proposal.live for row in proposals} == {
             'main:app.a': FilePresent(b'candidate'), 'main:app.b': FilePresent(b'candidate'),
         }
         assert all(row.approved for row in session.view.rows)
-        command(session, BatchSetApproval, approved=False)
+        command(session, BatchSetApproval, approved=False, row_ids=all_row_ids(session))
         assert all(not row.approved for row in session.view.rows)
         assert all(row.proposal is None for row in session.view.rows if not isinstance(row, AdditionalRow))
 
@@ -47,7 +47,7 @@ def test_mixed_batch_selection_keeps_approval_and_inclusion_distinct(tmp_path, m
     engine = DotmanEngine.from_config_path(engine.config.config_path)
     with open_session(engine) as session:
         assert 'main:app.agree' not in {row.row_id for row in session.view.rows}
-        command(session, BatchSetApproval, approved=True)
+        command(session, BatchSetApproval, approved=True, row_ids=all_row_ids(session))
         rows = {row.row_id: row for row in session.view.rows}
         assert rows['main:app.drift'].approved
         assert not rows['main:app.blocked'].approved
@@ -58,7 +58,7 @@ def test_mixed_batch_selection_keeps_approval_and_inclusion_distinct(tmp_path, m
         before = session.view
         assert isinstance(command(session, SetApproval, auxiliary[0], approved=True), CommandRejected)
         assert session.view == before
-        command(session, BatchSetApproval, approved=False)
+        command(session, BatchSetApproval, approved=False, row_ids=all_row_ids(session))
         assert all(not row.included for row in session.view.rows if isinstance(row, AuxiliaryRow))
         drift = next(row for row in session.view.rows if row.row_id == 'main:app.drift')
         assert drift.included and not drift.approved
@@ -85,3 +85,22 @@ def test_execute_consumes_reviewed_materialization_without_running_providers(tmp
         before = session.view
         assert isinstance(command(session, SetIncluded, before.rows[0], included=False), CommandRejected)
         assert session.view == before
+
+
+def test_scoped_batch_selects_only_listed_rows_and_rematerializes_dependents(tmp_path, monkeypatch):
+    from tests.engine.test_sync_additional import setup
+    session, _ = setup(tmp_path, monkeypatch)
+    a, b, additional = session.view.rows
+    command(session, BatchSetApproval, approved=True, row_ids=(a.row_id,))
+    a, b, additional = session.view.rows
+    assert a.approved and not b.approved and not additional.approved
+    assert a.proposal.live == FilePresent(b'original')
+    # Approving only the shared source still rematerializes the approved Proposal that reads it.
+    command(session, BatchSetApproval, approved=True, row_ids=(additional.row_id,))
+    a, b, additional = session.view.rows
+    assert additional.approved and not b.approved
+    assert a.proposal.live == FilePresent(b'candidate')
+    before = session.view
+    assert isinstance(command(session, BatchSetApproval, approved=False, row_ids=('main:app.missing',)),
+                      CommandRejected)
+    assert session.view == before
