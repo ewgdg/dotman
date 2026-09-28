@@ -192,6 +192,28 @@ def test_copy_key_copies_full_target_identity_and_review_text(tmp_path, monkeypa
         run(interact())
 
 
+def test_review_title_shows_approval_after_toggle(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo", b"live", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test() as pilot:
+                await pilot.press("enter")
+                await pilot.pause()
+                assert title_text(app) == ":: Proposal Review (unapproved)"
+                # The Decision section scrolls away; the title keeps Approval in view.
+                await pilot.press("space")
+                await pilot.pause()
+                assert title_text(app) == ":: Proposal Review (approved)"
+                await pilot.press("space")
+                await pilot.pause()
+                assert title_text(app) == ":: Proposal Review (unapproved)"
+        run(interact())
+
+
 def test_mouse_click_focuses_identity_and_toggles_only_approval(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
         ("one", "push-only", b"repo", b"live", ""),
@@ -477,7 +499,7 @@ def test_batched_mouse_and_keyboard_share_target(tmp_path, monkeypatch, column, 
                 if keys[-1] == "enter":
                     await pilot.pause()
                     # The title already names the review; the body opens with the target only.
-                    assert title_text(app) == ":: Proposal Review"
+                    assert title_text(app) == ":: Proposal Review (unapproved)"
                     assert review_text(app).splitlines()[0].strip() == "main:app.two"
         run(interact())
 
@@ -864,7 +886,7 @@ def test_full_view_lands_on_off_screen_change_and_steps_between_change_blocks(tm
                 assert "row-00" in app.clipboard
                 await pilot.press("escape")
                 await pilot.pause()
-                assert title_text(app) == ":: Proposal Review"
+                assert title_text(app) == ":: Proposal Review (unapproved)"
                 assert log.scroll_y == review_position
                 assert "row-00" not in review_text(app)
         run(interact())
@@ -893,7 +915,7 @@ def test_full_view_menu_offers_each_diff_and_shows_whole_merge_output(tmp_path, 
                     "Merge conflicts", "Drift"]
                 # Dismissing the menu stays in review.
                 await pilot.press("escape")
-                assert not menu.display and title_text(app) == ":: Proposal Review"
+                assert not menu.display and title_text(app) == ":: Proposal Review (unapproved)"
                 await pilot.press("v", "home", "enter")
                 await pilot.pause()
                 assert title_text(app) == ":: Full View"
@@ -905,9 +927,9 @@ def test_full_view_menu_offers_each_diff_and_shows_whole_merge_output(tmp_path, 
                 await pilot.press("q")
                 assert app.is_running and title_text(app) == ":: Full View"
                 await pilot.press("escape")
-                assert title_text(app) == ":: Proposal Review"
+                assert title_text(app) == ":: Proposal Review (unapproved)"
                 await pilot.press("q")
-                assert app.is_running and title_text(app) == ":: Proposal Review"
+                assert app.is_running and title_text(app) == ":: Proposal Review (unapproved)"
                 await pilot.press("escape")
                 assert app.query_one(WorksetTable).display
         run(interact())
@@ -965,13 +987,13 @@ def test_review_search_box_keeps_deck_keys_out_of_the_query(tmp_path, monkeypatc
                 assert app.query_one("#search").value == "ev ax" + "q"
                 assert help_text(app) == "Enter search · ↑/↓ history · Ctrl+U clear · Esc cancel · Ctrl+C abort"
                 assert session.view == frozen
-                assert title_text(app) == ":: Proposal Review"
+                assert title_text(app) == ":: Proposal Review (unapproved)"
                 assert app.is_running
                 # Esc while typing cancels the search without leaving the review.
                 await pilot.press("escape")
                 await pilot.pause()
                 assert not app.query_one("#search-bar").display
-                assert title_text(app) == ":: Proposal Review"
+                assert title_text(app) == ":: Proposal Review (unapproved)"
                 assert "/ev axq" not in help_text(app)
         run(interact())
 
@@ -1015,7 +1037,7 @@ def test_full_view_search_highlights_and_steps_matches_before_change_blocks(tmp_
                 assert "live-45" in visible_review_text(app)
                 await pilot.press("escape")
                 await pilot.pause()
-                assert title_text(app) == ":: Proposal Review"
+                assert title_text(app) == ":: Proposal Review (unapproved)"
         run(interact())
 
 
@@ -1117,7 +1139,7 @@ def test_workset_filter_survives_review_and_cancel_restores_it(tmp_path, monkeyp
             async with app.run_test(size=(100, 20)) as pilot:
                 await pilot.press("slash", "z", "s", "h", "enter", "down", "enter")
                 await pilot.pause()
-                assert title_text(app) == ":: Proposal Review"
+                assert title_text(app) == ":: Proposal Review (unapproved)"
                 assert app.deck.focused_row.row_id == "main:app.zsh_rc"
                 await pilot.press("escape")
                 await pilot.pause()

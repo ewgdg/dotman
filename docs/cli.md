@@ -123,7 +123,9 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
 - `Enter` opens focused Proposal Review or canonical Source Change Review;
   `Esc` returns to the same workset. Source Change Review shows the preimage diff,
   referencing Proposals and independent Approval; Proposal Review lists source
-  references without a duplicate Additional Approval control. Proposal Review
+  references without a duplicate Additional Approval control. Both review titles
+  annotate the focused row's Approval (`:: Proposal Review (approved)`) so `Space`
+  shows its effect while the Decision section is scrolled away. Proposal Review
   opens with the target and groups facts under full-width titled rules
   (`── Decision ───`; copied text uses `:: Decision`): Decision (Approval, Resolution, effective
   policy, and configured policy only when it differs), Paths, State (Observation,

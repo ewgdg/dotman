@@ -446,9 +446,7 @@ class CommandDeck:
         term = lambda value: render_sync_term(value, use_color=color)
         difference = lambda *args, **kwargs: _review_difference(*args, **kwargs, use_color=color,
                                                                 full_context=full_context)
-        approval = ReviewFact("Approval", term(
-            "not needed" if isinstance(row, SessionRow) and row.proposal is not None and row.proposal.noop
-            else "approved" if row.approved else "unapproved"))
+        approval = ReviewFact("Approval", term(review_approval_term(row)))
         if isinstance(row, AdditionalRow):
             return ReviewDocument(
                 heading=self.review_heading("Additional Source Review"),
@@ -606,6 +604,12 @@ def workset_target_label(row, *, use_color: bool) -> str:
 
 def row_selected(row) -> bool:
     return row.included if selection_uses_inclusion(row) else row.approved
+
+
+def review_approval_term(row) -> str:
+    if isinstance(row, SessionRow) and row.proposal is not None and row.proposal.noop:
+        return "not needed"
+    return "approved" if row.approved else "unapproved"
 
 
 def unit_label(row, *, use_color: bool) -> str:
@@ -1153,10 +1157,10 @@ class SyncDeckApp(App[bool]):
         elif self.deck.full_view is not None:
             hints = [*review_lead, ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            hints = [*review_lead, ("Space", "Approval"), ("V", "full view"), ("Y", "copy"), review_scroll,
+            hints = [*review_lead, ("Space", "approval"), ("V", "full view"), ("Y", "copy"), review_scroll,
                      ("Ctrl+C", "abort")]
         elif self.deck.reviewing:
-            hints = [*review_lead, ("Space", "Approval"), ("E", "edit"), ("T", "retry"), ("V", "full view"),
+            hints = [*review_lead, ("Space", "approval"), ("E", "edit"), ("T", "retry"), ("V", "full view"),
                      ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.detail_focused:
             hints = [("Tab/Esc", "return"), review_scroll, ("Space", "mark"), bulk_selection,
@@ -1280,7 +1284,11 @@ class SyncDeckApp(App[bool]):
         log.display = True
         self.clear_search()
         self.query_one(ReviewBody).document = self.deck.review_document()
-        self.query_one("#title", Static).update(":: Additional Source Review" if isinstance(self.deck.focused_row, AdditionalRow) else ":: Proposal Review")
+        row = self.deck.focused_row
+        title = ":: Additional Source Review" if isinstance(row, AdditionalRow) else ":: Proposal Review"
+        # Space toggles Approval while the Decision section may be scrolled away; the title keeps it in view.
+        approval = render_sync_term(review_approval_term(row), use_color=self.deck.use_color)
+        self.query_one("#title", Static).update(Text.from_ansi(f"{title} ({approval})"))
         log.focus()
         self.call_after_refresh(log.scroll_to, *position, animate=False)
 
