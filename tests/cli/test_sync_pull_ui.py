@@ -219,6 +219,28 @@ def test_noop_row_is_unselectable_and_review_explains_why(tmp_path, monkeypatch)
     asyncio.run(asyncio.wait_for(interact(), timeout=10))
 
 
+@pytest.mark.parametrize('key', ['a', 'u'])
+def test_bulk_selection_keeps_noop_row_unselectable(tmp_path, monkeypatch, key):
+    import asyncio
+
+    from dotman.sync_deck import SyncDeckApp, WorksetTable
+
+    engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'a\n', b'A\n', FOLDING_CAPTURE)])
+
+    async def interact():
+        with engine.open_pull_session(engine.resolve_sync_scope()) as session:
+            app = SyncDeckApp(CommandDeck(session, use_color=False))
+            async with app.run_test() as pilot:
+                await pilot.press(key)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                marker, _target, _policy, resolution = (str(cell) for cell in app.query_one(WorksetTable).get_row_at(0))
+                assert (marker, resolution) == ('[-]', 'No-op')
+                assert not session.view.rows[0].approved
+
+    asyncio.run(asyncio.wait_for(interact(), timeout=10))
+
+
 def test_no_write_review_says_approval_records_the_sync_base(tmp_path, monkeypatch):
     # Render reproduces live, so Approval can record a Sync Base even though nothing is written.
     extra = 'render = "tr a-z A-Z < $DOTMAN_SOURCE"\n' + FOLDING_CAPTURE
