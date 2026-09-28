@@ -49,13 +49,13 @@ def test_merge_default_is_lazy_and_executes_frozen_three_way_outcome(tmp_path, m
         assert session.view.observations[0].base.record.payload == FilePresent(MERGED)
 
 
-@pytest.mark.parametrize("repo,live", [(b"repo", b"live"), (b"repo", None), (None, b"live")])
-def test_without_base_repository_fallback_and_disallowed_merge_are_visible(tmp_path, monkeypatch, repo, live):
-    # One consistent no-Base default, even when a side is Missing.
+@pytest.mark.parametrize("repo,live,expected", [(b"repo", b"live", "use-repository"), (b"repo", None, "use-repository"), (None, b"live", "use-live")])
+def test_without_base_repository_fallback_and_disallowed_merge_are_visible(tmp_path, monkeypatch, repo, live, expected):
+    # No-Base default keeps whichever side still has the file, else the repository.
     engine = make_engine(tmp_path, monkeypatch, [("unit", "both", repo, live, "")])
     with open_session(engine) as session:
         row = session.view.rows[0]
-        assert row.intent == "use-repository" and row.fallback_reason == "absent"
+        assert row.intent == expected and row.fallback_reason == "absent"
         assert set(row.allowed_intents) == {"use-live", "use-repository"}
         before = session.view
         assert command(session, SetResolutionIntent, row.row_id, "merge").reason == "disallowed"

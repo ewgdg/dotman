@@ -195,9 +195,15 @@ def default_intent(unit: Observation) -> ResolutionIntent | None:
     if not supports_proposal(unit):
         return None
     if unit.effective_policy == "both":
-        # Without Base evidence the repository is the declared config, and live
-        # writes are snapshotted while repository writes are not.
-        return "merge" if unit.base.status == "usable" else "use-repository"
+        if unit.base.status == "usable":
+            return "merge"
+        # Without Base evidence keep whichever side still has the file when
+        # exactly one side is Missing; otherwise the repository is the declared config.
+        repo_missing = isinstance(unit.repository, Missing)
+        live_missing = isinstance(unit.live, Missing)
+        if repo_missing != live_missing:
+            return "use-live" if repo_missing else "use-repository"
+        return "use-repository"
     return allowed_intents(unit)[0]
 
 

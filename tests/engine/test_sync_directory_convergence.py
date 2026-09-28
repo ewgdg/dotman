@@ -123,7 +123,7 @@ def test_rename_has_independent_missing_and_present_proposals_and_ancestry(tmp_p
         new, old = session.view.rows
         assert new.observation.base.status == "unavailable"
         assert old.observation.base.status == "usable"
-        assert new.intent == "use-repository" and old.intent == "merge"
+        assert new.intent == "use-live" and old.intent == "merge"
         command(session, SetApproval, old.row_id, True)
         new, old = session.view.rows
         assert old.proposal.repository == Missing() and old.approved and not new.approved

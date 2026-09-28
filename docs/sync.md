@@ -180,11 +180,12 @@ Preview freezes Guard and Probe results but executes no hooks.
 Drifted push-only and push-only-delete files offer **Use repository**; pull-only files offer only
 **Use live**. Both-policy files offer **Use repository**, **Use live**, and
 **Merge** when a usable Sync Base exists. Their default is Merge with a usable
-Base; otherwise Use repository is an explicit fallback, with the Base reason shown in
+Base; otherwise the default keeps whichever side still has the file when exactly one
+side is Missing, else Use repository, with the Base reason shown as an explicit fallback in
 the focused detail, review, and command output. Without a Base, nothing shows
-which side changed. The repository is the declared configuration, and live writes
-are snapshotted while repository writes are not, so the fallback is the same for
-every case, including a Missing side. Unattended Sync does not guess and skips
+which side changed beyond presence. The repository is the declared configuration, and live writes
+are snapshotted while repository writes are not, so the fallback stays Use repository
+when both sides are present or both are Missing. Unattended Sync does not guess and skips
 this drift (see [Result log](#result-log)). Proposal Approval starts off;
 opening a review does not approve it. Review or Approval materializes the
 Proposal from frozen Observation, retaining the repository representation,
