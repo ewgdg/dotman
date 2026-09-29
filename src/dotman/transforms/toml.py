@@ -247,7 +247,7 @@ def as_single_table(value: Any) -> Any:
     return Table(
         body,
         copy.deepcopy(header_part.trivia),
-        is_aot_element=False,
+        is_aot_element=header_part.is_aot_element(),
         is_super_table=header_part.is_super_table(),
     )
 
@@ -297,10 +297,27 @@ def body_item(container: TomlContainer, key_name: str) -> Any:
     ]
     if len(matches) <= 1:
         return matches[0] if matches else None
-    if all(isinstance(match, AoT) for match in matches):
-        # An array of tables continued in another part of a split table.
-        return AoT([element for match in matches for element in match.body], parsed=True)
+    if any(isinstance(match, AoT) for match in matches):
+        return joined_array_of_tables(matches)
     return SplitTable(tuple(matches))
+
+
+def joined_array_of_tables(parts: list[AoT | Table]) -> AoT:
+    """Join an array of tables continued in other parts of a split table.
+
+    A table part there comes from a late sub-table header (`[[a.b]]` ... `[c]`
+    ... `[a.b.d]`) and extends the array's last element so far.
+    """
+    element_groups: list[list[Table]] = []
+    for part in parts:
+        if isinstance(part, AoT):
+            element_groups.extend([element] for element in part.body)
+        else:
+            element_groups[-1].append(part)
+    return AoT(
+        [as_single_table(SplitTable(tuple(group))) if len(group) > 1 else group[0] for group in element_groups],
+        parsed=True,
+    )
 
 
 def item_text(item: object) -> str:
@@ -763,7 +780,7 @@ def ensure_container(
     current: TomlContainer = root
     source_current: Any = source_root
     for part in table_path:
-        source_current = source_current[part]
+        source_current = body_item(source_current, part)
         next_value = current.get(part)
         if not is_table_like(next_value):
             current[part] = (

@@ -1399,6 +1399,33 @@ def test_merge_keeps_every_part_of_split_tables(tmp_path: Path) -> None:
     }
 
 
+# The late [a.b.d] extends the last element of [[a.b]].
+LATE_ARRAY_ELEMENT_SUBTABLE = "[[a.b]]\nx = 1\n[[a.b]]\nx = 2\n[c]\nq = 1\n[a.b.d]\ny = 1\n"
+LATE_ARRAY_OF_TABLES = {"b": [{"x": 1}, {"x": 2, "d": {"y": 1}}]}
+
+
+def test_late_subtable_of_array_of_tables_element_stays_with_that_element(tmp_path: Path) -> None:
+    def transform(base_text: str, *selector_args: str, overlay_text: str | None = None) -> dict:
+        return tomllib.loads(
+            run_toml_transform(tmp_path, base_text, *selector_args, overlay_text=overlay_text)
+        )
+
+    base_text = LATE_ARRAY_ELEMENT_SUBTABLE
+    assert transform(base_text, "--selector-type", "remove", "--selectors", "c") == {
+        "a": LATE_ARRAY_OF_TABLES
+    }
+    assert transform(base_text, "--selector-type", "remove", "--selectors", "a.b") == {"c": {"q": 1}}
+    assert transform(base_text, "--selectors", "a.b") == {"a": LATE_ARRAY_OF_TABLES}
+    assert transform("k = 1\n", "--selectors", "zzz", overlay_text=base_text) == {
+        "a": LATE_ARRAY_OF_TABLES,
+        "c": {"q": 1},
+    }
+    assert transform(base_text, "--selectors", "a", overlay_text="[c]\nq = 2\n") == {
+        "a": LATE_ARRAY_OF_TABLES,
+        "c": {"q": 2},
+    }
+
+
 def test_selectors_reach_into_inline_tables(tmp_path: Path) -> None:
     base_text = "a = {b = 1, c = 2}\nz = 3\n"
 
