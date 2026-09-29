@@ -37,12 +37,20 @@ tomlkit forces private internals (`_body`, `_map`, `OutOfOrderTableProxy._tables
 
 ## Surprises & Discoveries
 
+- 2026-09-29, design check before rewriting: tomlrt's native edits do not follow the comment rule in `docs/cli.md`. An entry's whole leading block (blank-separated groups included) travels and is deleted with it. Probe on `k = 1 / # about b / [b] / x = 1 / # tail of b / (blank) / # independent / (blank) / # about c / [c] / y = 1`:
+  - `del doc["c"]` also deletes `# tail of b` (often commented-out settings of `[b]`) and `# independent`.
+  - `del doc["b"]` leaves `# tail of b` behind.
+  - Deleting a key deletes a blank-separated independent block above it.
+  Enforcing the rule needs each slot's textual predecessor (to split its leading block into table-owned / independent / attached parts and re-home them on delete, retain and merge). tomlrt's public API exposes the blocks but not textual slot order, which differs from data order for out-of-order tables and interleaved dotted keys. Getting it needs a TOML-aware text scanner or a marker trick, i.e. a new ownership layer about as large as today's.
+
 - tomlrt `entry()` returns plain Python values; there is no scalar view. Only containers carry formatting across a copy.
 - Same-document moves also re-spell scalars.
 
 ## Decisions
 
-- Blocked on: how merge handles live-only retained scalars inside a table the repo copy also has. Options: accept re-spelling (document it), wait for an upstream public API that copies a key slot with its formatting, or stay on tomlkit's public API.
+- 2026-09-29: user chose to accept scalar re-spelling (option 1) and not to keep a tomlkit fallback.
+- Blocked again on the comment-rule finding above: decide between building the ownership layer on tomlrt, or keeping tomlkit through its public API only.
+- Earlier blocker (resolved by the user's choice): how merge handles live-only retained scalars inside a table the repo copy also has. Options: accept re-spelling (document it), wait for an upstream public API that copies a key slot with its formatting, or stay on tomlkit's public API.
 
 ## Outcomes & Retrospective
 
