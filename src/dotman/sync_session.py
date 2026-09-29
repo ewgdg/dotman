@@ -222,7 +222,14 @@ class SessionRow:
     allowed_intents: tuple[ResolutionIntent, ...] = ()
     intent: ResolutionIntent | None = None
     fallback_reason: str | None = None
+    # Choosing a Resolution or editing the outcome is a decision; Approval only accepts a default.
+    resolution_chosen: bool = False
     diagnostics: tuple[Diagnostic, ...] = ()
+
+    @property
+    def resolution_guessed(self) -> bool:
+        """A no-Base default nobody has decided on yet; the fallback reason itself stays as evidence."""
+        return self.fallback_reason is not None and not self.resolution_chosen
 
     @property
     def approvable(self) -> bool:
@@ -874,7 +881,7 @@ class ProposalSession:
                 if command.intent not in row.allowed_intents:
                     return CommandRejected(view, "disallowed")
                 self._edited_outcomes.pop(row.row_id, None)
-                row = replace(row, intent=command.intent, proposal=None, diagnostics=())
+                row = replace(row, intent=command.intent, resolution_chosen=True, proposal=None, diagnostics=())
             if isinstance(command, RetryMaterialization):
                 row = replace(row, proposal=None)
             proposal, diagnostics = row.proposal, row.diagnostics
@@ -1137,7 +1144,7 @@ class ProposalSession:
                         proposal = self._materialize_row(row)
                     operation.check_cancelled()
                     updated = replace(row, approved=row.approved and not proposal.noop, proposal=proposal,
-                                      diagnostics=(), additional_changes=output.additional)
+                                      resolution_chosen=True, diagnostics=(), additional_changes=output.additional)
         except (KeyboardInterrupt, InterruptedError):
             status = "cancelled"
             diagnostics = (Diagnostic("editor-cancelled", "Editor cancelled"),)

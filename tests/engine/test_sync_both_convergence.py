@@ -62,6 +62,30 @@ def test_without_base_repository_fallback_and_disallowed_merge_are_visible(tmp_p
         assert session.view == before
 
 
+def test_explicit_resolution_choice_ends_the_guess_but_keeps_the_base_reason(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"repo", b"live", "")])
+    with open_session(engine) as session:
+        assert session.view.rows[0].resolution_guessed
+        # Approval accepts the guess; it does not choose a side.
+        command(session, SetApproval, "main:app.unit", True)
+        assert session.view.rows[0].resolution_guessed
+        # Choosing back the guessed side is still a decision, and nothing restores the guess.
+        command(session, SetResolutionIntent, "main:app.unit", "use-live")
+        command(session, SetResolutionIntent, "main:app.unit", "use-repository")
+        row = session.view.rows[0]
+        assert not row.resolution_guessed and row.fallback_reason == "absent"
+
+
+def test_edited_outcome_ends_the_guess(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"repo", b"live", 'editor = { run = "printf edited > \\"$DOTMAN_SOURCE\\"", io = "pipe" }'),
+    ])
+    with open_session(engine) as session:
+        command(session, EditProposal, "main:app.unit")
+        row = session.view.rows[0]
+        assert row.proposal.intent == "editor" and not row.resolution_guessed
+
+
 @pytest.mark.parametrize("intent,expected", [("use-repository", REPO), ("use-live", LIVE)])
 def test_intent_effects_and_capture_cache(tmp_path, monkeypatch, intent, expected):
     marker = tmp_path / "captures"

@@ -11,7 +11,7 @@ from dotman.interaction import Interaction
 from dotman.interaction_policy import interaction_scope
 from dotman.progress import make_planning_sink
 from dotman.sync_timeline import SyncTimelineRenderer
-from dotman.cli_style import render_sync_term, render_package_label, render_summary_stat, style_text, MENU_REPO_STYLE
+from dotman.cli_style import SYNC_TERM_STYLE_BY_NAME, render_sync_term, render_package_label, render_summary_stat, style_text, MENU_REPO_STYLE
 from dotman.sync_scope import _parse_scope_selector, split_scope_child_path
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_session import (
@@ -326,9 +326,8 @@ class SyncDeckCommandRunner:
             print(f"  [{term(lead)}] {unit['identity']}")
             if not recap:
                 if unit["resolution"]:
-                    print(f"      {term(resolution_label(unit['resolution']))}")
-                if unit["fallback_reason"]:
-                    print(f"      {term('Fallback')}: {unit['fallback_reason']}")
+                    label = resolution_label(unit["resolution"])
+                    print(f"      {render_resolution(label, guessed=unit['resolution_guessed'], use_color=self._use_color)}")
                 if unit["primary_source_change"]:
                     print(f"      repository {unit['primary_source_change']['kind']}")
                 for effect in unit["effects"]:
@@ -516,6 +515,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "additional_source_changes": [item.row_id for item in additional if identity in item.references],
             "allowed_intents": list(row.allowed_intents) if row else [],
             "fallback_reason": row.fallback_reason if row else None,
+            "resolution_guessed": bool(row and row.resolution_guessed),
             "capture": ("missing" if isinstance(proposal.capture, Missing) else "present") if proposal and proposal.capture is not None else None,
             "reconciliation": proposal.reconciliation if proposal else None,
             "selected": bool(row and (row.included if selection_uses_inclusion(row) else row.approved)),
@@ -604,6 +604,14 @@ def effect_summary(effect) -> dict:
 
 def resolution_label(intent: str) -> str:
     return {"use-repository": "Use repository", "use-live": "Use live", "merge": "Merge", "editor": "Edited"}[intent]
+
+
+def render_resolution(label: str, *, guessed: bool, use_color: bool) -> str:
+    """A guessed Resolution takes the guess color and a text marker that survives without color."""
+    if not guessed:
+        return render_sync_term(label, use_color=use_color)
+    marked = f"{label} (guess)"
+    return style_text(marked, *SYNC_TERM_STYLE_BY_NAME["guess"]) if use_color else marked
 
 
 def primary_change_summary(proposal, path) -> dict | None:

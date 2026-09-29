@@ -295,6 +295,33 @@ def test_unattended_both_fallback_reports_reason_and_skips(tmp_path, monkeypatch
     assert (tmp_path / "live/push").read_bytes() == (b"live" if dry_run else b"repo")
 
 
+def test_report_marks_an_approved_guess_until_a_side_is_chosen(tmp_path, monkeypatch, capsys):
+    from dotman import sync_deck
+    from dotman.sync_session import SetApproval, SetResolutionIntent
+    import sys
+
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("guessed", "both", b"repo", b"live", ""),
+        ("chosen", "both", b"repo", b"live", ""),
+    ])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    def approve_both(session, *, use_color):
+        for row_id in ("main:app.guessed", "main:app.chosen"):
+            view = session.view
+            session.dispatch(SetApproval(view.session_id, view.revision, row_id, True))
+        view = session.view
+        session.dispatch(SetResolutionIntent(view.session_id, view.revision, "main:app.chosen", "use-repository"))
+        return True
+
+    monkeypatch.setattr(sync_deck, "run_command_deck", approve_both)
+    assert runner_for(engine).run(arguments(unattended=False, dry_run=True, json_output=False, report=True)) == 0
+    out = capsys.readouterr().out
+    assert _in_order(out, "main:app.guessed", "Use repository (guess)", "main:app.chosen")
+    assert out.count("(guess)") == 1
+
+
 def test_json_failed_hook_identifies_exact_instance_target(tmp_path, monkeypatch, capsys):
     from dotman.engine import DotmanEngine
 

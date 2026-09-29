@@ -33,7 +33,7 @@ from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
 from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
-from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, resolution_label, summary_stats
+from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_resolution, resolution_label, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SessionRow, SyncSession, conflict_diagnostic
 
 
@@ -475,7 +475,7 @@ class CommandDeck:
 
         decision = [
             approval,
-            ReviewFact("Resolution", term(row_resolution(row)) if intent or self.session.view.operation == "pull" else term("blocked")),
+            ReviewFact("Resolution", render_row_resolution(row, use_color=color) if intent or self.session.view.operation == "pull" else term("blocked")),
             ReviewFact("Policy", observation.effective_policy),
         ]
         if observation.configured_policy != observation.effective_policy:
@@ -483,8 +483,6 @@ class CommandDeck:
         if "authorize-symlink-replacement" in row.allowed_commands:
             link = "Link replacement authorized" if row.symlink_authorized else "Link replacement requires authorization"
             decision.append(ReviewNote(f"{term(link)} (L)"))
-        if row.fallback_reason:
-            decision.append(ReviewNote(f"{term('Fallback')}: {row.fallback_reason}"))
         decision.extend(ReviewNote(f"{term(item.severity)}: {item.message}") for item in row_diagnostics(row))
         sections = [
             ReviewSection("Decision", tuple(decision)),
@@ -622,9 +620,9 @@ def unit_label(row, *, use_color: bool) -> str:
     return label if identity.child_path is None else f"{label}/{identity.child_path}"
 
 
-def unit_detail_facts(observation) -> list[tuple[str, str]]:
-    """Surface what the workset columns cannot fit; labels match Proposal Review."""
-    state = f"{observation.state} · Sync Base: {observation.base.status}"
+def unit_detail_facts(observation, *, use_color: bool) -> list[tuple[str, str]]:
+    """Surface what the workset columns cannot fit; labels and colors match Proposal Review."""
+    state = f"{observation.state} · Sync Base: {render_sync_term(observation.base.status, use_color=use_color)}"
     if observation.configured_policy != observation.effective_policy:
         state += f" · Configured policy: {observation.configured_policy}"
     # Full paths: the ring wraps them, so compaction would only hide identity.
@@ -667,6 +665,13 @@ def row_resolution(row) -> str:
         return "In sync" if row.observation.state == "directly-in-sync" else "Unsupported"
     # Pull leaves its fixed direction implicit; Push records use-repository.
     return resolution_label((row.proposal and row.proposal.intent) or row.intent or "use-live")
+
+
+def render_row_resolution(row, *, use_color: bool) -> str:
+    label = row_resolution(row)
+    # Failures and No-op describe the row itself, so they outrank the guess mark.
+    guessed = isinstance(row, SessionRow) and row.resolution_guessed and label == resolution_label(row.intent)
+    return render_resolution(label, guessed=guessed, use_color=use_color)
 
 
 def elide_middle(label: Text, width: int) -> Text:
@@ -1115,7 +1120,7 @@ class SyncDeckApp(App[bool]):
                               Text.from_ansi(render_sync_term(term, use_color=self.deck.use_color).replace(term, marker)),
                               update_width=True)
             table.update_cell(row.row_id, table.ordered_columns[3].key,
-                              Text.from_ansi(render_sync_term(row_resolution(row), use_color=self.deck.use_color)),
+                              Text.from_ansi(render_row_resolution(row, use_color=self.deck.use_color)),
                               update_width=True)
         # Resolution width varies with intent, so refit after every cell update.
         table.fit_targets()
@@ -1198,9 +1203,7 @@ class SyncDeckApp(App[bool]):
                 facts.append((render_sync_term('Guard skipped', use_color=use_color), guard_skip_explanation(row)))
         else:
             identity = unit_label(row, use_color=use_color)
-            if row.fallback_reason:
-                facts.append((render_sync_term('Fallback', use_color=use_color), row.fallback_reason))
-            facts += unit_detail_facts(row.observation)
+            facts += unit_detail_facts(row.observation, use_color=use_color)
         if row.row_id != self._detail_row_id:
             # A newly focused row starts from its identity, not the old scroll offset.
             self._detail_row_id = row.row_id

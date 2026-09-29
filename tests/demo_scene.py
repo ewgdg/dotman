@@ -58,6 +58,9 @@ CASES = (
              base=MERGE_BASE, shows="+live"),
     DemoCase("merge-conflict", "both", b"repository\nmiddle\nlast\n", b"conflict\nmiddle\nlast\n",
              base=MERGE_BASE, shows=":: Merge conflicts"),
+    # No Sync Base, so the default is a guess: the Resolution is marked as one.
+    DemoCase("no-base-fallback", "both", b"kept = true\nretries = 3\n", b"kept = true\nretries = 5\n",
+             shows="Resolution: Use repository (guess)"),
 )
 
 

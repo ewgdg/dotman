@@ -456,7 +456,7 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "Use live": ("1", "36"),
     "Merge": ("1", "36"),
     "Edited": ("1", "36"),
-    "Fallback": ("33",),
+    "guess": ("33",),
     "completed": ("1", "32"),
     "incomplete": ("1", "33"),
     "aborted": ("1", "31"),
