@@ -154,12 +154,17 @@ def run_parsed_engine(engine: TransformEngine, parser: argparse.ArgumentParser, 
         parsed_args.stdout = True
         parsed_args.output_path = None
     request = build_request(parser, engine, parsed_args)
-    output = engine.transform(request)
-    emit_transform_output(
-        request.output_path,
-        output,
-        stdout=bool(request.engine_option("stdout", False)),
-    )
+    try:
+        output = engine.transform(request)
+        emit_transform_output(
+            request.output_path,
+            output,
+            stdout=bool(request.engine_option("stdout", False)),
+        )
+    except OSError as error:
+        # Unreadable inputs and unwritable outputs are user errors; report
+        # them like other transform errors instead of as a traceback.
+        raise ValueError(str(error)) from error
     return 0
 
 

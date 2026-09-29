@@ -417,3 +417,15 @@ def test_stdin_base_never_inherits_permissions_from_a_file_named_dash(
 
     assert cli.main(["transform", transform_format, "-", str(output), "--mode", "cleanup", "--selectors", "a"]) == 0
     assert output.stat().st_mode & 0o777 != 0o600
+
+
+def test_file_system_errors_are_clean_cli_errors(tmp_path, capsys) -> None:
+    from dotman import cli
+
+    base = tmp_path / "base.json"
+    base.write_text('{"a": 1}\n', encoding="utf-8")
+    output_directory = tmp_path / "directory"
+    output_directory.mkdir()
+
+    assert cli.main(["transform", "json", str(base), str(output_directory), "--mode", "cleanup"]) == 2
+    assert str(output_directory) in capsys.readouterr().err
