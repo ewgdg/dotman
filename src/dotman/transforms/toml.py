@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from datetime import datetime, time
-import math
 import tomllib
 import re
 from collections.abc import Iterable
@@ -25,6 +23,7 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
+    values_strictly_equal,
     read_input_text,
 )
 
@@ -61,29 +60,6 @@ def render_document_text(doc: TOMLDocument, line_ending: str) -> str:
     # tomlkit writes LF for trivia it creates, so unify every line ending to the
     # source's instead of emitting mixed endings for CRLF input.
     return doc.as_string().replace("\r\n", "\n").replace("\n", line_ending)
-
-
-def values_strictly_equal(left: Any, right: Any) -> bool:
-    """Compare unwrapped TOML values without Python's cross-type equality.
-
-    Python treats True == 1 == 1.0 and datetimes at the same instant as equal,
-    but TOML text for those values differs, so reusing the other text is stale.
-    """
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, dict):
-        return left.keys() == right.keys() and all(
-            values_strictly_equal(left[key], right[key]) for key in left
-        )
-    if isinstance(left, list):
-        return len(left) == len(right) and all(map(values_strictly_equal, left, right))
-    if isinstance(left, float):
-        if math.isnan(left) or math.isnan(right):
-            return math.isnan(left) and math.isnan(right)
-        return left == right and math.copysign(1.0, left) == math.copysign(1.0, right)
-    if isinstance(left, (datetime, time)):
-        return left == right and left.utcoffset() == right.utcoffset()
-    return left == right
 
 
 def get_existing_text_if_unchanged(
