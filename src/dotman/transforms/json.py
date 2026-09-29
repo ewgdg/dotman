@@ -20,6 +20,7 @@ from dotman.transforms.framework import (
     split_quoted_key_path,
     values_strictly_equal,
     read_input_text,
+    read_reference_text,
 )
 
 
@@ -29,6 +30,7 @@ KeyRegex = re.Pattern[str]
 DEFAULT_JSON_INDENT = "  "
 _JSON_INDENT_RE = re.compile(r"^([ \t]+)\S")
 _MISSING = object()
+_LONE_SURROGATE_RE = re.compile("[\ud800-\udfff]")
 
 
 @dataclass
@@ -315,23 +317,23 @@ def detect_json_indent(text: str) -> str | None:
 
 
 
-def detect_json_indent_from_path(path: Path | None) -> str | None:
-    if path is None or not path.exists():
+def detect_json_indent_from_text(text: str | None) -> str | None:
+    if text is None:
         return None
-
-    text = path.read_text(encoding="utf-8")
     try:
         json.loads(text)
-    except Exception:
+    except ValueError:
         return None
 
     return detect_json_indent(text)
 
 
 
-def select_json_indent(*reference_paths: Path | None) -> str:
+def select_json_indent(*reference_paths: Path | None, stdin_bytes: bytes | None = None) -> str:
     for reference_path in reference_paths:
-        indent = detect_json_indent_from_path(reference_path)
+        indent = detect_json_indent_from_text(
+            read_reference_text(reference_path, stdin_bytes=stdin_bytes)
+        )
         if indent is not None:
             return indent
     return DEFAULT_JSON_INDENT
@@ -339,7 +341,10 @@ def select_json_indent(*reference_paths: Path | None) -> str:
 
 
 def json_text(data: JsonDict, indent: str = DEFAULT_JSON_INDENT) -> str:
-    return json.dumps(data, indent=indent, ensure_ascii=False) + "\n"
+    text = json.dumps(data, indent=indent, ensure_ascii=False)
+    # JSON permits lone surrogate escapes such as "\ud800", but UTF-8 cannot
+    # encode them raw, so keep those (and only those) escaped.
+    return _LONE_SURROGATE_RE.sub(lambda match: f"\\u{ord(match.group()):04x}", text) + "\n"
 
 
 
@@ -366,6 +371,7 @@ def build_json_output(
     mode_reference_path: Path | None,
     compare_path: Path | None = None,
     indent_reference_paths: tuple[Path | None, ...] = (),
+    stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
     if compare_path is not None:
         existing_bytes = get_existing_bytes_if_semantically_unchanged(compare_path, data)
@@ -376,7 +382,7 @@ def build_json_output(
                 reused_compare_path=compare_path,
             )
 
-    indent = select_json_indent(compare_path, *indent_reference_paths, mode_reference_path)
+    indent = select_json_indent(compare_path, *indent_reference_paths, stdin_bytes=stdin_bytes)
     return TransformOutput(
         content=json_text(data, indent=indent),
         mode_reference_path=mode_reference_path,
@@ -464,6 +470,7 @@ class JsonTransformEngine(BaseTransformEngine):
             mode_reference_path=request.base_path,
             compare_path=request.engine_option("compare_path"),
             indent_reference_paths=(request.base_path, request.overlay_path),
+            stdin_bytes=request.engine_option("stdin_bytes"),
         )
 
 

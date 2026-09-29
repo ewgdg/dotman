@@ -783,3 +783,24 @@ def test_merge_remove_key_preserves_unselected_live_keys(tmp_path: Path) -> None
         "version": "12.5.7",
         "rpc": True,
     }
+
+
+def test_stdin_base_indent_is_preserved(monkeypatch, capsys) -> None:
+    import io
+
+    from dotman import cli
+
+    source = '{\n\t"settings": {\n\t\t"a": 1\n\t}\n}\n'
+    monkeypatch.setattr("sys.stdin", io.StringIO(source))
+
+    assert cli.main(["transform", "json", "-", "-", "--mode", "cleanup"]) == 0
+    assert capsys.readouterr().out == source
+
+
+def test_lone_surrogate_escape_survives_output(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "output.json"
+    input_path.write_text('{"a": "\\ud800", "b": 1}\n', encoding="utf-8")
+
+    assert MODULE.main([str(input_path), str(output_path), "--mode", "cleanup", "--selectors", "a"]) == 0
+    assert load_json(output_path) == {"a": "\ud800"}
