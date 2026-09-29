@@ -1263,6 +1263,7 @@ def run_toml_transform(
     base_text: str,
     *selector_args: str,
     overlay_text: str | None = None,
+    compare_text: str | None = None,
 ) -> str:
     """Run the engine CLI and return the output text without newline translation."""
     base_path = tmp_path / "base.toml"
@@ -1275,6 +1276,10 @@ def run_toml_transform(
         overlay_path = tmp_path / "overlay.toml"
         overlay_path.write_bytes(overlay_text.encode("utf-8"))
         argv += ["--mode", "merge", "--overlay-file", str(overlay_path)]
+    if compare_text is not None:
+        compare_path = tmp_path / "compare.toml"
+        compare_path.write_bytes(compare_text.encode("utf-8"))
+        argv += ["--compare-file", str(compare_path)]
 
     assert MODULE.main([*argv, *selector_args]) == 0
     return output_path.read_bytes().decode("utf-8")
@@ -1441,3 +1446,32 @@ def test_retain_mixing_regex_and_exact_selectors_keeps_document_order(tmp_path: 
     output = run_toml_transform(tmp_path, "[t]\nx = 1\n[u]\ny = 1\n", "--selectors", "re:^u$", "t")
 
     assert output == "[t]\nx = 1\n\n[u]\ny = 1\n"
+
+
+def test_compare_file_reuse_requires_values_of_the_same_type(tmp_path: Path) -> None:
+    def cleanup_with_compare(base_text: str, compare_text: str) -> str:
+        return run_toml_transform(
+            tmp_path,
+            base_text,
+            "--selector-type",
+            "remove",
+            "--selectors",
+            "unused",
+            compare_text=compare_text,
+        )
+
+    stale_lookalikes = [
+        ("a = true\n", "a = 1\n"),
+        ("a = 1\n", "a = 1.0\n"),
+        ("a = [1, 2]\n", "a = [1.0, 2]\n"),
+        ("a = {b = 0.0}\n", "a = {b = -0.0}\n"),
+        ("t = 1979-05-27T07:32:00Z\n", "t = 1979-05-27T00:32:00-07:00\n"),
+    ]
+    for base_text, compare_text in stale_lookalikes:
+        assert cleanup_with_compare(base_text, compare_text) == base_text
+
+    reusable_compare_text = "a  =  nan\nt = 1979-05-27T07:32:00Z\n"
+    assert (
+        cleanup_with_compare("a = nan\nt = 1979-05-27T07:32:00Z\n", reusable_compare_text)
+        == reusable_compare_text
+    )
