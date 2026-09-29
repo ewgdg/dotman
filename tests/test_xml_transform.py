@@ -491,3 +491,47 @@ def test_cleanup_with_compare_file_treats_selected_child_lists_as_semantically_e
     )
 
     assert output_path.read_text(encoding="utf-8") == repo_text
+
+
+def test_merge_keeps_retained_live_child_under_its_identified_sibling(tmp_path: Path) -> None:
+    live_path = tmp_path / "live.xml"
+    repo_path = tmp_path / "repo.xml"
+    output_path = tmp_path / "output.xml"
+    live_path.write_text(
+        '<config><item id="a"><x>1</x></item><item id="b"><keep>live-b</keep></item></config>',
+        encoding="utf-8",
+    )
+    repo_path.write_text('<config><item id="a"><x>1</x></item><item id="b"/></config>', encoding="utf-8")
+
+    transform_xml(
+        live_path,
+        output_path,
+        overlay_path=repo_path,
+        node_matchers=["config/item/keep"],
+        selector_action=MODULE.SelectorAction.RETAIN,
+    )
+
+    root = parse_xml(output_path)
+    assert root.find("item[@id='a']/keep") is None
+    assert root.findtext("item[@id='b']/keep") == "live-b"
+
+
+def test_merge_does_not_fuse_siblings_with_different_identities(tmp_path: Path) -> None:
+    live_path = tmp_path / "live.xml"
+    repo_path = tmp_path / "repo.xml"
+    output_path = tmp_path / "output.xml"
+    live_path.write_text('<config><item id="a"><x>live-a</x></item><other/></config>', encoding="utf-8")
+    repo_path.write_text('<config><item id="b"><y>repo-b</y></item></config>', encoding="utf-8")
+
+    transform_xml(
+        live_path,
+        output_path,
+        overlay_path=repo_path,
+        node_matchers=["config/other"],
+        selector_action=MODULE.SelectorAction.REMOVE,
+    )
+
+    root = parse_xml(output_path)
+    assert [
+        (item.get("id"), [(child.tag, child.text) for child in item]) for item in root.findall("item")
+    ] == [("a", [("x", "live-a")]), ("b", [("y", "repo-b")])]

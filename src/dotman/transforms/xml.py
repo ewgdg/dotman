@@ -37,12 +37,16 @@ def matches_node_path(
     )
 
 
+def element_attribute_identity(element: ET.Element) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (attribute_name, element.attrib[attribute_name])
+        for attribute_name in ("id", "name", "key", "uuid")
+        if attribute_name in element.attrib
+    )
+
+
 def element_identity_key(element: ET.Element) -> tuple[tuple[str, str], ...] | None:
-    identity_parts: list[tuple[str, str]] = []
-    for attribute_name in ("id", "name", "key", "uuid"):
-        attribute_value = element.attrib.get(attribute_name)
-        if attribute_value is not None:
-            identity_parts.append((attribute_name, attribute_value))
+    identity_parts = list(element_attribute_identity(element))
 
     text_value = (element.text or "").strip()
     if text_value:
@@ -64,8 +68,11 @@ def pop_matching_child(
             if child.tag == target.tag and element_identity_key(child) == identity_key:
                 return candidates.pop(index)
 
+    # Text may differ between live and repo copies of the same element, but a
+    # differing id/name/key/uuid means a different sibling, never a match.
+    attribute_identity = element_attribute_identity(target)
     for index, child in enumerate(candidates):
-        if child.tag == target.tag:
+        if child.tag == target.tag and element_attribute_identity(child) == attribute_identity:
             return candidates.pop(index)
 
     return None

@@ -799,7 +799,7 @@ Both operands accept `-` for stdin (at most one). Output path `-` and `--stdout`
 
 Transforms XML trees without repository configuration. At least one selector is required. Unprefixed and `exact:` selectors are `fnmatch`-style, root-inclusive element paths; `re:` selectors use Python regex search against those paths. Retain keeps matched subtrees and ancestor chains. Remove deletes matched subtrees.
 
-Merge matches repeated siblings by tag and available `id`, `name`, `key`, `uuid`, or non-empty text identity, then applies overlay attributes, text, children, and deletions. `--sort-attributes` sorts emitted attributes. Repeated or comma-separated `--sort-children PATH` flags sort immediate children only under matching parents.
+Merge matches repeated siblings by tag and available `id`, `name`, `key`, `uuid`, or non-empty text identity; siblings whose `id`, `name`, `key`, or `uuid` differ never match. It then applies overlay attributes, text, children, and deletions. `--sort-attributes` sorts emitted attributes. Repeated or comma-separated `--sort-children PATH` flags sort immediate children only under matching parents.
 
 `--compare-file PATH` normalizes whitespace-only text, attributes, and explicitly selected child lists for semantic comparison. Equal XML reuses compare file's exact bytes. This compare normalization does not otherwise canonicalize emitted XML.
 
