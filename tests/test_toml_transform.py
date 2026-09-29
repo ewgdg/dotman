@@ -1624,3 +1624,19 @@ def test_comment_between_implicit_parent_subtables_keeps_output_valid(
 
     assert tomllib.loads(output) == expected
     assert ("# about q" in output) == (removed_path != "b.q")
+
+
+@pytest.mark.parametrize(
+    ("selector_args", "keeps_trailing_comment"),
+    [(("--selectors", "a"), False), (("--selector-type", "remove", "--selectors", "drop"), True)],
+)
+def test_merge_keeps_base_trailing_comments_only_when_cleanup_would(
+    tmp_path: Path, selector_args: tuple[str, ...], keeps_trailing_comment: bool
+) -> None:
+    base_text = "a = 1\n\n[drop]\nx = 1\n\n# trailing note\n"
+
+    cleaned = run_toml_transform(tmp_path, base_text, *selector_args)
+    merged = run_toml_transform(tmp_path, base_text, *selector_args, overlay_text="b = 2\n")
+
+    assert ("# trailing note" in cleaned) == keeps_trailing_comment
+    assert ("# trailing note" in merged) == keeps_trailing_comment

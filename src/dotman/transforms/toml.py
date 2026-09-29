@@ -766,8 +766,8 @@ def restore_top_level_leading_trivia(
 ) -> TOMLDocument:
     merged_regions, _merged_trailing_entries = collect_top_level_body_regions(merged_doc)
     overlay_regions, overlay_trailing_entries = collect_top_level_body_regions(overlay_doc)
-    base_regions, base_trailing_entries = collect_top_level_body_regions(base_doc)
-    preserved_regions, _preserved_trailing_entries = collect_top_level_body_regions(preserved_base)
+    base_regions, _base_trailing_entries = collect_top_level_body_regions(base_doc)
+    preserved_regions, preserved_trailing_entries = collect_top_level_body_regions(preserved_base)
 
     rebuilt_doc = tomlkit.document()
     overlay_independent_texts = collect_independent_leading_trivia_texts(overlay_regions)
@@ -825,7 +825,10 @@ def restore_top_level_leading_trivia(
 
         rebuilt_doc.append(key_to_append, item_to_append)
 
-    trailing_entries: tuple[tuple[None, object], ...] = overlay_trailing_entries or base_trailing_entries
+    # Base trailing comments survive only where the selection kept them, as in cleanup.
+    trailing_entries: tuple[tuple[None, object], ...] = (
+        overlay_trailing_entries or preserved_trailing_entries
+    )
     add_trivia_entries(rebuilt_doc, trailing_entries)
 
     return rebuilt_doc
