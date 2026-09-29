@@ -296,3 +296,17 @@ def test_editor_continues_a_reselected_edit_before_materialization(tmp_path, mon
     dispatch(session, SetResolutionIntent, intent='use-repository')
     assert dispatch(session, SetResolutionIntent, intent='editor').view.rows[0].proposal is None
     assert dispatch(session, EditProposal).view.rows[0].proposal.repository == FilePresent(b'repoxx')
+
+
+def test_editor_stops_on_failed_capture_then_recovers_from_repository(tmp_path, monkeypatch):
+    from dotman.sync_session import SetResolutionIntent
+    engine = make_engine(tmp_path, monkeypatch, [('a', 'both', b'repo', b'live',
+        'capture = "false"\ncompare = { repo = "raw", live = "raw" }\n'
+        'editor = { run = "printf x >> \\"$DOTMAN_SOURCE\\"", io = "pipe" }')])
+    session = open_session(engine)
+    dispatch(session, SetResolutionIntent, intent='use-live')
+    # Opening repository bytes as if they were Use live would mislead the edit.
+    assert dispatch(session, EditProposal).result.status == 'materialization-failed'
+    saved = dispatch(session, EditProposal)
+    assert saved.result.status == 'saved'
+    assert saved.view.rows[0].proposal.repository == FilePresent(b'repox')

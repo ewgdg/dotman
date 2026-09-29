@@ -1077,14 +1077,23 @@ class ProposalSession:
         ))
 
     def _editor_initial(self, row: SessionRow) -> SyncBasePayload:
+        """The selected Resolution's repository outcome, which the Editor opens."""
         if row.proposal is not None:
             return row.proposal.repository
         # A merge conflict has no Proposal; its zdiff3 output is what the user resolves.
+        # A presence conflict has no merge text, so it falls back to the repository source.
         if (conflict := conflict_diagnostic(row)) is not None:
-            return conflict.conflict
+            return conflict.conflict if conflict.conflict is not None else row.observation.repository
         # A reselected edit stays unmaterialized until approved or reviewed.
         if row.intent == "editor":
             return self._edited_outcomes[row.row_id][0]
+        # Unreviewed Capture-based outcomes are materialized now; a failure stops this
+        # attempt, and the next one recovers from the repository source below.
+        if row.intent in ("use-live", "merge") and not row.diagnostics:
+            try:
+                return self._materialize_row(row).repository
+            except ReconciliationConflict as exc:
+                return exc.conflict if exc.conflict is not None else row.observation.repository
         return row.observation.repository
 
     @staticmethod

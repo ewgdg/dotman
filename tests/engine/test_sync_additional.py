@@ -247,7 +247,8 @@ def test_additional_approval_executes_when_editor_has_no_valid_proposal(tmp_path
 
 def test_unapproved_candidate_edit_preserves_approved_capture_and_refreshes_references(tmp_path, monkeypatch):
     marker = tmp_path / 'capture-ran'
-    capture = f'test ! -e {marker} || exit 7; touch {marker}; cat "$DOTMAN_PACKAGE_ROOT/shared"'
+    # Per unit: the Editor legitimately captures a, while b's approved Capture must not rerun.
+    capture = f'm={marker}-$(basename "$DOTMAN_LIVE_PATH"); test ! -e "$m" || exit 7; touch "$m"; cat "$DOTMAN_PACKAGE_ROOT/shared"'
     config = (f'capture = {json.dumps(capture)}\n'
               'compare = { repo = "raw", live = "raw" }\n'
               'editor = { run = "printf candidate > \\"$DOTMAN_EDITOR_ADDITIONAL_SOURCE_PATHS\\"", io = "pipe", additional_sources = ["shared"] }')

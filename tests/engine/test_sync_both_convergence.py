@@ -382,3 +382,26 @@ def test_saved_edit_keeps_intentional_conflict_markers(tmp_path, monkeypatch, so
         result = command(session, EditProposal, "main:app.unit")
         assert result.result.status == "saved"
         assert session.view.rows[0].approved
+
+
+@pytest.mark.parametrize("live,intent,expected", [
+    (LIVE, "use-live", LIVE),
+    (LIVE, "merge", MERGED),
+    (LIVE, "use-repository", REPO),
+    (b"conflict\nmiddle\nlast\n", "merge", ZDIFF3_CONFLICT),
+    # A presence conflict has no merge text, so the frozen repository source is the start.
+    (None, "merge", REPO),
+])
+def test_editor_opens_the_selected_resolution_before_review(tmp_path, monkeypatch, live, intent, expected):
+    seen = tmp_path / "seen"
+    engine = established(tmp_path, monkeypatch,
+        f'editor = {{ run = "cp \\"$DOTMAN_SOURCE\\" {seen}", io = "pipe" }}')
+    if live is None:
+        (tmp_path / "live/unit").unlink()
+    else:
+        (tmp_path / "live/unit").write_bytes(live)
+    with open_session(engine) as session:
+        command(session, SetResolutionIntent, "main:app.unit", intent)
+        assert session.view.rows[0].proposal is None
+        command(session, EditProposal, "main:app.unit")
+        assert seen.read_bytes() == expected
