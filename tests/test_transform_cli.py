@@ -446,3 +446,18 @@ def test_missing_overlay_file_is_an_error_not_an_empty_overlay(
         "--mode", "merge", "--overlay-file", str(missing_overlay), "--selectors", "a",
     ]) == 2
     assert f"overlay file not found: {missing_overlay}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("transform_format", "content"),
+    [("json", '{\n  "a": 1\n}\n'), ("toml", "a = 1\n"), ("yaml", "a: 1\n")],
+)
+def test_utf8_bom_input_is_read_like_plain_utf8(transform_format, content, tmp_path, capsys) -> None:
+    from dotman import cli
+
+    # Some Windows editors save UTF-8 with a byte order mark.
+    base = tmp_path / f"base.{transform_format}"
+    base.write_bytes(b"\xef\xbb\xbf" + content.encode())
+
+    assert cli.main(["transform", transform_format, str(base), "--stdout", "--mode", "cleanup", "--selectors", "a"]) == 0
+    assert capsys.readouterr().out == content

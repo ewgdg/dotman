@@ -221,7 +221,9 @@ def sync_output_mode(reference_path: Path | None, output_path: Path) -> None:
 
 def decode_utf8_input(content: bytes, source: str) -> str:
     try:
-        return content.decode("utf-8")
+        # utf-8-sig drops a leading byte order mark, which JSON and TOML
+        # parsers reject; output is re-serialized without it.
+        return content.decode("utf-8-sig")
     except UnicodeDecodeError as error:
         raise ValueError(f"{source} is not valid UTF-8: {error}") from error
 
