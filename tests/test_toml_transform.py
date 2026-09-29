@@ -1654,6 +1654,23 @@ def test_output_does_not_end_with_blank_lines(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("live", "expected"),
+    [
+        ("x = 1\n  \n\t\n \ny = 2\n", "x = 1\n\ny = 2\n"),
+        ("\n\n\nx = 1\n", "\nx = 1\n"),
+        ("x = 1\n\n  \n", "x = 1\n"),
+    ],
+    ids=["whitespace-only", "leading", "trailing-whitespace-only"],
+)
+def test_blank_line_runs_collapse_even_when_blank_lines_hold_spaces(
+    live: str, expected: str, tmp_path: Path
+) -> None:
+    assert run_toml_transform(
+        tmp_path, live, "--selector-type", "remove", "--selectors", "absent"
+    ) == expected
+
+
+@pytest.mark.parametrize(
     "source",
     [
         "# top\nk = 1\n# about b\n[b]\nx = 1\n# tail\n\n# independent\n\n# about c\n[c]\ny = 1\n",

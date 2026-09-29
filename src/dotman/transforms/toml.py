@@ -639,22 +639,25 @@ TOML_STRING_COMMENT_OR_BLANK_RUN = re.compile(
     r'|"(?:\\.|[^"\\\n])*"'
     r"|'[^'\n]*'"
     r"|#[^\r\n]*)"
-    r"|(?P<blank_run>(?:\r?\n){3,})",
+    # A line holding only spaces or tabs counts as blank. Documents are LF text.
+    r"|(?P<leading_blank_run>\A(?:[ \t]*\n){2,})"
+    r"|(?P<trailing_blank_run>\n(?:[ \t]*\n)*[ \t]*\Z)"
+    r"|(?P<blank_run>\n(?:[ \t]*\n){2,})",
     re.DOTALL,
 )
+# Runs collapse to one blank line; blank lines at the end separate nothing.
+BLANK_RUN_REPLACEMENTS = {
+    "leading_blank_run": "\n",
+    "trailing_blank_run": "\n",
+    "blank_run": "\n\n",
+}
 
 
 def normalize_blank_lines(content: str) -> str:
-    def collapse_blank_run(match: re.Match[str]) -> str:
-        if match.group("blank_run") is None:
-            return match.group(0)
-        return "\n\n"
-
-    collapsed = TOML_STRING_COMMENT_OR_BLANK_RUN.sub(collapse_blank_run, content)
-    if collapsed.endswith("\n"):
-        # Blank lines at the end of the document separate nothing.
-        collapsed = collapsed.rstrip("\n") + "\n"
-    return collapsed
+    return TOML_STRING_COMMENT_OR_BLANK_RUN.sub(
+        lambda match: BLANK_RUN_REPLACEMENTS.get(match.lastgroup, match.group(0)),
+        content,
+    )
 
 
 def normalize_document(doc: TOMLDocument) -> TOMLDocument:
