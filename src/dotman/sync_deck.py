@@ -483,6 +483,8 @@ class CommandDeck:
         if "authorize-symlink-replacement" in row.allowed_commands:
             link = "Link replacement authorized" if row.symlink_authorized else "Link replacement requires authorization"
             decision.append(ReviewNote(f"{term(link)} (L)"))
+        if row.resolution_guessed:
+            decision.append(ReviewNote(f"{term('Fallback')}: {row.fallback_reason}"))
         decision.extend(ReviewNote(f"{term(item.severity)}: {item.message}") for item in row_diagnostics(row))
         sections = [
             ReviewSection("Decision", tuple(decision)),
@@ -1203,6 +1205,8 @@ class SyncDeckApp(App[bool]):
                 facts.append((render_sync_term('Guard skipped', use_color=use_color), guard_skip_explanation(row)))
         else:
             identity = unit_label(row, use_color=use_color)
+            if row.resolution_guessed:
+                facts.append((render_sync_term('Fallback', use_color=use_color), row.fallback_reason))
             facts += unit_detail_facts(row.observation, use_color=use_color)
         if row.row_id != self._detail_row_id:
             # A newly focused row starts from its identity, not the old scroll offset.

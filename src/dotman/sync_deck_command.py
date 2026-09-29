@@ -328,6 +328,8 @@ class SyncDeckCommandRunner:
                 if unit["resolution"]:
                     label = resolution_label(unit["resolution"])
                     print(f"      {render_resolution(label, guessed=unit['resolution_guessed'], use_color=self._use_color)}")
+                if unit["resolution_guessed"]:
+                    print(f"      {term('Fallback')}: {unit['fallback_reason']}")
                 if unit["primary_source_change"]:
                     print(f"      repository {unit['primary_source_change']['kind']}")
                 for effect in unit["effects"]:
