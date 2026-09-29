@@ -1336,3 +1336,46 @@ def test_crlf_base_keeps_crlf_line_endings(tmp_path: Path) -> None:
     assert retained == "a = 1\r\n\r\n[t]\r\nx = 1\r\n"
     assert merged == expected_merge
     assert merged_with_crlf_overlay == expected_merge
+
+
+OUT_OF_ORDER_TABLES = "[a]\nx = 1\n[b]\ny = 2\n[a.c]\nz = 3\n"
+REPEATED_DOTTED_KEYS = "a.x = 1\nb = 2\na.y = 2\n"
+
+
+def test_selectors_reach_into_split_tables(tmp_path: Path) -> None:
+    def cleanup(base_text: str, *selector_args: str) -> dict:
+        return tomllib.loads(run_toml_transform(tmp_path, base_text, *selector_args))
+
+    assert cleanup(OUT_OF_ORDER_TABLES, "--selector-type", "remove", "--selectors", "a.c") == {
+        "a": {"x": 1},
+        "b": {"y": 2},
+    }
+    assert cleanup(OUT_OF_ORDER_TABLES, "--selectors", "a.c") == {"a": {"c": {"z": 3}}}
+    assert cleanup(OUT_OF_ORDER_TABLES, "--selectors", r"re:^a\.c\.z$") == {"a": {"c": {"z": 3}}}
+    assert cleanup(REPEATED_DOTTED_KEYS, "--selector-type", "remove", "--selectors", "a.y") == {
+        "a": {"x": 1},
+        "b": 2,
+    }
+    assert cleanup(REPEATED_DOTTED_KEYS, "--selectors", "a.y") == {"a": {"y": 2}}
+
+
+def test_merge_keeps_every_part_of_split_tables(tmp_path: Path) -> None:
+    def merge(base_text: str, overlay_text: str, *selector_args: str) -> dict:
+        return tomllib.loads(
+            run_toml_transform(tmp_path, base_text, *selector_args, overlay_text=overlay_text)
+        )
+
+    assert merge("k = 1\n", OUT_OF_ORDER_TABLES, "--selectors", "zzz") == {
+        "a": {"x": 1, "c": {"z": 3}},
+        "b": {"y": 2},
+    }
+    assert merge("k = 1\n", REPEATED_DOTTED_KEYS, "--selectors", "zzz") == {
+        "a": {"x": 1, "y": 2},
+        "b": 2,
+    }
+    assert merge(
+        OUT_OF_ORDER_TABLES, "[a]\nw = 1\n", "--selector-type", "remove", "--selectors", "b"
+    ) == {"a": {"x": 1, "w": 1, "c": {"z": 3}}}
+    assert merge(OUT_OF_ORDER_TABLES, "[a]\nw = 1\n", "--selectors", "a.c") == {
+        "a": {"w": 1, "c": {"z": 3}}
+    }

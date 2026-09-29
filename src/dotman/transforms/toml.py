@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from typing import Any
 from pathlib import Path
 import tomlkit
+from tomlkit.container import OutOfOrderTableProxy
 from tomlkit.items import AoT, Array, Null, Table
 from tomlkit.toml_document import TOMLDocument
 
@@ -167,13 +168,34 @@ def split_key_path(key_path: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
     return key_path[:-1], key_path[-1]
 
 
+def is_table_like(value: object) -> bool:
+    # tomlkit exposes a table split across the document (out-of-order headers or
+    # repeated dotted keys) as a proxy that is not a Table but edits every part.
+    return isinstance(value, (Table, OutOfOrderTableProxy))
+
+
+def as_single_table(value: Any) -> Any:
+    """Rebuild a table split across the document as one table copy.
+
+    Other values are returned unchanged. The first part's header trivia is kept,
+    and later parts' content follows the first part's content.
+    """
+    if not isinstance(value, OutOfOrderTableProxy):
+        return value
+    first_part = value._tables[0]
+    single_table = copy.deepcopy(first_part)
+    for key, child in value.items():
+        single_table[key] = copy.deepcopy(as_single_table(child))
+    return single_table
+
+
 def get_container(root: TomlContainer, table_path: tuple[str, ...]) -> TomlContainer | None:
     current: Any = root
     for part in table_path:
         if part not in current:
             return None
         current = current[part]
-        if not isinstance(current, Table):
+        if not is_table_like(current):
             return None
     return current
 
@@ -470,7 +492,7 @@ def iter_item_paths_in_order(
     for key, value in root.items():
         key_path = prefix + (str(key),)
         yield key_path
-        if isinstance(value, Table):
+        if is_table_like(value):
             yield from iter_item_paths_in_order(value, key_path)
 
 
@@ -555,7 +577,7 @@ def ensure_container(root: TomlContainer, table_path: tuple[str, ...]) -> TomlCo
     current: TomlContainer = root
     for part in table_path:
         next_value = current.get(part)
-        if not isinstance(next_value, Table):
+        if not is_table_like(next_value):
             current[part] = tomlkit.table()
             next_value = current[part]
         current = next_value
@@ -579,6 +601,16 @@ def collect_top_level_body_regions(
             continue
 
         key_name = key.key
+        if key_name in regions:
+            # A table split across the document becomes one region at its first
+            # part. Later parts follow its content with their leading trivia, so
+            # comments stay directly above the headers they describe.
+            single_table = regions[key_name].item
+            for entry_key, entry_item in (*pending_leading_entries, *container_body_entries(item)):
+                single_table.append(entry_key, copy.deepcopy(entry_item))
+            pending_leading_entries = []
+            continue
+
         regions[key_name] = TopLevelBodyRegion(
             key_name=key_name,
             key=copy.deepcopy(key),
@@ -756,7 +788,7 @@ def overlay_preserved_keys(
 
         table_path, key_name = split_key_path(key_path)
         target_container = ensure_container(base_doc, table_path)
-        target_container[key_name] = copy.deepcopy(retained_value)
+        target_container[key_name] = copy.deepcopy(as_single_table(retained_value))
 
 
 def overlay_preserved_regex_paths(
@@ -777,7 +809,7 @@ def overlay_preserved_regex_paths(
 
         parent_path, item_name = split_key_path(item_path)
         target_container = ensure_container(base_doc, parent_path)
-        target_container[item_name] = copy.deepcopy(retained_item)
+        target_container[item_name] = copy.deepcopy(as_single_table(retained_item))
 
 
 def build_document_with_retained_matchers(
@@ -826,9 +858,9 @@ def overlay_with_base_slots(
 
     for key in original_base.keys():
         key_name = str(key)
-        base_value = original_base.get(key_name)
-        preserved_value = preserved_base.get(key_name)
-        overlay_value = overlay_doc.get(key_name)
+        base_value = as_single_table(original_base.get(key_name))
+        preserved_value = as_single_table(preserved_base.get(key_name))
+        overlay_value = as_single_table(overlay_doc.get(key_name))
 
         if (
             isinstance(base_value, Table)
@@ -849,13 +881,13 @@ def overlay_with_base_slots(
         key_name = str(key)
         if key_name in merged:
             continue
-        merged[key_name] = copy.deepcopy(overlay_value)
+        merged[key_name] = copy.deepcopy(as_single_table(overlay_value))
 
     for key, preserved_value in preserved_base.items():
         key_name = str(key)
         if key_name in merged:
             continue
-        merged[key_name] = copy.deepcopy(preserved_value)
+        merged[key_name] = copy.deepcopy(as_single_table(preserved_value))
 
     return merged
 
