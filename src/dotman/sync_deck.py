@@ -671,7 +671,7 @@ def row_resolution(row) -> str:
 
 def render_row_resolution(row, *, use_color: bool) -> str:
     label = row_resolution(row)
-    # Failures and No-op describe the row itself, so they outrank the guess mark.
+    # Failures and No-op describe the row itself, so they outrank the guess color.
     guessed = isinstance(row, SessionRow) and row.resolution_guessed and label == resolution_label(row.intent)
     return render_resolution(label, guessed=guessed, use_color=use_color)
 

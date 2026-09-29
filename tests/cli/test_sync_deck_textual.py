@@ -257,8 +257,7 @@ def test_both_fallback_is_distinct_from_observation_failure(tmp_path, monkeypatc
         async def interact():
             async with app.run_test(size=(110, 24)) as pilot:
                 table = app.query_one(DataTable)
-                # The guess is marked in text, so it survives without color.
-                assert "Use repository (guess)" in table.render_line(1).text
+                assert "Use repository" in table.render_line(1).text
                 assert "Observation failed" in table.render_line(2).text
                 assert detail_facts(app)[:2] == ["main:app.both", "Fallback: absent"]
                 await pilot.press("space", "a")
@@ -268,7 +267,7 @@ def test_both_fallback_is_distinct_from_observation_failure(tmp_path, monkeypatc
         run(interact())
 
 
-def test_failed_proposal_outranks_the_guess_mark(tmp_path, monkeypatch):
+def test_guess_color_yields_to_a_choice_and_to_a_failed_proposal(tmp_path, monkeypatch):
     from dataclasses import replace
     from dotman.cli_style import render_sync_term
     from dotman.sync_deck import render_row_resolution
@@ -277,7 +276,10 @@ def test_failed_proposal_outranks_the_guess_mark(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [("both", "both", b"repo", b"live", "")])
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
         row = session.view.rows[0]
+        plain = render_sync_term("Use repository", use_color=True)
         assert row.resolution_guessed
+        assert render_row_resolution(row, use_color=True) != plain
+        assert render_row_resolution(replace(row, resolution_chosen=True), use_color=True) == plain
         failed = replace(row, diagnostics=(Diagnostic("materialization-failed", "boom"),))
         assert render_row_resolution(failed, use_color=True) == render_sync_term("Proposal failed", use_color=True)
 
@@ -579,21 +581,19 @@ def test_resolution_key_toggles_between_two_intents_without_menu(tmp_path, monke
             async with app.run_test() as pilot:
                 table = app.query_one(DataTable)
                 assert session.view.rows[0].intent == 'use-repository'
-                assert 'Use repository (guess)' in table.render_line(1).text
+                assert any(line.startswith('Fallback:') for line in detail_facts(app))
                 await pilot.press('r')
                 await pilot.pause()
                 assert not app.query_one(OptionList).display
                 assert session.view.rows[0].intent == 'use-live'
                 assert not session.view.rows[0].approved
-                assert '(guess)' not in table.render_line(1).text
                 # A chosen side is no longer a fallback, so its cause stops being shown.
                 assert not any(line.startswith('Fallback:') for line in detail_facts(app))
                 await pilot.press('r')
                 await pilot.pause()
                 assert session.view.rows[0].intent == 'use-repository'
-                # Toggling back is an explicit choice, so the guess mark stays gone.
-                assert 'Use repository' in table.render_line(1).text
-                assert '(guess)' not in table.render_line(1).text
+                # Toggling back is an explicit choice, so the guess stays gone.
+                assert not any(line.startswith('Fallback:') for line in detail_facts(app))
         run(interact())
 
 

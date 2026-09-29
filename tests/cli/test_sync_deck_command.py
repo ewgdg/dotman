@@ -318,8 +318,8 @@ def test_report_marks_an_approved_guess_until_a_side_is_chosen(tmp_path, monkeyp
     monkeypatch.setattr(sync_deck, "run_command_deck", approve_both)
     assert runner_for(engine).run(arguments(unattended=False, dry_run=True, json_output=False, report=True)) == 0
     out = capsys.readouterr().out
-    assert _in_order(out, "main:app.guessed", "Use repository (guess)", "Fallback: absent", "main:app.chosen")
-    assert out.count("(guess)") == 1 and out.count("Fallback:") == 1
+    assert _in_order(out, "main:app.guessed", "Use repository", "Fallback: absent", "main:app.chosen")
+    assert out.count("Fallback:") == 1
 
 
 def test_json_failed_hook_identifies_exact_instance_target(tmp_path, monkeypatch, capsys):
