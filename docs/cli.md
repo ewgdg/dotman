@@ -769,9 +769,9 @@ cat settings.json | dotman transform json - - --mode cleanup --selectors editor
 
 ### `dotman transform toml`
 
-Transforms TOML documents without repository configuration. At least one selector is required. Unprefixed and `exact:` selectors match exact dotted TOML key paths. `re:` selectors use Python regex search against dotted table and key paths; a table match selects its whole subtree, while a key match selects only that key.
+Transforms TOML documents without repository configuration. At least one selector is required. Unprefixed and `exact:` selectors match exact dotted TOML key paths; a double-quoted segment is a TOML basic string, so it may contain dots, spaces, or escapes (`x."a.b"`, `"a\tb"`), and `""` names the empty key. `re:` selectors use Python regex search against dotted table and key paths; a table match selects its whole subtree, while a key match selects only that key. Selectors reach keys inside inline tables and tables split across the file. Retain keeps selected content in document order. Removing a key also removes comment lines directly above it.
 
-Merge recursively overlays tables after partitioning the base. Scalar values, arrays, and arrays of tables are atomic values and are replaced as units. Comments, ordering, whitespace trivia, and formatting are retained where `tomlkit` can preserve them. `--compare-file PATH` reuses its exact text when parsed TOML values and comment attachments are equal.
+Merge recursively overlays tables and inline tables after partitioning the base, keeping the overlay's inline or table style; a table split across the file comes out as one table. Scalar values, arrays, and arrays of tables are atomic values and are replaced as units. Comments, ordering, whitespace trivia, and formatting are retained where `tomlkit` can preserve them. Output uses the base file's line ending (the overlay's when the base has none). `--compare-file PATH` reuses its exact text when parsed TOML values have equal types and values (so `true`, `1`, and `1.0` differ, as do datetimes with different offsets) and comment attachments are equal.
 
 ```sh
 dotman transform toml live.toml output.toml --mode merge \
