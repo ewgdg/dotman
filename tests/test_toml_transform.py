@@ -26,7 +26,9 @@ def write_document_if_changed(
 ) -> None:
     emit_transform_output(
         path,
-        MODULE.build_document_output(doc, mode_reference_path=mode_reference_path, compare_path=compare_path),
+        MODULE.build_document_output(
+            doc, mode_reference_path=mode_reference_path, line_ending="\n", compare_path=compare_path
+        ),
         stdout=stdout,
     )
 
@@ -1304,3 +1306,33 @@ def test_blank_line_collapsing_still_merges_separator_runs(tmp_path: Path) -> No
     )
 
     assert output == "a = 1\n\nc = 3\n"
+
+
+def test_crlf_base_keeps_crlf_line_endings(tmp_path: Path) -> None:
+    base_text = "a = 1\r\nb = 2\r\n\r\n[t]\r\nx = 1\r\n\r\n[u]\r\ny = 2\r\n"
+
+    retained = run_toml_transform(tmp_path, base_text, "--selectors", "t.x", "a")
+    merged = run_toml_transform(
+        tmp_path,
+        base_text,
+        "--selector-type",
+        "remove",
+        "--selectors",
+        "a",
+        overlay_text="c = 3\n\n[v]\nq = 1\n",
+    )
+
+    merged_with_crlf_overlay = run_toml_transform(
+        tmp_path,
+        base_text,
+        "--selector-type",
+        "remove",
+        "--selectors",
+        "a",
+        overlay_text="c = 3\r\n\r\n[v]\r\nq = 1\r\n",
+    )
+
+    expected_merge = "b = 2\r\nc = 3\r\n\r\n[t]\r\nx = 1\r\n\r\n[u]\r\ny = 2\r\n\r\n[v]\r\nq = 1\r\n"
+    assert retained == "a = 1\r\n\r\n[t]\r\nx = 1\r\n"
+    assert merged == expected_merge
+    assert merged_with_crlf_overlay == expected_merge

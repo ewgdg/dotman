@@ -43,7 +43,27 @@ def load_document(path: Path, *, stdin_bytes: bytes | None = None) -> TOMLDocume
     return detach_table_tail_trivia(tomlkit.parse(source_text))
 
 
-def get_existing_text_if_unchanged(compare_path: Path, doc: TOMLDocument) -> bytes | None:
+def detect_line_ending(*source_docs: TOMLDocument) -> str:
+    """Return the line ending of the first source document that has a newline."""
+    for source_doc in source_docs:
+        source_text = source_doc.as_string()
+        first_newline_index = source_text.find("\n")
+        if first_newline_index >= 0:
+            return "\r\n" if source_text[:first_newline_index].endswith("\r") else "\n"
+    return "\n"
+
+
+def render_document_text(doc: TOMLDocument, line_ending: str) -> str:
+    # tomlkit writes LF for trivia it creates, so unify every line ending to the
+    # source's instead of emitting mixed endings for CRLF input.
+    return doc.as_string().replace("\r\n", "\n").replace("\n", line_ending)
+
+
+def get_existing_text_if_unchanged(
+    compare_path: Path,
+    doc: TOMLDocument,
+    content: str,
+) -> bytes | None:
     if not compare_path.exists():
         return None
 
@@ -62,7 +82,7 @@ def get_existing_text_if_unchanged(compare_path: Path, doc: TOMLDocument) -> byt
     ):
         return existing_bytes
 
-    if existing_content != doc.as_string():
+    if existing_content != content:
         return None
 
     return existing_bytes
@@ -72,11 +92,12 @@ def build_document_output(
     doc: TOMLDocument,
     *,
     mode_reference_path: Path,
+    line_ending: str,
     compare_path: Path | None = None,
 ) -> TransformOutput:
-    content = doc.as_string()
+    content = render_document_text(doc, line_ending)
     if compare_path is not None:
-        existing_content = get_existing_text_if_unchanged(compare_path, doc)
+        existing_content = get_existing_text_if_unchanged(compare_path, doc, content)
         if existing_content is not None:
             return TransformOutput(
                 content=existing_content,
@@ -493,7 +514,7 @@ def normalize_document(doc: TOMLDocument) -> TOMLDocument:
 
 
 def table_has_leading_blank_separator(table: Table) -> bool:
-    return table.trivia.indent.startswith("\n")
+    return table.trivia.indent.startswith(("\n", "\r\n"))
 
 
 def remove_last_table_tail_blank_separator(table: Table) -> None:
@@ -705,14 +726,16 @@ def build_stripped_document_output(
     compare_path: Path | None = None,
     stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
+    source_doc = load_document(base_path, stdin_bytes=stdin_bytes)
     normalized_doc = build_document_with_stripped_matchers(
-        load_document(base_path, stdin_bytes=stdin_bytes),
+        source_doc,
         stripped_key_paths,
         stripped_table_regexes,
     )
     return build_document_output(
         normalized_doc,
         mode_reference_path=base_path,
+        line_ending=detect_line_ending(source_doc),
         compare_path=compare_path,
     )
 
@@ -860,6 +883,7 @@ def build_merged_document_output(
     return build_document_output(
         merged_doc,
         mode_reference_path=base_path,
+        line_ending=detect_line_ending(base_doc, overlay_doc),
         compare_path=compare_path,
     )
 
@@ -919,8 +943,9 @@ class TomlTransformEngine(BaseTransformEngine):
                     stdin_bytes=stdin_bytes,
                 )
 
+            source_doc = load_document(request.base_path, stdin_bytes=stdin_bytes)
             filtered_doc = build_document_with_selector_action(
-                load_document(request.base_path, stdin_bytes=stdin_bytes),
+                source_doc,
                 request.selector_action,
                 key_paths,
                 table_regexes,
@@ -928,6 +953,7 @@ class TomlTransformEngine(BaseTransformEngine):
             return build_document_output(
                 filtered_doc,
                 mode_reference_path=request.base_path,
+                line_ending=detect_line_ending(source_doc),
                 compare_path=compare_path,
             )
 
