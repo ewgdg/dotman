@@ -804,3 +804,15 @@ def test_lone_surrogate_escape_survives_output(tmp_path: Path) -> None:
 
     assert MODULE.main([str(input_path), str(output_path), "--mode", "cleanup", "--selectors", "a"]) == 0
     assert load_json(output_path) == {"a": "\ud800"}
+
+
+def test_number_out_of_float_range_is_an_error_not_infinity(tmp_path: Path, capsys) -> None:
+    from dotman import cli
+
+    input_path = tmp_path / "input.json"
+    input_path.write_text('{"a": 1e400, "b": 1}\n', encoding="utf-8")
+
+    assert cli.main(["transform", "json", str(input_path), "--stdout", "--mode", "cleanup"]) == 2
+    captured = capsys.readouterr()
+    assert "Infinity" not in captured.out
+    assert "1e400" in captured.err

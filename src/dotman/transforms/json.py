@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -39,12 +40,21 @@ class JsonPathSelector:
     children: dict[str, "JsonPathSelector"] = field(default_factory=dict)
 
 
+def parse_finite_json_float(number_text: str) -> float:
+    # json.loads turns an out-of-range number such as 1e400 into inf, which
+    # would be written back as the invalid JSON token Infinity.
+    value = float(number_text)
+    if math.isinf(value):
+        raise ValueError(f"JSON number {number_text} is out of float range")
+    return value
+
+
 def load_json(path: Path, *, stdin_bytes: bytes | None = None) -> JsonDict:
     source_text = read_input_text(path, stdin_bytes=stdin_bytes)
     if source_text is None:
         return {}
 
-    loaded = json.loads(source_text)
+    loaded = json.loads(source_text, parse_float=parse_finite_json_float)
     if not isinstance(loaded, dict):
         raise ValueError(f"Expected top-level JSON object in {path}")
     return loaded
