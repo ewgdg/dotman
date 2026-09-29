@@ -39,27 +39,51 @@ class TopLevelBodyRegion:
     leading_entries: tuple[tuple[None, object], ...]
 
 
-def load_document(path: Path, *, stdin_bytes: bytes | None = None) -> TOMLDocument:
+def detect_line_ending(text: str) -> str | None:
+    """Return the line ending of the first line break in text, if any."""
+    first_newline_index = text.find("\n")
+    if first_newline_index < 0:
+        return None
+    return "\r\n" if text[:first_newline_index].endswith("\r") else "\n"
+
+
+def parse_lf_normalized(text: str) -> TOMLDocument:
+    # tomlkit keeps CRLF inside multiline string values, while TOML readers like
+    # tomllib normalize it to LF; parse LF text so values match what readers see
+    # even after a string is re-rendered in another form (e.g. inline).
+    return tomlkit.parse(text.replace("\r\n", "\n"))
+
+
+def parse_source_text(text: str) -> TOMLDocument:
+    # A source's last line may lack a line break, but merging can move that
+    # line before others, where it would run into the next key.
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return parse_lf_normalized(text)
+
+
+def load_document(
+    path: Path, *, stdin_bytes: bytes | None = None
+) -> tuple[TOMLDocument, str | None]:
+    """Load a document parsed from LF text, with the source's line ending."""
     source_text = read_input_text(path, stdin_bytes=stdin_bytes)
     if source_text is None:
-        return tomlkit.document()
-    return detach_table_tail_trivia(tomlkit.parse(source_text))
+        return tomlkit.document(), None
+    return (
+        detach_table_tail_trivia(parse_source_text(source_text)),
+        detect_line_ending(source_text),
+    )
 
 
-def detect_line_ending(*source_docs: TOMLDocument) -> str:
-    """Return the line ending of the first source document that has a newline."""
-    for source_doc in source_docs:
-        source_text = source_doc.as_string()
-        first_newline_index = source_text.find("\n")
-        if first_newline_index >= 0:
-            return "\r\n" if source_text[:first_newline_index].endswith("\r") else "\n"
-    return "\n"
+def choose_line_ending(*source_line_endings: str | None) -> str:
+    """Return the first known source line ending, defaulting to LF."""
+    return next((line_ending for line_ending in source_line_endings if line_ending), "\n")
 
 
 def render_document_text(doc: TOMLDocument, line_ending: str) -> str:
-    # tomlkit writes LF for trivia it creates, so unify every line ending to the
-    # source's instead of emitting mixed endings for CRLF input.
-    return doc.as_string().replace("\r\n", "\n").replace("\n", line_ending)
+    # Documents are parsed from LF text and tomlkit writes LF for trivia it
+    # creates, so apply the source line ending once at render time.
+    return doc.as_string().replace("\n", line_ending)
 
 
 def get_existing_text_if_unchanged(
@@ -73,7 +97,7 @@ def get_existing_text_if_unchanged(
     existing_bytes = compare_path.read_bytes()
     existing_content = existing_bytes.decode("utf-8")
     try:
-        existing_doc = tomlkit.parse(existing_content)
+        existing_doc = parse_lf_normalized(existing_content)
     except Exception:
         existing_doc = None
 
@@ -188,15 +212,20 @@ def as_single_table(value: Any) -> Any:
     """Rebuild a table split across the document as one table copy.
 
     Other values are returned unchanged. The first part's header trivia is kept,
-    and later parts' content follows the first part's content.
+    and later parts' content follows the first part's content. The copy is a
+    fresh table because a copied part keeps dotted-key rendering state that
+    would emit nested dotted tables at a path relative to the wrong parent.
     """
     if not isinstance(value, OutOfOrderTableProxy):
         return value
-    first_part = value._tables[0]
-    single_table = copy.deepcopy(first_part)
+    single_table = Table(Container(), copy.deepcopy(value._tables[0].trivia), False)
     for key, child in value.items():
         single_table[key] = copy.deepcopy(as_single_table(child))
     return single_table
+
+
+def has_selected_ancestor(item_path: tuple[str, ...], selected_paths: set[tuple[str, ...]]) -> bool:
+    return any(item_path[:length] in selected_paths for length in range(1, len(item_path)))
 
 
 def get_container(root: TomlContainer, table_path: tuple[str, ...]) -> TomlContainer | None:
@@ -429,10 +458,19 @@ def detach_child_table_tail_trivia(
     detach_own_tail: bool = True,
 ) -> tuple[tuple[None, object], ...]:
     body_entries = container_body_entries(container)
+    # An implicit parent (`[b.k]` with no `[b]`) renders its own header once it
+    # holds a non-table entry, so its children's tails go elsewhere.
+    is_implicit_parent = isinstance(container, Table) and container.is_super_table()
+    carried_entries: tuple[tuple[None, object], ...] = ()
     index = 0
 
     while index < len(body_entries):
         key, item = body_entries[index]
+        if carried_entries and key is not None:
+            # The detached block sits directly above this sibling's header.
+            header_item = item.body[0] if isinstance(item, AoT) else item
+            header_item.trivia.indent = entries_text(carried_entries) + header_item.trivia.indent
+            carried_entries = ()
         detached_entries: tuple[tuple[None, object], ...] = ()
         if key is not None and isinstance(item, Table):
             detached_entries = detach_child_table_tail_trivia(item)
@@ -447,12 +485,17 @@ def detach_child_table_tail_trivia(
                 if candidate_entries:
                     detached_entries = candidate_entries
 
-        if detached_entries:
+        if detached_entries and is_implicit_parent:
+            carried_entries = detached_entries
+        elif detached_entries:
             insert_trivia_at_body_index(container, index + 1, detached_entries)
             body_entries = container_body_entries(container)
             index += len(detached_entries)
         index += 1
 
+    if is_implicit_parent:
+        # A tail after the last child follows the whole implicit parent.
+        return carried_entries
     if not detach_own_tail:
         return ()
 
@@ -794,13 +837,16 @@ def build_document_with_stripped_matchers(
     stripped_table_regexes: list[re.Pattern[str]],
 ) -> TOMLDocument:
     stripped_doc = copy.deepcopy(source_doc)
-    item_paths = sorted(iter_item_paths_in_order(stripped_doc), key=len, reverse=True)
-    for item_path in item_paths:
-        if matches_path_regex(item_path, stripped_table_regexes):
+    selected_paths = {
+        item_path
+        for item_path in iter_item_paths_in_order(stripped_doc)
+        if matches_path_regex(item_path, stripped_table_regexes)
+    } | set(stripped_key_paths)
+    # Delete only the topmost selections: deleting a descendant first can
+    # leave tomlkit reporting an emptied dotted parent that no longer deletes.
+    for item_path in selected_paths:
+        if not has_selected_ancestor(item_path, selected_paths):
             delete_key_path(stripped_doc, item_path)
-
-    for key_path in stripped_key_paths:
-        delete_key_path(stripped_doc, key_path)
 
     return normalize_document(stripped_doc)
 
@@ -812,7 +858,7 @@ def build_stripped_document_output(
     compare_path: Path | None = None,
     stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
-    source_doc = load_document(base_path, stdin_bytes=stdin_bytes)
+    source_doc, source_line_ending = load_document(base_path, stdin_bytes=stdin_bytes)
     normalized_doc = build_document_with_stripped_matchers(
         source_doc,
         stripped_key_paths,
@@ -821,7 +867,7 @@ def build_stripped_document_output(
     return build_document_output(
         normalized_doc,
         mode_reference_path=base_path,
-        line_ending=detect_line_ending(source_doc),
+        line_ending=choose_line_ending(source_line_ending),
         compare_path=compare_path,
     )
 
@@ -835,10 +881,14 @@ def copy_retained_paths(
 ) -> None:
     """Copy every selected item in one pass so the target keeps document order."""
     retained_key_path_set = set(retained_key_paths)
+    copied_paths: set[tuple[str, ...]] = set()
     for item_path in iter_item_paths_in_order(source_doc):
         if item_path not in retained_key_path_set and not matches_path_regex(
             item_path, retained_table_regexes
         ):
+            continue
+        # A copied table already carries its whole subtree.
+        if has_selected_ancestor(item_path, copied_paths):
             continue
 
         retained_item = get_key_path_value(source_doc, item_path)
@@ -848,6 +898,7 @@ def copy_retained_paths(
         parent_path, item_name = split_key_path(item_path)
         target_container = ensure_container(target_doc, parent_path, source_doc)
         target_container[item_name] = copy.deepcopy(as_single_table(retained_item))
+        copied_paths.add(item_path)
 
 
 def build_document_with_retained_matchers(
@@ -907,7 +958,8 @@ def set_merged_value(
     source_container: TomlContainer,
 ) -> None:
     """Copy a value from source_container into merged, adapting it to merged's style."""
-    value = copy.deepcopy(as_single_table(value))
+    # Container lookups return booleans as plain bool, which has no trivia.
+    value = tomlkit.item(copy.deepcopy(as_single_table(value)))
     merged_is_inline = isinstance(merged, InlineTable)
     if merged_is_inline and isinstance(value, (Table, AoT)):
         # Inline tables cannot hold [table] or [[array]] sections; let tomlkit
@@ -976,21 +1028,21 @@ def build_merged_document_output(
     compare_path: Path | None = None,
     stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
-    base_doc = load_document(base_path, stdin_bytes=stdin_bytes)
+    base_doc, base_line_ending = load_document(base_path, stdin_bytes=stdin_bytes)
     preserved_base = build_document_with_selector_action(
         base_doc,
         selector_action,
         key_paths,
         table_regexes,
     )
-    overlay_doc = load_document(overlay_path, stdin_bytes=stdin_bytes)
+    overlay_doc, overlay_line_ending = load_document(overlay_path, stdin_bytes=stdin_bytes)
     merged_doc = normalize_document(overlay_with_base_slots(base_doc, preserved_base, overlay_doc))
     merged_doc = restore_top_level_leading_trivia(merged_doc, overlay_doc, base_doc, preserved_base)
     collapse_duplicate_table_separators(merged_doc)
     return build_document_output(
         merged_doc,
         mode_reference_path=base_path,
-        line_ending=detect_line_ending(base_doc, overlay_doc),
+        line_ending=choose_line_ending(base_line_ending, overlay_line_ending),
         compare_path=compare_path,
     )
 
@@ -1050,7 +1102,9 @@ class TomlTransformEngine(BaseTransformEngine):
                     stdin_bytes=stdin_bytes,
                 )
 
-            source_doc = load_document(request.base_path, stdin_bytes=stdin_bytes)
+            source_doc, source_line_ending = load_document(
+                request.base_path, stdin_bytes=stdin_bytes
+            )
             filtered_doc = build_document_with_selector_action(
                 source_doc,
                 request.selector_action,
@@ -1060,7 +1114,7 @@ class TomlTransformEngine(BaseTransformEngine):
             return build_document_output(
                 filtered_doc,
                 mode_reference_path=request.base_path,
-                line_ending=detect_line_ending(source_doc),
+                line_ending=choose_line_ending(source_line_ending),
                 compare_path=compare_path,
             )
 

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tomllib
 
+import pytest
 from tomlkit.toml_document import TOMLDocument
 
 from dotman.transforms import toml as MODULE
@@ -124,7 +125,7 @@ command = "npx"
     )
 
     assert exit_code == 0
-    merged_doc = MODULE.load_document(output_path)
+    merged_doc = MODULE.load_document(output_path)[0]
     assert merged_doc["model"] == "gpt-5.4"
     assert (
         merged_doc["mcp_servers"]["playwright"]["env"]["PLAYWRIGHT_MCP_EXTENSION_TOKEN"]
@@ -163,7 +164,7 @@ def test_cleanup_does_not_reuse_compare_file_with_stale_comments(tmp_path: Path)
 
     assert exit_code == 0
     assert '# model = "old-local-value"' not in output_path.read_text(encoding="utf-8")
-    assert MODULE.load_document(output_path).unwrap() == {"features": {"hooks": True}}
+    assert MODULE.load_document(output_path)[0].unwrap() == {"features": {"hooks": True}}
 
 
 def test_cleanup_does_not_reuse_stale_array_of_table_header_comment(
@@ -386,7 +387,7 @@ trust_level = "trusted"
     )
 
     retained_doc = MODULE.build_document_with_retained_matchers(
-        MODULE.load_document(repo_path),
+        MODULE.load_document(repo_path)[0],
         {("model",)},
         [MODULE.re.compile(r"^projects\.")],
     )
@@ -416,7 +417,7 @@ format = "HH:mm"
     )
 
     stripped_doc = MODULE.build_document_with_stripped_matchers(
-        MODULE.load_document(source_path),
+        MODULE.load_document(source_path)[0],
         [],
         [MODULE.re.compile(r"^widget\.[^.]+\.enabled$")],
     )
@@ -426,7 +427,7 @@ format = "HH:mm"
         mode_reference_path=source_path,
     )
 
-    output_doc = MODULE.load_document(output_path)
+    output_doc = MODULE.load_document(output_path)[0]
     assert "enabled" not in output_doc["widget"]["media"]
     assert output_doc["widget"]["media"]["volume"] == 75
     assert "enabled" not in output_doc["widget"]["clock"]
@@ -449,7 +450,7 @@ format = "HH:mm"
     )
 
     retained_doc = MODULE.build_document_with_retained_matchers(
-        MODULE.load_document(source_path),
+        MODULE.load_document(source_path)[0],
         [],
         [MODULE.re.compile(r"^widget\.[^.]+\.enabled$")],
     )
@@ -568,7 +569,7 @@ def test_write_document_with_compare_file_skips_rewrite_for_matching_output(
     output_path = tmp_path / "output.toml"
 
     repo_path.write_text('model = "gpt-5.4"\n', encoding="utf-8")
-    retained_doc = MODULE.load_document(repo_path)
+    retained_doc = MODULE.load_document(repo_path)[0]
     output_path.write_text(retained_doc.as_string(), encoding="utf-8")
     os.utime(output_path, ns=(1, 1))
 
@@ -597,7 +598,7 @@ def test_write_document_with_compare_file_skips_rewrite_for_semantic_match(
     output_path.write_text("stale\n", encoding="utf-8")
     os.utime(output_path, ns=(1, 1))
 
-    merged_doc = MODULE.load_document(repo_path)
+    merged_doc = MODULE.load_document(repo_path)[0]
     merged_doc["model"] = "gpt-5.4"
 
     write_document_if_changed(
@@ -627,7 +628,7 @@ def test_write_document_with_compare_file_reuses_existing_text_in_stdout_mode(
         encoding="utf-8",
     )
 
-    merged_doc = MODULE.load_document(repo_path)
+    merged_doc = MODULE.load_document(repo_path)[0]
     merged_doc["model"] = "gpt-5.4"
 
     write_document_if_changed(
@@ -648,7 +649,7 @@ def test_write_document_without_compare_file_rewrites_matching_output(
     output_path = tmp_path / "output.toml"
 
     repo_path.write_text('model = "gpt-5.4"\n', encoding="utf-8")
-    retained_doc = MODULE.load_document(repo_path)
+    retained_doc = MODULE.load_document(repo_path)[0]
     output_path.write_text(retained_doc.as_string(), encoding="utf-8")
     os.utime(output_path, ns=(1, 1))
 
@@ -705,7 +706,7 @@ command = "npx"
         [],
     )
 
-    merged_doc = MODULE.load_document(output_path)
+    merged_doc = MODULE.load_document(output_path)[0]
 
     assert merged_doc["model"] == "gpt-5.4"
     assert merged_doc["web_search"] == "repo"
@@ -750,7 +751,7 @@ hooks = true
         [],
     )
 
-    merged_doc = MODULE.load_document(output_path)
+    merged_doc = MODULE.load_document(output_path)[0]
 
     assert "context7" not in merged_doc["mcp_servers"]
     assert merged_doc["mcp_servers"]["node_repl"]["command"] == "node_repl"
@@ -793,7 +794,7 @@ command = "npx"
         [MODULE.re.compile(r"^mcp_servers\.playwright\.env$")],
     )
 
-    merged_doc = MODULE.load_document(output_path)
+    merged_doc = MODULE.load_document(output_path)[0]
 
     assert "context7" in merged_doc["mcp_servers"]
     assert "playwright" in merged_doc["mcp_servers"]
@@ -1139,7 +1140,7 @@ def test_merge_skips_missing_preserved_paths(tmp_path: Path) -> None:
         [],
     )
 
-    merged_doc = MODULE.load_document(output_path)
+    merged_doc = MODULE.load_document(output_path)[0]
 
     assert merged_doc["approval_policy"] == "on-request"
     assert "mcp_servers" not in merged_doc
@@ -1189,7 +1190,7 @@ trust_level = "repo"
         [MODULE.re.compile(r"^projects\.")],
     )
 
-    merged_doc = MODULE.load_document(output_path)
+    merged_doc = MODULE.load_document(output_path)[0]
 
     assert merged_doc["approval_policy"] == "on-request"
     assert merged_doc["keep_local"] == "noise"
@@ -1342,6 +1343,18 @@ def test_crlf_base_keeps_crlf_line_endings(tmp_path: Path) -> None:
     assert merged == expected_merge
     assert merged_with_crlf_overlay == expected_merge
 
+
+
+def test_crlf_multiline_string_keeps_its_value_when_moved_into_an_inline_table(
+    tmp_path: Path,
+) -> None:
+    base_text = '[t.c]\r\ns = """line1\r\nline2"""\r\n'
+
+    output = run_toml_transform(
+        tmp_path, base_text, "--selectors", "t", overlay_text="t = {o = 1}\n"
+    )
+
+    assert tomllib.loads(output) == {"t": {"c": {"s": "line1\nline2"}, "o": 1}}
 
 OUT_OF_ORDER_TABLES = "[a]\nx = 1\n[b]\ny = 2\n[a.c]\nz = 3\n"
 REPEATED_DOTTED_KEYS = "a.x = 1\nb = 2\na.y = 2\n"
@@ -1516,3 +1529,98 @@ def test_remove_key_drops_its_attached_leading_comment(tmp_path: Path) -> None:
     assert remove("[t]\n# about k\n# more\nk = 1\nm = 2\n", "t.k") == "[t]\nm = 2\n"
     assert remove("# about b\nb = 2\nc = 3\n", r"re:^b$") == "c = 3\n"
     assert remove("# independent\n\nb = 2\nc = 3\n", "b") == "# independent\n\nc = 3\n"
+
+
+def test_retained_nested_dotted_tables_keep_their_full_path(tmp_path: Path) -> None:
+    base = 'tui.theme.name = "x"\ntui.theme.dark.bg = "y"\n'
+
+    output = run_toml_transform(tmp_path, base, "--selectors", "tui")
+
+    assert tomllib.loads(output) == tomllib.loads(base)
+
+
+def test_merge_keeps_nested_dotted_tables_at_their_full_path(tmp_path: Path) -> None:
+    base = 'tui.theme.name = "x"\ntui.theme.dark.bg = "y"\n'
+
+    output = run_toml_transform(
+        tmp_path,
+        base,
+        "--selector-type",
+        "remove",
+        "--selectors",
+        "absent",
+        overlay_text="other = 2\n",
+    )
+
+    assert tomllib.loads(output) == {**tomllib.loads(base), "other": 2}
+
+
+def test_merge_of_inline_and_standard_tables_keeps_boolean_values(tmp_path: Path) -> None:
+    for base, overlay in (
+        ("f = {a = true, c = 2}\n", "[f]\nb = 1\n"),
+        ("[f]\na = true\nc = 2\n", "f = {b = 1}\n"),
+    ):
+        output = run_toml_transform(
+            tmp_path,
+            base,
+            "--selector-type",
+            "remove",
+            "--selectors",
+            "absent",
+            overlay_text=overlay,
+        )
+
+        assert tomllib.loads(output)["f"] == {**tomllib.loads(base)["f"], "b": 1}
+
+
+def test_regex_removal_of_nested_dotted_keys_removes_everything_matched(tmp_path: Path) -> None:
+    base = "x.s.e = 1\nx.s.b.b = 1\nx.s.b.c = 2\nkeep = 3\n"
+
+    output = run_toml_transform(tmp_path, base, "--selector-type", "remove", "--selectors", "re:^x")
+
+    assert tomllib.loads(output) == {"keep": 3}
+
+
+def test_regex_retain_matching_a_table_and_its_nested_keys_retains_the_table(tmp_path: Path) -> None:
+    base = "[t]\ne.a.x = 1\ne.b.k = 2\nk = 3\n\n[u]\nv = 4\n"
+
+    output = run_toml_transform(tmp_path, base, "--selectors", "re:^t")
+
+    assert tomllib.loads(output) == {"t": tomllib.loads(base)["t"]}
+
+
+def test_merge_of_overlay_without_final_newline_keeps_keys_on_separate_lines(
+    tmp_path: Path,
+) -> None:
+    # The overlay's last key has no line break and is placed before the
+    # dotted table, so it must gain one to stay on its own line.
+    output = run_toml_transform(
+        tmp_path,
+        "\nt = 1\n",
+        "--selectors",
+        "absent",
+        overlay_text="\n\nt.x = 1\n\nlast = 2",
+    )
+
+    assert tomllib.loads(output) == {"t": {"x": 1}, "last": 2}
+
+
+@pytest.mark.parametrize(
+    ("q_header", "removed_path", "expected"),
+    [
+        ("[b.q]", "b.q", {"b": {"k": {}, "x": 1}}),
+        ("[b.q]", "b.k", {"b": {"q": {}, "x": 1}}),
+        ("[[b.q]]", "b.k", {"b": {"q": [{}], "x": 1}}),
+    ],
+)
+def test_comment_between_implicit_parent_subtables_keeps_output_valid(
+    tmp_path: Path, q_header: str, removed_path: str, expected: dict
+) -> None:
+    base_text = f"[b.k]\n\n# about q\n{q_header}\n[b]\nx = 1\n"
+
+    output = run_toml_transform(
+        tmp_path, base_text, "--selector-type", "remove", "--selectors", removed_path
+    )
+
+    assert tomllib.loads(output) == expected
+    assert ("# about q" in output) == (removed_path != "b.q")
