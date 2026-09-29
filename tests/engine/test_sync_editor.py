@@ -310,3 +310,12 @@ def test_editor_stops_on_failed_capture_then_recovers_from_repository(tmp_path, 
     saved = dispatch(session, EditProposal)
     assert saved.result.status == 'saved'
     assert saved.view.rows[0].proposal.repository == FilePresent(b'repox')
+
+
+def test_unchanged_edit_of_unreviewed_pull_only_row_keeps_live_outcome(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [('a', 'pull-only', b'repo', b'live',
+        'editor = { run = "true", io = "pipe" }')])
+    session = open_session(engine)
+    # Quitting the Editor unchanged must keep Use live, not collapse to a No-op.
+    proposal = dispatch(session, EditProposal).view.rows[0].proposal
+    assert not proposal.noop and proposal.repository == FilePresent(b'live')
