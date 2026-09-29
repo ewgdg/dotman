@@ -6,7 +6,8 @@ import copy
 import fnmatch
 from pathlib import Path
 import re
-import xml.etree.ElementTree as ET
+
+from lxml import etree
 
 from dotman.transforms.cli import run_engine_cli
 from dotman.transforms.framework import (
@@ -21,6 +22,18 @@ from dotman.transforms.framework import (
 
 
 NodeRegex = re.Pattern[str]
+# Elements, comments, processing instructions, and entity references alike.
+XmlNode = etree._Element
+
+# Entities stay unexpanded references and nothing is loaded or fetched, so an
+# input cannot pull local files or network content into the output (XXE) or
+# expand entity bombs. huge_tree stays off to keep libxml2's size limits.
+XML_PARSER = etree.XMLParser(
+    resolve_entities=False,
+    no_network=True,
+    load_dtd=False,
+    huge_tree=False,
+)
 
 
 def compile_node_regexes(raw_node_regexes: tuple[str, ...]) -> tuple[NodeRegex, ...]:
@@ -37,7 +50,48 @@ def matches_node_path(
     )
 
 
-def element_attribute_identity(element: ET.Element) -> tuple[tuple[str, str], ...]:
+def is_element(node: XmlNode) -> bool:
+    # Comments, processing instructions, and entity references are children
+    # too, but their tag is a factory function rather than a name.
+    return isinstance(node.tag, str)
+
+
+def child_elements(parent: XmlNode) -> list[XmlNode]:
+    return [child for child in parent if is_element(child)]
+
+
+def element_with_leading_nodes(element: XmlNode) -> list[XmlNode]:
+    """Return element preceded by the comments and processing instructions it owns.
+
+    Those directly before an element, with only whitespace between, usually
+    describe it, so they are selected, sorted, and merged together with it.
+    """
+    owned_nodes = [element]
+    previous = element.getprevious()
+    while (
+        previous is not None
+        and previous.tag in (etree.Comment, etree.PI)
+        and (previous.tail is None or not previous.tail.strip())
+    ):
+        owned_nodes.insert(0, previous)
+        previous = previous.getprevious()
+    return owned_nodes
+
+
+def replace_children(parent: XmlNode, children: list[XmlNode]) -> None:
+    # lxml keeps each node's tail on the node, so tails move with it.
+    for child in list(parent):
+        parent.remove(child)
+    parent.extend(children)
+
+
+def copy_document(root: XmlNode) -> XmlNode:
+    # Copying the whole document keeps the doctype and the comments and
+    # processing instructions around the root, which an element copy drops.
+    return copy.deepcopy(root.getroottree()).getroot()
+
+
+def element_attribute_identity(element: XmlNode) -> tuple[tuple[str, str], ...]:
     return tuple(
         (attribute_name, element.attrib[attribute_name])
         for attribute_name in ("id", "name", "key", "uuid")
@@ -45,7 +99,7 @@ def element_attribute_identity(element: ET.Element) -> tuple[tuple[str, str], ..
     )
 
 
-def element_identity_key(element: ET.Element) -> tuple[tuple[str, str], ...] | None:
+def element_identity_key(element: XmlNode) -> tuple[tuple[str, str], ...] | None:
     identity_parts = list(element_attribute_identity(element))
 
     text_value = (element.text or "").strip()
@@ -59,9 +113,9 @@ def element_identity_key(element: ET.Element) -> tuple[tuple[str, str], ...] | N
 
 
 def pop_matching_child(
-    target: ET.Element,
-    candidates: list[ET.Element],
-) -> ET.Element | None:
+    target: XmlNode,
+    candidates: list[XmlNode],
+) -> XmlNode | None:
     identity_key = element_identity_key(target)
     if identity_key is not None:
         for index, child in enumerate(candidates):
@@ -90,135 +144,123 @@ def pop_matching_child(
     return None if best_index is None else candidates.pop(best_index)
 
 
+def copy_with_leading_nodes(element: XmlNode) -> list[XmlNode]:
+    return [copy.deepcopy(node) for node in element_with_leading_nodes(element)]
+
+
 def overlay_with_base_slots(
-    original_base_node: ET.Element,
-    preserved_base_node: ET.Element | None,
-    overlay_node: ET.Element,
-) -> ET.Element:
+    original_base_node: XmlNode,
+    preserved_base_node: XmlNode | None,
+    overlay_node: XmlNode,
+) -> XmlNode:
+    # The overlay copy supplies attributes, text, namespace declarations, and
+    # the order of its children, including its comments and instructions.
+    result = copy_document(overlay_node) if overlay_node.getparent() is None else copy.deepcopy(overlay_node)
     if preserved_base_node is None:
-        return copy.deepcopy(overlay_node)
+        return result
 
-    result = copy.deepcopy(preserved_base_node)
-    result.attrib.clear()
-    result.attrib.update(copy.deepcopy(overlay_node.attrib))
-    result.text = overlay_node.text
-    result.tail = overlay_node.tail
+    preserved_children = child_elements(preserved_base_node)
+    overlay_children = child_elements(result)
+    merged_replacements: dict[XmlNode, XmlNode] = {}
+    # Live-only preserved children follow the overlay child that their nearest
+    # earlier live sibling paired with (None: before any), so they keep their
+    # live neighbours while overlay order decides everything else.
+    preserved_after: dict[XmlNode | None, list[XmlNode]] = {None: []}
+    anchor: XmlNode | None = None
 
-    preserved_children = list(preserved_base_node)
-    overlay_children = [copy.deepcopy(child) for child in overlay_node]
-    merged_children: list[ET.Element] = []
-
-    for base_child in original_base_node:
+    for base_child in child_elements(original_base_node):
         preserved_child = pop_matching_child(base_child, preserved_children)
         overlay_child = pop_matching_child(base_child, overlay_children)
 
-        if overlay_child is not None and preserved_child is not None:
-            merged_children.append(
-                overlay_with_base_slots(base_child, preserved_child, overlay_child)
-            )
-            continue
         if overlay_child is not None:
-            merged_children.append(overlay_child)
-            continue
-        if preserved_child is not None:
-            merged_children.append(preserved_child)
+            anchor = overlay_child
+            preserved_after[anchor] = []
+            if preserved_child is not None:
+                merged_replacements[overlay_child] = overlay_with_base_slots(
+                    base_child, preserved_child, overlay_child
+                )
+        elif preserved_child is not None:
+            preserved_after[anchor].extend(copy_with_leading_nodes(preserved_child))
 
-    merged_children.extend(preserved_children)
-    merged_children.extend(overlay_children)
-    result[:] = merged_children
+    merged_children = list(preserved_after[None])
+    for child in list(result):
+        merged_children.append(merged_replacements.get(child, child))
+        merged_children.extend(preserved_after.get(child, ()))
+    for preserved_child in preserved_children:
+        merged_children.extend(copy_with_leading_nodes(preserved_child))
+    replace_children(result, merged_children)
     return result
 
 
-def build_tree_with_retained_nodes(
-    source_root: ET.Element,
+def retain_nodes(
+    root: XmlNode,
     node_matchers: list[str],
     node_regexes: tuple[NodeRegex, ...] = (),
-) -> ET.Element:
-    def build_retained_subtree(current: ET.Element, cur_path: str) -> ET.Element | None:
+) -> None:
+    def retain_matching_descendants(current: XmlNode, cur_path: str) -> bool:
+        """Prune current to matched subtrees and their ancestors; report whether any matched."""
         if matches_node_path(cur_path, node_matchers, node_regexes):
-            return copy.deepcopy(current)
+            return True
 
-        retained_children: list[ET.Element] = []
-        for child in current:
-            child_path = f"{cur_path}/{child.tag}"
-            retained_child = build_retained_subtree(child, child_path)
-            if retained_child is not None:
-                retained_children.append(retained_child)
+        retained_nodes: set[XmlNode] = set()
+        for child in child_elements(current):
+            if retain_matching_descendants(child, f"{cur_path}/{child.tag}"):
+                retained_nodes.update(element_with_leading_nodes(child))
+        for child in list(current):
+            if child not in retained_nodes:
+                current.remove(child)
+        return bool(retained_nodes)
 
-        retained_current = ET.Element(current.tag, dict(current.attrib))
-        retained_current.text = current.text
-        retained_current.tail = current.tail
-        retained_current.extend(retained_children)
-        if retained_children or cur_path == source_root.tag:
-            return retained_current
-        return None
-
-    retained_root = build_retained_subtree(source_root, source_root.tag)
-    if retained_root is None:
-        return ET.Element(source_root.tag, dict(source_root.attrib))
-    return retained_root
+    retain_matching_descendants(root, root.tag)
 
 
-def remove_child_keeping_following_text(parent: ET.Element, child: ET.Element) -> None:
-    # ElementTree stores the text after an element as its tail, so a plain
-    # remove() would also delete the surrounding document text. Whitespace-only
-    # tails are layout, which pretty printing regenerates.
+def remove_child_keeping_following_text(parent: XmlNode, child: XmlNode) -> None:
+    # lxml stores the text after a node as its tail, so a plain remove() would
+    # also delete the surrounding document text. Whitespace-only tails are
+    # layout, which pretty printing regenerates.
     if child.tail is not None and child.tail.strip():
-        child_index = list(parent).index(child)
-        if child_index == 0:
+        previous_sibling = child.getprevious()
+        if previous_sibling is None:
             parent.text = (parent.text or "") + child.tail
         else:
-            previous_sibling = parent[child_index - 1]
             previous_sibling.tail = (previous_sibling.tail or "") + child.tail
     parent.remove(child)
 
 
 def strip_nodes(
-    root: ET.Element,
+    root: XmlNode,
     node_matchers: list[str],
     node_regexes: tuple[NodeRegex, ...] = (),
 ) -> None:
-    def strip_nodes_recursion(
-        current: ET.Element,
-        parent: ET.Element | None,
-        cur_path: str,
-        node_matchers: list[str],
-    ) -> None:
-        if matches_node_path(cur_path, node_matchers, node_regexes):
-            if parent is not None:
-                remove_child_keeping_following_text(parent, current)
-            else:
-                current.clear()
-            return
-
-        for child in list(current):
+    def strip_matching_descendants(current: XmlNode, cur_path: str) -> None:
+        for child in child_elements(current):
             child_path = f"{cur_path}/{child.tag}"
-            strip_nodes_recursion(child, current, child_path, node_matchers)
+            if matches_node_path(child_path, node_matchers, node_regexes):
+                for node in element_with_leading_nodes(child):
+                    remove_child_keeping_following_text(current, node)
+            else:
+                strip_matching_descendants(child, child_path)
 
-    strip_nodes_recursion(root, None, root.tag, node_matchers)
-
-
-def build_tree_with_stripped_nodes(
-    source_root: ET.Element,
-    node_matchers: list[str],
-    node_regexes: tuple[NodeRegex, ...] = (),
-) -> ET.Element:
-    stripped_root = copy.deepcopy(source_root)
-    strip_nodes(stripped_root, node_matchers, node_regexes)
-    return stripped_root
+    if matches_node_path(root.tag, node_matchers, node_regexes):
+        root.clear()
+    else:
+        strip_matching_descendants(root, root.tag)
 
 
 def build_tree_with_selector_action(
-    source_root: ET.Element,
+    source_root: XmlNode,
     node_matchers: list[str],
     selector_action: SelectorAction,
     node_regexes: tuple[NodeRegex, ...] = (),
-) -> ET.Element:
+) -> XmlNode:
+    root = copy_document(source_root)
     if not node_matchers and not node_regexes:
-        return copy.deepcopy(source_root)
+        return root
     if selector_action == SelectorAction.RETAIN:
-        return build_tree_with_retained_nodes(source_root, node_matchers, node_regexes)
-    return build_tree_with_stripped_nodes(source_root, node_matchers, node_regexes)
+        retain_nodes(root, node_matchers, node_regexes)
+    else:
+        strip_nodes(root, node_matchers, node_regexes)
+    return root
 
 
 def parse_node_matchers(raw_node_matchers: tuple[str, ...] | list[str]) -> list[str]:
@@ -231,34 +273,42 @@ def parse_node_matchers(raw_node_matchers: tuple[str, ...] | list[str]) -> list[
     return parsed_node_matchers
 
 
-def sort_xml_attributes(root: ET.Element) -> None:
-    for elem in root.iter():
+def sort_xml_attributes(root: XmlNode) -> None:
+    for elem in root.iter(etree.Element):
         sorted_attributes = dict(sorted(elem.attrib.items()))
         elem.attrib.clear()
         elem.attrib.update(sorted_attributes)
 
 
-def strip_whitespace_text_nodes(root: ET.Element) -> None:
-    for elem in root.iter():
-        if elem.text is not None and elem.text.strip() == "":
-            elem.text = None
-        if elem.tail is not None and elem.tail.strip() == "":
-            elem.tail = None
+def strip_whitespace_text_nodes(root: XmlNode) -> None:
+    for node in root.iter():
+        # A comment's or instruction's text is its content, not layout.
+        if is_element(node) and node.text is not None and node.text.strip() == "":
+            node.text = None
+        if node.tail is not None and node.tail.strip() == "":
+            node.tail = None
 
 
-def canonical_xml_sort_key(element: ET.Element) -> str:
+def canonical_xml_sort_key(element: XmlNode) -> str:
     normalized = copy.deepcopy(element)
     strip_whitespace_text_nodes(normalized)
     sort_xml_attributes(normalized)
-    return ET.tostring(normalized, encoding="unicode")
+    return etree.tostring(normalized, encoding="unicode")
 
 
-def sort_selected_children(root: ET.Element, parent_matchers: list[str]) -> None:
-    def sort_selected_children_recursion(current: ET.Element, cur_path: str) -> None:
+def sort_selected_children(root: XmlNode, parent_matchers: list[str]) -> None:
+    def sort_selected_children_recursion(current: XmlNode, cur_path: str) -> None:
         if matches_node_path(cur_path, parent_matchers):
-            current[:] = sorted(current, key=canonical_xml_sort_key)
+            sorted_groups = sorted(
+                (element_with_leading_nodes(child) for child in child_elements(current)),
+                key=lambda group: canonical_xml_sort_key(group[-1]),
+            )
+            grouped_nodes = {node for group in sorted_groups for node in group}
+            # Comments and instructions that describe no element stay after the sorted ones.
+            unowned_nodes = [node for node in current if node not in grouped_nodes]
+            replace_children(current, [*(node for group in sorted_groups for node in group), *unowned_nodes])
 
-        for child in current:
+        for child in child_elements(current):
             child_path = f"{cur_path}/{child.tag}"
             sort_selected_children_recursion(child, child_path)
 
@@ -266,20 +316,21 @@ def sort_selected_children(root: ET.Element, parent_matchers: list[str]) -> None
 
 
 def normalized_xml_for_compare(
-    root: ET.Element,
+    root: XmlNode,
     child_sort_parent_matchers: list[str] | None = None,
 ) -> str:
-    normalized = copy.deepcopy(root)
+    normalized = copy_document(root)
     strip_whitespace_text_nodes(normalized)
     sort_xml_attributes(normalized)
     if child_sort_parent_matchers:
         sort_selected_children(normalized, child_sort_parent_matchers)
-    return ET.tostring(normalized, encoding="unicode")
+    # The whole document, so the doctype and comments around the root count too.
+    return etree.tostring(normalized.getroottree(), encoding="unicode")
 
 
 def get_existing_xml_bytes_if_semantically_unchanged(
     compare_path: Path,
-    root: ET.Element,
+    root: XmlNode,
     child_sort_parent_matchers: list[str] | None = None,
  ) -> bytes | None:
     if not compare_path.is_file():
@@ -287,8 +338,8 @@ def get_existing_xml_bytes_if_semantically_unchanged(
 
     existing_bytes = compare_path.read_bytes()
     try:
-        existing_root = ET.fromstring(existing_bytes)
-    except ET.ParseError:
+        existing_root = etree.fromstring(existing_bytes, XML_PARSER)
+    except etree.XMLSyntaxError:
         return None
 
     if normalized_xml_for_compare(
@@ -304,23 +355,24 @@ def get_existing_xml_bytes_if_semantically_unchanged(
 
 
 # Kept byte-identical to the declaration minidom's toprettyxml emitted. Other
-# output bytes did change with the ElementTree serializer (`<a />`, a final
-# newline), so earlier outputs are rewritten once unless compare reuse applies.
+# output bytes did change since (`<a/>`, a final newline), so earlier outputs
+# are rewritten once unless compare reuse applies.
 XML_DECLARATION = '<?xml version="1.0" ?>'
 XML_INDENT = "  "
 
 
-def has_mixed_content(element: ET.Element) -> bool:
-    return any(
+def has_mixed_content(element: XmlNode) -> bool:
+    # An entity reference is text the parser left unexpanded.
+    return any(child.tag is etree.Entity for child in element) or any(
         text is not None and text.strip()
         for text in (element.text, *(child.tail for child in element))
     )
 
 
-def indent_element_only_content(element: ET.Element, level: int = 0) -> None:
-    # Like ET.indent, but leaves mixed content untouched: ET.indent would still
-    # inject newlines where a mixed-content element has no text before its
-    # first child or after its last one, changing the document's text.
+def indent_element_only_content(element: XmlNode, level: int = 0) -> None:
+    # Like etree.indent, but leaves mixed content untouched: etree.indent would
+    # still inject newlines where a mixed-content element has no text before
+    # its first child or after its last one, changing the document's text.
     if not len(element) or has_mixed_content(element):
         return
 
@@ -332,21 +384,25 @@ def indent_element_only_content(element: ET.Element, level: int = 0) -> None:
     element[-1].tail = "\n" + XML_INDENT * level
 
 
-def build_pretty_xml_text(root: ET.Element) -> str:
-    pretty_root = copy.deepcopy(root)
-    pretty_root.tail = None
+def build_pretty_xml_text(root: XmlNode) -> str:
+    pretty_root = copy_document(root)
     indent_element_only_content(pretty_root)
-    return f"{XML_DECLARATION}\n{ET.tostring(pretty_root, encoding='unicode')}\n"
+    # pretty_print here only breaks lines between the doctype, the root, and
+    # the comments and instructions around it: libxml2 leaves an element's
+    # content alone once it has text children, and after the indentation above
+    # every element with children has some.
+    document_text = etree.tostring(pretty_root.getroottree(), encoding="unicode", pretty_print=True)
+    return f"{XML_DECLARATION}\n{document_text}"
 
 
-def parse_xml_bytes(content: bytes, source: str) -> ET.Element:
+def parse_xml_bytes(content: bytes, source: str) -> XmlNode:
     try:
-        return ET.fromstring(content)
-    except ET.ParseError as error:
-        raise ValueError(f"{source} is not valid XML: {error}") from error
+        return etree.fromstring(content, XML_PARSER)
+    except etree.XMLSyntaxError as error:
+        raise ValueError(f"{source} is not valid XML: {error.msg}") from error
 
 
-def read_xml_root(path: Path, stdin_bytes: bytes | None) -> ET.Element | None:
+def read_xml_root(path: Path, stdin_bytes: bytes | None) -> XmlNode | None:
     """Parse XML input, or return None when the input file is missing."""
     if path == STDIN_PATH:
         assert stdin_bytes is not None
@@ -386,7 +442,7 @@ def render_xml_output(
     if base_root is None:
         if overlay_root is None:
             raise ValueError(f"base XML file not found: {base_path}")
-        root = ET.Element(overlay_root.tag)
+        root = etree.Element(overlay_root.tag)
     else:
         root = build_tree_with_selector_action(
             base_root,
@@ -397,7 +453,7 @@ def render_xml_output(
 
     if overlay_root is not None:
         if base_root is None:
-            root = copy.deepcopy(overlay_root)
+            root = copy_document(overlay_root)
         else:
             preserved_root = root
             root = overlay_with_base_slots(base_root, preserved_root, overlay_root)

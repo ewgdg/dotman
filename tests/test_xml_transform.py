@@ -622,7 +622,7 @@ def test_pretty_output_indents_element_only_content(tmp_path: Path) -> None:
         "<config>\n"
         '  <group name="g">\n'
         "    <item>1</item>\n"
-        "    <empty />\n"
+        "    <empty/>\n"
         "  </group>\n"
         "  <p>Hi <b>x</b></p>\n"
         "</config>\n"
@@ -670,7 +670,7 @@ def test_malformed_xml_fails_cleanly_naming_its_source(operand, tmp_path, monkey
     assert exit_code == 2
     error = capsys.readouterr().err
     assert source in error
-    assert "mismatched tag" in error
+    assert "tag mismatch" in error
 
 
 def test_missing_base_file_fails_cleanly(tmp_path, capsys) -> None:
@@ -680,3 +680,146 @@ def test_missing_base_file_fails_cleanly(tmp_path, capsys) -> None:
 
     assert cli.main(["transform", "xml", str(missing_path), "-", "--mode", "cleanup", "--selectors", "config/a"]) == 2
     assert f"base XML file not found: {missing_path}" in capsys.readouterr().err
+
+
+def test_cleanup_keeps_comments_instructions_doctype_and_namespace_prefixes(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.xml"
+    output_path = tmp_path / "output.xml"
+    input_path.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<!-- header -->
+<!DOCTYPE config>
+<?app-hint keep?>
+<config xmlns:p="urn:p" xmlns:unused="urn:unused">
+  <!-- window settings -->
+  <p:Window p:x="1"/>
+  <?inline pi?>
+  <keep>v</keep>
+  <!-- noisy state -->
+  <drop/>
+</config>
+<!-- footer -->
+""",
+        encoding="utf-8",
+    )
+
+    transform_xml(input_path, output_path, node_matchers=["config/drop"])
+
+    assert output_path.read_text(encoding="utf-8") == (
+        '<?xml version="1.0" ?>\n'
+        "<!-- header -->\n"
+        "<!DOCTYPE config>\n"
+        "<?app-hint keep?>\n"
+        '<config xmlns:p="urn:p" xmlns:unused="urn:unused">\n'
+        "  <!-- window settings -->\n"
+        '  <p:Window p:x="1"/>\n'
+        "  <?inline pi?>\n"
+        "  <keep>v</keep>\n"
+        "</config>\n"
+        "<!-- footer -->\n"
+    )
+
+
+def test_merge_places_overlay_children_at_their_overlay_position(tmp_path: Path) -> None:
+    live_path = tmp_path / "live.xml"
+    repo_path = tmp_path / "repo.xml"
+    output_path = tmp_path / "output.xml"
+    live_path.write_text(
+        """<config>
+  <!-- live note -->
+  <a>live</a>
+  <!-- local geometry -->
+  <WindowGeometry x="1"/>
+  <c>live</c>
+</config>
+""",
+        encoding="utf-8",
+    )
+    repo_path.write_text(
+        """<config>
+  <!-- managed -->
+  <a>repo</a>
+  <b>new</b>
+  <c>repo</c>
+</config>
+""",
+        encoding="utf-8",
+    )
+
+    transform_xml(
+        live_path,
+        output_path,
+        overlay_path=repo_path,
+        node_matchers=["config/WindowGeometry"],
+        selector_action=MODULE.SelectorAction.RETAIN,
+    )
+
+    assert output_path.read_text(encoding="utf-8") == (
+        '<?xml version="1.0" ?>\n'
+        "<config>\n"
+        "  <!-- managed -->\n"
+        "  <a>repo</a>\n"
+        "  <!-- local geometry -->\n"
+        '  <WindowGeometry x="1"/>\n'
+        "  <b>new</b>\n"
+        "  <c>repo</c>\n"
+        "</config>\n"
+    )
+
+
+def test_sort_children_moves_leading_comments_with_their_elements(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.xml"
+    output_path = tmp_path / "output.xml"
+    input_path.write_text(
+        "<config><list><!-- bee --><item>b</item><!-- ay --><item>a</item><!-- end --></list></config>",
+        encoding="utf-8",
+    )
+
+    transform_xml(
+        input_path,
+        output_path,
+        node_matchers=["config/drop"],
+        child_sort_parent_matchers=["config/list"],
+    )
+
+    assert output_path.read_text(encoding="utf-8") == (
+        '<?xml version="1.0" ?>\n'
+        "<config>\n"
+        "  <list>\n"
+        "    <!-- ay -->\n"
+        "    <item>a</item>\n"
+        "    <!-- bee -->\n"
+        "    <item>b</item>\n"
+        "    <!-- end -->\n"
+        "  </list>\n"
+        "</config>\n"
+    )
+
+
+def test_compare_file_differing_only_in_comments_is_not_reused(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.xml"
+    compare_path = tmp_path / "compare.xml"
+    output_path = tmp_path / "output.xml"
+    input_path.write_text("<config><!-- note --><a>1</a></config>", encoding="utf-8")
+    compare_path.write_text("<config><a>1</a></config>", encoding="utf-8")
+
+    transform_xml(input_path, output_path, node_matchers=["config/drop"], compare_path=compare_path)
+
+    assert "<!-- note -->" in output_path.read_text(encoding="utf-8")
+
+
+def test_external_entities_are_kept_as_references_not_resolved(tmp_path: Path) -> None:
+    secret_path = tmp_path / "secret.txt"
+    secret_path.write_text("SECRET", encoding="utf-8")
+    input_path = tmp_path / "input.xml"
+    output_path = tmp_path / "output.xml"
+    input_path.write_text(
+        f'<!DOCTYPE config [<!ENTITY e SYSTEM "{secret_path.as_uri()}">]>\n<config><v>&e;</v></config>',
+        encoding="utf-8",
+    )
+
+    transform_xml(input_path, output_path, node_matchers=["config/drop"])
+
+    output_text = output_path.read_text(encoding="utf-8")
+    assert "SECRET" not in output_text
+    assert "<v>&e;</v>" in output_text
