@@ -19,6 +19,7 @@ from dotman.transforms.framework import (
     TransformRequest,
     STDIN_PATH,
     compile_selector_regexes,
+    read_reference_bytes,
     split_quoted_key_path,
     values_strictly_equal,
 )
@@ -300,10 +301,9 @@ def get_existing_bytes_if_semantically_unchanged(
     path: Path,
     data: PlistDict,
 ) -> bytes | None:
-    if not path.exists():
+    existing_bytes = read_reference_bytes(path)
+    if existing_bytes is None:
         return None
-
-    existing_bytes = path.read_bytes()
     try:
         existing_data = plistlib.loads(existing_bytes)
     except Exception:

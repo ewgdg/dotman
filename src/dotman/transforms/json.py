@@ -21,6 +21,8 @@ from dotman.transforms.framework import (
     split_quoted_key_path,
     values_strictly_equal,
     read_input_text,
+    decode_reference_text,
+    read_reference_bytes,
     read_reference_text,
 )
 
@@ -359,12 +361,12 @@ def json_text(data: JsonDict, indent: str = DEFAULT_JSON_INDENT) -> str:
 
 
 def get_existing_bytes_if_semantically_unchanged(path: Path, data: JsonDict) -> bytes | None:
-    if not path.exists():
+    existing_bytes = read_reference_bytes(path)
+    existing_text = decode_reference_text(existing_bytes)
+    if existing_text is None:
         return None
-
-    existing_bytes = path.read_bytes()
     try:
-        existing_data = json.loads(existing_bytes.decode("utf-8"))
+        existing_data = json.loads(existing_text)
     except Exception:
         return None
 

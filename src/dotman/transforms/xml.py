@@ -18,6 +18,7 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
+    read_reference_bytes,
 )
 
 
@@ -333,10 +334,9 @@ def get_existing_xml_bytes_if_semantically_unchanged(
     root: XmlNode,
     child_sort_parent_matchers: list[str] | None = None,
  ) -> bytes | None:
-    if not compare_path.is_file():
+    existing_bytes = read_reference_bytes(compare_path)
+    if existing_bytes is None:
         return None
-
-    existing_bytes = compare_path.read_bytes()
     try:
         existing_root = etree.fromstring(existing_bytes, XML_PARSER)
     except etree.XMLSyntaxError:

@@ -476,3 +476,65 @@ def test_utf8_bom_input_is_read_like_plain_utf8(transform_format, content, tmp_p
 
     assert cli.main(["transform", transform_format, str(base), "--stdout", "--mode", "cleanup", "--selectors", "a"]) == 0
     assert capsys.readouterr().out == content
+
+
+TEXT_TRANSFORM_SAMPLES = {
+    "json": '{\n    "value": 1\n}\n',
+    "yaml": "value: 1\n",
+    "toml": "value = 1\n",
+    "xml": "<root><value>1</value></root>\n",
+}
+TRANSFORM_SAMPLES = {**TEXT_TRANSFORM_SAMPLES, "plist": plistlib.dumps({"value": 1}).decode()}
+# XML and TOML cleanup need a selector; one that matches nothing keeps the sample intact.
+NO_OP_CLEANUP_SELECTORS = ("--selector-type", "remove", "--selectors", "absent")
+CLEANUP_ARGUMENTS = {"xml": NO_OP_CLEANUP_SELECTORS, "toml": NO_OP_CLEANUP_SELECTORS}
+
+
+@pytest.mark.parametrize("transform_format", TRANSFORM_SAMPLES)
+@pytest.mark.parametrize("unreadable_compare", ["directory", "not_utf8"])
+def test_unreadable_compare_file_is_not_reused(transform_format, unreadable_compare, tmp_path) -> None:
+    from dotman import cli
+
+    base = tmp_path / f"base.{transform_format}"
+    base.write_text(TRANSFORM_SAMPLES[transform_format], encoding="utf-8")
+    compare = tmp_path / f"compare.{transform_format}"
+    if unreadable_compare == "directory":
+        compare.mkdir()
+    else:
+        compare.write_bytes(b"\xff\xfe not utf-8")
+    output = tmp_path / f"output.{transform_format}"
+
+    assert cli.main([
+        "transform", transform_format, str(base), str(output), "--mode", "cleanup", "--compare-file", str(compare),
+        *CLEANUP_ARGUMENTS.get(transform_format, ()),
+    ]) == 0
+    assert output.exists()
+
+
+@pytest.mark.parametrize("transform_format", TEXT_TRANSFORM_SAMPLES)
+def test_compare_file_with_utf8_bom_is_reused(transform_format, tmp_path) -> None:
+    from dotman import cli
+
+    base = tmp_path / f"base.{transform_format}"
+    base.write_text(TEXT_TRANSFORM_SAMPLES[transform_format], encoding="utf-8")
+    compare = tmp_path / f"compare.{transform_format}"
+    compare_bytes = b"\xef\xbb\xbf" + TEXT_TRANSFORM_SAMPLES[transform_format].encode()
+    compare.write_bytes(compare_bytes)
+    output = tmp_path / f"output.{transform_format}"
+
+    assert cli.main([
+        "transform", transform_format, str(base), str(output), "--mode", "cleanup", "--compare-file", str(compare),
+        *CLEANUP_ARGUMENTS.get(transform_format, ()),
+    ]) == 0
+    assert output.read_bytes() == compare_bytes
+
+
+def test_base_with_utf8_bom_still_sets_json_indent(tmp_path) -> None:
+    from dotman import cli
+
+    base = tmp_path / "base.json"
+    base.write_bytes(b"\xef\xbb\xbf" + TEXT_TRANSFORM_SAMPLES["json"].encode())
+    output = tmp_path / "output.json"
+
+    assert cli.main(["transform", "json", str(base), str(output), "--mode", "cleanup"]) == 0
+    assert output.read_text(encoding="utf-8") == TEXT_TRANSFORM_SAMPLES["json"]

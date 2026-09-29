@@ -173,8 +173,8 @@ class TransformRequest:
         return self.engine_options.get(option_name, default)
 
 
-def read_reference_text(path: Path | None, *, stdin_bytes: bytes | None = None) -> str | None:
-    """Read advisory text used only for formatting hints and compare reuse.
+def read_reference_bytes(path: Path | None, *, stdin_bytes: bytes | None = None) -> bytes | None:
+    """Read an advisory file used only for formatting hints and compare reuse.
 
     Unlike engine inputs, an unreadable reference must not abort the
     transform; it just provides no hint.
@@ -182,17 +182,24 @@ def read_reference_text(path: Path | None, *, stdin_bytes: bytes | None = None) 
     if path is None:
         return None
     if path == STDIN_PATH:
-        content = stdin_bytes
-    elif path.is_file():
-        content = path.read_bytes()
-    else:
-        return None
+        return stdin_bytes
+    if path.is_file():
+        return path.read_bytes()
+    return None
+
+
+def decode_reference_text(content: bytes | None) -> str | None:
+    """Decode advisory bytes like engine inputs, or return None when they are not UTF-8."""
     if content is None:
         return None
     try:
-        return content.decode("utf-8")
+        return content.decode("utf-8-sig")
     except UnicodeDecodeError:
         return None
+
+
+def read_reference_text(path: Path | None, *, stdin_bytes: bytes | None = None) -> str | None:
+    return decode_reference_text(read_reference_bytes(path, stdin_bytes=stdin_bytes))
 
 
 @dataclass(frozen=True)

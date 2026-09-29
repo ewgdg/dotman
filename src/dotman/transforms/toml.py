@@ -35,8 +35,10 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
-    values_strictly_equal,
+    decode_reference_text,
     read_input_text,
+    read_reference_bytes,
+    values_strictly_equal,
 )
 
 
@@ -93,11 +95,10 @@ def get_existing_text_if_unchanged(
     doc: TOMLDocument,
     content: str,
 ) -> bytes | None:
-    if not compare_path.exists():
+    existing_bytes = read_reference_bytes(compare_path)
+    existing_content = decode_reference_text(existing_bytes)
+    if existing_content is None:
         return None
-
-    existing_bytes = compare_path.read_bytes()
-    existing_content = existing_bytes.decode("utf-8")
     try:
         existing_doc = parse_document(existing_content)
     except Exception:
