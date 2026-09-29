@@ -395,6 +395,16 @@ def build_pretty_xml_text(root: XmlNode) -> str:
     return f"{XML_DECLARATION}\n{document_text}"
 
 
+def ensure_well_formed_output(document_text: str) -> None:
+    # A merge writes the overlay's doctype, so kept live nodes can reference
+    # entities that only the live doctype defines. Fail instead of writing XML
+    # that no reader accepts.
+    try:
+        etree.fromstring(document_text.encode("utf-8"), XML_PARSER)
+    except etree.XMLSyntaxError as error:
+        raise ValueError(f"XML output would not be well-formed: {error.msg}") from error
+
+
 def parse_xml_bytes(content: bytes, source: str) -> XmlNode:
     try:
         return etree.fromstring(content, XML_PARSER)
@@ -476,8 +486,10 @@ def render_xml_output(
                 reused_compare_path=compare_path,
             )
 
+    content = build_pretty_xml_text(root)
+    ensure_well_formed_output(content)
     return TransformOutput(
-        content=build_pretty_xml_text(root),
+        content=content,
         mode_reference_path=base_path,
     )
 

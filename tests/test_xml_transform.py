@@ -823,3 +823,28 @@ def test_external_entities_are_kept_as_references_not_resolved(tmp_path: Path) -
     output_text = output_path.read_text(encoding="utf-8")
     assert "SECRET" not in output_text
     assert "<v>&e;</v>" in output_text
+
+
+@pytest.mark.parametrize("overlay_doctype", ["", "<!DOCTYPE config>\n"], ids=["no-doctype", "doctype-without-entity"])
+def test_merge_that_keeps_an_entity_the_output_doctype_lacks_is_an_error(
+    overlay_doctype: str, tmp_path: Path, capsys
+) -> None:
+    from dotman import cli
+
+    live_path = tmp_path / "live.xml"
+    repo_path = tmp_path / "repo.xml"
+    output_path = tmp_path / "output.xml"
+    live_path.write_text(
+        '<!DOCTYPE config [<!ENTITY brand "Acme">]>\n<config><title>&brand;</title><managed/></config>\n',
+        encoding="utf-8",
+    )
+    repo_path.write_text(f"{overlay_doctype}<config><managed/></config>\n", encoding="utf-8")
+
+    # The output doctype comes from the overlay, so the kept &brand; would be
+    # undefined there; writing it would produce XML no reader accepts.
+    assert cli.main([
+        "transform", "xml", str(live_path), str(output_path),
+        "--mode", "merge", "--overlay-file", str(repo_path), "--selectors", "config/title",
+    ]) == 2
+    assert "brand" in capsys.readouterr().err
+    assert not output_path.exists()
