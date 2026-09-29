@@ -78,6 +78,43 @@ def test_quoted_empty_segment_selects_the_empty_key(transform_format, tmp_path) 
 
 @pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
 @pytest.mark.parametrize(
+    ("selector", "expected"),
+    [
+        ("a", {"a": {"x": {"p": 1}, "k": 1}, "b": 2}),
+        ("re:^a$", {"a": {"x": {"p": 1}, "k": 1}, "b": 2}),
+        ("a.x", {"a": {"x": {"p": 1}, "k": 5}, "b": 2}),
+        (r"re:^a\.x$", {"a": {"x": {"p": 1}, "k": 5}, "b": 2}),
+    ],
+)
+def test_render_restores_captured_live_values_for_path_and_regex_selectors(
+    transform_format, selector, expected, tmp_path
+) -> None:
+    # The engines keep separate selection code; the same selection spelled as a
+    # path or a regex must round-trip alike in each of them.
+    live = {"a": {"x": {"p": 1}, "k": 1}, "b": 1}
+    repo = run_transform(
+        transform_format,
+        tmp_path,
+        live,
+        "--mode", "cleanup", "--selector-type", "remove", "--selectors", selector,
+    )
+    repo["b"] = 2
+    if "a" in repo:
+        repo["a"]["k"] = 5
+    overlay_path = write_mapping(tmp_path / f"repo.{transform_format}", transform_format, repo)
+
+    rendered = run_transform(
+        transform_format,
+        tmp_path,
+        live,
+        "--mode", "merge", "--overlay-file", str(overlay_path), "--selectors", selector,
+    )
+
+    assert rendered == expected
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+@pytest.mark.parametrize(
     ("result_value", "stale_compare_value"),
     [(True, 1), (0.0, -0.0), (1, 1.0)],
 )
