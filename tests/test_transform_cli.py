@@ -538,3 +538,22 @@ def test_base_with_utf8_bom_still_sets_json_indent(tmp_path) -> None:
 
     assert cli.main(["transform", "json", str(base), str(output), "--mode", "cleanup"]) == 0
     assert output.read_text(encoding="utf-8") == TEXT_TRANSFORM_SAMPLES["json"]
+
+
+
+@pytest.mark.parametrize("transform_format", TRANSFORM_SAMPLES)
+def test_overlay_that_is_a_directory_is_an_error_not_an_empty_file(transform_format, tmp_path, capsys) -> None:
+    from dotman import cli
+
+    base = tmp_path / f"base.{transform_format}"
+    base.write_text(TRANSFORM_SAMPLES[transform_format], encoding="utf-8")
+    overlay = tmp_path / f"overlay.{transform_format}"
+    overlay.mkdir()
+    output = tmp_path / f"output.{transform_format}"
+
+    assert cli.main([
+        "transform", transform_format, str(base), str(output), "--mode", "merge", "--overlay-file", str(overlay),
+        *CLEANUP_ARGUMENTS.get(transform_format, ()),
+    ]) != 0
+    assert "Is a directory" in capsys.readouterr().err
+    assert not output.exists()

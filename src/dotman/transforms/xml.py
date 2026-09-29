@@ -407,7 +407,7 @@ def read_xml_root(path: Path, stdin_bytes: bytes | None) -> XmlNode | None:
     if path == STDIN_PATH:
         assert stdin_bytes is not None
         return parse_xml_bytes(stdin_bytes, "stdin")
-    if not path.is_file():
+    if not path.exists():
         return None
     return parse_xml_bytes(path.read_bytes(), str(path))
 
