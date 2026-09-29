@@ -9,8 +9,8 @@ from collections.abc import Iterable
 from typing import Any
 from pathlib import Path
 import tomlkit
-from tomlkit.container import OutOfOrderTableProxy
-from tomlkit.items import AoT, Array, Null, Table
+from tomlkit.container import Container, OutOfOrderTableProxy
+from tomlkit.items import AbstractTable, AoT, Array, InlineTable, Null, Table
 from tomlkit.toml_document import TOMLDocument
 
 from dotman.transforms.cli import run_engine_cli
@@ -169,9 +169,10 @@ def split_key_path(key_path: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
 
 
 def is_table_like(value: object) -> bool:
-    # tomlkit exposes a table split across the document (out-of-order headers or
-    # repeated dotted keys) as a proxy that is not a Table but edits every part.
-    return isinstance(value, (Table, OutOfOrderTableProxy))
+    # Inline tables hold selectable keys like tables do. tomlkit exposes a table
+    # split across the document (out-of-order headers or repeated dotted keys)
+    # as a proxy that is not a Table but edits every part.
+    return isinstance(value, (AbstractTable, OutOfOrderTableProxy))
 
 
 def as_single_table(value: Any) -> Any:
@@ -469,11 +470,28 @@ def insert_trivia_at_body_index(
         body_entries.insert(index + offset, entry)
 
 
+def inline_table_without_key(inline_table: InlineTable, removed_key_name: str) -> InlineTable:
+    rebuilt = tomlkit.inline_table()
+    for key_name, value in inline_table.items():
+        if key_name != removed_key_name:
+            rebuilt[key_name] = copy.deepcopy(value)
+    return rebuilt
+
+
 def delete_key_path(root: TomlContainer, key_path: tuple[str, ...]) -> None:
     table_path, key_name = split_key_path(key_path)
     container = get_container(root, table_path)
-    if container is not None and key_name in container:
-        del container[key_name]
+    if container is None or key_name not in container:
+        return
+    if isinstance(container, InlineTable):
+        # tomlkit leaves a dangling separator when deleting a middle key from an
+        # inline table (`{b = 1, , e = 3}`), so replace it with a rebuilt copy.
+        parent_path, inline_table_name = split_key_path(table_path)
+        get_container(root, parent_path)[inline_table_name] = inline_table_without_key(
+            container, key_name
+        )
+        return
+    del container[key_name]
 
 
 def iter_table_paths(root: TomlContainer, prefix: tuple[str, ...] = ()) -> Iterable[tuple[str, ...]]:
@@ -573,12 +591,21 @@ def collapse_duplicate_table_separators(container: TomlContainer) -> None:
             collapse_duplicate_table_separators(item)
 
 
-def ensure_container(root: TomlContainer, table_path: tuple[str, ...]) -> TomlContainer:
+def ensure_container(
+    root: TomlContainer,
+    table_path: tuple[str, ...],
+    source_root: TomlContainer,
+) -> TomlContainer:
+    """Create the tables along a path copied from source_root, keeping inline style."""
     current: TomlContainer = root
+    source_current: Any = source_root
     for part in table_path:
+        source_current = source_current[part]
         next_value = current.get(part)
         if not is_table_like(next_value):
-            current[part] = tomlkit.table()
+            current[part] = (
+                tomlkit.inline_table() if isinstance(source_current, InlineTable) else tomlkit.table()
+            )
             next_value = current[part]
         current = next_value
     return current
@@ -697,8 +724,8 @@ def restore_top_level_leading_trivia(
         if (
             overlay_region is not None
             and preserved_region is not None
-            and isinstance(overlay_region.item, Table)
-            and isinstance(preserved_region.item, Table)
+            and isinstance(overlay_region.item, AbstractTable)
+            and isinstance(preserved_region.item, AbstractTable)
         ):
             item_region = merged_region
         elif overlay_region is not None:
@@ -787,7 +814,7 @@ def overlay_preserved_keys(
             continue
 
         table_path, key_name = split_key_path(key_path)
-        target_container = ensure_container(base_doc, table_path)
+        target_container = ensure_container(base_doc, table_path, overlay_doc)
         target_container[key_name] = copy.deepcopy(as_single_table(retained_value))
 
 
@@ -808,7 +835,7 @@ def overlay_preserved_regex_paths(
             continue
 
         parent_path, item_name = split_key_path(item_path)
-        target_container = ensure_container(base_doc, parent_path)
+        target_container = ensure_container(base_doc, parent_path, overlay_doc)
         target_container[item_name] = copy.deepcopy(as_single_table(retained_item))
 
 
@@ -849,12 +876,50 @@ def clone_empty_container(source: TomlContainer) -> TomlContainer:
     return cloned
 
 
+def empty_merged_container(
+    preserved_base: TomlContainer,
+    overlay_doc: TomlContainer,
+) -> TomlContainer:
+    """Start a merged container in the overlay's inline or table style."""
+    if isinstance(overlay_doc, InlineTable):
+        # Deleting keys from a parsed inline table leaves broken separators in
+        # tomlkit, so inline results start fresh with the overlay's line trivia.
+        return InlineTable(Container(), copy.deepcopy(overlay_doc.trivia), new=True)
+    if isinstance(preserved_base, InlineTable):
+        return clone_empty_container(overlay_doc)
+    return clone_empty_container(preserved_base)
+
+
+def set_merged_value(
+    merged: TomlContainer,
+    key_name: str,
+    value: Any,
+    source_container: TomlContainer,
+) -> None:
+    """Copy a value from source_container into merged, adapting it to merged's style."""
+    value = copy.deepcopy(as_single_table(value))
+    merged_is_inline = isinstance(merged, InlineTable)
+    if merged_is_inline and isinstance(value, (Table, AoT)):
+        # Inline tables cannot hold [table] or [[array]] sections; let tomlkit
+        # rebuild the plain data in inline form.
+        merged[key_name] = value.unwrap()
+        return
+    if merged_is_inline != isinstance(source_container, InlineTable):
+        # Line breaks and comments of a key-value line are invalid inside an
+        # inline table, and a value parsed inline has no line break of its own.
+        value.trivia.indent = ""
+        value.trivia.comment_ws = ""
+        value.trivia.comment = ""
+        value.trivia.trail = "" if merged_is_inline else "\n"
+    merged[key_name] = value
+
+
 def overlay_with_base_slots(
     original_base: TomlContainer,
     preserved_base: TomlContainer,
     overlay_doc: TomlContainer,
 ) -> TomlContainer:
-    merged = clone_empty_container(preserved_base)
+    merged = empty_merged_container(preserved_base, overlay_doc)
 
     for key in original_base.keys():
         key_name = str(key)
@@ -863,31 +928,31 @@ def overlay_with_base_slots(
         overlay_value = as_single_table(overlay_doc.get(key_name))
 
         if (
-            isinstance(base_value, Table)
-            and isinstance(preserved_value, Table)
-            and isinstance(overlay_value, Table)
+            isinstance(base_value, AbstractTable)
+            and isinstance(preserved_value, AbstractTable)
+            and isinstance(overlay_value, AbstractTable)
         ):
             merged[key_name] = overlay_with_base_slots(base_value, preserved_value, overlay_value)
             continue
 
         if overlay_value is not None:
-            merged[key_name] = copy.deepcopy(overlay_value)
+            set_merged_value(merged, key_name, overlay_value, overlay_doc)
             continue
 
         if preserved_value is not None:
-            merged[key_name] = copy.deepcopy(preserved_value)
+            set_merged_value(merged, key_name, preserved_value, preserved_base)
 
     for key, overlay_value in overlay_doc.items():
         key_name = str(key)
         if key_name in merged:
             continue
-        merged[key_name] = copy.deepcopy(as_single_table(overlay_value))
+        set_merged_value(merged, key_name, overlay_value, overlay_doc)
 
     for key, preserved_value in preserved_base.items():
         key_name = str(key)
         if key_name in merged:
             continue
-        merged[key_name] = copy.deepcopy(as_single_table(preserved_value))
+        set_merged_value(merged, key_name, preserved_value, preserved_base)
 
     return merged
 

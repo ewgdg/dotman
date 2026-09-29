@@ -1379,3 +1379,59 @@ def test_merge_keeps_every_part_of_split_tables(tmp_path: Path) -> None:
     assert merge(OUT_OF_ORDER_TABLES, "[a]\nw = 1\n", "--selectors", "a.c") == {
         "a": {"w": 1, "c": {"z": 3}}
     }
+
+
+def test_selectors_reach_into_inline_tables(tmp_path: Path) -> None:
+    base_text = "a = {b = 1, c = 2}\nz = 3\n"
+
+    retained = run_toml_transform(tmp_path, base_text, "--selectors", "a.b")
+    removed = run_toml_transform(tmp_path, base_text, "--selector-type", "remove", "--selectors", "a.b")
+    regex_removed = run_toml_transform(
+        tmp_path, base_text, "--selector-type", "remove", "--selectors", r"re:^a\.c$"
+    )
+
+    middle_removed = run_toml_transform(
+        tmp_path,
+        "a = {b = 1, c = 2, e = 3}  # note\n",
+        "--selector-type",
+        "remove",
+        "--selectors",
+        "a.c",
+    )
+
+    assert retained == "a = {b = 1}\n"
+    assert removed == "a = {c = 2}\nz = 3\n"
+    assert regex_removed == "a = {b = 1}\nz = 3\n"
+    assert middle_removed == "a = {b = 1, e = 3}  # note\n"
+
+
+def test_merge_keeps_retained_live_keys_across_inline_and_table_styles(tmp_path: Path) -> None:
+    inline_overlay = run_toml_transform(
+        tmp_path,
+        "[a]\nx = 1\nlive = 9\n\n[a.sub]\nq = 1\n",
+        "--selectors",
+        "a.live",
+        "a.sub",
+        overlay_text="a = {x = 2}\n",
+    )
+    table_overlay = run_toml_transform(
+        tmp_path,
+        "a = {x = 1, live = 9}\n",
+        "--selectors",
+        "a.live",
+        overlay_text="[a]\nx = 2\n",
+    )
+
+    commented_inline_overlay = run_toml_transform(
+        tmp_path,
+        "a = {x = 1, live = 9}\n",
+        "--selectors",
+        "a.live",
+        overlay_text="a = {x = 2}  # repo note\n",
+    )
+
+    assert tomllib.loads(inline_overlay) == {"a": {"x": 2, "live": 9, "sub": {"q": 1}}}
+    assert commented_inline_overlay == "a = {x = 2, live = 9}  # repo note\n"
+    assert inline_overlay.startswith("a = {")
+    assert tomllib.loads(table_overlay) == {"a": {"x": 2, "live": 9}}
+    assert table_overlay.startswith("[a]\n")
