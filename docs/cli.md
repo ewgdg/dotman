@@ -753,9 +753,11 @@ cat portable.conf | dotman rewrite home expand > settings.conf
 
 `dotman transform json BASE [OUTPUT] --mode cleanup|merge` runs without a dotman repository or configuration.
 `--merge-file` is accepted as an alias for `--overlay-file` for every structured transform.
-Selectors always match the base JSON object. Unprefixed selectors default to `exact:`. Exact selectors use dotted nested key paths; quote a segment when its key contains a dot, such as `"key.with.dots".value`. `re:` selectors match full JSON key paths. `--selector-type retain|remove` controls selection. Merge mode requires `--overlay-file`; cleanup mode rejects it. `--compare-file` reuses exact existing bytes, including line endings, when JSON values are semantically equal.
+Selectors always match the base JSON object. Unprefixed selectors default to `exact:`. Exact selectors use dotted nested key paths; quote a segment when its key contains a dot, such as `"key.with.dots".value`, and use `""` for an empty key. `re:` selectors use Python regex search against complete dotted key paths. `--selector-type retain|remove` controls selection. No selectors means identity cleanup, or whole-base overlay merge; selectors that match nothing select nothing. Merge mode requires `--overlay-file`; cleanup mode rejects it. `--compare-file` reuses exact existing bytes, including line endings, when JSON values are semantically equal with matching types, so `true`, `1`, and `1.0` never reuse each other.
 
-Use `-` for base or overlay stdin, and for output stdout. At most one input may be `-`. `--stdout` takes precedence over an optional output operand. File output inherits base permissions; stdin base has no permissions to inherit.
+Use `-` for base or overlay stdin, and for output stdout. At most one input may be `-`; `--compare-file` must be a file. Inputs must be UTF-8. `--stdout` takes precedence over an optional output operand. File output inherits base permissions before it becomes visible, and a symlinked output updates its target; stdin base has no permissions to inherit.
+
+The selector, identity, and type-strict compare rules above apply to the JSON, YAML, and plist transforms alike.
 
 Examples:
 
@@ -814,7 +816,7 @@ Base or overlay accepts `-` for stdin (at most one). Output `-` or `--stdout` wr
 
 Transforms YAML mappings without repository configuration. Selectors are optional: with no selectors, cleanup is an identity rewrite and merge overlays the whole base. Unprefixed and `exact:` selectors match exact dotted nested YAML mapping key paths; quote a segment containing a literal dot (`"settings.window".width`). `re:` selectors use Python regex search against complete dotted key paths. Matching a mapping selects its subtree; scalars and lists remain atomic.
 
-Merge partitions the base by selector, then applies the overlay on top. A nested mapping a selector reaches is merged recursively; any mapping no selector reaches, and every scalar or list, is atomic — replaced by the overlay value or kept from the base as a whole. `--compare-file PATH` reuses its exact text when parsed YAML values are semantically equal, including line endings. Only `true` and `false` resolve as booleans; YAML 1.1 words such as `yes`, `no`, `on`, and `off` remain strings and are quoted when emitted for compatibility with YAML 1.1 consumers. Emitted YAML uses block style with insertion order preserved and the detected base/compare indentation (two spaces by default).
+Merge partitions the base by selector, then applies the overlay on top. A nested mapping a selector reaches is merged recursively; any mapping no selector reaches, and every scalar or list, is atomic — replaced by the overlay value or kept from the base as a whole. `--compare-file PATH` reuses its exact text when parsed YAML values are semantically equal, including line endings. An empty or comment-only document is an empty mapping. Only `true` and `false` resolve as booleans; YAML 1.1 words such as `yes`, `no`, `on`, and `off` remain strings. Any string a YAML 1.1 or 1.2 reader could resolve as a non-string, such as `on`, `y`, `1e3`, or `09`, is quoted when emitted. Emitted YAML uses block style with insertion order preserved and the detected base/compare indentation (two spaces by default).
 
 ```sh
 dotman transform yaml live.yaml output.yaml --mode merge \
