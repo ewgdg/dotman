@@ -373,7 +373,7 @@ class EditProposal:
 @dataclass(frozen=True)
 class ProposalEdit:
     row_id: str
-    status: Literal["saved", "cancelled", "command-failed", "materialization-failed", "unresolved-conflict"]
+    status: Literal["saved", "unchanged", "cancelled", "command-failed", "materialization-failed", "unresolved-conflict"]
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
@@ -1130,8 +1130,9 @@ class ProposalSession:
                 item, metadata = self._resolved_inputs[row.observation.identity]
                 if row.observation.identity in self._editor_input_errors:
                     raise ValueError(self._editor_input_errors[row.observation.identity])
+                initial = self._editor_initial(row)
                 output = edit_sources(
-                    observation=row.observation, initial=self._editor_initial(row),
+                    observation=row.observation, initial=initial,
                     metadata=metadata, repo_root=item.repo.root,
                     additional=prior_additional,
                     preimages=self._editor_preimages[row.observation.identity],
@@ -1142,6 +1143,10 @@ class ProposalSession:
                 if output.exit_code:
                     status = "command-failed"
                     diagnostics = (Diagnostic("editor-command-failed", f"Editor exited with status {output.exit_code}"),)
+                elif output.repository == initial and output.additional == prior_additional:
+                    # Quitting without changes is not an edit; an identical Edited
+                    # choice would only duplicate the current Resolution.
+                    status = "unchanged"
                 else:
                     previous = row.proposal
                     generation = self._next_generation(row.row_id)
@@ -1198,7 +1203,7 @@ class ProposalSession:
             diagnostics = (Diagnostic("editor-materialization-failed", str(exc)),)
         finally:
             self._editor_operation = CommandOperation()
-        if status not in ("saved", "cancelled"):
+        if status not in ("saved", "unchanged", "cancelled"):
             updated = replace(row, approved=False, proposal=None, diagnostics=diagnostics,
                               additional_changes=self._row_additional(row))
         self._view = replace(self.view, revision=self.view.revision + 1, rows=tuple(

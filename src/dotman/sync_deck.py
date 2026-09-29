@@ -390,6 +390,8 @@ class CommandDeck:
             self.notice = result.reason
         elif result.result.status == "cancelled":
             self.notice = "Editor cancelled; previous Proposal preserved."
+        elif result.result.status == "unchanged":
+            self.notice = "Editor closed without changes; Resolution kept."
         else:
             self.notice = "\n".join(item.message for item in result.result.diagnostics)
 

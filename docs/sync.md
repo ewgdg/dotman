@@ -274,7 +274,9 @@ the saved edit stays selectable after switching to another intent, and the next 
 and live endpoints remain unchanged until execution. Deliberate Primary writes
 activate Repository Apply pull hooks even when automatic live-to-repository flow
 is forbidden by policy or Guards. Guards are not rerun; no-write editing does not
-activate these hooks. Byte-identical saves retain
+activate these hooks. Quitting without changes, with the Primary identical to its start and no new
+Additional Source changes, is not an edit: it keeps the Resolution Intent, Proposal and
+Approval and adds no Edited choice. A byte-identical Primary save with Additional changes retains
 valid projection results rather than repeating provider work.
 
 ### Additional Source Approval

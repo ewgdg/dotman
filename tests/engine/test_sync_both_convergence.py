@@ -376,7 +376,8 @@ def test_saved_edit_with_unresolved_conflict_stays_blocked_without_reopening(tmp
     b"<<<<<<< mine\nx\n=======\nz\n>>>>>>> theirs\n",
 ])
 def test_saved_edit_keeps_intentional_conflict_markers(tmp_path, monkeypatch, source):
-    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", source, b"live", 'editor = { run = "true", io = "pipe" }')])
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", source, b"live",
+                                                  'editor = { run = "printf kept >> \\"$DOTMAN_SOURCE\\"", io = "pipe" }')])
     with open_session(engine) as session:
         command(session, SetApproval, "main:app.unit", True)
         result = command(session, EditProposal, "main:app.unit")

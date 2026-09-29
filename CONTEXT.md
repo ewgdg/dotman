@@ -157,7 +157,7 @@ The focused full-screen view for one Additional Source Change that shows its fro
 _Avoid_: Proposal Review, repository editor
 
 **Proposal Editor**:
-A configured or default action that edits the current Proposal through its transactional repository sources without directly mutating the repository working tree. It opens the selected Resolution Intent's outcome, materializing it first when unreviewed. If materialization failed, it starts from the current repository sources as `Use repository` would, or from the saved edit when `Edited` is selected; saving produces an `Edited` Proposal and replaces any earlier saved edit.
+A configured or default action that edits the current Proposal through its transactional repository sources without directly mutating the repository working tree. It opens the selected Resolution Intent's outcome, materializing it first when unreviewed. If materialization failed, it starts from the current repository sources as `Use repository` would, or from the saved edit when `Edited` is selected; saving a change produces an `Edited` Proposal and replaces any earlier saved edit; quitting without changes keeps the current Resolution Intent.
 _Avoid_: Outcome handler, repository editor
 
 **Apply**:

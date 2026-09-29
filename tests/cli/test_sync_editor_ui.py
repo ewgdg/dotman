@@ -362,3 +362,14 @@ def test_additional_edits_have_independent_canonical_review_and_json(tmp_path, m
         assert not any(row.approved for row in session.view.rows)
         deck.select_all(True)
         assert all(row.approved for row in session.view.rows)
+
+
+def test_unchanged_editor_quit_says_resolution_was_kept(tmp_path, monkeypatch):
+    from dotman.sync_deck import CommandDeck
+    from tests.engine.test_sync_session import make_engine
+
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", 'editor = { run = "true", io = "pipe" }')])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        deck = CommandDeck(session, use_color=False)
+        deck.edit()
+        assert deck.notice == "Editor closed without changes; Resolution kept."

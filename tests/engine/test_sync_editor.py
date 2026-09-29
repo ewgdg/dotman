@@ -44,17 +44,15 @@ def test_editor_failure_is_local_and_retryable(tmp_path, monkeypatch, exit_code,
     session.check_cancelled()
 
 
-def test_identical_edit_preserves_materialization(tmp_path, monkeypatch):
+def test_unchanged_editor_quit_keeps_resolution_and_proposal(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [('a', 'push-only', b'repo', b'live',
         'editor = { run = "true", io = "pipe" }')])
     session = open_session(engine)
     dispatch(session, SetApproval, approved=True)
-    before = session.view.rows[0].proposal
+    before = session.view.rows[0]
     result = dispatch(session, EditProposal)
-    after = result.view.rows[0].proposal
-    assert after.intent == "editor" and after.generation == before.generation + 1
-    assert after.publication_effects == before.publication_effects
-    assert result.view.rows[0].approved
+    assert result.result.status == 'unchanged'
+    assert result.view.rows[0] == before
 
 
 def test_editor_recovers_capture_failure_without_enabling_publication(tmp_path, monkeypatch):
@@ -145,7 +143,7 @@ def test_editor_cancel_before_dispatch_is_local(tmp_path, monkeypatch):
     session = open_session(engine)
     session.request_editor_cancel()
     assert dispatch(session, EditProposal).result.status == 'cancelled'
-    assert dispatch(session, EditProposal).result.status == 'saved'
+    assert dispatch(session, EditProposal).result.status == 'unchanged'
     session.check_cancelled()
 
 
@@ -236,7 +234,7 @@ def test_running_editor_cancellation_preserves_approval(tmp_path, monkeypatch, o
 def test_editor_generations_never_revive_after_intent_changes(tmp_path, monkeypatch):
     from dotman.sync_session import SetResolutionIntent
     engine = make_engine(tmp_path, monkeypatch, [('a', 'push-only', b'repo', b'live',
-        'editor = { run = "true", io = "pipe" }')])
+        'editor = { run = "printf x >> \\"$DOTMAN_SOURCE\\"", io = "pipe" }')])
     session = open_session(engine)
     first = dispatch(session, EditProposal).view.rows[0].proposal.generation
     dispatch(session, SetResolutionIntent, intent='use-repository')
@@ -259,7 +257,8 @@ def test_editor_primary_activates_pull_hooks_only_for_repository_write(tmp_path,
     session = open_session(engine, preview=False)
     guards = guard_log.read_bytes() if guard_log.exists() else None
     if edited:
-        assert dispatch(session, EditProposal).result.status == "saved"
+        unchanged = edited == "identical" and policy != "pull-only"
+        assert dispatch(session, EditProposal).result.status == ("unchanged" if unchanged else "saved")
     dispatch(session, SetApproval, approved=True)
     result = session.execute()
     # An identical pull-only edit writes nothing and cannot record a Sync Base.
@@ -312,10 +311,14 @@ def test_editor_stops_on_failed_capture_then_recovers_from_repository(tmp_path, 
     assert saved.view.rows[0].proposal.repository == FilePresent(b'repox')
 
 
-def test_unchanged_edit_of_unreviewed_pull_only_row_keeps_live_outcome(tmp_path, monkeypatch):
-    engine = make_engine(tmp_path, monkeypatch, [('a', 'pull-only', b'repo', b'live',
-        'editor = { run = "true", io = "pipe" }')])
+def test_unchanged_editor_quit_adds_no_edited_choice(tmp_path, monkeypatch):
+    # The demo pull-noop row: Capture drops the volatile line, so Use live writes nothing.
+    engine = make_engine(tmp_path, monkeypatch, [('a', 'pull-only', b'window\n', b'window\nopened-at\n',
+        "capture = '''grep -v '^opened-at' \"$DOTMAN_LIVE_PATH\"'''\n"
+        'compare = { repo = "raw", live = "raw" }\neditor = { run = "true", io = "pipe" }')])
     session = open_session(engine)
-    # Quitting the Editor unchanged must keep Use live, not collapse to a No-op.
-    proposal = dispatch(session, EditProposal).view.rows[0].proposal
-    assert not proposal.noop and proposal.repository == FilePresent(b'live')
+    result = dispatch(session, EditProposal)
+    assert result.result.status == 'unchanged'
+    row = result.view.rows[0]
+    # An identical Edited choice would only toggle between two outcomes that both write nothing.
+    assert (row.intent, row.allowed_intents) == ('use-live', ('use-live',))

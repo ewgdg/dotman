@@ -181,7 +181,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   covered by owned-process cleanup.
 - **E** opens the focused drifted file's Proposal Editor from the workset or
   review, including one-sided policies and recoverable Proposal failures.
-  The Editor works on isolated repository source copies; saving shows **Edited**
+  The Editor works on isolated repository source copies; quitting without changes keeps the
+  Resolution and says so; saving a change shows **Edited**
   and rematerializes policy-appropriate effects without writing tracked sources.
   Successful editing preserves Approval; cancellation preserves the previous
   Proposal. Failed materialization clears only that unit's Approval.

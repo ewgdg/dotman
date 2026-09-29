@@ -105,7 +105,7 @@ def test_repository_editor_forward_qualification_uses_edited_bytes(tmp_path, mon
 
 
 @pytest.mark.parametrize('operation', ['sync', 'pull'])
-def test_identical_editor_save_reuses_frozen_successful_checkpoint_qualification(
+def test_unchanged_editor_quit_keeps_frozen_successful_checkpoint_qualification(
     tmp_path, monkeypatch, operation,
 ):
     import json
@@ -130,13 +130,9 @@ def test_identical_editor_save_reuses_frozen_successful_checkpoint_qualification
         assert marker.read_text().splitlines() == ['render']
 
         edited = command(session, EditProposal, 'main:app.unit')
-        assert edited.result.status == 'saved'
+        assert edited.result.status == 'unchanged'
         row = session.view.rows[0]
-        assert row.approved
-        assert row.proposal.intent == 'editor'
-        assert row.proposal.repository == before.repository
-        assert row.proposal.checkpoint_qualified
-        assert not row.proposal.checkpoint_warnings
+        assert row.approved and row.proposal == before
         assert marker.read_text().splitlines() == ['render']
 
         (tmp_path / 'repo/packages/app/unit').write_bytes(b'external repository edit')

@@ -90,7 +90,7 @@ def test_pull_jinja_editor_discovers_nested_dependencies_after_configured_source
     (package / "nested.j2").write_bytes(b"{% include 'leaf.j2' %}")
     (package / "leaf.j2").write_bytes(b"leaf")
     with engine.open_pull_session(engine.resolve_sync_scope(), preview=True) as session:
-        assert edit_first(session).result.status == "saved"
+        assert edit_first(session).result.status == "unchanged"
     assert marker.read_bytes() == b"configured{% include 'leaf.j2' %}leaf"
 
 
@@ -160,7 +160,7 @@ def test_pull_inherited_editor_sources_keep_each_declaring_package_root(tmp_path
     initialize_git_repository(repo)
     engine = DotmanEngine.from_config_path(write_single_repo_config(tmp_path, repo_name="fixture", repo_path=repo))
     with open_tracked_pull_session(engine, tmp_path, entries=[("child", "default")]) as session:
-        assert edit_first(session).result.status == "saved"
+        assert edit_first(session).result.status == "unchanged"
     assert marker.read_bytes() == (b"parentchild" if append else b"parent")
     assert (parent / "context").read_bytes() == b"parent"
     assert (child / "context").read_bytes() == b"child"
