@@ -429,3 +429,20 @@ def test_file_system_errors_are_clean_cli_errors(tmp_path, capsys) -> None:
 
     assert cli.main(["transform", "json", str(base), str(output_directory), "--mode", "cleanup"]) == 2
     assert str(output_directory) in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("transform_format", ["json", "toml", "yaml", "plist", "xml"])
+def test_missing_overlay_file_is_an_error_not_an_empty_overlay(
+    transform_format, tmp_path, capsys
+) -> None:
+    from dotman import cli
+
+    missing_overlay = tmp_path / f"missing.{transform_format}"
+
+    # The base is missing too: a fresh machine has no live file, but the repo
+    # overlay must always exist, or merge would silently drop managed content.
+    assert cli.main([
+        "transform", transform_format, str(tmp_path / "live"), "--stdout",
+        "--mode", "merge", "--overlay-file", str(missing_overlay), "--selectors", "a",
+    ]) == 2
+    assert f"overlay file not found: {missing_overlay}" in capsys.readouterr().err

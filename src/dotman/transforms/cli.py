@@ -149,6 +149,13 @@ def run_parsed_engine(engine: TransformEngine, parser: argparse.ArgumentParser, 
     if getattr(parsed_args, "compare_file", None) == STDIN_PATH:
         parser.error("--compare-file must be a file path; stdin ('-') is not supported")
 
+    overlay_path = parsed_args.overlay_path
+    # A missing base is an empty live file (e.g. before the first push), but the
+    # overlay is the managed content: treating it as empty would silently drop
+    # everything it should apply.
+    if overlay_path is not None and overlay_path != STDIN_PATH and not overlay_path.is_file():
+        raise ValueError(f"overlay file not found: {overlay_path}")
+
     parsed_args.stdin_bytes = read_stdin_bytes() if stdin_inputs else None
     if parsed_args.output_path == STDIN_PATH:
         parsed_args.stdout = True
