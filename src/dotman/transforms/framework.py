@@ -47,9 +47,11 @@ def compile_selector_regexes(
 def split_quoted_key_path(raw_key: str, format_name: str) -> tuple[str, ...]:
     """Split a dotted selector path; double quotes protect dots and allow ``""``.
 
-    A quoted segment always produces a key, even when empty. Unquoted empty
-    segments are dropped, as in ``a..b``.
+    A quoted segment always produces a key, even when empty. An unquoted empty
+    segment, as in ``a..b`` or ``a.``, is almost always a typo and is rejected.
     """
+    if not raw_key:
+        raise ValueError(f"{format_name} key paths must not be empty")
     parts: list[str] = []
     current: list[str] = []
     in_quotes = False
@@ -57,8 +59,11 @@ def split_quoted_key_path(raw_key: str, format_name: str) -> tuple[str, ...]:
     escape = False
 
     def finish_segment() -> None:
-        if current or segment_was_quoted:
-            parts.append("".join(current))
+        if not current and not segment_was_quoted:
+            raise ValueError(
+                f'empty segment in {format_name} key path {raw_key!r}; use "" for an empty key'
+            )
+        parts.append("".join(current))
 
     for char in raw_key:
         if in_quotes and escape:
@@ -89,8 +94,6 @@ def split_quoted_key_path(raw_key: str, format_name: str) -> tuple[str, ...]:
         raise ValueError(f"unterminated quoted {format_name} key path: {raw_key}")
 
     finish_segment()
-    if not parts:
-        raise ValueError(f"{format_name} key paths must not be empty")
     return tuple(parts)
 
 

@@ -140,53 +140,57 @@ def build_document_output(
 
 
 def parse_key_path(raw_key: str) -> tuple[str, ...]:
-    key_path = tuple(split_toml_key(raw_key))
-    if not key_path:
-        raise ValueError("key paths must not be empty")
-    return key_path
+    return tuple(split_toml_key(raw_key))
 
 
-QUOTED_KEY_SEGMENT = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+BASIC_STRING_KEY_SEGMENT = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+LITERAL_STRING_KEY_SEGMENT = re.compile(r"'[^']*'")
 
 
 def split_toml_key(raw_key: str) -> list[str]:
     raw_segments: list[str] = []
     current: list[str] = []
-    in_quotes = False
+    open_quote: str | None = None
     escape = False
 
     # Split on dots outside quotes, keeping each segment's raw text so quoted
-    # segments can be decoded as a whole.
+    # segments can be decoded as a whole. Only basic ("...") strings have
+    # escapes; literal ('...') strings end at the next single quote.
     for char in raw_key:
-        if in_quotes and escape:
+        if open_quote == '"' and escape:
             escape = False
-        elif in_quotes and char == "\\":
+        elif open_quote == '"' and char == "\\":
             escape = True
-        elif char == '"':
-            in_quotes = not in_quotes
-        elif char == "." and not in_quotes:
+        elif open_quote is None and char in "\"'":
+            open_quote = char
+        elif char == open_quote:
+            open_quote = None
+        elif char == "." and open_quote is None:
             raw_segments.append("".join(current))
             current = []
             continue
         current.append(char)
 
-    if in_quotes:
+    if open_quote is not None:
         raise ValueError(f"unterminated quoted TOML key: {raw_key}")
 
     raw_segments.append("".join(current))
-    return [
-        key_part
-        for raw_segment in raw_segments
-        if (key_part := parse_key_part(raw_segment, raw_key)) is not None
-    ]
+    return [parse_key_part(raw_segment, raw_key) for raw_segment in raw_segments]
 
 
-def parse_key_part(raw_segment: str, raw_key: str) -> str | None:
+def parse_key_part(raw_segment: str, raw_key: str) -> str:
     segment = raw_segment.strip()
+    if not segment:
+        raise ValueError(
+            f"empty segment in TOML key path {raw_key!r}; use \"\" for an empty key"
+        )
+    if segment.startswith("'"):
+        if not LITERAL_STRING_KEY_SEGMENT.fullmatch(segment):
+            raise ValueError(f"quoted TOML key segment must be one literal string: {raw_key}")
+        return segment[1:-1]
     if not segment.startswith('"'):
-        # Unquoted empty segments such as `a..b` have always been skipped.
-        return segment or None
-    if not QUOTED_KEY_SEGMENT.fullmatch(segment):
+        return segment
+    if not BASIC_STRING_KEY_SEGMENT.fullmatch(segment):
         raise ValueError(f"quoted TOML key segment must be one basic string: {raw_key}")
     try:
         # Decode escapes with TOML's own basic-string rules; `""` is the empty key.

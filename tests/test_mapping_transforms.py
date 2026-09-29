@@ -102,3 +102,20 @@ def test_compare_file_is_not_reused_for_a_value_of_another_type(
     assert type(output_value) is type(result_value)
     if isinstance(result_value, float):
         assert math.copysign(1, output_value) == math.copysign(1, result_value)
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+@pytest.mark.parametrize("selector", ["a..b", "a.", ".a"])
+def test_empty_unquoted_selector_segment_is_an_error(
+    transform_format, selector, tmp_path, capsys
+) -> None:
+    base_path = write_mapping(tmp_path / f"base.{transform_format}", transform_format, {"a": {"b": 1}})
+
+    # Selector mistakes are usage errors, reported through argparse.
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main([
+            "transform", transform_format, str(base_path), "--stdout",
+            "--mode", "cleanup", "--selectors", selector,
+        ])
+    assert exit_info.value.code == 2
+    assert "empty segment" in capsys.readouterr().err
