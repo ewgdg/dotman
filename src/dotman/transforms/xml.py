@@ -68,14 +68,26 @@ def pop_matching_child(
             if child.tag == target.tag and element_identity_key(child) == identity_key:
                 return candidates.pop(index)
 
-    # Text may differ between live and repo copies of the same element, but a
-    # differing id/name/key/uuid means a different sibling, never a match.
-    attribute_identity = element_attribute_identity(target)
+    # Text may differ between live and repo copies of the same element, and one
+    # copy may carry identity attributes the other lacks. Siblings differ when a
+    # shared identity attribute differs, or when both are identified but share
+    # no attribute to compare; among the rest, prefer the most agreement.
+    target_identity = dict(element_attribute_identity(target))
+    best_index: int | None = None
+    best_agreement = -1
     for index, child in enumerate(candidates):
-        if child.tag == target.tag and element_attribute_identity(child) == attribute_identity:
-            return candidates.pop(index)
+        if child.tag != target.tag:
+            continue
+        child_identity = dict(element_attribute_identity(child))
+        shared_names = target_identity.keys() & child_identity.keys()
+        if any(child_identity[name] != target_identity[name] for name in shared_names):
+            continue
+        if target_identity and child_identity and not shared_names:
+            continue
+        if len(shared_names) > best_agreement:
+            best_index, best_agreement = index, len(shared_names)
 
-    return None
+    return None if best_index is None else candidates.pop(best_index)
 
 
 def overlay_with_base_slots(
@@ -291,8 +303,9 @@ def get_existing_xml_bytes_if_semantically_unchanged(
     return existing_bytes
 
 
-# Byte-identical to the declaration minidom's toprettyxml emitted, so outputs
-# written before the ElementTree serializer do not churn on their first line.
+# Kept byte-identical to the declaration minidom's toprettyxml emitted. Other
+# output bytes did change with the ElementTree serializer (`<a />`, a final
+# newline), so earlier outputs are rewritten once unless compare reuse applies.
 XML_DECLARATION = '<?xml version="1.0" ?>'
 XML_INDENT = "  "
 

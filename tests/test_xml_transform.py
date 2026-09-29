@@ -540,6 +540,46 @@ def test_merge_does_not_fuse_siblings_with_different_identities(tmp_path: Path) 
     ] == [("a", [("x", "live-a")]), ("b", [("y", "repo-b")])]
 
 
+
+@pytest.mark.parametrize(
+    ("live_items", "repo_items", "expected_items"),
+    [
+        # The live copy carries an extra identity attribute the repo lacks.
+        (
+            '<item name="x" id="7"><keep>live</keep></item>',
+            '<item name="x"><v>repo</v></item>',
+            [({"name": "x"}, [("keep", "live"), ("v", "repo")])],
+        ),
+        # A sibling identified only by unrelated attributes is not paired.
+        (
+            '<item id="1"/><item name="a" id="2"><keep>two</keep></item>',
+            '<item name="a"><v>repo</v></item>',
+            [({"name": "a"}, [("keep", "two"), ("v", "repo")])],
+        ),
+    ],
+)
+def test_merge_pairs_siblings_whose_shared_identity_attributes_agree(
+    tmp_path: Path, live_items: str, repo_items: str, expected_items: list
+) -> None:
+    live_path = tmp_path / "live.xml"
+    repo_path = tmp_path / "repo.xml"
+    output_path = tmp_path / "output.xml"
+    live_path.write_text(f"<config>{live_items}</config>", encoding="utf-8")
+    repo_path.write_text(f"<config>{repo_items}</config>", encoding="utf-8")
+
+    transform_xml(
+        live_path,
+        output_path,
+        overlay_path=repo_path,
+        node_matchers=["config/item/keep"],
+        selector_action=MODULE.SelectorAction.RETAIN,
+    )
+
+    root = parse_xml(output_path)
+    assert [
+        (item.attrib, [(child.tag, child.text) for child in item]) for item in root.findall("item")
+    ] == expected_items
+
 def test_pretty_output_preserves_blank_lines_inside_text(tmp_path: Path) -> None:
     input_path = tmp_path / "input.xml"
     output_path = tmp_path / "output.xml"
