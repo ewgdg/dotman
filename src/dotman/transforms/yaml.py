@@ -69,10 +69,21 @@ class AmbiguousPlainScalar(str):
     """Plain scalar text that YAML 1.1 and YAML 1.2 core readers resolve differently.
 
     Examples are ``0777`` (511 vs 777), ``22:22`` (1342 vs a string), and
-    ``yes`` (true vs a string). It behaves as a string for selection and
-    merging, and is emitted with its original plain spelling so the value
-    each kind of reader sees never changes.
+    ``yes`` (true vs a string). It matches selectors by its text and is
+    emitted with its original plain spelling so the value each kind of reader
+    sees never changes.
     """
+
+    # No reader sees plain 0777 and quoted "0777" as the same mapping key, so
+    # they must not collide in a dict either.
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, AmbiguousPlainScalar) and str.__eq__(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
+    def __hash__(self) -> int:
+        return hash((AmbiguousPlainScalar, str(self)))
 
 
 def yaml12_core_tag(text: str) -> str:
@@ -180,7 +191,7 @@ def parse_yaml_text(text: str) -> Any:
 def yaml_key_text(key: Any) -> str:
     """Spell a mapping key for selector matching."""
     if isinstance(key, str):
-        return key
+        return str(key)
     # Match non-string keys by their emitted YAML spelling (true, null, 1.5),
     # not Python's (True, None).
     return yaml.representer.SafeRepresenter().represent_data(key).value

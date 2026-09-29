@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 import dotman.transforms.yaml as MODULE
@@ -34,8 +35,9 @@ def test_yaml_11_boolean_words_load_as_strings_and_keep_plain_spelling(tmp_path:
     )
 
     assert exit_code == 0
-    assert MODULE.load_yaml(output_path) == {
-        "reasoningEfforts": {"off": "none", "on": "max", "enabled": True}
+    loaded_efforts = MODULE.load_yaml(output_path)["reasoningEfforts"]
+    assert {str(key): value for key, value in loaded_efforts.items()} == {
+        "off": "none", "on": "max", "enabled": True
     }
     assert output_path.read_text(encoding="utf-8") == (
         "reasoningEfforts:\n"
@@ -923,3 +925,17 @@ def test_selectors_match_keys_by_their_yaml_spelling(tmp_path: Path) -> None:
         r"re:^1\.5$",
         "yes",
     ) == "keep: f\n"
+
+
+@pytest.mark.parametrize("spelling", ["0777", "yes", "22:22"])
+def test_plain_ambiguous_key_and_quoted_key_of_the_same_spelling_stay_distinct(
+    spelling: str, tmp_path: Path
+) -> None:
+    # Every YAML 1.1 reader sees two keys here (a number or bool, and a string).
+    source = f'{spelling}: plain\n"{spelling}": quoted\n'
+
+    assert yaml.safe_load(
+        run_yaml_cleanup(tmp_path, source, "--selector-type", "remove", "--selectors", "absent")
+    ) == yaml.safe_load(source)
+    # Selectors match keys by spelling, so both are selected.
+    assert run_yaml_cleanup(tmp_path, source, "--selector-type", "remove", "--selectors", spelling) == "{}\n"
