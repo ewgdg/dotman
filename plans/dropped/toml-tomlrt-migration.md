@@ -50,8 +50,11 @@ tomlkit forces private internals (`_body`, `_map`, `OutOfOrderTableProxy._tables
 
 - 2026-09-29: user chose to accept scalar re-spelling (option 1) and not to keep a tomlkit fallback.
 - Blocked again on the comment-rule finding above: decide between building the ownership layer on tomlrt, or keeping tomlkit through its public API only.
+- 2026-09-29: user chose tomlkit through its public API only, with no version pin. Plan dropped.
 - Earlier blocker (resolved by the user's choice): how merge handles live-only retained scalars inside a table the repo copy also has. Options: accept re-spelling (document it), wait for an upstream public API that copies a key slot with its formatting, or stay on tomlkit's public API.
 
 ## Outcomes & Retrospective
 
-(pending)
+- Dropped. tomlrt would still need our own ownership layer plus a text scanner for slot order, and it re-spells copied scalars. Staying on tomlkit's public API removes the private-API risk that motivated the move, without either cost.
+- `src/dotman/transforms/toml.py` now uses only tomlkit's public API: split tables are read through public body entries, rebuilt containers are filled in parser mode, and array comments are read from the array's text. No version pin.
+- Evidence: `~/.agents/artifacts/outputs/dotman/2026-09-29/tomlrt-evaluation/`.
