@@ -606,15 +606,6 @@ def delete_key_path(root: TomlContainer, key_path: tuple[str, ...]) -> None:
     del container[key_name]
 
 
-def iter_table_paths(root: TomlContainer, prefix: tuple[str, ...] = ()) -> Iterable[tuple[str, ...]]:
-    for key, value in root.items():
-        if not isinstance(value, Table):
-            continue
-        key_path = prefix + (str(key),)
-        yield key_path
-        yield from iter_table_paths(value, key_path)
-
-
 def iter_item_paths_in_order(
     root: TomlContainer,
     prefix: tuple[str, ...] = (),
