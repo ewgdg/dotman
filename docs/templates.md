@@ -29,9 +29,9 @@ For a Jinja target, make the forward render explicit:
 
 - `render = 'dotman render jinja "$DOTMAN_SOURCE"'`
 
-Important: that command form is only equivalent when **dotman** launches it as a target command. In that case, dotman injects the resolved selector/profile context through env vars such as `DOTMAN_PROFILE`, `DOTMAN_OS`, and `DOTMAN_VAR_*`.
+Important: that command form is only equivalent when **dotman** launches it as a target command. In that case, dotman injects the resolved selector/profile context through env vars such as `DOTMAN_PROFILE`, `DOTMAN_OS`, `DOTMAN_CPU_ARCH`, and `DOTMAN_VAR_*`.
 
-If you run `dotman render jinja ...` manually in your shell, dotman does **not** look up a repo, package, or profile on its own. You must provide context explicitly with `--profile`, `--os`, and `--var`, or export the corresponding `DOTMAN_*` env vars first.
+If you run `dotman render jinja ...` manually in your shell, dotman does **not** look up a repo, package, or profile on its own. You must provide context explicitly with `--profile`, `--os`, `--cpu-arch`, and `--var`, or export the corresponding `DOTMAN_*` env vars first.
 
 The shortcut is preferred in manifests. The explicit command form is mainly useful for understanding what dotman runs internally and for manual debugging with explicit inputs.
 
@@ -185,6 +185,9 @@ export SUDO_ASKPASS="$HOME/bin/askpass-macos"
 {% elif os == "linux" %}
 export SUDO_ASKPASS="$HOME/bin/askpass-gui"
 {% endif %}
+{% if cpu_arch == "x86_64" %}
+export PATH="$HOME/.local/bin/x86_64:$PATH"
+{% endif %}
 ```
 
 `files/env.core.sh`:
@@ -262,11 +265,13 @@ Resolution source:
 - `profile` comes from the selected selector+profile form, for example `...@basic`
 - template vars come from `package vars -> composed profile vars -> repo local override vars`
 - `os` is the inferred target OS for that selector/profile context
+- `cpu_arch` is the host CPU architecture, the same value `uname -m` prints (for example `x86_64`, `aarch64` on Linux ARM, `arm64` on Apple Silicon); set a string `cpu_arch` var to override it
 
 Injected env:
 
 - `DOTMAN_PROFILE`
 - `DOTMAN_OS`
+- `DOTMAN_CPU_ARCH`
 - `DOTMAN_VAR_*` (flattened with `__` as the nested key separator, for example `vars.git.user_name` -> `DOTMAN_VAR_git__user_name`)
 
 `dotman render jinja` reconstructs the nested `vars` object from those env vars unless you override them with CLI flags.
@@ -274,7 +279,7 @@ Injected env:
 For manual testing, you can also pass values explicitly:
 
 ```sh
-dotman render jinja --profile basic --os linux --var git.user_name='Example User' path/to/file
+dotman render jinja --profile basic --os linux --cpu-arch x86_64 --var git.user_name='Example User' path/to/file
 ```
 
 ## Rules Of Thumb

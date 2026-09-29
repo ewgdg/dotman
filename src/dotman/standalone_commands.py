@@ -23,6 +23,7 @@ from dotman.templates import (
     JinjaRenderError,
     build_template_context,
     render_template_file,
+    resolve_cpu_arch,
 )
 
 
@@ -64,6 +65,7 @@ class StandaloneCommandRunner:
                 review_live_path=args.review_live_path,
                 profile=args.profile,
                 inferred_os=args.template_os,
+                cpu_arch=args.template_cpu_arch,
                 var_assignments=args.var,
             )
         if args.command == "reconcile" and args.reconcile_helper == "editor":
@@ -88,6 +90,7 @@ class StandaloneCommandRunner:
                 source_path=args.source_path,
                 profile=args.profile,
                 inferred_os=args.template_os,
+                cpu_arch=args.template_cpu_arch,
                 var_assignments=args.var,
             )
         raise ValueError(f"unsupported standalone command '{args.command}'")
@@ -135,6 +138,7 @@ def run_jinja_render(
     source_path: str,
     profile: str | None,
     inferred_os: str | None,
+    cpu_arch: str | None,
     var_assignments: Sequence[str],
 ) -> int:
     path = Path(source_path)
@@ -146,6 +150,7 @@ def run_jinja_render(
         variables,
         profile=profile or os.environ.get("DOTMAN_PROFILE") or "default",
         inferred_os=inferred_os or os.environ.get("DOTMAN_OS") or sys.platform,
+        cpu_arch=cpu_arch or os.environ.get("DOTMAN_CPU_ARCH"),
     )
     rendered, _projection_kind = render_template_file(path, context)
     sys.stdout.write(rendered.decode("utf-8"))
@@ -158,12 +163,14 @@ def _build_patch_capture_cli_env(
     variables: dict[str, object],
     profile: str,
     inferred_os: str,
+    cpu_arch: str,
 ) -> dict[str, str]:
     env = {
         "DOTMAN_REPO_PATH": str(repo_path),
         "DOTMAN_SOURCE": str(repo_path),
         "DOTMAN_PROFILE": profile,
         "DOTMAN_OS": inferred_os,
+        "DOTMAN_CPU_ARCH": cpu_arch,
     }
     for flat_key, value in flatten_vars(variables).items():
         env[f"DOTMAN_VAR_{flat_key}"] = value
@@ -177,12 +184,14 @@ def _build_cli_patch_capture_projector(
     variables: dict[str, object],
     profile: str,
     inferred_os: str,
+    cpu_arch: str,
 ):
     if render_command == "jinja":
         context = build_template_context(
             variables,
             profile=profile,
             inferred_os=inferred_os,
+            cpu_arch=cpu_arch,
         )
 
         def project(candidate_bytes: bytes) -> bytes:
@@ -196,6 +205,7 @@ def _build_cli_patch_capture_projector(
         variables=variables,
         profile=profile,
         inferred_os=inferred_os,
+        cpu_arch=cpu_arch,
     )
 
     def project(candidate_bytes: bytes) -> bytes:
@@ -241,6 +251,7 @@ def run_patch_capture(
     review_live_path: str | None,
     profile: str | None,
     inferred_os: str | None,
+    cpu_arch: str | None,
     var_assignments: Sequence[str],
 ) -> int:
     resolved_repo_path = Path(repo_path).expanduser().resolve()
@@ -248,6 +259,7 @@ def run_patch_capture(
     _apply_template_var_assignments(variables, var_assignments)
     resolved_profile = profile or os.environ.get("DOTMAN_PROFILE") or "default"
     resolved_os = inferred_os or os.environ.get("DOTMAN_OS") or sys.platform
+    resolved_cpu_arch = resolve_cpu_arch(variables, cpu_arch or os.environ.get("DOTMAN_CPU_ARCH"))
     captured = capture_patch(
         repo_path=resolved_repo_path,
         review_repo_path=review_repo_path,
@@ -258,6 +270,7 @@ def run_patch_capture(
             variables=variables,
             profile=resolved_profile,
             inferred_os=resolved_os,
+            cpu_arch=resolved_cpu_arch,
         ),
         command_runtime=current_command_runtime(),
         protect_template_syntax=render_command == "jinja",

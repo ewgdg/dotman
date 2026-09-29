@@ -543,6 +543,7 @@ def build_target_command_env(
         "DOTMAN_PROFILE": selection.requested_profile,
         "DOTMAN_OPERATION": operation,
         "DOTMAN_OS": inferred_os,
+        "DOTMAN_CPU_ARCH": context["cpu_arch"],
     }
     for flat_key, value in flatten_vars(context["vars"]).items():
         env[f"DOTMAN_VAR_{flat_key}"] = value
@@ -567,6 +568,7 @@ def build_package_hook_env(
         "DOTMAN_PROFILE": selection.requested_profile,
         "DOTMAN_OPERATION": operation,
         "DOTMAN_OS": inferred_os,
+        "DOTMAN_CPU_ARCH": context["cpu_arch"],
     }
     for flat_key, value in flatten_vars(context["vars"]).items():
         env[f"DOTMAN_VAR_{flat_key}"] = value

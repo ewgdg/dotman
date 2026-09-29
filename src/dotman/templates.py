@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import platform
 import shlex
 from pathlib import Path
 from typing import Any
@@ -102,17 +103,27 @@ def _resolve_vars_templates(variables: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
+def resolve_cpu_arch(variables: dict[str, Any], override: str | None = None) -> str:
+    # Like `os`, an explicit `cpu_arch` var wins so a repo can render for another machine.
+    if override:
+        return override
+    explicit = variables.get("cpu_arch")
+    return explicit if isinstance(explicit, str) else platform.machine()
+
+
 def build_template_context(
     variables: dict[str, Any],
     *,
     profile: str,
     inferred_os: str,
+    cpu_arch: str | None = None,
 ) -> dict[str, Any]:
     resolved = _resolve_vars_templates(variables)
     context = dict(resolved)
     context["vars"] = resolved
     context["profile"] = profile
     context["os"] = inferred_os
+    context["cpu_arch"] = resolve_cpu_arch(resolved, cpu_arch)
     return context
 
 

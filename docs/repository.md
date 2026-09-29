@@ -461,7 +461,7 @@ commands = [
 - Provenance alone should not cause hooks to execute.
 - Repo hook template expansion and env stay repo-scoped only. Dotman intentionally does not inject ambiguous single-package-entry values like `DOTMAN_PROFILE` or `DOTMAN_PACKAGE_ID` there.
 - Repo hook env includes `DOTMAN_REPO_NAME`, `DOTMAN_REPO_ROOT`, `DOTMAN_STATE_PATH`, `DOTMAN_OPERATION`, `DOTMAN_UNATTENDED`, and flattened repo vars as `DOTMAN_VAR_*`.
-- Package hook env includes repo hook vars plus `DOTMAN_PACKAGE_ID`, `DOTMAN_PACKAGE_ROOT`, `DOTMAN_PROFILE`, `DOTMAN_OS`, and flattened package vars as `DOTMAN_VAR_*`.
+- Package hook env includes repo hook vars plus `DOTMAN_PACKAGE_ID`, `DOTMAN_PACKAGE_ROOT`, `DOTMAN_PROFILE`, `DOTMAN_OS`, `DOTMAN_CPU_ARCH`, and flattened package vars as `DOTMAN_VAR_*`.
 - `DOTMAN_PACKAGE_ROOT` is the package directory containing that package's `package.toml`.
 - Target hook env includes package hook vars plus `DOTMAN_TARGET_NAME`, `DOTMAN_TARGET_REPO_PATH`, `DOTMAN_TARGET_LIVE_PATH`, `DOTMAN_REPO_PATH`, `DOTMAN_SOURCE`, and `DOTMAN_LIVE_PATH`.
 - Execution-time pre/post hooks receive `DOTMAN_UNATTENDED=1` when global CLI `--unattended` is active and `0` otherwise. Planning guards do not receive it.

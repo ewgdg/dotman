@@ -17,6 +17,7 @@ def test_render_jinja_cli_renders_with_dotman_env(tmp_path: Path, monkeypatch, c
             [
                 "profile={{ profile }}",
                 "os={{ os }}",
+                "cpu_arch={{ cpu_arch }}",
                 "name={{ vars.git.user_name }}",
                 "{% include 'shared.txt' %}",
                 "",
@@ -28,18 +29,19 @@ def test_render_jinja_cli_renders_with_dotman_env(tmp_path: Path, monkeypatch, c
 
     monkeypatch.setenv("DOTMAN_PROFILE", "basic")
     monkeypatch.setenv("DOTMAN_OS", "linux")
+    monkeypatch.setenv("DOTMAN_CPU_ARCH", "riscv64")
     monkeypatch.setenv("DOTMAN_VAR_git__user_name", "Example User")
 
     exit_code = main(["render", "jinja", str(template_path)])
 
     assert exit_code == 0
-    assert capsys.readouterr().out == "profile=basic\nos=linux\nname=Example User\nshared=1\n"
+    assert capsys.readouterr().out == "profile=basic\nos=linux\ncpu_arch=riscv64\nname=Example User\nshared=1\n"
 
 
-def test_render_jinja_cli_accepts_explicit_profile_os_and_vars(tmp_path: Path, capsys) -> None:
+def test_render_jinja_cli_accepts_explicit_profile_os_cpu_arch_and_vars(tmp_path: Path, capsys) -> None:
     template_path = tmp_path / "profile"
     template_path.write_text(
-        "profile={{ profile }} os={{ os }} name={{ vars.git.user_name }}\n",
+        "profile={{ profile }} os={{ os }} cpu_arch={{ cpu_arch }} name={{ vars.git.user_name }}\n",
         encoding="utf-8",
     )
 
@@ -51,6 +53,8 @@ def test_render_jinja_cli_accepts_explicit_profile_os_and_vars(tmp_path: Path, c
             "work",
             "--os",
             "darwin",
+            "--cpu-arch",
+            "arm64",
             "--var",
             "git.user_name=Work User",
             str(template_path),
@@ -58,7 +62,7 @@ def test_render_jinja_cli_accepts_explicit_profile_os_and_vars(tmp_path: Path, c
     )
 
     assert exit_code == 0
-    assert capsys.readouterr().out == "profile=work os=darwin name=Work User\n"
+    assert capsys.readouterr().out == "profile=work os=darwin cpu_arch=arm64 name=Work User\n"
 
 
 @pytest.mark.parametrize(

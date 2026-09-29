@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import shlex
 import subprocess
 from pathlib import Path
@@ -165,3 +166,15 @@ def test_discover_template_file_dependencies_rejects_dynamic_refs(tmp_path: Path
 
     with pytest.raises(ValueError, match="static template references"):
         discover_template_file_dependencies(template_path)
+
+
+def test_template_context_exposes_host_cpu_arch() -> None:
+    context = build_template_context({}, profile="basic", inferred_os="linux")
+
+    assert context["cpu_arch"] == platform.machine()
+
+
+def test_template_context_cpu_arch_can_be_overridden_by_var() -> None:
+    context = build_template_context({"cpu_arch": "aarch64"}, profile="basic", inferred_os="linux")
+
+    assert context["cpu_arch"] == "aarch64"

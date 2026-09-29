@@ -211,6 +211,7 @@ def test_capture_patch_help_uses_explicit_option_placeholders(capsys) -> None:
     assert "--review-live-path <review-live-path>" in output
     assert "--profile <profile>" in output
     assert "--os <os>" in output
+    assert "--cpu-arch <cpu-arch>" in output
     assert "--var <key=value>" in output
 
 
@@ -248,6 +249,7 @@ def test_render_jinja_help_uses_explicit_placeholders(capsys) -> None:
     assert "<source-path>" in output
     assert "--profile <profile>" in output
     assert "--os <os>" in output
+    assert "--cpu-arch <cpu-arch>" in output
     assert "--var <key=value>" in output
 
 

@@ -1,5 +1,6 @@
 """Providers see the invoking workflow; Guards and hooks keep their direction."""
 import json
+import platform
 
 import pytest
 
@@ -93,3 +94,18 @@ def test_push_render_keeps_push_workflow_identity(tmp_path, monkeypatch):
         assert session.execute().result.status == "completed"
     assert (tmp_path / "live/unit").read_bytes() == b"push"
     assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"repo"
+
+
+def test_commands_and_hooks_receive_cpu_arch_env(tmp_path, monkeypatch):
+    hook_log = tmp_path / "hooks.log"
+    engine = make_engine(tmp_path, monkeypatch, [(
+        "unit", "both", b"repo", b"live",
+        "render = 'printf \"%s\" \"$DOTMAN_CPU_ARCH\"'\n"
+        f"hooks.pre_push = 'echo \"target $DOTMAN_CPU_ARCH\" >> {hook_log}'\n"
+        "[hooks]\n"
+        f"pre_push = 'echo \"package $DOTMAN_CPU_ARCH\" >> {hook_log}'",
+    )])
+    with engine.open_push_session(engine.resolve_sync_scope()) as session:
+        assert session.execute().result.status == "completed"
+    assert (tmp_path / "live/unit").read_text() == platform.machine()
+    assert sorted(hook_log.read_text().splitlines()) == [f"package {platform.machine()}", f"target {platform.machine()}"]

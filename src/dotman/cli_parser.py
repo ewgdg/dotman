@@ -166,6 +166,12 @@ def add_jinja_context_arguments(parser: argparse.ArgumentParser) -> None:
         help="OS value to expose in template context",
     )
     parser.add_argument(
+        "--cpu-arch",
+        dest="template_cpu_arch",
+        metavar="<cpu-arch>",
+        help="CPU architecture value to expose in template context",
+    )
+    parser.add_argument(
         "--var",
         action="append",
         default=[],

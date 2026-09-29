@@ -510,7 +510,7 @@ Examples: `dotman pull main:git.config`,
 
 - `capture` is the helper namespace for built-in reverse-capture tools.
 - `capture patch` is the built-in automatic patch helper for patchable rendered/template file targets.
-- `capture patch` should accept `--repo-path`, `--render`, `--review-repo-path`, `--review-live-path`, and the same template-context flags currently used by `render jinja` (`--profile`, `--os`, and repeated `--var`).
+- `capture patch` should accept `--repo-path`, `--render`, `--review-repo-path`, `--review-live-path`, and the same template-context flags currently used by `render jinja` (`--profile`, `--os`, `--cpu-arch`, and repeated `--var`).
 - `capture patch` should output the patched repo source to stdout.
 - `capture patch` reprojects the patched repo file through the forward render path and must match the reviewed live bytes exactly.
 - If that verification fails, `capture patch` exits non-zero and Pull leaves the Proposal failed and unapproved; an unverified patch is never applied.
