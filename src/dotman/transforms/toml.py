@@ -514,36 +514,47 @@ def split_trivia_run(
     return rest[:owned_end], rest[owned_end:], attached
 
 
-def set_body_entries(container: TomlContainer, entries: list[tuple[object, object]]) -> None:
-    """Replace a container's body, keeping tomlkit's key-to-index map in step."""
-    storage = container if isinstance(container, TOMLDocument) else container.value
-    storage._body[:] = entries
-    key_indexes: dict[object, int | tuple[int, ...]] = {}
-    for index, (key, _item) in enumerate(entries):
-        if key is None:
-            continue
-        previous = key_indexes.get(key)
-        if previous is None:
-            key_indexes[key] = index
-        else:
-            key_indexes[key] = (*(previous if isinstance(previous, tuple) else (previous,)), index)
-    storage._map = key_indexes
+def append_entries(container: Container | Table, entries: list[tuple[object, object]]) -> None:
+    body = container.value if isinstance(container, Table) else container
+    for key, item in entries:
+        body.append(key, item)
+
+
+def rebuilt(container: TOMLDocument | Table, entries: list[tuple[object, object]]) -> TOMLDocument | Table:
+    """A copy of container holding entries, filled the way tomlkit's parser fills one."""
+    body = TOMLDocument(True) if isinstance(container, TOMLDocument) else Container(True)
+    append_entries(body, entries)
+    if isinstance(container, TOMLDocument):
+        return body
+    return Table(
+        body,
+        container.trivia,
+        is_aot_element=container.is_aot_element(),
+        is_super_table=container.is_super_table(),
+        name=container.name,
+        display_name=container.display_name,
+    )
 
 
 def assign_comment_owners(doc: TOMLDocument) -> TOMLDocument:
-    tail = assign_container_comment_owners(doc)
-    previous = next((item for key, item in reversed(doc.body) if key is not None), None)
+    owned_doc, tail = with_comment_owners(doc)
+    previous = next((item for key, item in reversed(owned_doc.body) if key is not None), None)
     owned, independent, _attached = split_trivia_run(
         tail, follows_table=isinstance(previous, (Table, AoT)), precedes_item=False
     )
     if owned:
-        container_body_entries(textual_end_table(previous)).extend(owned)
-    container_body_entries(doc).extend(independent)
-    return doc
+        append_entries(textual_end_table(previous), owned)
+    append_entries(owned_doc, independent)
+    # Rebuilt containers are filled in parser mode, which keeps entries in the
+    # order given; leave it like tomlkit.parse() does.
+    owned_doc.parsing(False)
+    return owned_doc
 
 
-def assign_container_comment_owners(container: TomlContainer) -> list[TriviaEntry]:
-    """Place comments within container; return the trailing trivia for the parent."""
+def with_comment_owners(
+    container: TOMLDocument | Table,
+) -> tuple[TOMLDocument | Table, list[TriviaEntry]]:
+    """Rebuild container with its comments placed; also return its trailing trivia."""
     # A standalone comment would make tomlkit print an implicit parent's header,
     # so an independent block inside one stays above the next child's header.
     is_implicit_parent = isinstance(container, Table) and container.is_super_table()
@@ -559,43 +570,43 @@ def assign_container_comment_owners(container: TomlContainer) -> list[TriviaEntr
             run, follows_table=isinstance(previous, (Table, AoT)), precedes_item=True
         )
         if owned:
-            container_body_entries(textual_end_table(previous)).extend(owned)
+            append_entries(textual_end_table(previous), owned)
         if is_implicit_parent:
             attached = independent + attached
         else:
             entries.extend(independent)
+        item, run = item_with_comment_owners(key, item)
         attach_comments(item, attached)
         entries.append((key, item))
-        run = item_trailing_trivia(key, item)
         previous = item
 
-    set_body_entries(container, entries)
-    return run
+    return rebuilt(container, entries), run
 
 
-def item_trailing_trivia(key: object, item: object) -> list[TriviaEntry]:
+def item_with_comment_owners(key: object, item: object) -> tuple[object, list[TriviaEntry]]:
     if isinstance(item, AoT):
-        return assign_array_of_tables_comment_owners(item)
+        return array_of_tables_with_comment_owners(item)
     if isinstance(item, Table) and not is_dotted_table_entry(key, item):
-        return assign_container_comment_owners(item)
-    return []
+        return with_comment_owners(item)
+    return item, []
 
 
-def assign_array_of_tables_comment_owners(array_of_tables: AoT) -> list[TriviaEntry]:
+def array_of_tables_with_comment_owners(array_of_tables: AoT) -> tuple[AoT, list[TriviaEntry]]:
+    elements: list[Table] = []
     run: list[TriviaEntry] = []
-    previous: Table | None = None
     for element in array_of_tables.body:
-        if previous is not None:
+        element, element_run = with_comment_owners(element)
+        if elements:
             # An array of tables holds no standalone entries, so only an attached
             # block moves; the rest stays at the end of the earlier element.
             owned, independent, attached = split_trivia_run(
                 run, follows_table=True, precedes_item=True
             )
-            container_body_entries(textual_end_table(previous)).extend(owned + independent)
+            append_entries(textual_end_table(elements[-1]), owned + independent)
             attach_comments(element, attached)
-        run = assign_container_comment_owners(element)
-        previous = element
-    return run
+        elements.append(element)
+        run = element_run
+    return AoT(elements, name=array_of_tables.name, parsed=True), run
 
 
 def inline_table_without_key(inline_table: InlineTable, removed_key_name: str) -> InlineTable:
