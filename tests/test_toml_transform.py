@@ -1823,3 +1823,14 @@ def test_compare_file_reuse_follows_which_array_element_a_comment_belongs_to(tmp
     assert cleanup_with_compare(live, reformatted) == reformatted
     assert cleanup_with_compare(live, moved_out_of_nested_array) == live
     assert cleanup_with_compare(live, moved_to_previous_element) == live
+
+
+def test_compare_file_reuse_reads_array_comments_past_strings_holding_toml_syntax(tmp_path: Path) -> None:
+    live = "a = [\n  \"x] # not a comment\",\n  2, # c\n]\n"
+    moved_to_previous_element = "a = [\n  \"x] # not a comment\", # c\n  2,\n]\n"
+
+    output = run_toml_transform(
+        tmp_path, live, "--selector-type", "remove", "--selectors", "unused", compare_text=moved_to_previous_element
+    )
+
+    assert output == live
