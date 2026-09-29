@@ -524,7 +524,25 @@ def delete_key_path(root: TomlContainer, key_path: tuple[str, ...]) -> None:
             container, key_name
         )
         return
+    if isinstance(container, (TOMLDocument, Table)):
+        remove_attached_leading_comments(container, key_name)
     del container[key_name]
+
+
+def remove_attached_leading_comments(container: TOMLDocument | Table, key_name: str) -> None:
+    """Drop comment lines directly above a key, with no blank line between."""
+    body_entries = container_body_entries(container)
+    key_indexes = [
+        index
+        for index, (key, _item) in enumerate(body_entries)
+        if key is not None and key.key == key_name
+    ]
+    for key_index in key_indexes:
+        comment_index = key_index - 1
+        while comment_index >= 0 and is_comment_entry(body_entries[comment_index]):
+            # Null keeps tomlkit's key-to-body-index map valid, like tomlkit's own removal.
+            body_entries[comment_index] = (None, Null())
+            comment_index -= 1
 
 
 def iter_table_paths(root: TomlContainer, prefix: tuple[str, ...] = ()) -> Iterable[tuple[str, ...]]:

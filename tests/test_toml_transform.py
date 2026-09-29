@@ -1504,3 +1504,15 @@ def test_remove_quoted_empty_key_keeps_its_table(tmp_path: Path) -> None:
     )
 
     assert output == "[a]\nk = 2\n"
+
+
+def test_remove_key_drops_its_attached_leading_comment(tmp_path: Path) -> None:
+    def remove(base_text: str, *selectors: str) -> str:
+        return run_toml_transform(
+            tmp_path, base_text, "--selector-type", "remove", "--selectors", *selectors
+        )
+
+    assert remove("# about b\nb = 2\n# about c\nc = 3\n", "b") == "# about c\nc = 3\n"
+    assert remove("[t]\n# about k\n# more\nk = 1\nm = 2\n", "t.k") == "[t]\nm = 2\n"
+    assert remove("# about b\nb = 2\nc = 3\n", r"re:^b$") == "c = 3\n"
+    assert remove("# independent\n\nb = 2\nc = 3\n", "b") == "# independent\n\nc = 3\n"
