@@ -1798,3 +1798,12 @@ def test_merge_keeps_base_trailing_comments_only_when_cleanup_would(
 
     assert ("# trailing note" in cleaned) == keeps_trailing_comment
     assert ("# trailing note" in merged) == keeps_trailing_comment
+
+
+def test_removing_the_last_key_of_a_split_table_part_keeps_its_header(tmp_path: Path) -> None:
+    live = "# about a\n[a]\nx = 1\n[b]\ny = 2\n[a.c]\nz = 3\n"
+
+    # Like an emptied table that is not split, the header and its comment stay.
+    assert run_toml_transform(
+        tmp_path, live, "--selector-type", "remove", "--selectors", "a.x"
+    ) == "# about a\n[a]\n[b]\ny = 2\n[a.c]\nz = 3\n"

@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from typing import Any, NamedTuple
 from pathlib import Path
 import tomlkit
-from tomlkit.container import Container, OutOfOrderTableProxy
+from tomlkit.container import Container
 from tomlkit.items import (
     AbstractTable,
     AoT,
@@ -42,7 +42,18 @@ from dotman.transforms.framework import (
 )
 
 
-TomlContainer = TOMLDocument | Table
+@dataclass(frozen=True)
+class SplitTable:
+    """A table whose content is split across the document, as its parts.
+
+    Out-of-order headers (`[a]` ... `[b]` ... `[a.c]`) and repeated dotted
+    keys leave one entry per part in the parent's body.
+    """
+
+    parts: tuple[Table, ...]
+
+
+TomlContainer = TOMLDocument | AbstractTable | SplitTable
 
 
 def detect_line_ending(text: str) -> str | None:
@@ -210,10 +221,8 @@ def split_key_path(key_path: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
 
 
 def is_table_like(value: object) -> bool:
-    # Inline tables hold selectable keys like tables do. tomlkit exposes a table
-    # split across the document (out-of-order headers or repeated dotted keys)
-    # as a proxy that is not a Table but edits every part.
-    return isinstance(value, (AbstractTable, OutOfOrderTableProxy))
+    # Inline tables hold selectable keys like tables do.
+    return isinstance(value, (AbstractTable, SplitTable))
 
 
 def as_single_table(value: Any) -> Any:
@@ -225,18 +234,15 @@ def as_single_table(value: Any) -> Any:
     fresh table because a copied part keeps dotted-key rendering state that
     would emit nested dotted tables at a path relative to the wrong parent.
     """
-    if not isinstance(value, OutOfOrderTableProxy):
+    if not isinstance(value, SplitTable):
         return value
     body = Container()
-    child_names = dict.fromkeys(
-        key.key for key, _child in container_body_entries(value) if key is not None
-    )
-    for child_name in child_names:
+    for child_name in child_key_names(value):
         body[child_name] = copy.deepcopy(as_single_table(body_item(value, child_name)))
     # Wrap only after filling: tomlkit indents a table's new children by any
     # spaces in the table's indent, which holds its attached comments.
     header_part = next(
-        (part for part in value._tables if not part.is_super_table()), value._tables[0]
+        (part for part in value.parts if not part.is_super_table()), value.parts[0]
     )
     return Table(
         body,
@@ -253,9 +259,7 @@ def has_selected_ancestor(item_path: tuple[str, ...], selected_paths: set[tuple[
 def get_container(root: TomlContainer, table_path: tuple[str, ...]) -> TomlContainer | None:
     current: Any = root
     for part in table_path:
-        if part not in current:
-            return None
-        current = current[part]
+        current = body_item(current, part)
         if not is_table_like(current):
             return None
     return current
@@ -269,23 +273,34 @@ def get_key_path_value(root: TomlContainer, key_path: tuple[str, ...]) -> Any | 
     return body_item(container, key_name)
 
 
-def container_storage(container: TomlContainer) -> Any:
+def container_body_entries(container: TomlContainer) -> list[tuple[object, object]]:
+    if isinstance(container, SplitTable):
+        return [entry for part in container.parts for entry in container_body_entries(part)]
     if isinstance(container, TOMLDocument):
-        return container
-    if isinstance(container, OutOfOrderTableProxy):
-        # A table split across the document; this view holds every part's items.
-        return container._internal_container
-    return container.value
+        return container.body
+    return container.value.body
+
+
+def child_key_names(container: TomlContainer) -> list[str]:
+    # keys() gives insertion order, which merge and retain follow; the body
+    # holds values above tables.
+    parts = container.parts if isinstance(container, SplitTable) else (container,)
+    return list(dict.fromkeys(key_name for part in parts for key_name in part.keys()))
 
 
 def body_item(container: TomlContainer, key_name: str) -> Any:
     """Return the stored item; unlike get(), a boolean keeps its comments."""
-    storage = container_storage(container)
-    return storage.item(key_name) if key_name in storage else None
-
-
-def container_body_entries(container: TomlContainer) -> list[tuple[object, object]]:
-    return container_storage(container)._body
+    matches = [
+        item
+        for key, item in container_body_entries(container)
+        if key is not None and key.key == key_name
+    ]
+    if len(matches) <= 1:
+        return matches[0] if matches else None
+    if all(isinstance(match, AoT) for match in matches):
+        # An array of tables continued in another part of a split table.
+        return AoT([element for match in matches for element in match.body], parsed=True)
+    return SplitTable(tuple(matches))
 
 
 def item_text(item: object) -> str:
@@ -501,7 +516,7 @@ def split_trivia_run(
 
 def set_body_entries(container: TomlContainer, entries: list[tuple[object, object]]) -> None:
     """Replace a container's body, keeping tomlkit's key-to-index map in step."""
-    storage = container_storage(container)
+    storage = container if isinstance(container, TOMLDocument) else container.value
     storage._body[:] = entries
     key_indexes: dict[object, int | tuple[int, ...]] = {}
     for index, (key, _item) in enumerate(entries):
@@ -591,29 +606,42 @@ def inline_table_without_key(inline_table: InlineTable, removed_key_name: str) -
     return rebuilt
 
 
+def parts_holding(container: TomlContainer, key_name: str) -> list[TOMLDocument | AbstractTable]:
+    """The containers whose own body holds key_name: some parts of a split table, or container."""
+    parts = container.parts if isinstance(container, SplitTable) else (container,)
+    return [
+        part
+        for part in parts
+        if any(key is not None and key.key == key_name for key, _item in container_body_entries(part))
+    ]
+
+
 def delete_key_path(root: TomlContainer, key_path: tuple[str, ...]) -> None:
     table_path, key_name = split_key_path(key_path)
     container = get_container(root, table_path)
-    if container is None or key_name not in container:
+    if container is None:
         return
     if isinstance(container, InlineTable):
+        if key_name not in container:
+            return
         # tomlkit leaves a dangling separator when deleting a middle key from an
         # inline table (`{b = 1, , e = 3}`), so replace it with a rebuilt copy.
         parent_path, inline_table_name = split_key_path(table_path)
-        get_container(root, parent_path)[inline_table_name] = inline_table_without_key(
-            container, key_name
-        )
+        [holder] = parts_holding(get_container(root, parent_path), inline_table_name)
+        holder[inline_table_name] = inline_table_without_key(container, key_name)
         return
-    del container[key_name]
+    for holder in parts_holding(container, key_name):
+        del holder[key_name]
 
 
 def iter_item_paths_in_order(
     root: TomlContainer,
     prefix: tuple[str, ...] = (),
 ) -> Iterable[tuple[str, ...]]:
-    for key, value in root.items():
-        key_path = prefix + (str(key),)
+    for key_name in child_key_names(root):
+        key_path = prefix + (key_name,)
         yield key_path
+        value = body_item(root, key_name)
         if is_table_like(value):
             yield from iter_item_paths_in_order(value, key_path)
 
@@ -955,7 +983,7 @@ def merge_containers(
         )
 
     key_names = dict.fromkeys(
-        str(key) for source in (base, overlay, preserved_base) for key in source.keys()
+        key_name for source in (base, overlay, preserved_base) for key_name in child_key_names(source)
     )
     overlay_keys = keys_by_name(overlay)
     preserved_keys = keys_by_name(preserved_base)
