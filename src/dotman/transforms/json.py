@@ -51,12 +51,22 @@ def parse_finite_json_float(number_text: str) -> float:
     return value
 
 
+def reject_non_json_constant(token: str) -> float:
+    # json.loads accepts NaN and Infinity as an extension, but they would be
+    # written back as the same invalid JSON tokens.
+    raise ValueError(f"{token} is not a valid JSON number")
+
+
 def load_json(path: Path, *, stdin_bytes: bytes | None = None) -> JsonDict:
     source_text = read_input_text(path, stdin_bytes=stdin_bytes)
     if source_text is None:
         return {}
 
-    loaded = json.loads(source_text, parse_float=parse_finite_json_float)
+    loaded = json.loads(
+        source_text,
+        parse_float=parse_finite_json_float,
+        parse_constant=reject_non_json_constant,
+    )
     if not isinstance(loaded, dict):
         raise ValueError(f"Expected top-level JSON object in {path}")
     return loaded

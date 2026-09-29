@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import dotman.transforms.json as MODULE
 
 
@@ -816,3 +818,16 @@ def test_number_out_of_float_range_is_an_error_not_infinity(tmp_path: Path, caps
     captured = capsys.readouterr()
     assert "Infinity" not in captured.out
     assert "1e400" in captured.err
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_non_json_number_token_is_an_error_not_passed_through(token: str, tmp_path: Path, capsys) -> None:
+    from dotman import cli
+
+    input_path = tmp_path / "input.json"
+    input_path.write_text(f'{{"a": {token}, "b": 1}}\n', encoding="utf-8")
+
+    assert cli.main(["transform", "json", str(input_path), "--stdout", "--mode", "cleanup"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert token in captured.err
