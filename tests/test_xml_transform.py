@@ -584,3 +584,19 @@ def test_pretty_output_indents_element_only_content(tmp_path: Path) -> None:
         "  <p>Hi <b>x</b></p>\n"
         "</config>\n"
     )
+
+
+def test_removing_an_element_keeps_the_text_that_follows_it(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.xml"
+    output_path = tmp_path / "output.xml"
+    input_path.write_text(
+        "<doc><p>Hello <b>bold</b> world</p><p><b>lead</b> tail <i>kept</i></p></doc>",
+        encoding="utf-8",
+    )
+
+    transform_xml(input_path, output_path, node_matchers=["doc/p/b"])
+
+    assert [ET.tostring(p, encoding="unicode").strip() for p in parse_xml(output_path)] == [
+        "<p>Hello  world</p>",
+        "<p> tail <i>kept</i></p>",
+    ]

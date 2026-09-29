@@ -146,6 +146,20 @@ def build_tree_with_retained_nodes(
     return retained_root
 
 
+def remove_child_keeping_following_text(parent: ET.Element, child: ET.Element) -> None:
+    # ElementTree stores the text after an element as its tail, so a plain
+    # remove() would also delete the surrounding document text. Whitespace-only
+    # tails are layout, which pretty printing regenerates.
+    if child.tail is not None and child.tail.strip():
+        child_index = list(parent).index(child)
+        if child_index == 0:
+            parent.text = (parent.text or "") + child.tail
+        else:
+            previous_sibling = parent[child_index - 1]
+            previous_sibling.tail = (previous_sibling.tail or "") + child.tail
+    parent.remove(child)
+
+
 def strip_nodes(
     root: ET.Element,
     node_matchers: list[str],
@@ -159,7 +173,7 @@ def strip_nodes(
     ) -> None:
         if matches_node_path(cur_path, node_matchers, node_regexes):
             if parent is not None:
-                parent.remove(current)
+                remove_child_keeping_following_text(parent, current)
             else:
                 current.clear()
             return
