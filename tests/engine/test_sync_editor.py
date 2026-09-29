@@ -268,3 +268,31 @@ def test_editor_primary_activates_pull_hooks_only_for_repository_write(tmp_path,
     assert (log.read_text().splitlines() if log.exists() else []) == (
         ["pre", "post"] if repository_write else [])
     assert (guard_log.read_bytes() if guard_log.exists() else None) == guards
+
+
+def test_edit_stays_selectable_after_switching_resolution(tmp_path, monkeypatch):
+    from dotman.sync_session import SetResolutionIntent
+    engine = make_engine(tmp_path, monkeypatch, [('a', 'push-only', b'repo', b'live',
+        'editor = { run = "printf edited > \\"$DOTMAN_SOURCE\\"", io = "pipe" }')])
+    session = open_session(engine)
+    dispatch(session, SetApproval, approved=True)
+    edited = dispatch(session, EditProposal).view.rows[0]
+    assert (edited.intent, edited.allowed_intents) == ('editor', ('use-repository', 'editor'))
+    row = dispatch(session, SetResolutionIntent, intent='use-repository').view.rows[0]
+    assert row.proposal.repository == FilePresent(b'repo')
+    assert row.allowed_intents == ('use-repository', 'editor')
+    row = dispatch(session, SetResolutionIntent, intent='editor').view.rows[0]
+    assert row.proposal.intent == 'editor' and row.proposal.repository == FilePresent(b'edited')
+    # A restored edit is a new Proposal, never a revived earlier generation.
+    assert row.proposal.generation > edited.proposal.generation
+
+
+def test_editor_continues_a_reselected_edit_before_materialization(tmp_path, monkeypatch):
+    from dotman.sync_session import SetResolutionIntent
+    engine = make_engine(tmp_path, monkeypatch, [('a', 'push-only', b'repo', b'live',
+        'editor = { run = "printf x >> \\"$DOTMAN_SOURCE\\"", io = "pipe" }')])
+    session = open_session(engine)
+    dispatch(session, EditProposal)
+    dispatch(session, SetResolutionIntent, intent='use-repository')
+    assert dispatch(session, SetResolutionIntent, intent='editor').view.rows[0].proposal is None
+    assert dispatch(session, EditProposal).view.rows[0].proposal.repository == FilePresent(b'repoxx')

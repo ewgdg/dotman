@@ -129,7 +129,7 @@ A session-local staged mutation of one normalized repository-relative source pat
 _Avoid_: Proposal, Sync Unit, editable copy
 
 **Resolution Intent**:
-The session-local choice of `Use repository`, `Use live`, or `Merge` for one drifted Sync Unit before Dotman materializes a Proposal. Changing it discards the prior Proposal for rematerialization but preserves Approval; returning to an earlier intent does not revive its prior frozen outcome.
+The session-local choice of `Use repository`, `Use live`, `Merge`, or, once the Proposal Editor saved for the unit, `Edited`, for one drifted Sync Unit before Dotman materializes a Proposal. Changing it discards the prior Proposal for rematerialization but preserves Approval; returning to an earlier intent does not revive its prior frozen outcome. The saved edit stays selectable for the session: returning to `Edited` rematerializes its saved sources as a new generation.
 _Avoid_: Proposal, applied resolution
 
 **Proposal**:
@@ -157,7 +157,7 @@ The focused full-screen view for one Additional Source Change that shows its fro
 _Avoid_: Proposal Review, repository editor
 
 **Proposal Editor**:
-A configured or default action that edits the current Proposal through its transactional repository sources without directly mutating the repository working tree. If materialization produced no Proposal, it starts from the current repository sources as `Use repository` would; saving produces an `Edited` Proposal.
+A configured or default action that edits the current Proposal through its transactional repository sources without directly mutating the repository working tree. If materialization produced no Proposal, it starts from the current repository sources as `Use repository` would, or from the saved edit when `Edited` is selected; saving produces an `Edited` Proposal and replaces any earlier saved edit.
 _Avoid_: Outcome handler, repository editor
 
 **Apply**:

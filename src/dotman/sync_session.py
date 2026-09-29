@@ -39,7 +39,8 @@ from dotman.sync_editor import AdditionalEdit, EditorCommandFailed, edit_sources
 
 from dotman.sync_path_policy import SyncPathError
 
-ResolutionIntent = Literal["use-repository", "use-live", "merge"]
+# "editor" becomes selectable once the Editor saves an outcome for the row.
+ResolutionIntent = Literal["use-repository", "use-live", "merge", "editor"]
 
 
 CommandName = Literal["authorize-symlink-replacement", "batch-set-approval", "prepare-source-review", "edit-proposal", "set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
@@ -79,7 +80,7 @@ class Proposal:
     live: SyncBasePayload
     primary_source_change: SyncBasePayload | None
     publication_effects: tuple[PublicationEffect, ...]
-    intent: ResolutionIntent | Literal["editor"] | None = "use-repository"
+    intent: ResolutionIntent | None = "use-repository"
     capture: SyncBasePayload | None = None
     reconciliation: str | None = None
     generation: int = 0
@@ -876,11 +877,14 @@ class ProposalSession:
             if isinstance(command, AuthorizeSymlinkReplacement):
                 row = replace(row, symlink_authorized=True, proposal=None, diagnostics=())
             if isinstance(command, SetResolutionIntent):
-                if command.intent not in ("use-repository", "use-live", "merge"):
+                if command.intent not in ("use-repository", "use-live", "merge", "editor"):
                     return CommandRejected(view, "invalid")
                 if command.intent not in row.allowed_intents:
                     return CommandRejected(view, "disallowed")
-                self._edited_outcomes.pop(row.row_id, None)
+                if command.intent == "editor":
+                    # The kept edit returns as a new Proposal; its earlier generation never revives.
+                    repository, _generation = self._edited_outcomes[row.row_id]
+                    self._edited_outcomes[row.row_id] = (repository, self._next_generation(row.row_id))
                 row = replace(row, intent=command.intent, resolution_chosen=True, proposal=None, diagnostics=())
             if isinstance(command, RetryMaterialization):
                 row = replace(row, proposal=None)
@@ -1040,7 +1044,7 @@ class ProposalSession:
         return generation
 
     def _materialize_row(self, row: SessionRow) -> Proposal:
-        if row.row_id not in self._edited_outcomes:
+        if row.intent != "editor":
             observation = row.observation
             if observation.effective_policy == "push-only":
                 observation = replace(observation, comparison_repository=self._render(observation, observation.repository))
@@ -1072,6 +1076,24 @@ class ProposalSession:
             additional_changes=self._row_additional(row),
         ))
 
+    def _editor_initial(self, row: SessionRow) -> SyncBasePayload:
+        if row.proposal is not None:
+            return row.proposal.repository
+        # A merge conflict has no Proposal; its zdiff3 output is what the user resolves.
+        if (conflict := conflict_diagnostic(row)) is not None:
+            return conflict.conflict
+        # A reselected edit stays unmaterialized until approved or reviewed.
+        if row.intent == "editor":
+            return self._edited_outcomes[row.row_id][0]
+        return row.observation.repository
+
+    @staticmethod
+    def _select_edit(row: SessionRow) -> SessionRow:
+        # Push/Pull rows carry no Resolution choice, so Edited is not offered as one.
+        choosable = "set-resolution-intent" in row.allowed_commands and "editor" not in row.allowed_intents
+        return replace(row, intent="editor", resolution_chosen=True,
+                       allowed_intents=row.allowed_intents + (("editor",) if choosable else ()))
+
     def _unresolved_conflict(self, row: SessionRow, repository: SyncBasePayload) -> bool:
         present = (FilePresent, DirectoryChildPresent)
         if not isinstance(repository, present):
@@ -1100,8 +1122,7 @@ class ProposalSession:
                 if row.observation.identity in self._editor_input_errors:
                     raise ValueError(self._editor_input_errors[row.observation.identity])
                 output = edit_sources(
-                    observation=row.observation, proposal=row.proposal,
-                    conflict=conflict.conflict if (conflict := conflict_diagnostic(row)) else None,
+                    observation=row.observation, initial=self._editor_initial(row),
                     metadata=metadata, repo_root=item.repo.root,
                     additional=prior_additional,
                     preimages=self._editor_preimages[row.observation.identity],
@@ -1118,6 +1139,7 @@ class ProposalSession:
                     # Commit saved sources before projection: a failed Render must
                     # remain retryable from the user's edits, not automatic intent.
                     self._edited_outcomes[row.row_id] = (output.repository, generation)
+                    row = self._select_edit(row)
                     for path in self._editor_preimages[row.observation.identity]:
                         self._additional_candidates.pop(path, None)
                     self._additional_candidates.update({change.path: change for change in output.additional})
@@ -1144,7 +1166,7 @@ class ProposalSession:
                         proposal = self._materialize_row(row)
                     operation.check_cancelled()
                     updated = replace(row, approved=row.approved and not proposal.noop, proposal=proposal,
-                                      resolution_chosen=True, diagnostics=(), additional_changes=output.additional)
+                                      diagnostics=(), additional_changes=output.additional)
         except (KeyboardInterrupt, InterruptedError):
             status = "cancelled"
             diagnostics = (Diagnostic("editor-cancelled", "Editor cancelled"),)

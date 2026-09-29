@@ -119,7 +119,9 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   and vim-style `h`/`j`/`k`/`l` navigate; terminals too narrow even for shortened targets scroll horizontally,
   and long worksets scroll vertically without losing column alignment.
 - `R`, or a click in the Resolution cell, changes the focused row's Resolution:
-  with two allowed intents it toggles between them; with Merge available it opens a menu.
+  with two allowed intents it toggles between them; with three or more it opens a menu.
+  A saved Editor outcome adds **Edited** as an intent for the rest of the session, so
+  switching away never loses it: a one-way Policy toggles with Edited, a two-way one opens the menu.
   The `R intent` hint appears only when the focused row has a choice. A Resolution
   fixed by a one-way Policy (push-only Use repository, pull-only Use live) is dimmed
   like auxiliary work, so only choosable Resolutions keep the emphasis.
@@ -247,8 +249,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   `probe_work`, `directory_root_work` and `hook_work` contain canonical `identity`, `selected`,
   `directions` and `diagnostics`, without file/Proposal/Base fields.
   `summary.selected_auxiliary` counts directly selected auxiliary rows.
-  Each unit's `resolution_intent` retains its selected automatic intent;
-  `resolution` reports `editor` for an Edited Proposal and `generation` identifies
+  Each unit's `resolution_intent` reports the selected intent, `editor` once Edited is selected;
+  `allowed_intents` includes `editor` after a save; `resolution` reports `editor` for an Edited Proposal and `generation` identifies
   the materialized generation. Top-level `additional_source_changes`
   contains canonical `row_id`, `repo`, repository-relative `path`, `approved`,
   reverse `references`, change `kind`, byte count `bytes` (not content), `result` and `diagnostics`.

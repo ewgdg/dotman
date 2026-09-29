@@ -623,6 +623,29 @@ def test_resolution_key_toggles_between_two_intents_without_menu(tmp_path, monke
         run(interact())
 
 
+def test_resolution_key_on_edited_row_offers_edit_alongside_both_sides(tmp_path, monkeypatch):
+    from textual.widgets import OptionList
+    from dotman.sync_deck_command import edit_proposal
+
+    engine = make_engine(tmp_path, monkeypatch, [
+        ('unit', 'both', b'repo', b'live', 'editor = { run = "printf edited > \\"$DOTMAN_SOURCE\\"", io = "pipe" }'),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        edit_proposal(session, session.view.rows[0].row_id)
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test() as pilot:
+                # Edited is a third choice, so R must not silently flip to a side.
+                await pilot.press('r')
+                menu = app.query_one(OptionList)
+                assert menu.display and menu.option_count == 3
+                assert menu.highlighted == session.view.rows[0].allowed_intents.index('editor')
+                await pilot.press('escape')
+                assert session.view.rows[0].intent == 'editor'
+        run(interact())
+
+
 def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
     from textual.widgets import OptionList
     from tests.engine.test_sync_both_convergence import established
