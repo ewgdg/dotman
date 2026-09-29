@@ -18,7 +18,7 @@ def test_yaml_engine_declares_typed_selectors() -> None:
     assert selector_specs["key_regex"].prefix == "re"
 
 
-def test_yaml_11_boolean_words_remain_string_keys(tmp_path: Path) -> None:
+def test_yaml_11_boolean_words_load_as_strings_and_keep_plain_spelling(tmp_path: Path) -> None:
     input_path = tmp_path / "input.yaml"
     output_path = tmp_path / "output.yaml"
     input_path.write_text(
@@ -39,8 +39,8 @@ def test_yaml_11_boolean_words_remain_string_keys(tmp_path: Path) -> None:
     }
     assert output_path.read_text(encoding="utf-8") == (
         "reasoningEfforts:\n"
-        "  'off': none\n"
-        "  'on': max\n"
+        "  off: none\n"
+        "  on: max\n"
         "  enabled: true\n"
     )
 
@@ -860,3 +860,66 @@ def test_stdin_base_indent_is_preserved(monkeypatch, capsys) -> None:
 
     assert cli.main(["transform", "yaml", "-", "-", "--mode", "cleanup"]) == 0
     assert capsys.readouterr().out == source
+
+
+def test_plain_scalars_yaml_11_and_12_read_differently_keep_their_spelling(tmp_path: Path) -> None:
+    # YAML 1.1 reads these as sexagesimal, octal, underscored, binary, or signed
+    # hex ints, booleans, or timestamps; YAML 1.2 reads them as strings or other
+    # numbers (0777 is 777, 1e3 is 1000.0). Any rewrite changes one reading.
+    source = (
+        "port: 22:22\n"
+        "mode: 0777\n"
+        "count: 1_000\n"
+        "bits: 0b101\n"
+        "negative_hex: -0x1F\n"
+        "scale: 1e3\n"
+        "octal: 0o17\n"
+        "leading: 09\n"
+        "enabled: yes\n"
+        "short: y\n"
+        "when: 2001-12-14t21:59:43.10-05:00\n"
+        "on: off\n"
+    )
+
+    assert run_yaml_cleanup(tmp_path, source) == source
+
+
+def test_plain_scalars_both_yaml_versions_agree_on_keep_their_type(tmp_path: Path) -> None:
+    source = "a: true\nb: 12\nc: 1.5\nd: null\ne: 0x1F\nf: -.inf\n"
+
+    assert [type(value) for value in MODULE.parse_yaml_text(source).values()] == [
+        bool, int, float, type(None), int, float
+    ]
+    assert run_yaml_cleanup(tmp_path, source) == "a: true\nb: 12\nc: 1.5\nd: null\ne: 31\nf: -.inf\n"
+
+
+def test_compare_file_reuse_distinguishes_plain_and_quoted_ambiguous_scalars(tmp_path: Path) -> None:
+    compare_path = tmp_path / "compare.yaml"
+
+    compare_path.write_text("mode: 0777  # rwx\n", encoding="utf-8")
+    assert run_yaml_cleanup(tmp_path, "mode: 0777\n", "--compare-file", str(compare_path)) == (
+        "mode: 0777  # rwx\n"
+    )
+
+    # The quoted string is "0777" for every reader, unlike the plain scalar.
+    compare_path.write_text("mode: '0777'\n", encoding="utf-8")
+    assert run_yaml_cleanup(tmp_path, "mode: 0777\n", "--compare-file", str(compare_path)) == (
+        "mode: 0777\n"
+    )
+
+
+def test_selectors_match_keys_by_their_yaml_spelling(tmp_path: Path) -> None:
+    source = "true: a\nnull: b\n0777: c\n1.5: d\nyes: e\nkeep: f\n"
+
+    assert run_yaml_cleanup(
+        tmp_path,
+        source,
+        "--selector-type",
+        "remove",
+        "--selectors",
+        "true",
+        "null",
+        "0777",
+        r"re:^1\.5$",
+        "yes",
+    ) == "keep: f\n"

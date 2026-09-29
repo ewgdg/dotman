@@ -30,13 +30,66 @@ YamlKeyPath = tuple[str, ...]
 KeyRegex = re.Pattern[str]
 DEFAULT_YAML_INDENT = 2
 _MISSING = object()
+_NULL_TAG = "tag:yaml.org,2002:null"
 _BOOL_TAG = "tag:yaml.org,2002:bool"
 _INT_TAG = "tag:yaml.org,2002:int"
 _FLOAT_TAG = "tag:yaml.org,2002:float"
+_STR_TAG = "tag:yaml.org,2002:str"
+_MERGE_TAG = "tag:yaml.org,2002:merge"
 # PyYAML's YAML 1.1 "=" value-key tag has no constructor in SafeLoader, so a
 # plain "=" scalar would crash instead of loading as the string it is in 1.2.
 _VALUE_TAG = "tag:yaml.org,2002:value"
-_STRICT_BOOL_RE = re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")
+# Private tag the loader gives plain scalars whose YAML 1.1 and 1.2 readings
+# differ; it never appears in emitted YAML.
+_AMBIGUOUS_PLAIN_SCALAR_TAG = "tag:dotman,2026:ambiguous-plain-scalar"
+
+# The YAML 1.1 spec's single-letter booleans, which PyYAML itself does not resolve.
+_YAML11_SINGLE_LETTER_BOOL_RE = re.compile(r"^(?:y|Y|n|N)$")
+_YAML12_CORE_NUMBER_RESOLVERS = (
+    (_INT_TAG, re.compile(r"^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$"), "-+0123456789"),
+    (
+        _FLOAT_TAG,
+        re.compile(
+            r"^(?:[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?"
+            r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$"
+        ),
+        "-+.0123456789",
+    ),
+)
+_YAML12_CORE_RESOLVERS = (
+    (_NULL_TAG, re.compile(r"^(?:~|null|Null|NULL|)$")),
+    (_BOOL_TAG, re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")),
+    *((tag, pattern) for tag, pattern, _ in _YAML12_CORE_NUMBER_RESOLVERS),
+)
+
+
+class AmbiguousPlainScalar(str):
+    """Plain scalar text that YAML 1.1 and YAML 1.2 core readers resolve differently.
+
+    Examples are ``0777`` (511 vs 777), ``22:22`` (1342 vs a string), and
+    ``yes`` (true vs a string). It behaves as a string for selection and
+    merging, and is emitted with its original plain spelling so the value
+    each kind of reader sees never changes.
+    """
+
+
+def yaml12_core_tag(text: str) -> str:
+    return next((tag for tag, pattern in _YAML12_CORE_RESOLVERS if pattern.match(text)), _STR_TAG)
+
+
+def yaml12_core_value(tag: str, text: str) -> Any:
+    if tag == _NULL_TAG:
+        return None
+    if tag == _BOOL_TAG:
+        return text.lower() == "true"
+    if tag == _INT_TAG:
+        if text.startswith("0o"):
+            return int(text[2:], 8)
+        if text.startswith("0x"):
+            return int(text[2:], 16)
+        return int(text)
+    # Python spells YAML's .inf and .nan without the leading dot.
+    return float(text.lower().replace(".inf", "inf").replace(".nan", "nan"))
 
 
 def resolvers_without_tags(
@@ -49,18 +102,47 @@ def resolvers_without_tags(
     }
 
 
-class StrictBooleanSafeLoader(yaml.SafeLoader):
+class VersionNeutralSafeLoader(yaml.SafeLoader):
+    """Load plain scalars as typed values only when YAML 1.1 and 1.2 agree.
+
+    Its implicit resolvers are YAML 1.1's. A plain scalar whose YAML 1.1
+    reading differs from the YAML 1.2 core schema reading in type or value
+    loads as an ``AmbiguousPlainScalar`` holding the original text instead.
+    """
+
     yaml_implicit_resolvers = resolvers_without_tags(
         yaml.SafeLoader.yaml_implicit_resolvers,
-        frozenset({_BOOL_TAG, _VALUE_TAG}),
+        frozenset({_VALUE_TAG}),
     )
+    bool_values = {**yaml.SafeLoader.bool_values, "y": True, "n": False}
+
+    def resolve(self, kind: Any, value: Any, implicit: Any) -> str:
+        yaml11_tag = super().resolve(kind, value, implicit)
+        is_plain_scalar = kind is yaml.ScalarNode and implicit[0]
+        if is_plain_scalar and self.yaml_versions_disagree(yaml11_tag, value):
+            return _AMBIGUOUS_PLAIN_SCALAR_TAG
+        return yaml11_tag
+
+    def yaml_versions_disagree(self, yaml11_tag: str, text: str) -> bool:
+        # "<<" is a string in YAML 1.2, but merge keys are widely supported
+        # there too; keep applying them at load time.
+        if yaml11_tag == _MERGE_TAG:
+            return False
+        yaml12_tag = yaml12_core_tag(text)
+        if yaml11_tag != yaml12_tag:
+            return True
+        if yaml11_tag == _STR_TAG:
+            return False
+        yaml11_value = self.yaml_constructors[yaml11_tag](self, yaml.ScalarNode(yaml11_tag, text))
+        return not values_strictly_equal(yaml11_value, yaml12_core_value(yaml12_tag, text))
 
 
-# PyYAML defaults to YAML 1.1's yes/no/on/off booleans. Configuration keys such
-# as a reasoning effort named "off" must remain strings; only explicit boolean
-# words should resolve to bool values.
-StrictBooleanSafeLoader.add_implicit_resolver(
-    _BOOL_TAG, _STRICT_BOOL_RE, list("tTfF")
+VersionNeutralSafeLoader.add_implicit_resolver(
+    _BOOL_TAG, _YAML11_SINGLE_LETTER_BOOL_RE, list("yYnN")
+)
+VersionNeutralSafeLoader.add_constructor(
+    _AMBIGUOUS_PLAIN_SCALAR_TAG,
+    lambda loader, node: AmbiguousPlainScalar(loader.construct_scalar(node)),
 )
 
 
@@ -73,21 +155,33 @@ class PortableSafeDumper(yaml.SafeDumper):
     """
 
 
-for _tag, _pattern, _first_chars in (
-    (_BOOL_TAG, r"^(?:y|Y|n|N)$", "yYnN"),
-    (_INT_TAG, r"^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$", "-+0123456789"),
-    (
-        _FLOAT_TAG,
-        r"^(?:[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?"
-        r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$",
-        "-+.0123456789",
-    ),
-):
-    PortableSafeDumper.add_implicit_resolver(_tag, re.compile(_pattern), list(_first_chars))
+PortableSafeDumper.add_implicit_resolver(_BOOL_TAG, _YAML11_SINGLE_LETTER_BOOL_RE, list("yYnN"))
+for _tag, _pattern, _first_chars in _YAML12_CORE_NUMBER_RESOLVERS:
+    PortableSafeDumper.add_implicit_resolver(_tag, _pattern, list(_first_chars))
+
+
+def represent_ambiguous_plain_scalar(dumper: yaml.SafeDumper, data: AmbiguousPlainScalar) -> yaml.Node:
+    text = str(data)
+    # Tagging the node with whatever the dumper resolves this text to makes the
+    # serializer mark it implicit, so the emitter writes it plain instead of
+    # quoting it like an ordinary string lookalike.
+    return dumper.represent_scalar(dumper.resolve(yaml.ScalarNode, text, (True, False)), text)
+
+
+PortableSafeDumper.add_representer(AmbiguousPlainScalar, represent_ambiguous_plain_scalar)
 
 
 def parse_yaml_text(text: str) -> Any:
-    return yaml.load(text, Loader=StrictBooleanSafeLoader)
+    return yaml.load(text, Loader=VersionNeutralSafeLoader)
+
+
+def yaml_key_text(key: Any) -> str:
+    """Spell a mapping key for selector matching."""
+    if isinstance(key, str):
+        return key
+    # Match non-string keys by their emitted YAML spelling (true, null, 1.5),
+    # not Python's (True, None).
+    return yaml.representer.SafeRepresenter().represent_data(key).value
 
 
 @dataclass
@@ -153,7 +247,7 @@ def iter_yaml_key_paths(value: Any, prefix: YamlKeyPath = ()) -> tuple[YamlKeyPa
 
     key_paths: list[YamlKeyPath] = []
     for key, child_value in value.items():
-        key_path = prefix + (str(key),)
+        key_path = prefix + (yaml_key_text(key),)
         key_paths.append(key_path)
         key_paths.extend(iter_yaml_key_paths(child_value, key_path))
     return tuple(key_paths)
@@ -188,7 +282,7 @@ def retained_yaml_value(value: Any, selector: YamlPathSelector) -> Any:
 
     retained_data: YamlDict = {}
     for key, child_value in value.items():
-        child_selector = selector.children.get(str(key))
+        child_selector = selector.children.get(yaml_key_text(key))
         if child_selector is None:
             continue
         retained_value = retained_yaml_value(child_value, child_selector)
@@ -208,7 +302,7 @@ def stripped_yaml_value(value: Any, selector: YamlPathSelector) -> Any:
 
     stripped_data: YamlDict = {}
     for key, child_value in value.items():
-        child_selector = selector.children.get(str(key))
+        child_selector = selector.children.get(yaml_key_text(key))
         if child_selector is None:
             stripped_data[key] = child_value
             continue
@@ -228,11 +322,11 @@ def filter_retained_keys(
     path_selector = build_yaml_path_selector(retained_key_paths)
     retained_data: YamlDict = {}
     for key, value in data.items():
-        if matches_key_regexes((str(key),), retained_key_regexes):
+        if matches_key_regexes((yaml_key_text(key),), retained_key_regexes):
             retained_data[key] = value
             continue
 
-        child_selector = path_selector.children.get(str(key))
+        child_selector = path_selector.children.get(yaml_key_text(key))
         if child_selector is None:
             continue
 
@@ -254,10 +348,10 @@ def filter_stripped_keys(
     path_selector = build_yaml_path_selector(stripped_key_paths)
     stripped_data: YamlDict = {}
     for key, value in data.items():
-        if matches_key_regexes((str(key),), stripped_key_regexes):
+        if matches_key_regexes((yaml_key_text(key),), stripped_key_regexes):
             continue
 
-        child_selector = path_selector.children.get(str(key))
+        child_selector = path_selector.children.get(yaml_key_text(key))
         if child_selector is None:
             stripped_data[key] = value
             continue
@@ -298,7 +392,7 @@ def overlay_yaml_objects(
     for key in original_base_data:
         overlay_has_key = key in overlay_data
         preserved_has_key = key in preserved_base_data
-        child_selector = path_selector.children.get(str(key))
+        child_selector = path_selector.children.get(yaml_key_text(key))
 
         if overlay_has_key and preserved_has_key:
             overlay_value = overlay_data[key]
@@ -306,7 +400,7 @@ def overlay_yaml_objects(
             base_value = original_base_data[key]
             if (
                 should_recurse_overlay(child_selector)
-                and not matches_key_regexes((str(key),), whole_key_regexes)
+                and not matches_key_regexes((yaml_key_text(key),), whole_key_regexes)
                 and isinstance(base_value, dict)
                 and isinstance(preserved_value, dict)
                 and isinstance(overlay_value, dict)
@@ -358,7 +452,7 @@ def detect_yaml_indent(text: str | None) -> int | None:
     if text is None:
         return None
     try:
-        root_node = yaml.compose(text, Loader=StrictBooleanSafeLoader)
+        root_node = yaml.compose(text, Loader=VersionNeutralSafeLoader)
     except yaml.YAMLError:
         return None
     indent = nested_mapping_indent(root_node)
