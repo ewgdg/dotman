@@ -6,7 +6,6 @@ import copy
 import fnmatch
 from pathlib import Path
 import re
-import xml.dom.minidom
 import xml.etree.ElementTree as ET
 
 from dotman.transforms.cli import run_engine_cli
@@ -277,12 +276,39 @@ def get_existing_xml_bytes_if_semantically_unchanged(
     return existing_bytes
 
 
-def build_pretty_xml_text(root: ET.Element) -> str:
-    xml_string = ET.tostring(root, encoding="unicode")
-    dom = xml.dom.minidom.parseString(xml_string)
-    pretty_xml = dom.toprettyxml(indent="  ", newl="\n")
-    return "\n".join(line for line in pretty_xml.splitlines() if line.strip())
+# Byte-identical to the declaration minidom's toprettyxml emitted, so outputs
+# written before the ElementTree serializer do not churn on their first line.
+XML_DECLARATION = '<?xml version="1.0" ?>'
+XML_INDENT = "  "
 
+
+def has_mixed_content(element: ET.Element) -> bool:
+    return any(
+        text is not None and text.strip()
+        for text in (element.text, *(child.tail for child in element))
+    )
+
+
+def indent_element_only_content(element: ET.Element, level: int = 0) -> None:
+    # Like ET.indent, but leaves mixed content untouched: ET.indent would still
+    # inject newlines where a mixed-content element has no text before its
+    # first child or after its last one, changing the document's text.
+    if not len(element) or has_mixed_content(element):
+        return
+
+    child_indentation = "\n" + XML_INDENT * (level + 1)
+    element.text = child_indentation
+    for child in element:
+        indent_element_only_content(child, level + 1)
+        child.tail = child_indentation
+    element[-1].tail = "\n" + XML_INDENT * level
+
+
+def build_pretty_xml_text(root: ET.Element) -> str:
+    pretty_root = copy.deepcopy(root)
+    pretty_root.tail = None
+    indent_element_only_content(pretty_root)
+    return f"{XML_DECLARATION}\n{ET.tostring(pretty_root, encoding='unicode')}\n"
 
 
 def render_xml_output(

@@ -535,3 +535,52 @@ def test_merge_does_not_fuse_siblings_with_different_identities(tmp_path: Path) 
     assert [
         (item.get("id"), [(child.tag, child.text) for child in item]) for item in root.findall("item")
     ] == [("a", [("x", "live-a")]), ("b", [("y", "repo-b")])]
+
+
+def test_pretty_output_preserves_blank_lines_inside_text(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.xml"
+    output_path = tmp_path / "output.xml"
+    input_path.write_text("<doc><script>line1\n\n    \nline4</script><drop/></doc>", encoding="utf-8")
+
+    transform_xml(input_path, output_path, node_matchers=["doc/drop"])
+
+    assert parse_xml(output_path).findtext("script") == "line1\n\n    \nline4"
+
+
+def test_pretty_output_preserves_mixed_content(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.xml"
+    output_path = tmp_path / "output.xml"
+    input_path.write_text(
+        "<doc><p>Hello <b>world</b> again</p><p><b>lead</b> tail</p><p>head <i>end</i></p></doc>",
+        encoding="utf-8",
+    )
+
+    transform_xml(input_path, output_path, node_matchers=["doc/drop"])
+
+    assert [ET.tostring(p, encoding="unicode").strip() for p in parse_xml(output_path)] == [
+        "<p>Hello <b>world</b> again</p>",
+        "<p><b>lead</b> tail</p>",
+        "<p>head <i>end</i></p>",
+    ]
+
+
+def test_pretty_output_indents_element_only_content(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.xml"
+    output_path = tmp_path / "output.xml"
+    input_path.write_text(
+        '<config>\n    <group name="g">   <item>1</item><empty/></group>\n<p>Hi <b>x</b></p></config>',
+        encoding="utf-8",
+    )
+
+    transform_xml(input_path, output_path, node_matchers=["config/drop"])
+
+    assert output_path.read_text(encoding="utf-8") == (
+        '<?xml version="1.0" ?>\n'
+        "<config>\n"
+        '  <group name="g">\n'
+        "    <item>1</item>\n"
+        "    <empty />\n"
+        "  </group>\n"
+        "  <p>Hi <b>x</b></p>\n"
+        "</config>\n"
+    )

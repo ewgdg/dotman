@@ -801,7 +801,7 @@ Transforms XML trees without repository configuration. At least one selector is 
 
 Merge matches repeated siblings by tag and available `id`, `name`, `key`, `uuid`, or non-empty text identity; siblings whose `id`, `name`, `key`, or `uuid` differ never match. It then applies overlay attributes, text, children, and deletions. `--sort-attributes` sorts emitted attributes. Repeated or comma-separated `--sort-children PATH` flags sort immediate children only under matching parents.
 
-`--compare-file PATH` normalizes whitespace-only text, attributes, and explicitly selected child lists for semantic comparison. Equal XML reuses compare file's exact bytes. This compare normalization does not otherwise canonicalize emitted XML.
+`--compare-file PATH` normalizes whitespace-only text, attributes, and explicitly selected child lists for semantic comparison. Equal XML reuses compare file's exact bytes. This compare normalization does not otherwise canonicalize emitted XML. Emitted XML starts with `<?xml version="1.0" ?>`, indents element-only content by two spaces, and leaves text and mixed content unchanged.
 
 ```sh
 dotman transform xml live.xml output.xml --mode merge \
