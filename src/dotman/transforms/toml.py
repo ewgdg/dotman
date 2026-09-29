@@ -6,6 +6,7 @@ import copy
 from dataclasses import dataclass
 from datetime import datetime, time
 import math
+import tomllib
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -145,48 +146,55 @@ def parse_key_path(raw_key: str) -> tuple[str, ...]:
     return key_path
 
 
+QUOTED_KEY_SEGMENT = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+
+
 def split_toml_key(raw_key: str) -> list[str]:
-    parts: list[str] = []
+    raw_segments: list[str] = []
     current: list[str] = []
     in_quotes = False
     escape = False
 
+    # Split on dots outside quotes, keeping each segment's raw text so quoted
+    # segments can be decoded as a whole.
     for char in raw_key:
         if in_quotes and escape:
-            current.append(char)
             escape = False
-            continue
-
-        if in_quotes and char == "\\":
+        elif in_quotes and char == "\\":
             escape = True
-            continue
-
-        if char == '"':
+        elif char == '"':
             in_quotes = not in_quotes
-            continue
-
-        if char == "." and not in_quotes:
-            append_key_part(parts, current)
+        elif char == "." and not in_quotes:
+            raw_segments.append("".join(current))
             current = []
             continue
-
         current.append(char)
 
     if in_quotes:
         raise ValueError(f"unterminated quoted TOML key: {raw_key}")
 
-    append_key_part(parts, current)
-    return parts
+    raw_segments.append("".join(current))
+    return [
+        key_part
+        for raw_segment in raw_segments
+        if (key_part := parse_key_part(raw_segment, raw_key)) is not None
+    ]
 
 
-def append_key_part(parts: list[str], current: list[str]) -> None:
-    raw_part = "".join(current).strip()
-    if not raw_part:
-        return
-    if raw_part.startswith('"') and raw_part.endswith('"'):
-        parts.append(bytes(raw_part[1:-1], "utf-8").decode("unicode_escape"))
-        return
-    parts.append(raw_part)
+def parse_key_part(raw_segment: str, raw_key: str) -> str | None:
+    segment = raw_segment.strip()
+    if not segment.startswith('"'):
+        # Unquoted empty segments such as `a..b` have always been skipped.
+        return segment or None
+    if not QUOTED_KEY_SEGMENT.fullmatch(segment):
+        raise ValueError(f"quoted TOML key segment must be one basic string: {raw_key}")
+    try:
+        # Decode escapes with TOML's own basic-string rules; `""` is the empty key.
+        return tomllib.loads(f"key = {segment}")["key"]
+    except tomllib.TOMLDecodeError as error:
+        raise ValueError(
+            f"quoted TOML key segment is not a valid basic string: {segment}"
+        ) from error
 
 
 def split_key_path(key_path: tuple[str, ...]) -> tuple[tuple[str, ...], str]:

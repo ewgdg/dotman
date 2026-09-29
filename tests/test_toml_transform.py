@@ -1475,3 +1475,32 @@ def test_compare_file_reuse_requires_values_of_the_same_type(tmp_path: Path) -> 
         cleanup_with_compare("a = nan\nt = 1979-05-27T07:32:00Z\n", reusable_compare_text)
         == reusable_compare_text
     )
+
+
+def test_quoted_selector_segments_follow_toml_basic_string_rules() -> None:
+    assert MODULE.parse_key_paths(
+        ['"é"', r'"a\tb"', '" a"', 'x."a.b"', r'"q\"t"', r'"é"', 'a.""', 'a..b', " a . b "]
+    ) == [
+        ("é",),
+        ("a\tb",),
+        (" a",),
+        ("x", "a.b"),
+        ('q"t',),
+        ("é",),
+        ("a", ""),
+        ("a", "b"),
+        ("a", "b"),
+    ]
+
+
+def test_remove_quoted_empty_key_keeps_its_table(tmp_path: Path) -> None:
+    output = run_toml_transform(
+        tmp_path,
+        '[a]\n"" = 1\nk = 2\n',
+        "--selector-type",
+        "remove",
+        "--selectors",
+        'a.""',
+    )
+
+    assert output == "[a]\nk = 2\n"
