@@ -1807,3 +1807,19 @@ def test_removing_the_last_key_of_a_split_table_part_keeps_its_header(tmp_path: 
     assert run_toml_transform(
         tmp_path, live, "--selector-type", "remove", "--selectors", "a.x"
     ) == "# about a\n[a]\n[b]\ny = 2\n[a.c]\nz = 3\n"
+
+
+def test_compare_file_reuse_follows_which_array_element_a_comment_belongs_to(tmp_path: Path) -> None:
+    def cleanup_with_compare(base_text: str, compare_text: str) -> str:
+        return run_toml_transform(
+            tmp_path, base_text, "--selector-type", "remove", "--selectors", "unused", compare_text=compare_text
+        )
+
+    live = "a = [\n  [1, # one\n   2],\n  # before three\n  3, # three\n]\n"
+    reformatted = "a = [\n    [1,  # one\n     2],\n    # before three\n    3,  # three\n]\n"
+    moved_out_of_nested_array = "a = [\n  [1,\n   2], # one\n  # before three\n  3, # three\n]\n"
+    moved_to_previous_element = "a = [\n  [1, # one\n   2], # before three\n  3, # three\n]\n"
+
+    assert cleanup_with_compare(live, reformatted) == reformatted
+    assert cleanup_with_compare(live, moved_out_of_nested_array) == live
+    assert cleanup_with_compare(live, moved_to_previous_element) == live

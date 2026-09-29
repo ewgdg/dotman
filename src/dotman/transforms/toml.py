@@ -6,7 +6,7 @@ import copy
 from dataclasses import dataclass
 import tomllib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any, NamedTuple
 from pathlib import Path
 import tomlkit
@@ -334,34 +334,89 @@ def next_key_name(
     return None
 
 
+# TOML string literals, scanned as whole tokens so their content is never read as syntax.
+TOML_STRING_PATTERN = (
+    r'"""(?:\\.|[^\\])*?"""(?:"{1,2})?'
+    r"|'''.*?'''(?:'{1,2})?"
+    r'|"(?:\\.|[^"\\\n])*"'
+    r"|'[^'\n]*'"
+)
+
+# Array item comments are not exposed by tomlkit's public API, so they are read
+# from the array's text.
+ARRAY_TOKEN = re.compile(
+    rf"(?P<value>{TOML_STRING_PATTERN}|[^\s,#\[\]{{}}\"']+)"
+    r"|(?P<comment>#[^\r\n]*)"
+    r"|(?P<open_array>\[)|(?P<close_array>\])"
+    r"|(?P<open_inline_table>\{)|(?P<close_inline_table>\})"
+    r"|(?P<comma>,)"
+    r"|(?P<newline>\n)"
+    r"|\s",
+    re.DOTALL,
+)
+
+
+def skip_inline_table(tokens: Iterator[re.Match[str]]) -> None:
+    """Consume tokens through the `}` that closes an already opened inline table."""
+    depth = 1
+    for token in tokens:
+        if token.lastgroup == "open_inline_table":
+            depth += 1
+        elif token.lastgroup == "close_inline_table":
+            depth -= 1
+            if depth == 0:
+                return
+
+
 def array_comment_signature(
     array: Array,
     path: tuple[str, ...],
 ) -> list[tuple[tuple[str, ...], str, int, str]]:
-    """Identify comments held in tomlkit's lossless array item groups."""
+    tokens = ARRAY_TOKEN.finditer(array.as_string())
+    next(tokens)  # the array's own `[`
+    return array_tokens_comment_signature(tokens, path)
+
+
+def array_tokens_comment_signature(
+    tokens: Iterator[re.Match[str]],
+    path: tuple[str, ...],
+) -> list[tuple[tuple[str, ...], str, int, str]]:
+    """Attach each comment in an opened array to an element, through its `]`.
+
+    A comment after an element on the same line belongs to that element; any
+    other comment sits before the next element.
+    """
     comments: list[tuple[tuple[str, ...], str, int, str]] = []
     attachment_counts: dict[tuple[tuple[str, ...], str], int] = {}
-    value_index = 0
+    started_values = 0
+    in_value = line_has_value = False
 
-    # Public Array iteration omits standalone comments, so lossless comparison
-    # must inspect the item groups tomlkit uses to retain multiline trivia.
-    for group in array._value:
-        value = group.value
-        comment = parsed_item_comment(group.comment)
-        value_exists = value is not None and not isinstance(value, Null)
-        item_path = path + (f"[{value_index}]",)
-
-        if comment:
-            attachment_kind = "element-inline" if value_exists else "before-element"
-            attachment = (item_path, attachment_kind)
+    for token in tokens:
+        kind = token.lastgroup
+        if kind in ("value", "open_array", "open_inline_table"):
+            if not in_value:
+                started_values += 1
+                in_value = True
+            line_has_value = True
+            element_path = path + (f"[{started_values - 1}]",)
+            if kind == "open_array":
+                comments.extend(array_tokens_comment_signature(tokens, element_path))
+            elif kind == "open_inline_table":
+                skip_inline_table(tokens)
+        elif kind == "comment":
+            if line_has_value:
+                attachment = (path + (f"[{started_values - 1}]",), "element-inline")
+            else:
+                attachment = (path + (f"[{started_values}]",), "before-element")
             attachment_index = attachment_counts.get(attachment, 0)
             attachment_counts[attachment] = attachment_index + 1
-            comments.append((*attachment, attachment_index, comment))
-
-        if value_exists:
-            if isinstance(value, Array):
-                comments.extend(array_comment_signature(value, item_path))
-            value_index += 1
+            comments.append((*attachment, attachment_index, token.group()))
+        elif kind == "comma":
+            in_value = False
+        elif kind == "newline":
+            line_has_value = False
+        elif kind == "close_array":
+            break
 
     return comments
 
@@ -673,11 +728,7 @@ def compile_table_regexes(raw_table_regexes: Iterable[str]) -> list[re.Pattern[s
 # Scan strings and comments as whole tokens so blank-line runs are collapsed
 # only between items, never inside multiline string values.
 TOML_STRING_COMMENT_OR_BLANK_RUN = re.compile(
-    r'(?P<opaque>"""(?:\\.|[^\\])*?"""(?:"{1,2})?'
-    r"|'''.*?'''(?:'{1,2})?"
-    r'|"(?:\\.|[^"\\\n])*"'
-    r"|'[^'\n]*'"
-    r"|#[^\r\n]*)"
+    rf"(?P<opaque>{TOML_STRING_PATTERN}|#[^\r\n]*)"
     # A line holding only spaces or tabs counts as blank. Documents are LF text.
     r"|(?P<leading_blank_run>\A(?:[ \t]*\n){2,})"
     r"|(?P<trailing_blank_run>\n(?:[ \t]*\n)*[ \t]*\Z)"
