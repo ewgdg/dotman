@@ -466,8 +466,26 @@ def compile_table_regexes(raw_table_regexes: Iterable[str]) -> list[re.Pattern[s
     return list(compile_selector_regexes(raw_table_regexes, "TOML path selector"))
 
 
+# Scan strings and comments as whole tokens so blank-line runs are collapsed
+# only between items, never inside multiline string values.
+TOML_STRING_COMMENT_OR_BLANK_RUN = re.compile(
+    r'(?P<opaque>"""(?:\\.|[^\\])*?"""(?:"{1,2})?'
+    r"|'''.*?'''(?:'{1,2})?"
+    r'|"(?:\\.|[^"\\\n])*"'
+    r"|'[^'\n]*'"
+    r"|#[^\r\n]*)"
+    r"|(?P<blank_run>(?:\r?\n){3,})",
+    re.DOTALL,
+)
+
+
 def normalize_blank_lines(content: str) -> str:
-    return re.sub(r"\n{3,}", "\n\n", content)
+    def collapse_blank_run(match: re.Match[str]) -> str:
+        if match.group("blank_run") is None:
+            return match.group(0)
+        return "\n\n"
+
+    return TOML_STRING_COMMENT_OR_BLANK_RUN.sub(collapse_blank_run, content)
 
 
 def normalize_document(doc: TOMLDocument) -> TOMLDocument:

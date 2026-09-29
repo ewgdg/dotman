@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 
 from tomlkit.toml_document import TOMLDocument
 
@@ -1253,3 +1254,53 @@ print(output_path.read_text(encoding="utf-8"))
 
     output = completed.stdout
     assert output.index('model_reasoning_effort = "high"') < output.index('model = "gpt-5.4"')
+
+
+def run_toml_transform(
+    tmp_path: Path,
+    base_text: str,
+    *selector_args: str,
+    overlay_text: str | None = None,
+) -> str:
+    """Run the engine CLI and return the output text without newline translation."""
+    base_path = tmp_path / "base.toml"
+    output_path = tmp_path / "output.toml"
+    base_path.write_bytes(base_text.encode("utf-8"))
+    argv = [str(base_path), str(output_path)]
+    if overlay_text is None:
+        argv += ["--mode", "cleanup"]
+    else:
+        overlay_path = tmp_path / "overlay.toml"
+        overlay_path.write_bytes(overlay_text.encode("utf-8"))
+        argv += ["--mode", "merge", "--overlay-file", str(overlay_path)]
+
+    assert MODULE.main([*argv, *selector_args]) == 0
+    return output_path.read_bytes().decode("utf-8")
+
+
+def test_blank_line_collapsing_keeps_multiline_string_content(tmp_path: Path) -> None:
+    base_text = 'a = """\nline1\n\n\n\nline5"""\nb = 2\n'
+    literal_base_text = "a = '''\nline1\n\n\n\nline5'''\nb = 2\n"
+
+    removed = run_toml_transform(tmp_path, base_text, "--selector-type", "remove", "--selectors", "b")
+    literal_removed = run_toml_transform(
+        tmp_path, literal_base_text, "--selector-type", "remove", "--selectors", "b"
+    )
+    merged = run_toml_transform(tmp_path, base_text, "--selectors", "a", overlay_text="c = 1\n")
+
+    assert tomllib.loads(removed) == {"a": "line1\n\n\n\nline5"}
+    assert tomllib.loads(literal_removed) == {"a": "line1\n\n\n\nline5"}
+    assert tomllib.loads(merged) == {"a": "line1\n\n\n\nline5", "c": 1}
+
+
+def test_blank_line_collapsing_still_merges_separator_runs(tmp_path: Path) -> None:
+    output = run_toml_transform(
+        tmp_path,
+        "a = 1\n\nb = 2\n\nc = 3\n",
+        "--selector-type",
+        "remove",
+        "--selectors",
+        "b",
+    )
+
+    assert output == "a = 1\n\nc = 3\n"
