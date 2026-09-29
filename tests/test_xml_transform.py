@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 import xml.etree.ElementTree as ET
+
+import pytest
 
 from dotman.transforms import xml as MODULE
 from dotman.transforms.framework import emit_transform_output
@@ -600,3 +603,40 @@ def test_removing_an_element_keeps_the_text_that_follows_it(tmp_path: Path) -> N
         "<p>Hello  world</p>",
         "<p> tail <i>kept</i></p>",
     ]
+
+
+MALFORMED_XML = "<config><a></config>"
+
+
+@pytest.mark.parametrize("operand", ["base", "overlay", "stdin"])
+def test_malformed_xml_fails_cleanly_naming_its_source(operand, tmp_path, monkeypatch, capsys) -> None:
+    from dotman import cli
+
+    good_path = tmp_path / "good.xml"
+    good_path.write_text("<config/>", encoding="utf-8")
+    bad_path = tmp_path / "bad.xml"
+    bad_path.write_text(MALFORMED_XML, encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(MALFORMED_XML.encode())))
+    base, overlay, source = {
+        "base": (bad_path, good_path, str(bad_path)),
+        "overlay": (good_path, bad_path, str(bad_path)),
+        "stdin": ("-", good_path, "stdin"),
+    }[operand]
+
+    exit_code = cli.main(
+        ["transform", "xml", str(base), "-", "--mode", "merge", "--overlay-file", str(overlay), "--selectors", "config/a"]
+    )
+
+    assert exit_code == 2
+    error = capsys.readouterr().err
+    assert source in error
+    assert "mismatched tag" in error
+
+
+def test_missing_base_file_fails_cleanly(tmp_path, capsys) -> None:
+    from dotman import cli
+
+    missing_path = tmp_path / "missing.xml"
+
+    assert cli.main(["transform", "xml", str(missing_path), "-", "--mode", "cleanup", "--selectors", "config/a"]) == 2
+    assert f"base XML file not found: {missing_path}" in capsys.readouterr().err

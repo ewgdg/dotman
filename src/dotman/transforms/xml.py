@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 from dotman.transforms.cli import run_engine_cli
 from dotman.transforms.framework import (
+    STDIN_PATH,
     BaseTransformEngine,
     SelectorAction,
     SelectorSpec,
@@ -325,6 +326,23 @@ def build_pretty_xml_text(root: ET.Element) -> str:
     return f"{XML_DECLARATION}\n{ET.tostring(pretty_root, encoding='unicode')}\n"
 
 
+def parse_xml_bytes(content: bytes, source: str) -> ET.Element:
+    try:
+        return ET.fromstring(content)
+    except ET.ParseError as error:
+        raise ValueError(f"{source} is not valid XML: {error}") from error
+
+
+def read_xml_root(path: Path, stdin_bytes: bytes | None) -> ET.Element | None:
+    """Parse XML input, or return None when the input file is missing."""
+    if path == STDIN_PATH:
+        assert stdin_bytes is not None
+        return parse_xml_bytes(stdin_bytes, "stdin")
+    if not path.is_file():
+        return None
+    return parse_xml_bytes(path.read_bytes(), str(path))
+
+
 def render_xml_output(
     base_path: str | Path,
     node_matchers: list[str] | None = None,
@@ -349,23 +367,12 @@ def render_xml_output(
     parsed_node_matchers = node_matchers or []
     parsed_child_sort_parent_matchers = child_sort_parent_matchers or []
 
-    base_root = None
-    if base_path == Path("-"):
-        assert stdin_bytes is not None
-        base_root = ET.fromstring(stdin_bytes)
-    elif base_path.is_file():
-        base_root = ET.parse(base_path).getroot()
-
-    overlay_root = None
-    if overlay_path == Path("-"):
-        assert stdin_bytes is not None
-        overlay_root = ET.fromstring(stdin_bytes)
-    elif overlay_path is not None and overlay_path.is_file():
-        overlay_root = ET.parse(overlay_path).getroot()
+    base_root = read_xml_root(base_path, stdin_bytes)
+    overlay_root = read_xml_root(overlay_path, stdin_bytes) if overlay_path is not None else None
 
     if base_root is None:
         if overlay_root is None:
-            raise FileNotFoundError(f"File not found: {base_path}")
+            raise ValueError(f"base XML file not found: {base_path}")
         root = ET.Element(overlay_root.tag)
     else:
         root = build_tree_with_selector_action(
