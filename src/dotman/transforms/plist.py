@@ -17,6 +17,8 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
+    split_quoted_key_path,
+    values_strictly_equal,
 )
 
 
@@ -53,52 +55,7 @@ def compile_key_regexes(raw_key_regexes: tuple[str, ...]) -> tuple[KeyRegex, ...
 
 
 def parse_plist_key_path(raw_key: str) -> PlistKeyPath:
-    key_path = tuple(split_plist_key(raw_key))
-    if not key_path:
-        raise ValueError("plist key paths must not be empty")
-    return key_path
-
-
-def split_plist_key(raw_key: str) -> list[str]:
-    parts: list[str] = []
-    current: list[str] = []
-    in_quotes = False
-    escape = False
-
-    for char in raw_key:
-        if in_quotes and escape:
-            current.append(char)
-            escape = False
-            continue
-
-        if in_quotes and char == "\\":
-            escape = True
-            continue
-
-        if char == '"':
-            in_quotes = not in_quotes
-            continue
-
-        if char == "." and not in_quotes:
-            append_plist_key_part(parts, current)
-            current = []
-            continue
-
-        current.append(char)
-
-    if escape:
-        current.append("\\")
-    if in_quotes:
-        raise ValueError(f"unterminated quoted plist key path: {raw_key}")
-
-    append_plist_key_part(parts, current)
-    return parts
-
-
-def append_plist_key_part(parts: list[str], current: list[str]) -> None:
-    key_part = "".join(current)
-    if key_part:
-        parts.append(key_part)
+    return split_quoted_key_path(raw_key, "plist")
 
 
 def parse_plist_key_paths(raw_key_paths: tuple[str, ...]) -> tuple[PlistKeyPath, ...]:
@@ -210,9 +167,6 @@ def filter_retained_keys(
     retained_key_paths: tuple[PlistKeyPath, ...],
     retained_key_regexes: tuple[KeyRegex, ...] = (),
 ) -> PlistDict:
-    if not retained_key_paths and not retained_key_regexes:
-        return dict(data)
-
     selected_key_paths = selected_plist_key_paths(
         data,
         retained_key_paths,
@@ -330,23 +284,6 @@ def plist_bytes(data: PlistDict, fmt: str) -> bytes:
     return plistlib.dumps(data, fmt=plist_format_from_name(fmt), sort_keys=True)
 
 
-def plist_values_semantically_equal(left: Any, right: Any) -> bool:
-    # Python considers bool a numeric subtype (`True == 1`), but plist stores
-    # booleans and integers as distinct value types.
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, dict):
-        return left.keys() == right.keys() and all(
-            plist_values_semantically_equal(left[key], right[key]) for key in left
-        )
-    if isinstance(left, list):
-        return len(left) == len(right) and all(
-            plist_values_semantically_equal(left_item, right_item)
-            for left_item, right_item in zip(left, right, strict=True)
-        )
-    return left == right
-
-
 def get_existing_bytes_if_semantically_unchanged(
     path: Path,
     data: PlistDict,
@@ -360,7 +297,7 @@ def get_existing_bytes_if_semantically_unchanged(
     except Exception:
         return None
 
-    if not plist_values_semantically_equal(existing_data, data):
+    if not values_strictly_equal(existing_data, data):
         return None
 
     return existing_bytes
@@ -448,10 +385,12 @@ class PlistTransformEngine(BaseTransformEngine):
             exact_key_paths,
             selected_key_regexes,
         )
-        transformed_data = select_plist_data(
-            base_data,
-            request.selector_action,
-            selected_key_paths,
+        # Only an absent selector list means identity. Selectors that match
+        # nothing must still select nothing.
+        transformed_data = (
+            select_plist_data(base_data, request.selector_action, selected_key_paths)
+            if exact_key_paths or selected_key_regexes
+            else dict(base_data)
         )
 
         if request.mode == TransformMode.MERGE:

@@ -6,7 +6,9 @@ import argparse
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, time
 from enum import StrEnum
+import math
 from pathlib import Path
 import re
 import sys
@@ -40,6 +42,85 @@ def compile_selector_regexes(
                 f"invalid {selector_description} regex {raw_regex!r}: {error}"
             ) from error
     return tuple(compiled_regexes)
+
+
+def split_quoted_key_path(raw_key: str, format_name: str) -> tuple[str, ...]:
+    """Split a dotted selector path; double quotes protect dots and allow ``""``.
+
+    A quoted segment always produces a key, even when empty. Unquoted empty
+    segments are dropped, as in ``a..b``.
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    segment_was_quoted = False
+    escape = False
+
+    def finish_segment() -> None:
+        if current or segment_was_quoted:
+            parts.append("".join(current))
+
+    for char in raw_key:
+        if in_quotes and escape:
+            current.append(char)
+            escape = False
+            continue
+
+        if in_quotes and char == "\\":
+            escape = True
+            continue
+
+        if char == '"':
+            in_quotes = not in_quotes
+            segment_was_quoted = True
+            continue
+
+        if char == "." and not in_quotes:
+            finish_segment()
+            current = []
+            segment_was_quoted = False
+            continue
+
+        current.append(char)
+
+    if escape:
+        current.append("\\")
+    if in_quotes:
+        raise ValueError(f"unterminated quoted {format_name} key path: {raw_key}")
+
+    finish_segment()
+    if not parts:
+        raise ValueError(f"{format_name} key paths must not be empty")
+    return tuple(parts)
+
+
+def values_strictly_equal(left: Any, right: Any) -> bool:
+    """Compare parsed values without Python's cross-type numeric equality.
+
+    Plain ``==`` treats ``True == 1 == 1.0`` and ``0.0 == -0.0`` as equal, which
+    would let compare-file reuse keep bytes that encode a different value.
+    """
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        right_items_by_typed_key = {(type(key), key): value for key, value in right.items()}
+        return len(left) == len(right) and all(
+            (type(key), key) in right_items_by_typed_key
+            and values_strictly_equal(value, right_items_by_typed_key[(type(key), key)])
+            for key, value in left.items()
+        )
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(
+            values_strictly_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    if isinstance(left, float):
+        if math.isnan(left) or math.isnan(right):
+            return math.isnan(left) and math.isnan(right)
+        return left == right and math.copysign(1.0, left) == math.copysign(1.0, right)
+    if isinstance(left, (datetime, time)):
+        return left == right and left.utcoffset() == right.utcoffset()
+    return left == right
 
 
 @dataclass(frozen=True)

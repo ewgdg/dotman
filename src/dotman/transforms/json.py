@@ -17,6 +17,8 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
+    split_quoted_key_path,
+    values_strictly_equal,
     read_input_text,
 )
 
@@ -53,55 +55,7 @@ def compile_key_regexes(raw_key_regexes: tuple[str, ...]) -> tuple[KeyRegex, ...
 
 
 def parse_json_key_path(raw_key: str) -> JsonKeyPath:
-    key_path = tuple(split_json_key(raw_key))
-    if not key_path:
-        raise ValueError("JSON key paths must not be empty")
-    return key_path
-
-
-
-def split_json_key(raw_key: str) -> list[str]:
-    parts: list[str] = []
-    current: list[str] = []
-    in_quotes = False
-    escape = False
-
-    for char in raw_key:
-        if in_quotes and escape:
-            current.append(char)
-            escape = False
-            continue
-
-        if in_quotes and char == "\\":
-            escape = True
-            continue
-
-        if char == '"':
-            in_quotes = not in_quotes
-            continue
-
-        if char == "." and not in_quotes:
-            append_json_key_part(parts, current)
-            current = []
-            continue
-
-        current.append(char)
-
-    if escape:
-        current.append("\\")
-    if in_quotes:
-        raise ValueError(f"unterminated quoted JSON key path: {raw_key}")
-
-    append_json_key_part(parts, current)
-    return parts
-
-
-
-def append_json_key_part(parts: list[str], current: list[str]) -> None:
-    key_part = "".join(current)
-    if key_part:
-        parts.append(key_part)
-
+    return split_quoted_key_path(raw_key, "JSON")
 
 
 def parse_json_key_paths(raw_key_paths: tuple[str, ...]) -> tuple[JsonKeyPath, ...]:
@@ -217,9 +171,6 @@ def filter_retained_keys(
     retained_key_paths: tuple[JsonKeyPath, ...],
     retained_key_regexes: tuple[KeyRegex, ...] = (),
 ) -> JsonDict:
-    if not retained_key_paths and not retained_key_regexes:
-        return dict(data)
-
     path_selector = build_json_path_selector(retained_key_paths)
     retained_data: JsonDict = {}
     for key, value in data.items():
@@ -402,7 +353,7 @@ def get_existing_bytes_if_semantically_unchanged(path: Path, data: JsonDict) -> 
     except Exception:
         return None
 
-    if existing_data != data:
+    if not values_strictly_equal(existing_data, data):
         return None
 
     return existing_bytes
@@ -487,10 +438,12 @@ class JsonTransformEngine(BaseTransformEngine):
             exact_key_paths,
             selected_key_regexes,
         )
-        transformed_data = select_json_data(
-            base_data,
-            request.selector_action,
-            selected_key_paths,
+        # Only an absent selector list means identity. Selectors that match
+        # nothing must still select nothing.
+        transformed_data = (
+            select_json_data(base_data, request.selector_action, selected_key_paths)
+            if exact_key_paths or selected_key_regexes
+            else dict(base_data)
         )
 
         if request.mode == TransformMode.MERGE:
