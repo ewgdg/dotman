@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 import json
+import plistlib
 
 import pytest
 
@@ -431,21 +432,35 @@ def test_file_system_errors_are_clean_cli_errors(tmp_path, capsys) -> None:
     assert str(output_directory) in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("transform_format", ["json", "toml", "yaml", "plist", "xml"])
-def test_missing_overlay_file_is_an_error_not_an_empty_overlay(
-    transform_format, tmp_path, capsys
+@pytest.mark.parametrize(
+    ("transform_format", "base_content"),
+    [
+        ("json", '{"a": 1, "b": 2}\n'),
+        ("toml", "a = 1\nb = 2\n"),
+        ("yaml", "a: 1\nb: 2\n"),
+        ("plist", plistlib.dumps({"a": 1, "b": 2}).decode()),
+        ("xml", "<root><a>1</a><b>2</b></root>\n"),
+    ],
+)
+def test_missing_overlay_file_counts_as_empty_like_a_missing_base(
+    transform_format, base_content, tmp_path, capsys
 ) -> None:
     from dotman import cli
 
-    missing_overlay = tmp_path / f"missing.{transform_format}"
+    # Either input may be the live file, so a missing overlay is treated the
+    # same as a missing base: an empty document.
+    base = tmp_path / f"base.{transform_format}"
+    base.write_text(base_content, encoding="utf-8")
+    selector_args = ["--selectors", "a"]
 
-    # The base is missing too: a fresh machine has no live file, but the repo
-    # overlay must always exist, or merge would silently drop managed content.
+    assert cli.main(["transform", transform_format, str(base), "--stdout", "--mode", "cleanup", *selector_args]) == 0
+    cleanup_output = capsys.readouterr().out
+
     assert cli.main([
-        "transform", transform_format, str(tmp_path / "live"), "--stdout",
-        "--mode", "merge", "--overlay-file", str(missing_overlay), "--selectors", "a",
-    ]) == 2
-    assert f"overlay file not found: {missing_overlay}" in capsys.readouterr().err
+        "transform", transform_format, str(base), "--stdout", "--mode", "merge",
+        "--overlay-file", str(tmp_path / f"missing.{transform_format}"), *selector_args,
+    ]) == 0
+    assert capsys.readouterr().out == cleanup_output
 
 
 @pytest.mark.parametrize(
