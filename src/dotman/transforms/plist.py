@@ -7,6 +7,7 @@ from pathlib import Path
 import plistlib
 import re
 from typing import Any
+from xml.parsers.expat import ExpatError
 
 from dotman.transforms.cli import run_engine_cli
 from dotman.transforms.framework import (
@@ -16,6 +17,7 @@ from dotman.transforms.framework import (
     TransformMode,
     TransformOutput,
     TransformRequest,
+    STDIN_PATH,
     compile_selector_regexes,
     split_quoted_key_path,
     values_strictly_equal,
@@ -35,14 +37,19 @@ class PlistPathSelector:
 
 
 def load_plist(path: Path, *, stdin_bytes: bytes | None = None) -> PlistDict:
-    if path == Path("-"):
+    if path == STDIN_PATH:
         assert stdin_bytes is not None
-        loaded = plistlib.loads(stdin_bytes)
+        content = stdin_bytes
     elif not path.exists():
         return {}
     else:
-        with path.open("rb") as handle:
-            loaded = plistlib.load(handle)
+        content = path.read_bytes()
+
+    try:
+        loaded = plistlib.loads(content)
+    except ExpatError as error:
+        # plistlib reports malformed XML plists as ExpatError, not ValueError.
+        raise ValueError(f"invalid plist in {path}: {error}") from error
 
     if not isinstance(loaded, dict):
         raise ValueError(f"Expected plist dictionary in {path}")
@@ -281,7 +288,12 @@ def plist_format_from_name(format_name: str) -> int:
 
 
 def plist_bytes(data: PlistDict, fmt: str) -> bytes:
-    return plistlib.dumps(data, fmt=plist_format_from_name(fmt), sort_keys=True)
+    try:
+        return plistlib.dumps(data, fmt=plist_format_from_name(fmt), sort_keys=True)
+    except (TypeError, OverflowError) as error:
+        # Some values only fit one format: UID needs binary, and both formats
+        # cap integers at 64 bits.
+        raise ValueError(f"cannot write {fmt} plist: {error}") from error
 
 
 def get_existing_bytes_if_semantically_unchanged(
