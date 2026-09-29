@@ -1435,3 +1435,9 @@ def test_merge_keeps_retained_live_keys_across_inline_and_table_styles(tmp_path:
     assert inline_overlay.startswith("a = {")
     assert tomllib.loads(table_overlay) == {"a": {"x": 2, "live": 9}}
     assert table_overlay.startswith("[a]\n")
+
+
+def test_retain_mixing_regex_and_exact_selectors_keeps_document_order(tmp_path: Path) -> None:
+    output = run_toml_transform(tmp_path, "[t]\nx = 1\n[u]\ny = 1\n", "--selectors", "re:^u$", "t")
+
+    assert output == "[t]\nx = 1\n\n[u]\ny = 1\n"

@@ -800,42 +800,26 @@ def build_stripped_document_output(
 
 
 
-def overlay_preserved_keys(
-    overlay_doc: TomlContainer,
-    base_doc: TomlContainer,
+def copy_retained_paths(
+    source_doc: TomlContainer,
+    target_doc: TomlContainer,
     retained_key_paths: Iterable[tuple[str, ...]],
-) -> None:
-    retained_key_path_set = set(retained_key_paths)
-    for key_path in iter_item_paths_in_order(overlay_doc):
-        if key_path not in retained_key_path_set:
-            continue
-        retained_value = get_key_path_value(overlay_doc, key_path)
-        if retained_value is None:
-            continue
-
-        table_path, key_name = split_key_path(key_path)
-        target_container = ensure_container(base_doc, table_path, overlay_doc)
-        target_container[key_name] = copy.deepcopy(as_single_table(retained_value))
-
-
-def overlay_preserved_regex_paths(
-    overlay_doc: TomlContainer,
-    base_doc: TomlContainer,
     retained_table_regexes: list[re.Pattern[str]],
 ) -> None:
-    if not retained_table_regexes:
-        return
-
-    for item_path in iter_item_paths_in_order(overlay_doc):
-        if not matches_path_regex(item_path, retained_table_regexes):
+    """Copy every selected item in one pass so the target keeps document order."""
+    retained_key_path_set = set(retained_key_paths)
+    for item_path in iter_item_paths_in_order(source_doc):
+        if item_path not in retained_key_path_set and not matches_path_regex(
+            item_path, retained_table_regexes
+        ):
             continue
 
-        retained_item = get_key_path_value(overlay_doc, item_path)
+        retained_item = get_key_path_value(source_doc, item_path)
         if retained_item is None:
             continue
 
         parent_path, item_name = split_key_path(item_path)
-        target_container = ensure_container(base_doc, parent_path, overlay_doc)
+        target_container = ensure_container(target_doc, parent_path, source_doc)
         target_container[item_name] = copy.deepcopy(as_single_table(retained_item))
 
 
@@ -845,8 +829,7 @@ def build_document_with_retained_matchers(
     retained_table_regexes: list[re.Pattern[str]],
 ) -> TOMLDocument:
     retained_doc = tomlkit.document()
-    overlay_preserved_regex_paths(source_doc, retained_doc, retained_table_regexes)
-    overlay_preserved_keys(source_doc, retained_doc, retained_key_paths)
+    copy_retained_paths(source_doc, retained_doc, retained_key_paths, retained_table_regexes)
     return normalize_document(retained_doc)
 
 
