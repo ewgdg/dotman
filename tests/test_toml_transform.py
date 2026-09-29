@@ -1545,6 +1545,133 @@ def test_remove_key_drops_its_attached_leading_comment(tmp_path: Path) -> None:
     assert remove("# independent\n\nb = 2\nc = 3\n", "b") == "# independent\n\nc = 3\n"
 
 
+@pytest.mark.parametrize("value", ["true", "1", '"x"'])
+def test_retain_keeps_the_attached_leading_comment(tmp_path: Path, value: str) -> None:
+    output = run_toml_transform(
+        tmp_path, f"# about b\nb = {value}\nc = 3\n", "--selectors", "b"
+    )
+
+    assert output == f"# about b\nb = {value}\n"
+
+
+def test_retain_keeps_dotted_keys_and_their_comments(tmp_path: Path) -> None:
+    output = run_toml_transform(
+        tmp_path, "x = 1\n# about b\nb.e = true\nb.a = 2\n", "--selectors", "b"
+    )
+
+    assert output == "# about b\nb.e = true\nb.a = 2\n"
+
+
+def test_merge_moves_a_dotted_key_table_into_an_overlay_inline_table(tmp_path: Path) -> None:
+    output = run_toml_transform(
+        tmp_path, "[e]\na.x = 1\n", "--selectors", "e.a", overlay_text="e = {y = 2}\n"
+    )
+
+    assert tomllib.loads(output) == {"e": {"a": {"x": 1}, "y": 2}}
+
+
+def test_retained_split_table_keeps_the_comment_above_its_header(tmp_path: Path) -> None:
+    output = run_toml_transform(
+        tmp_path, "[e.f]\nx = 1\n\n# about e\n[e]\ny = 2\n", "--selectors", "e"
+    )
+
+    assert output == "# about e\n[e]\ny = 2\n\n[e.f]\nx = 1\n"
+
+
+def test_comment_directly_above_a_table_header_belongs_to_that_table(tmp_path: Path) -> None:
+    # tomlkit parses `# about b` into the end of the previous table's body.
+    def remove(base_text: str, *selectors: str) -> str:
+        return run_toml_transform(
+            tmp_path, base_text, "--selector-type", "remove", "--selectors", *selectors
+        )
+
+    base = "# about a\n[a]\nx = 1\n# about b\n[b]\ny = 1\n"
+    assert remove(base, "b") == "# about a\n[a]\nx = 1\n"
+    assert remove(base, "a") == "# about b\n[b]\ny = 1\n"
+
+    nested = "[a]\nx = 1\n[a.c]\nz = 1\n# about b\n[b]\ny = 1\n"
+    assert remove(nested, "a") == "# about b\n[b]\ny = 1\n"
+
+    array_of_tables = "[[a]]\nx = 1\n# about b\n[b]\ny = 1\n"
+    assert remove(array_of_tables, "a") == "# about b\n[b]\ny = 1\n"
+
+
+def test_merge_does_not_duplicate_a_comment_directly_above_an_overlay_table(
+    tmp_path: Path,
+) -> None:
+    output = run_toml_transform(
+        tmp_path,
+        "# about a\n[a]\nx = 1\n# about b\n[b]\ny = 1\n",
+        "--selector-type", "remove", "--selectors", "b",
+        overlay_text="# about b\n[b]\ny = 2\n",
+    )
+
+    assert output == "# about a\n[a]\nx = 1\n# about b\n[b]\ny = 2\n"
+
+
+def test_merge_takes_nested_table_header_comments_from_the_overlay(tmp_path: Path) -> None:
+    output = run_toml_transform(
+        tmp_path,
+        "[t]\nk = 1\n# live note\n[t.u]\nv = 1\n",
+        "--selectors", "t.u.v",
+        overlay_text="[t]\nk = 1\n# repo note\n[t.u]\nv = 2\n",
+    )
+
+    assert output == "[t]\nk = 1\n# repo note\n[t.u]\nv = 2\n"
+
+
+def test_merge_keeps_layout_around_a_commented_inline_table(tmp_path: Path) -> None:
+    live = "b = 1\n\n# about t\nt = {f = 0, g = 1, h = false}\n"
+
+    output = run_toml_transform(
+        tmp_path,
+        live,
+        "--selectors", "t.f",
+        overlay_text="b = 1\n\n# about t\nt = {g = 1, h = false}\n",
+    )
+
+    assert output == live
+
+
+def test_merge_sets_off_a_kept_live_table_that_has_an_attached_comment(tmp_path: Path) -> None:
+    live = "[d]\nx = 1\n\n# about c\n[c]\ny = 1\n"
+
+    output = run_toml_transform(tmp_path, live, "--selectors", "c", overlay_text="[d]\nx = 1\n")
+
+    assert output == live
+
+
+def test_output_does_not_end_with_blank_lines(tmp_path: Path) -> None:
+    live = "x = 1\n\n[[a]]\nn = 1\n"
+
+    captured = run_toml_transform(
+        tmp_path, live, "--selector-type", "remove", "--selectors", "a"
+    )
+    rendered = run_toml_transform(tmp_path, live, "--selectors", "a", overlay_text="x = 1\n\n")
+
+    assert captured == "x = 1\n"
+    assert rendered == live
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "# top\nk = 1\n# about b\n[b]\nx = 1\n# tail\n\n# independent\n\n# about c\n[c]\ny = 1\n",
+        "# about b.k\n[b.k]\nx = 1\n# about b.j\n[b.j]\ny = 1\n\n# independent\n\n[z]\n",
+        "[a]\nx = 1\n[a.b]\ny = 1\n# about d\n[d]\n",
+        "[[t]]\nx = 1\n# about t2\n[[t]]\nx = 2\n\n# between\n\n# about u\n[u]\n",
+        "x = 1\n  # indented\n  y = 2\n\n# end\n",
+        "[a]\nx = 1\n[b]\ny = 2\n[a.c]\nz = 3\n# tail of a.c\n",
+    ],
+)
+def test_removing_nothing_keeps_the_source_text(tmp_path: Path, source: str) -> None:
+    output = run_toml_transform(
+        tmp_path, source, "--selector-type", "remove", "--selectors", "absent"
+    )
+
+    assert output == source
+
+
 def test_retained_nested_dotted_tables_keep_their_full_path(tmp_path: Path) -> None:
     base = 'tui.theme.name = "x"\ntui.theme.dark.bg = "y"\n'
 

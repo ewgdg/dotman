@@ -7,11 +7,23 @@ from dataclasses import dataclass
 import tomllib
 import re
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, NamedTuple
 from pathlib import Path
 import tomlkit
 from tomlkit.container import Container, OutOfOrderTableProxy
-from tomlkit.items import AbstractTable, AoT, Array, InlineTable, Null, Table
+from tomlkit.items import (
+    AbstractTable,
+    AoT,
+    Array,
+    InlineTable,
+    Item,
+    Key,
+    Null,
+    SingleKey,
+    Table,
+    Trivia,
+    Whitespace,
+)
 from tomlkit.toml_document import TOMLDocument
 
 from dotman.transforms.cli import run_engine_cli
@@ -31,14 +43,6 @@ from dotman.transforms.framework import (
 TomlContainer = TOMLDocument | Table
 
 
-@dataclass(frozen=True)
-class TopLevelBodyRegion:
-    key_name: str
-    key: object
-    item: object
-    leading_entries: tuple[tuple[None, object], ...]
-
-
 def detect_line_ending(text: str) -> str | None:
     """Return the line ending of the first line break in text, if any."""
     first_newline_index = text.find("\n")
@@ -47,11 +51,12 @@ def detect_line_ending(text: str) -> str | None:
     return "\r\n" if text[:first_newline_index].endswith("\r") else "\n"
 
 
-def parse_lf_normalized(text: str) -> TOMLDocument:
+def parse_document(text: str) -> TOMLDocument:
+    """Parse text with every comment block placed with its owner."""
     # tomlkit keeps CRLF inside multiline string values, while TOML readers like
     # tomllib normalize it to LF; parse LF text so values match what readers see
     # even after a string is re-rendered in another form (e.g. inline).
-    return tomlkit.parse(text.replace("\r\n", "\n"))
+    return assign_comment_owners(tomlkit.parse(text.replace("\r\n", "\n")))
 
 
 def parse_source_text(text: str) -> TOMLDocument:
@@ -59,7 +64,7 @@ def parse_source_text(text: str) -> TOMLDocument:
     # line before others, where it would run into the next key.
     if text and not text.endswith("\n"):
         text += "\n"
-    return parse_lf_normalized(text)
+    return parse_document(text)
 
 
 def load_document(
@@ -69,10 +74,7 @@ def load_document(
     source_text = read_input_text(path, stdin_bytes=stdin_bytes)
     if source_text is None:
         return tomlkit.document(), None
-    return (
-        detach_table_tail_trivia(parse_source_text(source_text)),
-        detect_line_ending(source_text),
-    )
+    return parse_source_text(source_text), detect_line_ending(source_text)
 
 
 def choose_line_ending(*source_line_endings: str | None) -> str:
@@ -97,15 +99,16 @@ def get_existing_text_if_unchanged(
     existing_bytes = compare_path.read_bytes()
     existing_content = existing_bytes.decode("utf-8")
     try:
-        existing_doc = parse_lf_normalized(existing_content)
+        existing_doc = parse_document(existing_content)
     except Exception:
         existing_doc = None
 
+    # Reparse the output so both sides place comments by the same ownership rule.
     if (
         existing_doc is not None
         and values_strictly_equal(existing_doc.unwrap(), doc.unwrap())
-        and normalized_document_comment_signature(existing_doc)
-        == normalized_document_comment_signature(doc)
+        and document_comment_signature(existing_doc)
+        == document_comment_signature(parse_document(content))
     ):
         return existing_bytes
 
@@ -215,17 +218,31 @@ def is_table_like(value: object) -> bool:
 def as_single_table(value: Any) -> Any:
     """Rebuild a table split across the document as one table copy.
 
-    Other values are returned unchanged. The first part's header trivia is kept,
-    and later parts' content follows the first part's content. The copy is a
+    Other values are returned unchanged. The header, with its comments, comes
+    from the part that prints one, and later parts' content follows the first
+    part's content. The copy is a
     fresh table because a copied part keeps dotted-key rendering state that
     would emit nested dotted tables at a path relative to the wrong parent.
     """
     if not isinstance(value, OutOfOrderTableProxy):
         return value
-    single_table = Table(Container(), copy.deepcopy(value._tables[0].trivia), False)
-    for key, child in value.items():
-        single_table[key] = copy.deepcopy(as_single_table(child))
-    return single_table
+    body = Container()
+    child_names = dict.fromkeys(
+        key.key for key, _child in container_body_entries(value) if key is not None
+    )
+    for child_name in child_names:
+        body[child_name] = copy.deepcopy(as_single_table(body_item(value, child_name)))
+    # Wrap only after filling: tomlkit indents a table's new children by any
+    # spaces in the table's indent, which holds its attached comments.
+    header_part = next(
+        (part for part in value._tables if not part.is_super_table()), value._tables[0]
+    )
+    return Table(
+        body,
+        copy.deepcopy(header_part.trivia),
+        is_aot_element=False,
+        is_super_table=header_part.is_super_table(),
+    )
 
 
 def has_selected_ancestor(item_path: tuple[str, ...], selected_paths: set[tuple[str, ...]]) -> bool:
@@ -246,32 +263,28 @@ def get_container(root: TomlContainer, table_path: tuple[str, ...]) -> TomlConta
 def get_key_path_value(root: TomlContainer, key_path: tuple[str, ...]) -> Any | None:
     table_path, key_name = split_key_path(key_path)
     container = get_container(root, table_path)
-    if container is None or key_name not in container:
+    if container is None:
         return None
-    return container[key_name]
+    return body_item(container, key_name)
 
 
 def container_storage(container: TomlContainer) -> Any:
     if isinstance(container, TOMLDocument):
         return container
+    if isinstance(container, OutOfOrderTableProxy):
+        # A table split across the document; this view holds every part's items.
+        return container._internal_container
     return container.value
+
+
+def body_item(container: TomlContainer, key_name: str) -> Any:
+    """Return the stored item; unlike get(), a boolean keeps its comments."""
+    storage = container_storage(container)
+    return storage.item(key_name) if key_name in storage else None
 
 
 def container_body_entries(container: TomlContainer) -> list[tuple[object, object]]:
     return container_storage(container)._body
-
-
-def increment_container_map_indexes(container: TomlContainer, start_index: int, offset: int) -> None:
-    storage = container_storage(container)
-    for key, value in storage._map.items():
-        if isinstance(value, tuple):
-            storage._map[key] = tuple(
-                index + offset if index >= start_index else index for index in value
-            )
-            continue
-
-        if value >= start_index:
-            storage._map[key] = value + offset
 
 
 def item_text(item: object) -> str:
@@ -287,10 +300,10 @@ def parsed_item_comment(item: object) -> str:
         return ""
 
 
-def table_indent_comments(table: Table) -> tuple[str, ...]:
+def attached_comment_lines(item: object) -> tuple[str, ...]:
     return tuple(
         stripped_line
-        for line in table.trivia.indent.splitlines()
+        for line in item.trivia.indent.splitlines()
         if (stripped_line := line.lstrip()).startswith("#")
     )
 
@@ -368,12 +381,12 @@ def document_comment_signature(
             continue
 
         item_path = path + (str(key.key),)
-        if isinstance(item, Table):
+        if not isinstance(item, AoT):
             attachment = (item_path, "before-item")
-            for indent_comment in table_indent_comments(item):
+            for attached_comment in attached_comment_lines(item):
                 attachment_index = attachment_counts.get(attachment, 0)
                 attachment_counts[attachment] = attachment_index + 1
-                comments.append((*attachment, attachment_index, indent_comment))
+                comments.append((*attachment, attachment_index, attached_comment))
 
         if comment:
             attachment_kind = "table-header" if isinstance(item, Table) else "item-inline"
@@ -384,6 +397,10 @@ def document_comment_signature(
         elif isinstance(item, AoT):
             for table_index, table in enumerate(item):
                 table_path = item_path + (f"[{table_index}]",)
+                comments.extend(
+                    (table_path, "before-item", line_index, attached_comment)
+                    for line_index, attached_comment in enumerate(attached_comment_lines(table))
+                )
                 if table.trivia.comment:
                     comments.append((table_path, "table-header", 0, table.trivia.comment))
                 comments.extend(document_comment_signature(table, table_path))
@@ -393,137 +410,176 @@ def document_comment_signature(
     return tuple(sorted(comments))
 
 
-def normalized_document_comment_signature(
-    doc: TOMLDocument,
-) -> tuple[tuple[tuple[str, ...], str, int, str], ...]:
-    normalized_doc = detach_table_tail_trivia(copy.deepcopy(doc))
-    return document_comment_signature(normalized_doc)
-
-
 def is_comment_entry(entry: tuple[object, object]) -> bool:
     key, item = entry
     return key is None and item_text(item).lstrip().startswith("#")
 
 
-def is_blank_entry(entry: tuple[object, object]) -> bool:
-    key, item = entry
-    return key is None and "\n" in item_text(item) and not is_comment_entry(entry)
+# Comment ownership
+#
+# tomlkit stores comments by parse position: a comment above `[b]` lands at the
+# end of the previous table's body. After parsing, each comment block (comment
+# lines with no blank line between them) is placed with its owner instead:
+#
+# 1. A block directly above an item is attached to it: it is moved into the
+#    item's header indent, so it moves and is deleted with the item.
+# 2. A block that directly follows a table's content and is not attached to a
+#    following item stays at the end of that table.
+# 3. Every other block is independent: a standalone entry in the container of
+#    the following item, so deleting items around it leaves it in place.
+#
+# Placement changes only; the document renders the same text.
+
+TriviaEntry = tuple[None, object]
 
 
-def split_blank_separated_tail_trivia(
-    entries: list[tuple[object, object]],
-    *,
-    require_trailing_blank: bool = True,
-) -> tuple[list[tuple[object, object]], tuple[tuple[None, object], ...]]:
-    split_index = len(entries)
+def entries_text(entries: list[TriviaEntry]) -> str:
+    return "".join(item_text(item) for _key, item in entries)
 
-    while split_index > 0 and entries[split_index - 1][0] is None:
-        split_index -= 1
 
-    tail_entries = entries[split_index:]
-    if not tail_entries:
-        return entries, ()
-    if require_trailing_blank and not is_blank_entry(tail_entries[-1]):
-        return entries, ()
+def is_dotted_table_entry(key: object, item: object) -> bool:
+    # A dotted key (`a.b = 1`) is a header-less table; tomlkit keeps the comments
+    # around it in the parent's body, never inside it.
+    return isinstance(item, Table) and key.is_dotted()
 
-    # An attached comment may precede a blank-separated independent block in
-    # the same tomlkit trivia run. Split at that separator, not at run start.
-    independent_start = next(
-        (
-            index
-            for index, entry in enumerate(tail_entries)
-            if is_blank_entry(entry)
-            and any(is_comment_entry(candidate) for candidate in tail_entries[index + 1 :])
-        ),
-        None,
+
+def is_section_entry(key: object, item: object) -> bool:
+    """Whether a body entry renders under its own [table] or [[array]] header."""
+    return (
+        key is not None
+        and isinstance(item, (Table, AoT))
+        and not is_dotted_table_entry(key, item)
     )
-    if independent_start is None:
-        return entries, ()
-
-    split_index += independent_start
-    tail_entries = entries[split_index:]
-    retained_entries = entries[:split_index]
-    detached_entries = tuple((None, copy.deepcopy(item)) for _key, item in tail_entries)
-    return retained_entries, detached_entries
 
 
-def detach_table_tail_trivia(doc: TOMLDocument) -> TOMLDocument:
-    # tomlkit keeps blank-separated comments after a table inside that table.
-    # Bubble those tail blocks out so selector deletes do not own them.
-    detached_entries = detach_child_table_tail_trivia(doc)
-    if detached_entries:
-        container_body_entries(doc).extend(detached_entries)
+def header_item(item: object) -> Any:
+    """Return the item whose indent renders first, where attached comments go."""
+    if isinstance(item, AoT):
+        return header_item(item.body[0])
+    if isinstance(item, Table) and item.is_super_table():
+        # An implicit parent (`b` in `[b.k]`) prints no header of its own.
+        first_child = next(child for key, child in container_body_entries(item) if key is not None)
+        return header_item(first_child)
+    return item
+
+
+def attach_comments(item: object, entries: list[TriviaEntry]) -> None:
+    if entries:
+        header = header_item(item)
+        header.trivia.indent = entries_text(entries) + header.trivia.indent
+
+
+def textual_end_table(item: object) -> Table:
+    """Return the table whose body renders last within item."""
+    if isinstance(item, AoT):
+        return textual_end_table(item.body[-1])
+    entries = container_body_entries(item)
+    if entries and is_section_entry(*entries[-1]):
+        return textual_end_table(entries[-1][1])
+    return item
+
+
+def split_trivia_run(
+    run: list[TriviaEntry],
+    *,
+    follows_table: bool,
+    precedes_item: bool,
+) -> tuple[list[TriviaEntry], list[TriviaEntry], list[TriviaEntry]]:
+    """Split trivia between two items into (table-owned, independent, attached) parts."""
+    attached_start = len(run)
+    if precedes_item:
+        while attached_start > 0 and is_comment_entry(run[attached_start - 1]):
+            attached_start -= 1
+    rest, attached = run[:attached_start], run[attached_start:]
+    owned_end = 0
+    if follows_table:
+        while owned_end < len(rest) and is_comment_entry(rest[owned_end]):
+            owned_end += 1
+    return rest[:owned_end], rest[owned_end:], attached
+
+
+def set_body_entries(container: TomlContainer, entries: list[tuple[object, object]]) -> None:
+    """Replace a container's body, keeping tomlkit's key-to-index map in step."""
+    storage = container_storage(container)
+    storage._body[:] = entries
+    key_indexes: dict[object, int | tuple[int, ...]] = {}
+    for index, (key, _item) in enumerate(entries):
+        if key is None:
+            continue
+        previous = key_indexes.get(key)
+        if previous is None:
+            key_indexes[key] = index
+        else:
+            key_indexes[key] = (*(previous if isinstance(previous, tuple) else (previous,)), index)
+    storage._map = key_indexes
+
+
+def assign_comment_owners(doc: TOMLDocument) -> TOMLDocument:
+    tail = assign_container_comment_owners(doc)
+    previous = next((item for key, item in reversed(doc.body) if key is not None), None)
+    owned, independent, _attached = split_trivia_run(
+        tail, follows_table=isinstance(previous, (Table, AoT)), precedes_item=False
+    )
+    if owned:
+        container_body_entries(textual_end_table(previous)).extend(owned)
+    container_body_entries(doc).extend(independent)
     return doc
 
 
-def detach_child_table_tail_trivia(
-    container: TomlContainer,
-    *,
-    detach_own_tail: bool = True,
-) -> tuple[tuple[None, object], ...]:
-    body_entries = container_body_entries(container)
-    # An implicit parent (`[b.k]` with no `[b]`) renders its own header once it
-    # holds a non-table entry, so its children's tails go elsewhere.
+def assign_container_comment_owners(container: TomlContainer) -> list[TriviaEntry]:
+    """Place comments within container; return the trailing trivia for the parent."""
+    # A standalone comment would make tomlkit print an implicit parent's header,
+    # so an independent block inside one stays above the next child's header.
     is_implicit_parent = isinstance(container, Table) and container.is_super_table()
-    carried_entries: tuple[tuple[None, object], ...] = ()
-    index = 0
+    entries: list[tuple[object, object]] = []
+    run: list[TriviaEntry] = []
+    previous: object = None
 
-    while index < len(body_entries):
-        key, item = body_entries[index]
-        if carried_entries and key is not None:
-            # The detached block sits directly above this sibling's header.
-            header_item = item.body[0] if isinstance(item, AoT) else item
-            header_item.trivia.indent = entries_text(carried_entries) + header_item.trivia.indent
-            carried_entries = ()
-        detached_entries: tuple[tuple[None, object], ...] = ()
-        if key is not None and isinstance(item, Table):
-            detached_entries = detach_child_table_tail_trivia(item)
-        elif key is not None and isinstance(item, AoT):
-            # Trivia after the final element belongs after the whole atomic AoT.
-            # Earlier element tails remain inside the AoT as element separators.
-            for table_index, table in enumerate(item):
-                candidate_entries = detach_child_table_tail_trivia(
-                    table,
-                    detach_own_tail=table_index == len(item) - 1,
-                )
-                if candidate_entries:
-                    detached_entries = candidate_entries
+    for key, item in container_body_entries(container):
+        if key is None:
+            run.append((key, item))
+            continue
+        owned, independent, attached = split_trivia_run(
+            run, follows_table=isinstance(previous, (Table, AoT)), precedes_item=True
+        )
+        if owned:
+            container_body_entries(textual_end_table(previous)).extend(owned)
+        if is_implicit_parent:
+            attached = independent + attached
+        else:
+            entries.extend(independent)
+        attach_comments(item, attached)
+        entries.append((key, item))
+        run = item_trailing_trivia(key, item)
+        previous = item
 
-        if detached_entries and is_implicit_parent:
-            carried_entries = detached_entries
-        elif detached_entries:
-            insert_trivia_at_body_index(container, index + 1, detached_entries)
-            body_entries = container_body_entries(container)
-            index += len(detached_entries)
-        index += 1
-
-    if is_implicit_parent:
-        # A tail after the last child follows the whole implicit parent.
-        return carried_entries
-    if not detach_own_tail:
-        return ()
-
-    retained_entries, detached_entries = split_blank_separated_tail_trivia(
-        body_entries,
-        require_trailing_blank=False,
-    )
-    if detached_entries:
-        body_entries[:] = retained_entries
-    return detached_entries
+    set_body_entries(container, entries)
+    return run
 
 
-def insert_trivia_at_body_index(
-    container: TomlContainer,
-    index: int,
-    trivia_entries: tuple[tuple[None, object], ...],
-) -> None:
-    if not trivia_entries:
-        return
+def item_trailing_trivia(key: object, item: object) -> list[TriviaEntry]:
+    if isinstance(item, AoT):
+        return assign_array_of_tables_comment_owners(item)
+    if isinstance(item, Table) and not is_dotted_table_entry(key, item):
+        return assign_container_comment_owners(item)
+    return []
 
-    body_entries = container_body_entries(container)
-    increment_container_map_indexes(container, index, len(trivia_entries))
-    for offset, entry in enumerate(trivia_entries):
-        body_entries.insert(index + offset, entry)
+
+def assign_array_of_tables_comment_owners(array_of_tables: AoT) -> list[TriviaEntry]:
+    run: list[TriviaEntry] = []
+    previous: Table | None = None
+    for element in array_of_tables.body:
+        if previous is not None:
+            # An array of tables holds no standalone entries, so only an attached
+            # block moves; the rest stays at the end of the earlier element.
+            owned, independent, attached = split_trivia_run(
+                run, follows_table=True, precedes_item=True
+            )
+            container_body_entries(textual_end_table(previous)).extend(owned + independent)
+            attach_comments(element, attached)
+        run = assign_container_comment_owners(element)
+        previous = element
+    return run
 
 
 def inline_table_without_key(inline_table: InlineTable, removed_key_name: str) -> InlineTable:
@@ -547,25 +603,7 @@ def delete_key_path(root: TomlContainer, key_path: tuple[str, ...]) -> None:
             container, key_name
         )
         return
-    if isinstance(container, (TOMLDocument, Table)):
-        remove_attached_leading_comments(container, key_name)
     del container[key_name]
-
-
-def remove_attached_leading_comments(container: TOMLDocument | Table, key_name: str) -> None:
-    """Drop comment lines directly above a key, with no blank line between."""
-    body_entries = container_body_entries(container)
-    key_indexes = [
-        index
-        for index, (key, _item) in enumerate(body_entries)
-        if key is not None and key.key == key_name
-    ]
-    for key_index in key_indexes:
-        comment_index = key_index - 1
-        while comment_index >= 0 and is_comment_entry(body_entries[comment_index]):
-            # Null keeps tomlkit's key-to-body-index map valid, like tomlkit's own removal.
-            body_entries[comment_index] = (None, Null())
-            comment_index -= 1
 
 
 def iter_table_paths(root: TomlContainer, prefix: tuple[str, ...] = ()) -> Iterable[tuple[str, ...]]:
@@ -620,49 +658,15 @@ def normalize_blank_lines(content: str) -> str:
             return match.group(0)
         return "\n\n"
 
-    return TOML_STRING_COMMENT_OR_BLANK_RUN.sub(collapse_blank_run, content)
+    collapsed = TOML_STRING_COMMENT_OR_BLANK_RUN.sub(collapse_blank_run, content)
+    if collapsed.endswith("\n"):
+        # Blank lines at the end of the document separate nothing.
+        collapsed = collapsed.rstrip("\n") + "\n"
+    return collapsed
 
 
 def normalize_document(doc: TOMLDocument) -> TOMLDocument:
-    return tomlkit.parse(normalize_blank_lines(doc.as_string()))
-
-
-def table_has_leading_blank_separator(table: Table) -> bool:
-    return table.trivia.indent.startswith(("\n", "\r\n"))
-
-
-def remove_last_table_tail_blank_separator(table: Table) -> None:
-    body_entries = container_body_entries(table)
-    if body_entries and is_blank_entry(body_entries[-1]):
-        body_entries.pop()
-        return
-
-    for key, item in reversed(body_entries):
-        if key is not None and isinstance(item, Table):
-            remove_last_table_tail_blank_separator(item)
-            return
-
-
-def collapse_duplicate_table_separators(container: TomlContainer) -> None:
-    """Keep one blank separator when both adjacent tables carry separator trivia.
-
-    tomlkit may store a section separator as trailing blank whitespace on the
-    previous table, while the next table may also carry a leading blank indent.
-    Treat blank lines as separators: when both sides provide one, keep the next
-    table's leading separator and remove the previous table's tail separator.
-    """
-    body_entries = container_body_entries(container)
-    keyed_entries = [entry for entry in body_entries if entry[0] is not None]
-    adjacent_pairs = zip(keyed_entries, keyed_entries[1:])
-    for (_left_key, left_item), (_right_key, right_item) in adjacent_pairs:
-        if not isinstance(left_item, Table) or not isinstance(right_item, Table):
-            continue
-        if table_has_leading_blank_separator(right_item):
-            remove_last_table_tail_blank_separator(left_item)
-
-    for key, item in list(body_entries):
-        if key is not None and isinstance(item, Table):
-            collapse_duplicate_table_separators(item)
+    return parse_document(normalize_blank_lines(doc.as_string()))
 
 
 def ensure_container(
@@ -683,159 +687,6 @@ def ensure_container(
             next_value = current[part]
         current = next_value
     return current
-
-
-def collect_top_level_body_regions(
-    source_doc: TOMLDocument,
-) -> tuple[dict[str, TopLevelBodyRegion], tuple[tuple[None, object], ...]]:
-    regions: dict[str, TopLevelBodyRegion] = {}
-    pending_leading_entries: list[tuple[None, object]] = []
-
-    for key, item in source_doc._body:
-        if key is None:
-            if isinstance(item, Null):
-                continue
-            pending_leading_entries.append((None, copy.deepcopy(item)))
-            continue
-
-        if isinstance(item, Null):
-            continue
-
-        key_name = key.key
-        if key_name in regions:
-            # A table split across the document becomes one region at its first
-            # part. Later parts follow its content with their leading trivia, so
-            # comments stay directly above the headers they describe.
-            single_table = regions[key_name].item
-            for entry_key, entry_item in (*pending_leading_entries, *container_body_entries(item)):
-                single_table.append(entry_key, copy.deepcopy(entry_item))
-            pending_leading_entries = []
-            continue
-
-        regions[key_name] = TopLevelBodyRegion(
-            key_name=key_name,
-            key=copy.deepcopy(key),
-            item=copy.deepcopy(item),
-            leading_entries=tuple(pending_leading_entries),
-        )
-        pending_leading_entries = []
-
-    return regions, tuple(pending_leading_entries)
-
-
-def entries_text(entries: tuple[tuple[None, object], ...]) -> str:
-    return "".join(item_text(item) for _key, item in entries)
-
-
-def trivia_identity_text(entries: tuple[tuple[None, object], ...]) -> str:
-    return "\n".join(line for line in entries_text(entries).splitlines() if line.strip())
-
-
-def split_independent_leading_trivia(
-    leading_entries: tuple[tuple[None, object], ...],
-) -> tuple[tuple[tuple[None, object], ...], tuple[tuple[None, object], ...]]:
-    retained_entries, independent_entries = split_blank_separated_tail_trivia(
-        list(leading_entries),
-        require_trailing_blank=True,
-    )
-    return tuple(retained_entries), independent_entries
-
-
-def collect_independent_leading_trivia_texts(
-    regions: dict[str, TopLevelBodyRegion],
-) -> set[str]:
-    independent_texts: set[str] = set()
-    for region in regions.values():
-        _attached_entries, independent_entries = split_independent_leading_trivia(
-            region.leading_entries
-        )
-        if independent_entries:
-            independent_texts.add(trivia_identity_text(independent_entries))
-    return independent_texts
-
-
-def add_trivia_entries(
-    target_doc: TOMLDocument,
-    entries: tuple[tuple[None, object], ...],
-) -> None:
-    for _unused_key, entry in entries:
-        target_doc.add(copy.deepcopy(entry))
-
-
-def restore_top_level_leading_trivia(
-    merged_doc: TOMLDocument,
-    overlay_doc: TOMLDocument,
-    base_doc: TOMLDocument,
-    preserved_base: TOMLDocument,
-) -> TOMLDocument:
-    merged_regions, _merged_trailing_entries = collect_top_level_body_regions(merged_doc)
-    overlay_regions, overlay_trailing_entries = collect_top_level_body_regions(overlay_doc)
-    base_regions, _base_trailing_entries = collect_top_level_body_regions(base_doc)
-    preserved_regions, preserved_trailing_entries = collect_top_level_body_regions(preserved_base)
-
-    rebuilt_doc = tomlkit.document()
-    overlay_independent_texts = collect_independent_leading_trivia_texts(overlay_regions)
-    emitted_independent_texts: set[str] = set()
-
-    for merged_region in merged_regions.values():
-        overlay_region = overlay_regions.get(merged_region.key_name)
-        base_region = base_regions.get(merged_region.key_name)
-        preserved_region = preserved_regions.get(merged_region.key_name)
-
-        if overlay_region is not None:
-            leading_entries = overlay_region.leading_entries
-            leading_source = "overlay"
-        elif base_region is not None:
-            leading_entries = base_region.leading_entries
-            leading_source = "base"
-        elif preserved_region is not None:
-            leading_entries = preserved_region.leading_entries
-            leading_source = "preserved"
-        else:
-            leading_entries = ()
-            leading_source = "merged"
-
-        if (
-            overlay_region is not None
-            and preserved_region is not None
-            and isinstance(overlay_region.item, AbstractTable)
-            and isinstance(preserved_region.item, AbstractTable)
-        ):
-            item_region = merged_region
-        elif overlay_region is not None:
-            item_region = overlay_region
-        else:
-            # Base regions supply trivia only: their items can contain tables the merge removed.
-            item_region = merged_region
-
-        attached_entries, independent_entries = split_independent_leading_trivia(
-            leading_entries
-        )
-        key_to_append = copy.deepcopy(item_region.key)
-        item_to_append = copy.deepcopy(item_region.item)
-        if attached_entries and isinstance(item_to_append, Table):
-            item_to_append.trivia.indent = entries_text(attached_entries) + item_to_append.trivia.indent
-        else:
-            add_trivia_entries(rebuilt_doc, attached_entries)
-
-        independent_identity = trivia_identity_text(independent_entries)
-        independent_seen = independent_identity in emitted_independent_texts
-        independent_claimed_by_overlay = (
-            leading_source != "overlay" and independent_identity in overlay_independent_texts
-        )
-        if independent_entries and not independent_seen and not independent_claimed_by_overlay:
-            add_trivia_entries(rebuilt_doc, independent_entries)
-            emitted_independent_texts.add(independent_identity)
-
-        rebuilt_doc.append(key_to_append, item_to_append)
-
-    # Base trailing comments survive only where the selection kept them, as in cleanup.
-    trailing_entries: tuple[tuple[None, object], ...] = (
-        overlay_trailing_entries or preserved_trailing_entries
-    )
-    add_trivia_entries(rebuilt_doc, trailing_entries)
-
-    return rebuilt_doc
 
 
 def build_document_with_stripped_matchers(
@@ -903,8 +754,10 @@ def copy_retained_paths(
             continue
 
         parent_path, item_name = split_key_path(item_path)
+        source_key = keys_by_name(get_container(source_doc, parent_path))[item_name]
+        retained_value = copy.deepcopy(as_single_table(retained_item))
         target_container = ensure_container(target_doc, parent_path, source_doc)
-        target_container[item_name] = copy.deepcopy(as_single_table(retained_item))
+        target_container[copied_item_key(source_key, retained_value)] = retained_value
         copied_paths.add(item_path)
 
 
@@ -937,42 +790,18 @@ def build_document_with_selector_action(
     )
 
 
-def clone_empty_container(source: TomlContainer) -> TomlContainer:
-    cloned = copy.deepcopy(source)
-    for key in list(cloned.keys()):
-        del cloned[key]
-    return cloned
-
-
-def empty_merged_container(
-    preserved_base: TomlContainer,
-    overlay_doc: TomlContainer,
-) -> TomlContainer:
-    """Start a merged container in the overlay's inline or table style."""
-    if isinstance(overlay_doc, InlineTable):
-        # Deleting keys from a parsed inline table leaves broken separators in
-        # tomlkit, so inline results start fresh with the overlay's line trivia.
-        return InlineTable(Container(), copy.deepcopy(overlay_doc.trivia), new=True)
-    if isinstance(preserved_base, InlineTable):
-        return clone_empty_container(overlay_doc)
-    return clone_empty_container(preserved_base)
-
-
-def set_merged_value(
-    merged: TomlContainer,
-    key_name: str,
+def adapt_merged_value(
     value: Any,
     source_container: TomlContainer,
-) -> None:
-    """Copy a value from source_container into merged, adapting it to merged's style."""
+    merged_is_inline: bool,
+) -> Item:
+    """Copy a value from source_container, adapted to the merged container's style."""
     # Container lookups return booleans as plain bool, which has no trivia.
     value = tomlkit.item(copy.deepcopy(as_single_table(value)))
-    merged_is_inline = isinstance(merged, InlineTable)
     if merged_is_inline and isinstance(value, (Table, AoT)):
         # Inline tables cannot hold [table] or [[array]] sections; let tomlkit
         # rebuild the plain data in inline form.
-        merged[key_name] = value.unwrap()
-        return
+        return tomlkit.item(value.unwrap(), _parent=tomlkit.inline_table())
     if merged_is_inline != isinstance(source_container, InlineTable):
         # Line breaks and comments of a key-value line are invalid inside an
         # inline table, and a value parsed inline has no line break of its own.
@@ -980,49 +809,198 @@ def set_merged_value(
         value.trivia.comment_ws = ""
         value.trivia.comment = ""
         value.trivia.trail = "" if merged_is_inline else "\n"
-    merged[key_name] = value
+    return value
 
 
-def overlay_with_base_slots(
-    original_base: TomlContainer,
+def trivia_identity_text(entries: list[TriviaEntry]) -> str:
+    """Comment text of a trivia run, ignoring blank-line padding."""
+    return "\n".join(line for line in entries_text(entries).splitlines() if line.strip())
+
+
+@dataclass(frozen=True)
+class IndependentTrivia:
+    """A container's standalone trivia runs, by the key each run precedes."""
+
+    before_key: dict[str, list[TriviaEntry]]
+    tail: list[TriviaEntry]
+
+    def block_texts(self) -> set[str]:
+        return {
+            text
+            for run in (*self.before_key.values(), self.tail)
+            if (text := trivia_identity_text(run))
+        }
+
+
+def collect_independent_trivia(container: TomlContainer) -> IndependentTrivia:
+    if isinstance(container, InlineTable):
+        # Entries without a key in an inline table are separators, not comments.
+        return IndependentTrivia({}, [])
+    before_key: dict[str, list[TriviaEntry]] = {}
+    run: list[TriviaEntry] = []
+    for key, item in container_body_entries(container):
+        if key is None:
+            run.append((None, item))
+            continue
+        before_key.setdefault(key.key, []).extend(run)
+        run = []
+    return IndependentTrivia(before_key, run)
+
+
+def append_trivia(container: TomlContainer, entries: list[TriviaEntry]) -> None:
+    if isinstance(container, InlineTable):
+        # An inline table holds no standalone comments or blank lines.
+        return
+    for _key, item in entries:
+        if isinstance(item, Whitespace):
+            # tomlkit inserts new values above unfixed trailing whitespace, which
+            # would move a blank line below the item it separates.
+            item = Whitespace(item.s, fixed=True)
+        container.append(None, copy.deepcopy(item))
+
+
+class MergeEntry(NamedTuple):
+    key: Key
+    preserved_value: Any
+    overlay_value: Any
+
+
+class MergedItem(NamedTuple):
+    key: Key
+    value: Item
+    leading_trivia: list[TriviaEntry]
+    is_section: bool
+    from_overlay: bool
+
+
+SECTION_SEPARATOR: list[TriviaEntry] = [(None, Whitespace("\n"))]
+
+
+def keys_by_name(container: TomlContainer) -> dict[str, Key]:
+    return {key.key: key for key, _item in container_body_entries(container) if key is not None}
+
+
+def renders_section_inside(item: object) -> bool:
+    """Whether a table renders a [table] or [[array]] header anywhere inside it."""
+    return isinstance(item, Table) and any(
+        is_section_entry(key, child)
+        or (is_dotted_table_entry(key, child) and renders_section_inside(child))
+        for key, child in container_body_entries(item)
+    )
+
+
+def copied_item_key(key: Key, value: Item) -> Key:
+    """Key to set a copied value under.
+
+    A dotted key keeps its `a.b = 1` form while the value is still a table that
+    renders only key-value lines; tomlkit prints a section nested under a dotted
+    key at the wrong path. Other keys are rebuilt from the name, as a key parsed
+    from a table header keeps header spelling that is invalid elsewhere.
+    """
+    if key.is_dotted() and isinstance(value, Table) and not renders_section_inside(value):
+        return key
+    return SingleKey(key.key)
+
+
+def merge_containers(
+    base: TomlContainer,
     preserved_base: TomlContainer,
-    overlay_doc: TomlContainer,
+    overlay: TomlContainer,
 ) -> TomlContainer:
-    merged = empty_merged_container(preserved_base, overlay_doc)
+    """Merge overlay onto the kept base; every item brings its own comments.
 
-    for key in original_base.keys():
-        key_name = str(key)
-        base_value = as_single_table(original_base.get(key_name))
-        preserved_value = as_single_table(preserved_base.get(key_name))
-        overlay_value = as_single_table(overlay_doc.get(key_name))
+    Keys follow the base order, then overlay-only, then kept-base-only keys, with
+    values before sections. A table on both sides takes its header from the
+    overlay and merges its body.
+    """
+    merged_is_inline = isinstance(overlay, InlineTable)
+    # Tables are filled under blank trivia and take the overlay's trivia only
+    # afterwards: tomlkit indents new children by any spaces in their table's
+    # indent, which holds the table's attached comments.
+    if merged_is_inline:
+        # Deleting keys from a parsed inline table leaves broken separators in
+        # tomlkit, so inline results start fresh.
+        merged: TomlContainer | Container = InlineTable(Container(), Trivia(), new=True)
+    elif isinstance(overlay, TOMLDocument):
+        merged = tomlkit.document()
+    else:
+        merged = Container()
 
-        if (
-            isinstance(base_value, AbstractTable)
-            and isinstance(preserved_value, AbstractTable)
-            and isinstance(overlay_value, AbstractTable)
+    overlay_trivia = collect_independent_trivia(overlay)
+    preserved_trivia = collect_independent_trivia(preserved_base)
+    overlay_block_texts = overlay_trivia.block_texts()
+
+    def merged_value(entry: MergeEntry) -> Item:
+        if isinstance(entry.preserved_value, AbstractTable) and isinstance(
+            entry.overlay_value, AbstractTable
         ):
-            merged[key_name] = overlay_with_base_slots(base_value, preserved_value, overlay_value)
-            continue
+            base_value = as_single_table(body_item(base, entry.key.key))
+            return merge_containers(base_value, entry.preserved_value, entry.overlay_value)
+        if entry.overlay_value is not None:
+            return adapt_merged_value(entry.overlay_value, overlay, merged_is_inline)
+        return adapt_merged_value(entry.preserved_value, preserved_base, merged_is_inline)
 
-        if overlay_value is not None:
-            set_merged_value(merged, key_name, overlay_value, overlay_doc)
-            continue
+    def leading_trivia(entry: MergeEntry) -> list[TriviaEntry]:
+        if entry.overlay_value is not None:
+            return overlay_trivia.before_key.get(entry.key.key, [])
+        leading = preserved_trivia.before_key.get(entry.key.key, [])
+        # The overlay already places this block, e.g. at a key it moved to
+        # after capture removed the key the block used to precede.
+        return [] if trivia_identity_text(leading) in overlay_block_texts else leading
 
-        if preserved_value is not None:
-            set_merged_value(merged, key_name, preserved_value, preserved_base)
+    def merged_item(entry: MergeEntry) -> MergedItem:
+        value = merged_value(entry)
+        key = copied_item_key(entry.key, value)
+        return MergedItem(
+            key,
+            value,
+            leading_trivia(entry),
+            is_section=not merged_is_inline and is_section_entry(key, value),
+            from_overlay=entry.overlay_value is not None,
+        )
 
-    for key, overlay_value in overlay_doc.items():
-        key_name = str(key)
-        if key_name in merged:
-            continue
-        set_merged_value(merged, key_name, overlay_value, overlay_doc)
+    key_names = dict.fromkeys(
+        str(key) for source in (base, overlay, preserved_base) for key in source.keys()
+    )
+    overlay_keys = keys_by_name(overlay)
+    preserved_keys = keys_by_name(preserved_base)
+    merged_items = [
+        merged_item(
+            MergeEntry(
+                overlay_keys.get(key_name) or preserved_keys[key_name],
+                as_single_table(body_item(preserved_base, key_name)),
+                as_single_table(body_item(overlay, key_name)),
+            )
+        )
+        for key_name in key_names
+        if key_name in overlay_keys or key_name in preserved_keys
+    ]
+    # tomlkit moves a value added after a table above all tables, away from its
+    # leading comments, so values go first and nothing is moved.
+    merged_items.sort(key=lambda item: item.is_section)
 
-    for key, preserved_value in preserved_base.items():
-        key_name = str(key)
-        if key_name in merged:
-            continue
-        set_merged_value(merged, key_name, preserved_value, preserved_base)
+    for index, item in enumerate(merged_items):
+        leading = item.leading_trivia
+        if item.is_section and not item.from_overlay and not leading and index > 0:
+            # A kept base section has no place in the overlay's layout, so it is
+            # set off like a new table. tomlkit does that only for an empty
+            # header indent, which may hold attached comments here.
+            leading = SECTION_SEPARATOR
+        append_trivia(merged, leading)
+        merged[item.key] = item.value
+    append_trivia(merged, overlay_trivia.tail or preserved_trivia.tail)
 
+    if isinstance(merged, InlineTable):
+        return InlineTable(merged.value, copy.deepcopy(overlay.trivia), new=True)
+    if type(merged) is Container:
+        return Table(
+            merged,
+            copy.deepcopy(overlay.trivia),
+            is_aot_element=False,
+            is_super_table=overlay.is_super_table(),
+            name=overlay.name,
+            display_name=overlay.display_name,
+        )
     return merged
 
 
@@ -1043,9 +1021,7 @@ def build_merged_document_output(
         table_regexes,
     )
     overlay_doc, overlay_line_ending = load_document(overlay_path, stdin_bytes=stdin_bytes)
-    merged_doc = normalize_document(overlay_with_base_slots(base_doc, preserved_base, overlay_doc))
-    merged_doc = restore_top_level_leading_trivia(merged_doc, overlay_doc, base_doc, preserved_base)
-    collapse_duplicate_table_separators(merged_doc)
+    merged_doc = normalize_document(merge_containers(base_doc, preserved_base, overlay_doc))
     return build_document_output(
         merged_doc,
         mode_reference_path=base_path,
