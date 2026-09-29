@@ -349,13 +349,13 @@ def render_xml_output(
         if existing_bytes is not None:
             return TransformOutput(
                 content=existing_bytes,
-                mode_reference_path=None if base_path == Path("-") else base_path,
+                mode_reference_path=base_path,
                 reused_compare_path=compare_path,
             )
 
     return TransformOutput(
         content=build_pretty_xml_text(root),
-        mode_reference_path=None if base_path == Path("-") else base_path,
+        mode_reference_path=base_path,
     )
 
 

@@ -313,3 +313,107 @@ def test_root_nested_regex_removal_and_mode_validation(tmp_path, capsys) -> None
         cli.main(["transform", "json", str(base), str(output), "--mode", "cleanup", "--overlay-file", str(overlay)])
     assert exit_info.value.code == 2
     assert "only valid when mode=merge" in capsys.readouterr().err
+
+
+def test_file_output_has_base_permissions_before_it_becomes_visible(tmp_path, monkeypatch) -> None:
+    from dotman import cli
+
+    base = tmp_path / "secret.json"
+    output = tmp_path / "output.json"
+    base.write_text('{"token": "x"}\n', encoding="utf-8")
+    base.chmod(0o600)
+    modes_at_replace = []
+    original_replace = Path.replace
+
+    def spy_replace(self: Path, target: Path) -> Path:
+        modes_at_replace.append(self.stat().st_mode & 0o777)
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", spy_replace)
+
+    assert cli.main(["transform", "json", str(base), str(output), "--mode", "cleanup"]) == 0
+    assert modes_at_replace == [0o600]
+
+
+def test_file_output_through_symlink_updates_link_target(tmp_path) -> None:
+    from dotman import cli
+
+    base = tmp_path / "base.json"
+    target = tmp_path / "target.json"
+    link = tmp_path / "link.json"
+    base.write_text('{"a": 1}\n', encoding="utf-8")
+    target.write_text("{}\n", encoding="utf-8")
+    link.symlink_to(target)
+
+    assert cli.main(["transform", "json", str(base), str(link), "--mode", "cleanup"]) == 0
+    assert link.is_symlink()
+    assert json.loads(target.read_text()) == {"a": 1}
+
+
+def test_compare_reuse_at_same_file_spelled_differently_keeps_mtime(tmp_path, monkeypatch) -> None:
+    from dotman import cli
+
+    monkeypatch.chdir(tmp_path)
+    base = tmp_path / "base.json"
+    compare = tmp_path / "compare.json"
+    base.write_text('{"value": 1}\n', encoding="utf-8")
+    compare.write_text('{"value":1}\n', encoding="utf-8")
+    old_time_ns = 1_600_000_000_000_000_000
+    import os
+
+    os.utime(compare, ns=(old_time_ns, old_time_ns))
+
+    assert cli.main(["transform", "json", str(base), str(compare), "--mode", "cleanup", "--compare-file", "compare.json"]) == 0
+    assert compare.stat().st_mtime_ns == old_time_ns
+
+
+def test_compare_file_rejects_stdin(tmp_path, monkeypatch, capsys) -> None:
+    from dotman import cli
+
+    base = tmp_path / "base.json"
+    base.write_text('{"a": 1}\n', encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}\n"))
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["transform", "json", str(base), "--mode", "cleanup", "--compare-file", "-", "--stdout"])
+    assert exit_info.value.code == 2
+    assert "--compare-file" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("transform_format", "content"),
+    [("json", b'{"a": "\xff"}\n'), ("toml", b'a = "\xff"\n'), ("yaml", b'a: "\xff"\n')],
+)
+def test_stdin_with_invalid_utf8_fails_like_file_input(transform_format, content, monkeypatch, capsys) -> None:
+    from dotman import cli
+
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(content)))
+
+    assert cli.main(["transform", transform_format, "-", "-", "--mode", "cleanup", "--selectors", "zzz"]) == 2
+    assert "utf-8" in capsys.readouterr().err.lower()
+
+
+@pytest.mark.parametrize(
+    ("transform_format", "content"),
+    [
+        ("json", '{"a": 1}\n'),
+        ("toml", "a = 1\n"),
+        ("yaml", "a: 1\n"),
+        ("plist", '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>a</key><integer>1</integer></dict></plist>\n'),
+        ("xml", "<config><a>1</a></config>\n"),
+    ],
+)
+def test_stdin_base_never_inherits_permissions_from_a_file_named_dash(
+    transform_format, content, tmp_path, monkeypatch
+) -> None:
+    from dotman import cli
+
+    monkeypatch.chdir(tmp_path)
+    dash_file = tmp_path / "-"
+    dash_file.write_text(content, encoding="utf-8")
+    dash_file.chmod(0o600)
+    output = tmp_path / "output"
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(content.encode())))
+
+    assert cli.main(["transform", transform_format, "-", str(output), "--mode", "cleanup", "--selectors", "a"]) == 0
+    assert output.stat().st_mode & 0o777 != 0o600

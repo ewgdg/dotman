@@ -14,6 +14,8 @@ from typing import Any, ClassVar, Iterable, Protocol, runtime_checkable
 
 from dotman.atomic_files import write_bytes_atomic, write_text_atomic
 
+STDIN_PATH = Path("-")
+
 
 class TransformMode(StrEnum):
     CLEANUP = "cleanup"
@@ -93,14 +95,43 @@ class TransformOutput:
     mode_reference_path: Path | None
     reused_compare_path: Path | None = None
 
+def reference_file_mode(reference_path: Path | None) -> int | None:
+    # A stdin base ("-") has no permissions to inherit, even when the working
+    # directory happens to contain a file literally named "-".
+    if reference_path is None or reference_path == STDIN_PATH or not reference_path.exists():
+        return None
+    return reference_path.stat().st_mode & 0o777
+
+
 def sync_output_mode(reference_path: Path | None, output_path: Path) -> None:
-    if reference_path is None or not reference_path.exists() or not output_path.exists():
+    target_mode = reference_file_mode(reference_path)
+    if target_mode is None or not output_path.exists():
         return
 
-    target_mode = reference_path.stat().st_mode & 0o777
     current_mode = output_path.stat().st_mode & 0o777
     if current_mode != target_mode:
         output_path.chmod(target_mode)
+
+
+def decode_utf8_input(content: bytes, source: str) -> str:
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{source} is not valid UTF-8: {error}") from error
+
+
+def read_input_text(path: Path, *, stdin_bytes: bytes | None = None) -> str | None:
+    """Read strict UTF-8 input text, or None when the input file is missing.
+
+    Bytes are decoded without newline translation so CRLF input is visible to
+    engines that preserve line endings.
+    """
+    if path == STDIN_PATH:
+        assert stdin_bytes is not None
+        return decode_utf8_input(stdin_bytes, "stdin")
+    if not path.exists():
+        return None
+    return decode_utf8_input(path.read_bytes(), str(path))
 
 
 
@@ -123,19 +154,26 @@ def write_output_to_stdout(output: TransformOutput) -> None:
 
 
 def write_output_to_path(output_path: Path, output: TransformOutput) -> None:
+    # Resolve so a symlinked output updates its target instead of being
+    # replaced by a regular file, and so differently spelled paths to the same
+    # file are recognized as the reused compare file.
+    output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Reusing the existing compare file is intentional. If that same path is also
     # the destination, skip the rewrite to preserve metadata like mtime.
-    if output.reused_compare_path is not None and output.reused_compare_path == output_path:
+    if (
+        output.reused_compare_path is not None
+        and output.reused_compare_path.resolve() == output_path
+    ):
         sync_output_mode(output.mode_reference_path, output_path)
         return
 
+    output_mode = reference_file_mode(output.mode_reference_path)
     if isinstance(output.content, bytes):
-        write_bytes_atomic(output_path, output.content)
+        write_bytes_atomic(output_path, output.content, mode=output_mode)
     else:
-        write_text_atomic(output_path, output.content)
-    sync_output_mode(output.mode_reference_path, output_path)
+        write_text_atomic(output_path, output.content, mode=output_mode)
 
 
 

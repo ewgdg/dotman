@@ -21,6 +21,7 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
+    read_input_text,
 )
 
 
@@ -35,14 +36,10 @@ class TopLevelBodyRegion:
     leading_entries: tuple[tuple[None, object], ...]
 
 
-def load_document(path: Path, *, stdin_text: str | None = None) -> TOMLDocument:
-    if path == Path("-"):
-        assert stdin_text is not None
-        source_text = stdin_text
-    elif not path.exists():
+def load_document(path: Path, *, stdin_bytes: bytes | None = None) -> TOMLDocument:
+    source_text = read_input_text(path, stdin_bytes=stdin_bytes)
+    if source_text is None:
         return tomlkit.document()
-    else:
-        source_text = path.read_text(encoding="utf-8")
     return detach_table_tail_trivia(tomlkit.parse(source_text))
 
 
@@ -688,10 +685,10 @@ def build_stripped_document_output(
     stripped_key_paths: list[tuple[str, ...]],
     stripped_table_regexes: list[re.Pattern[str]],
     compare_path: Path | None = None,
-    stdin_text: str | None = None,
+    stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
     normalized_doc = build_document_with_stripped_matchers(
-        load_document(base_path, stdin_text=stdin_text),
+        load_document(base_path, stdin_bytes=stdin_bytes),
         stripped_key_paths,
         stripped_table_regexes,
     )
@@ -829,16 +826,16 @@ def build_merged_document_output(
     key_paths: list[tuple[str, ...]],
     table_regexes: list[re.Pattern[str]],
     compare_path: Path | None = None,
-    stdin_text: str | None = None,
+    stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
-    base_doc = load_document(base_path, stdin_text=stdin_text)
+    base_doc = load_document(base_path, stdin_bytes=stdin_bytes)
     preserved_base = build_document_with_selector_action(
         base_doc,
         selector_action,
         key_paths,
         table_regexes,
     )
-    overlay_doc = load_document(overlay_path, stdin_text=stdin_text)
+    overlay_doc = load_document(overlay_path, stdin_bytes=stdin_bytes)
     merged_doc = normalize_document(overlay_with_base_slots(base_doc, preserved_base, overlay_doc))
     merged_doc = restore_top_level_leading_trivia(merged_doc, overlay_doc, base_doc, preserved_base)
     collapse_duplicate_table_separators(merged_doc)
@@ -879,7 +876,7 @@ class TomlTransformEngine(BaseTransformEngine):
         return {
             "compare_path": parsed_args.compare_file,
             "stdout": parsed_args.stdout,
-            "stdin_text": parsed_args.stdin_text,
+            "stdin_bytes": parsed_args.stdin_bytes,
         }
 
     def validate_request(self, request: TransformRequest) -> None:
@@ -892,7 +889,7 @@ class TomlTransformEngine(BaseTransformEngine):
         key_paths = parse_key_paths(request.selector_values("key"))
         table_regexes = compile_table_regexes(request.selector_values("table_regex"))
         compare_path = request.engine_option("compare_path")
-        stdin_text = request.engine_option("stdin_text")
+        stdin_bytes = request.engine_option("stdin_bytes")
 
         if request.mode == TransformMode.CLEANUP:
             if request.selector_action == SelectorAction.REMOVE:
@@ -901,11 +898,11 @@ class TomlTransformEngine(BaseTransformEngine):
                     key_paths,
                     table_regexes,
                     compare_path=compare_path,
-                    stdin_text=stdin_text,
+                    stdin_bytes=stdin_bytes,
                 )
 
             filtered_doc = build_document_with_selector_action(
-                load_document(request.base_path, stdin_text=stdin_text),
+                load_document(request.base_path, stdin_bytes=stdin_bytes),
                 request.selector_action,
                 key_paths,
                 table_regexes,
@@ -924,7 +921,7 @@ class TomlTransformEngine(BaseTransformEngine):
             key_paths,
             table_regexes,
             compare_path=compare_path,
-            stdin_text=stdin_text,
+            stdin_bytes=stdin_bytes,
         )
 
 

@@ -469,7 +469,7 @@ class PlistTransformEngine(BaseTransformEngine):
         return build_plist_output(
             transformed_data,
             output_format,
-            mode_reference_path=(None if request.base_path == Path("-") else request.base_path),
+            mode_reference_path=request.base_path,
             compare_path=request.engine_option("compare_path"),
         )
 

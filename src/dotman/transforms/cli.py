@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 from dotman.transforms.framework import (
+    STDIN_PATH,
     SelectorAction,
     TransformEngine,
     TransformMode,
@@ -139,23 +141,16 @@ def build_request(
 
 def run_parsed_engine(engine: TransformEngine, parser: argparse.ArgumentParser, parsed_args: argparse.Namespace) -> int:
     stdin_inputs = [
-        path for path in (parsed_args.base_path, parsed_args.overlay_path) if path == Path("-")
+        path for path in (parsed_args.base_path, parsed_args.overlay_path) if path == STDIN_PATH
     ]
     if len(stdin_inputs) > 1:
         raise ValueError("at most one of BASE and --overlay-file may read from stdin ('-')")
 
-    parsed_args.stdin_bytes = None
-    parsed_args.stdin_text = None
-    if stdin_inputs:
-        stdin = __import__("sys").stdin
-        stdin_buffer = getattr(stdin, "buffer", None)
-        if stdin_buffer is not None:
-            parsed_args.stdin_bytes = stdin_buffer.read()
-            parsed_args.stdin_text = parsed_args.stdin_bytes.decode("utf-8", errors="surrogateescape")
-        else:
-            parsed_args.stdin_text = stdin.read()
-            parsed_args.stdin_bytes = parsed_args.stdin_text.encode("utf-8")
-    if parsed_args.output_path == Path("-"):
+    if getattr(parsed_args, "compare_file", None) == STDIN_PATH:
+        parser.error("--compare-file must be a file path; stdin ('-') is not supported")
+
+    parsed_args.stdin_bytes = read_stdin_bytes() if stdin_inputs else None
+    if parsed_args.output_path == STDIN_PATH:
         parsed_args.stdout = True
         parsed_args.output_path = None
     request = build_request(parser, engine, parsed_args)
@@ -166,6 +161,13 @@ def run_parsed_engine(engine: TransformEngine, parser: argparse.ArgumentParser, 
         stdout=bool(request.engine_option("stdout", False)),
     )
     return 0
+
+
+def read_stdin_bytes() -> bytes:
+    stdin_buffer = getattr(sys.stdin, "buffer", None)
+    if stdin_buffer is not None:
+        return stdin_buffer.read()
+    return sys.stdin.read().encode("utf-8")
 
 
 def run_engine_cli(engine: TransformEngine, argv: list[str] | None = None) -> int:

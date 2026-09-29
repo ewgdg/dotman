@@ -26,10 +26,12 @@ def _new_atomic_temp_path(directory: Path) -> Path:
     return directory / f"{_atomic_temp_file_prefix()}{uuid4().hex}{_TEMP_FILE_SUFFIX}"
 
 
-def write_bytes_atomic(path: Path, content: bytes) -> None:
+def write_bytes_atomic(path: Path, content: bytes, *, mode: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_stale_atomic_temp_files(path.parent)
-    replacement_mode = target_replacement_mode(path)
+    # An explicit mode is applied before the rename so the content never
+    # becomes visible with broader permissions than requested.
+    replacement_mode = mode if mode is not None else target_replacement_mode(path)
     candidate_temp_path = _new_atomic_temp_path(path.parent)
     temp_path: Path | None = None
     try:
@@ -44,8 +46,14 @@ def write_bytes_atomic(path: Path, content: bytes) -> None:
 
 
 
-def write_text_atomic(path: Path, content: str, *, encoding: str = "utf-8") -> None:
-    write_bytes_atomic(path, content.encode(encoding))
+def write_text_atomic(
+    path: Path,
+    content: str,
+    *,
+    encoding: str = "utf-8",
+    mode: int | None = None,
+) -> None:
+    write_bytes_atomic(path, content.encode(encoding), mode=mode)
 
 
 

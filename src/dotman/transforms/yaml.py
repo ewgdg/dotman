@@ -18,6 +18,7 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
+    read_input_text,
 )
 
 
@@ -64,14 +65,10 @@ class YamlPathSelector:
     children: dict[str, "YamlPathSelector"] = field(default_factory=dict)
 
 
-def load_yaml(path: Path, *, stdin_text: str | None = None) -> YamlDict:
-    if path == Path("-"):
-        assert stdin_text is not None
-        source_text = stdin_text
-    elif not path.exists():
+def load_yaml(path: Path, *, stdin_bytes: bytes | None = None) -> YamlDict:
+    source_text = read_input_text(path, stdin_bytes=stdin_bytes)
+    if source_text is None:
         return {}
-    else:
-        source_text = path.read_text(encoding="utf-8")
 
     loaded = parse_yaml_text(source_text)
     if not isinstance(loaded, dict):
@@ -503,7 +500,7 @@ class YamlTransformEngine(BaseTransformEngine):
         return {
             "compare_path": parsed_args.compare_file,
             "stdout": parsed_args.stdout,
-            "stdin_text": parsed_args.stdin_text,
+            "stdin_bytes": parsed_args.stdin_bytes,
         }
 
     def validate_request(self, request: TransformRequest) -> None:
@@ -518,7 +515,7 @@ class YamlTransformEngine(BaseTransformEngine):
 
         base_data = load_yaml(
             request.base_path,
-            stdin_text=request.engine_option("stdin_text"),
+            stdin_bytes=request.engine_option("stdin_bytes"),
         )
         selected_key_paths = selected_yaml_key_paths(
             base_data,
@@ -535,7 +532,7 @@ class YamlTransformEngine(BaseTransformEngine):
             assert request.overlay_path is not None
             overlay_data = load_yaml(
                 request.overlay_path,
-                stdin_text=request.engine_option("stdin_text"),
+                stdin_bytes=request.engine_option("stdin_bytes"),
             )
             transformed_data = overlay_yaml_data(
                 base_data,
@@ -546,7 +543,7 @@ class YamlTransformEngine(BaseTransformEngine):
 
         return build_yaml_output(
             transformed_data,
-            mode_reference_path=(None if request.base_path == Path("-") else request.base_path),
+            mode_reference_path=request.base_path,
             compare_path=request.engine_option("compare_path"),
             indent_reference_paths=(request.base_path, request.overlay_path),
         )
