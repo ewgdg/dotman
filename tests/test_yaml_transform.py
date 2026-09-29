@@ -794,3 +794,69 @@ def test_cleanup_retain_key_matches_non_string_yaml_key(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert load_yaml(output_path) == {1: "one"}
+
+
+def run_yaml_cleanup(tmp_path: Path, source: str, *arguments: str) -> str:
+    input_path = tmp_path / "input.yaml"
+    output_path = tmp_path / "output.yaml"
+    input_path.write_text(source, encoding="utf-8")
+
+    assert MODULE.main([str(input_path), str(output_path), "--mode", "cleanup", *arguments]) == 0
+    return output_path.read_text(encoding="utf-8")
+
+
+def test_strings_that_yaml_readers_could_resolve_as_non_strings_are_quoted(tmp_path: Path) -> None:
+    # 1e3, 0o17, 09, and +.5 are numbers to YAML 1.2 readers; y and N are
+    # booleans to YAML 1.1 readers. They must stay strings for both.
+    ambiguous_strings = ["1e3", "0o17", "09", "+.5", "0x1F", "y", "N"]
+    source = "".join(f"v{index}: '{value}'\n" for index, value in enumerate(ambiguous_strings))
+
+    output = run_yaml_cleanup(tmp_path, source)
+
+    assert output == source
+
+
+def test_plain_equals_sign_value_is_a_string(tmp_path: Path) -> None:
+    assert MODULE.parse_yaml_text(run_yaml_cleanup(tmp_path, "separator: =\n")) == {"separator": "="}
+
+
+def test_comment_only_base_is_an_empty_mapping(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.yaml"
+    overlay_path = tmp_path / "overlay.yaml"
+    output_path = tmp_path / "output.yaml"
+    input_path.write_text("# managed: value\n", encoding="utf-8")
+    overlay_path.write_text("managed: 1\n", encoding="utf-8")
+
+    assert MODULE.main(
+        [str(input_path), str(output_path), "--mode", "merge", "--overlay-file", str(overlay_path)]
+    ) == 0
+    assert MODULE.load_yaml(output_path) == {"managed": 1}
+
+
+def test_invalid_yaml_is_a_clean_cli_error(tmp_path: Path, capsys) -> None:
+    from dotman import cli
+
+    for index, source in enumerate(["a: [1\n", "a: 1\n---\nb: 2\n", "r: !Ref foo\n"]):
+        input_path = tmp_path / f"input{index}.yaml"
+        input_path.write_text(source, encoding="utf-8")
+
+        assert cli.main(["transform", "yaml", str(input_path), "-", "--mode", "cleanup"]) == 2
+        assert str(input_path) in capsys.readouterr().err
+
+
+def test_indent_detection_ignores_block_scalar_content(tmp_path: Path) -> None:
+    source = "script: |\n      echo hi\nsettings:\n  a: 1\n"
+
+    assert run_yaml_cleanup(tmp_path, source).endswith("\nsettings:\n  a: 1\n")
+
+
+def test_stdin_base_indent_is_preserved(monkeypatch, capsys) -> None:
+    import io
+
+    from dotman import cli
+
+    source = "settings:\n    a: 1\n"
+    monkeypatch.setattr("sys.stdin", io.StringIO(source))
+
+    assert cli.main(["transform", "yaml", "-", "-", "--mode", "cleanup"]) == 0
+    assert capsys.readouterr().out == source

@@ -21,6 +21,7 @@ from dotman.transforms.framework import (
     split_quoted_key_path,
     values_strictly_equal,
     read_input_text,
+    read_reference_text,
 )
 
 
@@ -28,24 +29,30 @@ YamlDict = dict[Any, Any]
 YamlKeyPath = tuple[str, ...]
 KeyRegex = re.Pattern[str]
 DEFAULT_YAML_INDENT = 2
-_YAML_INDENT_RE = re.compile(r"^( +)\S")
 _MISSING = object()
 _BOOL_TAG = "tag:yaml.org,2002:bool"
+_INT_TAG = "tag:yaml.org,2002:int"
+_FLOAT_TAG = "tag:yaml.org,2002:float"
+# PyYAML's YAML 1.1 "=" value-key tag has no constructor in SafeLoader, so a
+# plain "=" scalar would crash instead of loading as the string it is in 1.2.
+_VALUE_TAG = "tag:yaml.org,2002:value"
 _STRICT_BOOL_RE = re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")
 
 
-def resolvers_without_legacy_booleans(
+def resolvers_without_tags(
     resolvers: dict[Any, list[tuple[str, re.Pattern[str]]]],
+    excluded_tags: frozenset[str],
 ) -> dict[Any, list[tuple[str, re.Pattern[str]]]]:
     return {
-        initial: [resolver for resolver in initial_resolvers if resolver[0] != _BOOL_TAG]
+        initial: [resolver for resolver in initial_resolvers if resolver[0] not in excluded_tags]
         for initial, initial_resolvers in resolvers.items()
     }
 
 
 class StrictBooleanSafeLoader(yaml.SafeLoader):
-    yaml_implicit_resolvers = resolvers_without_legacy_booleans(
-        yaml.SafeLoader.yaml_implicit_resolvers
+    yaml_implicit_resolvers = resolvers_without_tags(
+        yaml.SafeLoader.yaml_implicit_resolvers,
+        frozenset({_BOOL_TAG, _VALUE_TAG}),
     )
 
 
@@ -55,6 +62,28 @@ class StrictBooleanSafeLoader(yaml.SafeLoader):
 StrictBooleanSafeLoader.add_implicit_resolver(
     _BOOL_TAG, _STRICT_BOOL_RE, list("tTfF")
 )
+
+
+class PortableSafeDumper(yaml.SafeDumper):
+    """Quote strings that any common YAML reader would resolve as non-strings.
+
+    SafeDumper already quotes YAML 1.1 lookalikes. These extra resolvers are
+    only consulted to decide quoting, covering YAML 1.2 core numbers and the
+    single-letter YAML 1.1 booleans that PyYAML itself does not resolve.
+    """
+
+
+for _tag, _pattern, _first_chars in (
+    (_BOOL_TAG, r"^(?:y|Y|n|N)$", "yYnN"),
+    (_INT_TAG, r"^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$", "-+0123456789"),
+    (
+        _FLOAT_TAG,
+        r"^(?:[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?"
+        r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$",
+        "-+.0123456789",
+    ),
+):
+    PortableSafeDumper.add_implicit_resolver(_tag, re.compile(_pattern), list(_first_chars))
 
 
 def parse_yaml_text(text: str) -> Any:
@@ -72,7 +101,13 @@ def load_yaml(path: Path, *, stdin_bytes: bytes | None = None) -> YamlDict:
     if source_text is None:
         return {}
 
-    loaded = parse_yaml_text(source_text)
+    try:
+        loaded = parse_yaml_text(source_text)
+    except yaml.YAMLError as error:
+        raise ValueError(f"invalid YAML in {path}: {error}") from error
+    # An empty or comment-only document has no mapping yet, like a missing file.
+    if loaded is None:
+        return {}
     if not isinstance(loaded, dict):
         raise ValueError(f"Expected top-level YAML mapping in {path}")
     return loaded
@@ -319,43 +354,49 @@ def overlay_yaml_data(
     )
 
 
-def detect_yaml_indent(text: str) -> int | None:
-    for line in text.splitlines():
-        match = _YAML_INDENT_RE.match(line)
-        if match:
-            return len(match.group(1))
-    return None
-
-
-def detect_yaml_indent_from_path(path: Path | None) -> int | None:
-    if path is None or not path.exists():
+def detect_yaml_indent(text: str | None) -> int | None:
+    if text is None:
         return None
-
-    text = path.read_text(encoding="utf-8")
     try:
-        parse_yaml_text(text)
-    except Exception:
+        root_node = yaml.compose(text, Loader=StrictBooleanSafeLoader)
+    except yaml.YAMLError:
         return None
-
-    indent = detect_yaml_indent(text)
+    indent = nested_mapping_indent(root_node)
     if indent is None or indent < 1:
         return None
     return indent
 
 
-def select_yaml_indent(*reference_paths: Path | None) -> int:
+def nested_mapping_indent(node: yaml.Node | None) -> int | None:
+    # Measure the first block mapping nested under a key, so literal block
+    # scalar content never counts as structural indentation.
+    if isinstance(node, yaml.MappingNode):
+        for key_node, value_node in node.value:
+            if isinstance(value_node, yaml.MappingNode) and not value_node.flow_style and value_node.value:
+                return value_node.value[0][0].start_mark.column - key_node.start_mark.column
+            indent = nested_mapping_indent(value_node)
+            if indent is not None:
+                return indent
+    if isinstance(node, yaml.SequenceNode):
+        for item_node in node.value:
+            indent = nested_mapping_indent(item_node)
+            if indent is not None:
+                return indent
+    return None
+
+
+def select_yaml_indent(*reference_paths: Path | None, stdin_bytes: bytes | None = None) -> int:
     for reference_path in reference_paths:
-        indent = detect_yaml_indent_from_path(reference_path)
+        indent = detect_yaml_indent(read_reference_text(reference_path, stdin_bytes=stdin_bytes))
         if indent is not None:
             return indent
     return DEFAULT_YAML_INDENT
 
 
 def yaml_text(data: YamlDict, indent: int = DEFAULT_YAML_INDENT) -> str:
-    # Keep SafeDumper's YAML 1.1 resolver so ambiguous strings are quoted for
-    # compatibility with both YAML 1.1 and 1.2 consumers.
-    return yaml.safe_dump(
+    return yaml.dump(
         data,
+        Dumper=PortableSafeDumper,
         sort_keys=False,
         default_flow_style=False,
         allow_unicode=True,
@@ -388,6 +429,7 @@ def build_yaml_output(
     mode_reference_path: Path | None,
     compare_path: Path | None = None,
     indent_reference_paths: tuple[Path | None, ...] = (),
+    stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
     if compare_path is not None:
         existing_bytes = get_existing_bytes_if_semantically_unchanged(compare_path, data)
@@ -398,7 +440,11 @@ def build_yaml_output(
                 reused_compare_path=compare_path,
             )
 
-    indent = select_yaml_indent(compare_path, *indent_reference_paths, mode_reference_path)
+    indent = select_yaml_indent(
+        compare_path,
+        *indent_reference_paths,
+        stdin_bytes=stdin_bytes,
+    )
     return TransformOutput(
         content=yaml_text(data, indent=indent),
         mode_reference_path=mode_reference_path,
@@ -485,6 +531,7 @@ class YamlTransformEngine(BaseTransformEngine):
             mode_reference_path=request.base_path,
             compare_path=request.engine_option("compare_path"),
             indent_reference_paths=(request.base_path, request.overlay_path),
+            stdin_bytes=request.engine_option("stdin_bytes"),
         )
 
 
