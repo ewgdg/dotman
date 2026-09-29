@@ -669,11 +669,21 @@ def row_resolution(row) -> str:
     return resolution_label((row.proposal and row.proposal.intent) or row.intent or "use-live")
 
 
+def resolution_choosable(row) -> bool:
+    return (isinstance(row, SessionRow) and "set-resolution-intent" in row.allowed_commands
+            and len(row.allowed_intents) >= 2)
+
+
+# Directions a one-way Policy or a push/pull operation imposes; Edited stays a decision.
+POLICY_DIRECTION_LABELS = (resolution_label("use-repository"), resolution_label("use-live"))
+
+
 def render_row_resolution(row, *, use_color: bool) -> str:
     label = row_resolution(row)
     # Failures and No-op describe the row itself, so they outrank the guess color.
     guessed = isinstance(row, SessionRow) and row.resolution_guessed and label == resolution_label(row.intent)
-    return render_resolution(label, guessed=guessed, use_color=use_color)
+    fixed = isinstance(row, SessionRow) and not resolution_choosable(row) and label in POLICY_DIRECTION_LABELS
+    return render_resolution(label, guessed=guessed, fixed=fixed, use_color=use_color)
 
 
 def elide_middle(label: Text, width: int) -> Text:
@@ -1183,7 +1193,7 @@ class SyncDeckApp(App[bool]):
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
                 and not self._search_open and self.deck.full_view is None):
             hints.append(("Shift+L", "authorize link replacement"))
-        if (self.deck.session.view.operation == "sync" and not self.deck.reviewing and not self._search_open
+        if (resolution_choosable(row) and not self.deck.reviewing and not self._search_open
                 and not self.query_one(OptionList).display and not self.deck.confirming):
             hints.append(("R", "intent"))
         self.query_one("#help", Static).update(Text.from_ansi(render_key_hints(hints, use_color=self.deck.use_color)))
@@ -1218,6 +1228,8 @@ class SyncDeckApp(App[bool]):
         if not self.busy and not self.deck.reviewing and not self.deck.confirming:
             self.sync_focus()
             self.update_detail()
+            # Row-specific hints (R, Shift+L) follow the focused row.
+            self.update_hints()
 
     def show_workset(self) -> None:
         self.query_one("#workset").display = True
@@ -1525,7 +1537,7 @@ class SyncDeckApp(App[bool]):
             return
         self.sync_focus()
         row = self.deck.focused_row
-        if row is None or "set-resolution-intent" not in row.allowed_commands or len(row.allowed_intents) < 2:
+        if not resolution_choosable(row):
             return
         if len(row.allowed_intents) == 2:
             # With one alternative, a menu only adds a keystroke; toggling is visible in the Resolution cell.

@@ -120,6 +120,9 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   and long worksets scroll vertically without losing column alignment.
 - `R`, or a click in the Resolution cell, changes the focused row's Resolution:
   with two allowed intents it toggles between them; with Merge available it opens a menu.
+  The `R intent` hint appears only when the focused row has a choice. A Resolution
+  fixed by a one-way Policy (push-only Use repository, pull-only Use live) is dimmed
+  like auxiliary work, so only choosable Resolutions keep the emphasis.
 - `Enter` opens focused Proposal Review or canonical Source Change Review;
   `Esc` returns to the same workset. Source Change Review shows the preimage diff,
   referencing Proposals and independent Approval; Proposal Review lists source

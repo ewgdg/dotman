@@ -608,11 +608,12 @@ def resolution_label(intent: str) -> str:
     return {"use-repository": "Use repository", "use-live": "Use live", "merge": "Merge", "editor": "Edited"}[intent]
 
 
-def render_resolution(label: str, *, guessed: bool, use_color: bool) -> str:
+def render_resolution(label: str, *, guessed: bool, use_color: bool, fixed: bool = False) -> str:
     """A guessed Resolution takes the guess color; its Fallback cause explains it without color."""
-    if not guessed:
+    style = "guess" if guessed else "fixed" if fixed else None
+    if style is None:
         return render_sync_term(label, use_color=use_color)
-    return style_text(label, *SYNC_TERM_STYLE_BY_NAME["guess"]) if use_color else label
+    return style_text(label, *SYNC_TERM_STYLE_BY_NAME[style]) if use_color else label
 
 
 def primary_change_summary(proposal, path) -> dict | None:

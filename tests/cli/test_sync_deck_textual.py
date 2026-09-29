@@ -284,6 +284,32 @@ def test_guess_color_yields_to_a_choice_and_to_a_failed_proposal(tmp_path, monke
         assert render_row_resolution(failed, use_color=True) == render_sync_term("Proposal failed", use_color=True)
 
 
+def test_fixed_resolution_is_recessive_and_offers_no_intent_key(tmp_path, monkeypatch):
+    from dotman.cli_style import render_sync_term
+    from dotman.sync_deck import render_row_resolution
+
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("both", "both", b"repo", b"live", ""),
+        ("pull", "pull-only", b"repo", b"live", ""),
+        ("push", "push-only", b"repo", b"live", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        both, pull, push = session.view.rows
+        # Push-only and pull-only follow from Policy; only real choices keep the Resolution emphasis.
+        assert render_row_resolution(pull, use_color=True) != render_sync_term("Use live", use_color=True)
+        assert render_row_resolution(push, use_color=True) != render_sync_term("Use repository", use_color=True)
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(140, 24)) as pilot:
+                assert "R intent" in help_text(app)
+                await pilot.press("down")
+                assert "R intent" not in help_text(app)
+                await pilot.press("down")
+                assert "R intent" not in help_text(app)
+        run(interact())
+
+
 def test_review_shows_the_fallback_cause_only_while_guessed(tmp_path, monkeypatch):
     from dotman.sync_session import SetResolutionIntent
 

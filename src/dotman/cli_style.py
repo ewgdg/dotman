@@ -457,6 +457,9 @@ SYNC_TERM_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "Merge": ("1", "36"),
     "Edited": ("1", "36"),
     "guess": ("33",),
+    # A Resolution fixed by a one-way Policy is not a decision; keep it recessive
+    # like auxiliary kinds so choosable Resolutions stand out.
+    "fixed": ("2",),
     "Fallback": ("33",),
     "completed": ("1", "32"),
     "incomplete": ("1", "33"),
