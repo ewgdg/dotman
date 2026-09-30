@@ -530,9 +530,9 @@ class CommandDeck:
             )))
 
         # Capture differs while the live bytes already match, so publication
-        # rewrites them for push hooks to reapply (see materialize).
-        republish = proposal is not None and proposal.live == observation.live and any(
-            effect.kind == "write" for effect in proposal.publication_effects)
+        # runs push hooks to reapply live state (see materialize).
+        reapply = proposal is not None and any(
+            effect.kind == "reapply" for effect in proposal.publication_effects)
         if proposal is not None:
             effects = []
             for effect in proposal.publication_effects:
@@ -542,6 +542,8 @@ class CommandDeck:
                     detail += render_annotation_parentheses(f"{summary['bytes']} bytes", use_color=color)
                 if "mode" in summary:
                     detail += f" → {summary['mode']}"
+                if effect.kind == "reapply":
+                    detail += render_annotation_parentheses("push-hooks", use_color=color)
                 effects.append(ReviewNote(detail))
             if not effects:
                 effects.append(ReviewNote(render_payload_section_label("none", use_color=color)))
@@ -558,20 +560,20 @@ class CommandDeck:
             if repository_effect:
                 sections.append(effect_preview("repository", observation.repository, proposal.repository, notes))
             if not pull_only:
-                notes = (ReviewNote("Rewrites unchanged bytes: Capture differs, so push hooks reapply live state"),
-                         ) if republish else ()
+                notes = (ReviewNote("Live file unchanged: Capture differs, so push hooks reapply live state"),
+                         ) if reapply else ()
                 sections.append(effect_preview("live", observation.live, proposal.live, notes))
         # Drift explains a drifted row only when no outcome preview shows a change,
         # e.g. Capture reproduces the repository while the compared copies differ,
-        # or a republish whose rewritten bytes equal live.
+        # or a hook reapply that leaves the live file unchanged.
         writes_nothing = proposal is None or (
             proposal.primary_source_change is None and not proposal.publication_effects)
         if (observation.effective_policy in ("both", "pull-only")
-                and observation.state == "drifted" and (writes_nothing or republish)):
+                and observation.state == "drifted" and (writes_nothing or reapply)):
             drift = [
                 ReviewNote(NOOP_NOTICE if proposal.noop else "Nothing will be written; Approval records the Sync Base"),
-                # A Capture differing from the outcome forces a write (see materialize), so
-                # no write means only the compare projection sees drift: a configuration mismatch.
+                # A Capture differing from the outcome reapplies push hooks (see materialize), so
+                # no effect means only compare sees drift, or no hook can apply it.
                 ReviewNote("compare does not match Capture, so this unit keeps appearing; align them to stop it"),
             ] if proposal and writes_nothing else []
             drift += [ReviewFact("Repository comparison", observation.compare_repo),

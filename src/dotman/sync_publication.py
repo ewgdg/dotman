@@ -20,7 +20,7 @@ from dotman.snapshot import SnapshotRecord, create_push_snapshot, mark_snapshot_
 
 class Effect(Protocol):
     @property
-    def kind(self) -> Literal["write", "delete", "chmod"]: ...
+    def kind(self) -> Literal["write", "delete", "chmod", "reapply"]: ...
     @property
     def path(self) -> Path: ...
     @property
@@ -339,6 +339,12 @@ def ordered_stage_steps(
     return tuple(steps)
 
 
+def activates_hooks(metadata: PublicationMetadata, identity: ResolvedSyncTarget, *, direction: str) -> bool:
+    """Whether activating this unit alone runs any normal hook of the direction."""
+    return any(step.kind == "hook" for step in ordered_stage_steps(
+        metadata, {identity: ()}, direction=direction, active_targets=[identity]))
+
+
 def unattempted_steps(steps: Sequence[ExecutionStep]) -> tuple[ExecutionStepResult, ...]:
     return tuple(ExecutionStepResult(step, "unattempted", skip_reason="earlier-failure")
                  for step in steps)
@@ -366,7 +372,7 @@ def execute_publication(
         raise ValueError("Duplicate publication unit")
     for unit in units:
         for effect in unit.effects:
-            if effect.kind not in {"write", "delete", "chmod"}:
+            if effect.kind not in {"write", "delete", "chmod", "reapply"}:
                 raise ValueError(f"Unknown publication effect: {effect.kind}")
             if effect.kind == "write" and effect.content is None:
                 raise ValueError("Frozen write requires content")
@@ -392,9 +398,10 @@ def execute_publication(
         for scope_target in package.target_plans:
             for target in _unit_targets(metadata, package, scope_target):
                 unit = by_identity.get(_target_identity(package, target))
-                if unit is not None and unit.effects:
-                    snapshot_endpoints.append((unit.effects[0], target, unit.symlink_authorized))
-                    effect = unit.effects[0]
+                # A reapply touches no file, so it has nothing to snapshot.
+                effect = next((item for item in unit.effects if item.kind != "reapply"), None) if unit is not None else None
+                if effect is not None:
+                    snapshot_endpoints.append((effect, target, unit.symlink_authorized))
                     action = ("delete" if effect.kind == "delete"
                               else "update" if effect.path.exists() or effect.path.is_symlink() else "create")
                     targets.append(replace(target, action=action))
@@ -423,6 +430,11 @@ def execute_publication(
                 else:
                     effect = unit.effects[effect_positions[unit.row_id]]
                     effect_positions[unit.row_id] += 1
+                    if effect.kind == "reapply":
+                        # Activation alone lets the enclosing push hooks reapply live state.
+                        steps.append(ExecutionStepResult(step, "ok"))
+                        reporter.finished(index, steps[reported_from:])
+                        continue
                     if not snapshot_started:
                         try:
                             if snapshot_config.enabled:

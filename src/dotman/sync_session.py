@@ -29,7 +29,7 @@ from dotman.sync_base_lifecycle import (
 )
 from dotman.operation_lock import OperationBusy, OperationLock, OperationLockError
 from dotman.sync_observation import Diagnostic, Observation, observe_scope, _resolve_inputs
-from dotman.sync_publication import HookActivation, PublicationResult, PublicationUnit, execute_publication, prepare_publication, freeze_child_metadata
+from dotman.sync_publication import HookActivation, PublicationResult, PublicationUnit, activates_hooks, execute_publication, prepare_publication, freeze_child_metadata
 from dotman.sync_repository_apply import (
     RepositoryApplyUnit, apply_repository_source, execute_repository_apply, prepare_repository_apply,
 )
@@ -48,7 +48,7 @@ CommandName = Literal["authorize-symlink-replacement", "batch-set-approval", "pr
 
 @dataclass(frozen=True)
 class PublicationEffect:
-    kind: Literal["write", "delete", "chmod"]
+    kind: Literal["write", "delete", "chmod", "reapply"]
     path: Path
     content: bytes | None = None
     mode: int | None = None
@@ -99,6 +99,7 @@ def materialize(
     render: Callable[[Observation, SyncBasePayload], SyncBasePayload] | None = None,
     merge: Callable[[Observation, SyncBasePayload], SyncBasePayload] | None = None,
     symlink_authorized: bool = False,
+    reapply_hooks: bool = False,
 ) -> Proposal:
     intent = intent or ("use-live" if observation.effective_policy == "pull-only" else "use-repository")
     repository = observation.repository
@@ -137,15 +138,20 @@ def materialize(
         or not isinstance(live, Missing) and live.content != observation.live.content
     )
     # Equal bytes can still hide drift when Capture reads state that push hooks
-    # apply from the live file (e.g. a settings dump). Rewriting the unchanged
-    # bytes publishes the outcome so those hooks reapply it. Mode drift has its
-    # own chmod effect, so only content counts here.
-    if (not content_changed and observation.effective_policy == "both" and capture is not None
-            and observation.comparison_repository != observation.comparison_live
+    # apply from the live file (e.g. a settings dump). Reapplying runs those hooks
+    # without rewriting the file; without hooks nothing could change what Capture
+    # reads. Mode drift has its own chmod effect, so only content counts here.
+    reapply = False
+    if (not content_changed and observation.effective_policy == "both" and reapply_hooks
+            and capture is not None and observation.comparison_repository != observation.comparison_live
             and isinstance(live, (FilePresent, DirectoryChildPresent))):
         if captured is None:
             captured = capture(observation)
-        content_changed = isinstance(captured, Missing) or captured.content != repository.content
+        reapply = isinstance(captured, Missing) or captured.content != repository.content
+    if reapply:
+        if path is None:
+            raise ValueError("Publication requires a live endpoint path")
+        effects.append(PublicationEffect("reapply", path))
     if content_changed:
         if path is None:
             raise ValueError("Publication requires a live endpoint path")
@@ -170,7 +176,7 @@ def materialize(
     if (
         effects and observation.live_is_symlink
         and observation.file_symlink_mode == "prompt"
-        and any(effect.kind != "delete" for effect in effects)
+        and any(effect.kind in ("write", "chmod") for effect in effects)
     ):
         if not symlink_authorized:
             raise SyncPathError("symlink-authorization-required", "Live symlink replacement requires explicit authorization")
@@ -1061,6 +1067,7 @@ class ProposalSession:
             proposal = materialize(
                 observation, intent=row.intent, capture=self._capture,
                 render=self._render, merge=self._merge, symlink_authorized=row.symlink_authorized,
+                reapply_hooks=self._reapplies(observation),
             )
             return self._finalize_proposal(observation, replace(
                 proposal, generation=self._next_generation(row.row_id), additional_changes=self._row_additional(row)))
@@ -1079,13 +1086,17 @@ class ProposalSession:
         proposal = materialize(
             replace(observation, repository=repository, comparison_repository=live),
             intent="use-repository", capture=self._capture, render=lambda *_: live,
-            symlink_authorized=row.symlink_authorized,
+            symlink_authorized=row.symlink_authorized, reapply_hooks=self._reapplies(observation),
         )
         return self._finalize_proposal(observation, replace(
             proposal, primary_source_change=repository if repository != observation.repository else None,
             intent="editor", generation=generation, reconciliation="edited repository outcome",
             additional_changes=self._row_additional(row),
         ))
+
+    def _reapplies(self, observation: Observation) -> bool:
+        return observation.effective_policy == "both" and activates_hooks(
+            self._publication_metadata, observation.identity, direction="push")
 
     def _editor_initial(self, row: SessionRow) -> SyncBasePayload:
         """The selected Resolution's repository outcome, which the Editor opens."""

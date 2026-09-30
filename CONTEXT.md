@@ -173,7 +173,7 @@ Sync's operation-wide live-destination stage. It follows successful Repository A
 _Avoid_: Push, Render
 
 **Publication Effect**:
-A frozen write, deletion, or mode change to one Sync Unit's live target, executed during Live Publication.
+A frozen write, deletion, mode change, or hook-only reapply to one Sync Unit's live target, executed during Live Publication. A reapply leaves the file untouched and only activates the unit's push hooks.
 _Avoid_: Live effect, Push
 
 **Command Runtime**:

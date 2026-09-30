@@ -1,3 +1,4 @@
+import re
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -152,14 +153,16 @@ def test_unavailable_base_store_warns_only_base_eligible_units(tmp_path, monkeyp
         assert row_resolution(rows["shared"]) == "In sync"
 
 
-def test_review_explains_republishing_unchanged_bytes_with_its_drift(tmp_path, monkeypatch):
+def test_review_explains_hook_reapply_with_its_drift(tmp_path, monkeypatch):
     applied = tmp_path / "applied"
     applied.write_bytes(b"user-set\n")
-    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"reset\n", b"reset\n", f'capture = "cat {applied}"')])
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"reset\n", b"reset\n",
+                                                  f'capture = "cat {applied}"\n[targets.unit.hooks]\npost_push = "true"')])
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
         command(session, SetApproval, session.view.rows[0].row_id, True)
         text = CommandDeck(session, use_color=False).review_text()
-        assert "Rewrites unchanged bytes: Capture differs, so push hooks reapply live state" in text
+        assert re.search(r"reapply \S+/live/unit \(push-hooks\)", text)
+        assert "Live file unchanged: Capture differs, so push hooks reapply live state" in text
         # The Pull View diff still explains the drift the unchanged bytes cannot show.
         assert ":: Drift" in text and "-reset" in text and "+user-set" in text
         assert "keeps appearing" not in text and "Nothing will be written" not in text

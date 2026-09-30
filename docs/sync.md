@@ -215,9 +215,11 @@ the workset.
 A both-policy outcome whose live bytes already match can still differ from Capture when
 Capture reads state that push hooks apply from the live file, such as a settings dump.
 When the Pull Views drift and Capture's content differs from the repository outcome, the
-Proposal rewrites the unchanged bytes so publication runs those hooks; review notes the rewrite
-in the live preview and keeps the Drift section's Pull View diff, without blaming the `compare`
-configuration.
+Proposal gets a `reapply` Publication Effect: it activates the unit's push hooks without
+rewriting or snapshotting the file. Review lists it as `reapply <path> (push-hooks)`, notes the
+unchanged live file, and keeps the Drift section's Pull View diff. A unit whose activation runs
+no push hook gets no reapply, since nothing could change what Capture reads; it stays a no-write
+Proposal.
 Changing Resolution Intent preserves Approval, discards the prior Proposal, and
 rematerializes approved work. Review exposes Capture and Reconciliation evidence
 separately from repository and live effects. The [CLI reference](cli.md#sync)

@@ -408,7 +408,7 @@ def test_editor_opens_the_selected_resolution_before_review(tmp_path, monkeypatc
         assert seen.read_bytes() == expected
 
 
-def test_use_repository_republishes_unchanged_bytes_when_capture_sees_other_live_state(tmp_path, monkeypatch):
+def test_use_repository_reapplies_hooks_without_rewriting_when_capture_sees_other_live_state(tmp_path, monkeypatch):
     # Like a settings dump: the live file is only what a push hook applies, and
     # Capture reads the applied state, so equal file bytes can hide real drift.
     applied = tmp_path / "applied"
@@ -417,14 +417,30 @@ def test_use_repository_republishes_unchanged_bytes_when_capture_sees_other_live
         ("unit", "both", b"reset\n", b"reset\n",
          f'capture = "cat {applied}"\n[targets.unit.hooks]\npost_push = "cp $DOTMAN_LIVE_PATH {applied}"'),
     ])
+    live = tmp_path / "live/unit"
+    inode = live.stat().st_ino
     with open_session(engine, preview=False) as session:
         row = session.view.rows[0]
         assert row.intent == "use-repository"
         command(session, SetApproval, row.row_id, True)
         proposal = session.view.rows[0].proposal
         assert proposal.capture == FilePresent(b"user-set\n")
-        assert [(effect.kind, effect.content) for effect in proposal.publication_effects] == [("write", b"reset\n")]
+        assert [(effect.kind, effect.path) for effect in proposal.publication_effects] == [("reapply", live)]
         assert session.execute().result.units[0].status == "converged"
+    # Reapplying runs hooks only: no rewrite and no snapshot of an unchanged file.
+    assert live.stat().st_ino == inode
+    assert not any(path.is_file() for path in tmp_path.rglob("snapshots/**/*"))
     assert applied.read_bytes() == b"reset\n"
     with open_session(engine) as session:
         assert not session.view.rows
+
+
+def test_capture_drift_without_push_hooks_writes_nothing(tmp_path, monkeypatch):
+    # Nothing could reapply the captured state, so promising a reapply would be false.
+    applied = tmp_path / "applied"
+    applied.write_bytes(b"user-set\n")
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"reset\n", b"reset\n", f'capture = "cat {applied}"')])
+    with open_session(engine, preview=False) as session:
+        command(session, SetApproval, "main:app.unit", True)
+        proposal = session.view.rows[0].proposal
+        assert proposal.primary_source_change is None and proposal.publication_effects == ()
