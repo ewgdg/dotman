@@ -166,3 +166,23 @@ def test_review_explains_hook_reapply_with_its_drift(tmp_path, monkeypatch):
         # The Pull View diff still explains the drift the unchanged bytes cannot show.
         assert ":: Drift" in text and "-reset" in text and "+user-set" in text
         assert "keeps appearing" not in text and "Nothing will be written" not in text
+
+
+def test_live_stat_counts_each_changed_target_once_including_modes_and_reapplies(tmp_path, monkeypatch):
+    applied = tmp_path / "applied"
+    applied.write_bytes(b"user-set\n")
+    engine = make_engine(tmp_path, monkeypatch, [
+        # A created file with a configured mode has both a write and a chmod effect.
+        ("created", "push-only", b"new\n", None, 'chmod = "600"'),
+        ("mode", "push-only", b"same\n", b"same\n", 'chmod = "600"'),
+        ("applied", "both", b"reset\n", b"reset\n",
+         f'capture = "cat {applied}"\n[targets.applied.hooks]\npost_push = "true"'),
+    ])
+    (tmp_path / "live/mode").chmod(0o644)
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        for row in session.view.rows:
+            command(session, SetApproval, row.row_id, True)
+        text = CommandDeck(session, use_color=False).confirmation_text()
+        assert "live: 3 (1 reapplied)" in text and "modes" not in text
+        summary = sync_document(SimpleNamespace(dry_run=True, scopes=[]), session, None)["summary"]
+        assert (summary["live_changes"], summary["live_reapplies"]) == (3, 1)

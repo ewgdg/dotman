@@ -164,7 +164,9 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   filters and reader searches keep separate histories for the session, and `↓` past
   the newest query restores the text typed before recalling.
   `X` opens one compact confirmation with selected units, repository changes,
-  live writes, and live deletions; cancelling returns without
+  and changed live targets, each counted once whether written, deleted,
+  mode-changed, or reapplied; deletions and reapplies are also shown in brackets
+  (`live: 3 (1 deleted, 1 reapplied)`). Cancelling returns without
   changing Approval, inclusion or focus. Real execution is offered only for valid,
   completed approved Proposals; confirming executes the already-reviewed set without
   further materialization. Review scroll position is retained per target; arrow keys, `j`/`k`,

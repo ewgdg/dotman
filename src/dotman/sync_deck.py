@@ -33,7 +33,7 @@ from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
 from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
-from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_resolution, resolution_label, summary_stats
+from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_resolution, resolution_label, live_counts, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SessionRow, SyncSession, conflict_diagnostic
 
 
@@ -398,11 +398,8 @@ class CommandDeck:
     def confirmation_text(self) -> str:
         selected = [row for row in self.session.view.rows if not isinstance(row, (AuxiliaryRow, AdditionalRow)) and row.approved]
         auxiliary_count = sum(row.included for row in self.session.view.rows if isinstance(row, AuxiliaryRow))
-        effects = [effect for row in selected if row.proposal
-                   for effect in row.proposal.publication_effects]
-        writes = sum(effect.kind == "write" for effect in effects)
-        deletions = sum(effect.kind == "delete" for effect in effects)
-        modes = sum(effect.kind == "chmod" for effect in effects)
+        live = live_counts([effect.kind for effect in row.proposal.publication_effects]
+                           for row in selected if row.proposal)
         repository_changes = sum(row.proposal.primary_source_change is not None for row in selected if row.proposal)
         additional_count = sum(row.approved for row in self.session.view.rows if isinstance(row, AdditionalRow))
         repository_changes += additional_count
@@ -410,7 +407,7 @@ class CommandDeck:
         stats = summary_stats(
             (("approved", len(selected)), ("additional", additional_count),
              ("auxiliary", auxiliary_count), ("repos", repository_changes)),
-            writes=writes, deletions=deletions, trailing=(("modes", modes),), use_color=self.use_color,
+            live=live, use_color=self.use_color,
         )
         return f":: {verb}? — {stats}"
 

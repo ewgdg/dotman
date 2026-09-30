@@ -368,7 +368,7 @@ class SyncDeckCommandRunner:
         summary = payload["summary"]
         stats = summary_stats(
             (("approved", summary["approved_units"]), ("repos", summary["repository_changes"])),
-            writes=summary["live_writes"], deletions=summary["live_deletions"],
+            live=summary,
             trailing=(("in-sync", summary["in_sync_units"]),) + ((("skipped", skipped_count),) if skipped_count else ()),
             use_color=self._use_color,
         )
@@ -453,14 +453,25 @@ def guard_skip_summaries(auxiliary) -> list[dict]:
     ]
 
 
-def summary_stats(leading, *, writes, deletions, trailing=(), use_color) -> str:
-    """Join counts as dimmed `label: n` stats; live writes and deletions share one `live` stat."""
-    live = render_summary_stat(label="live", value=writes + deletions, use_color=use_color)
-    # Deletions are destructive, so they stay visible inside the merged live count.
-    if deletions:
-        live += f" ({deletions} deleted)"
+def live_counts(unit_effect_kinds) -> dict[str, int]:
+    """Count live targets once each, however many effects (e.g. write plus chmod) they carry."""
+    units = [set(kinds) for kinds in unit_effect_kinds]
+    return {"live_changes": sum(bool(kinds) for kinds in units),
+            "live_deletions": sum("delete" in kinds for kinds in units),
+            "live_reapplies": sum("reapply" in kinds for kinds in units)}
+
+
+def summary_stats(leading, *, live, trailing=(), use_color) -> str:
+    """Join counts as dimmed `label: n` stats; every changed live target shares one `live` stat."""
+    stat = render_summary_stat(label="live", value=live["live_changes"], use_color=use_color)
+    # Deletions are destructive and reapplies may overwrite manual live state
+    # without a content diff, so both stay visible inside the merged live count.
+    notes = [f"{count} {label}" for count, label in (
+        (live["live_deletions"], "deleted"), (live["live_reapplies"], "reapplied")) if count]
+    if notes:
+        stat += f" ({', '.join(notes)})"
     stats = [render_summary_stat(label=label, value=value, use_color=use_color) for label, value in leading]
-    stats.append(live)
+    stats.append(stat)
     stats.extend(render_summary_stat(label=label, value=value, use_color=use_color) for label, value in trailing)
     return " · ".join(stats)
 
@@ -547,7 +558,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "repository_changes": sum(unit["primary_source_change"] is not None for unit in units if unit["selected"]) + sum(row.approved for row in additional),
             "approved_additional_sources": sum(row.approved for row in additional),
             "live_writes": sum(effect["kind"] == "write" for unit in units if unit["selected"] for effect in unit["effects"]),
-            "live_deletions": sum(effect["kind"] == "delete" for unit in units if unit["selected"] for effect in unit["effects"]),
+            **live_counts([effect["kind"] for effect in unit["effects"]] for unit in units if unit["selected"]),
             "diagnostics": ([diagnostic] if diagnostic else []) + [
                 {"code": item.code, "message": item.message, "severity": item.severity}
                 for item in result.diagnostics
