@@ -83,7 +83,6 @@ def make_package_plan(
     owner_identity: ResolvedPackageIdentity | None = None,
     hooks: dict | None = None,
     target_plans: list | None = None,
-    hook_plans: dict | None = None,
     repo_root: Path | None = None,
 ) -> PackagePlan:
     return PackagePlan(
@@ -100,7 +99,6 @@ def make_package_plan(
         ),
         hooks=hooks or {},
         target_plans=target_plans or [],
-        hook_plans=hook_plans,
         repo_root=repo_root,
     )
 
