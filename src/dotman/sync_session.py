@@ -136,6 +136,16 @@ def materialize(
         isinstance(live, Missing) != isinstance(observation.live, Missing)
         or not isinstance(live, Missing) and live.content != observation.live.content
     )
+    # Equal bytes can still hide drift when Capture reads state that push hooks
+    # apply from the live file (e.g. a settings dump). Rewriting the unchanged
+    # bytes publishes the outcome so those hooks reapply it. Mode drift has its
+    # own chmod effect, so only content counts here.
+    if (not content_changed and observation.effective_policy == "both" and capture is not None
+            and observation.comparison_repository != observation.comparison_live
+            and isinstance(live, (FilePresent, DirectoryChildPresent))):
+        if captured is None:
+            captured = capture(observation)
+        content_changed = isinstance(captured, Missing) or captured.content != repository.content
     if content_changed:
         if path is None:
             raise ValueError("Publication requires a live endpoint path")
@@ -1068,7 +1078,8 @@ class ProposalSession:
             live = observation.live
         proposal = materialize(
             replace(observation, repository=repository, comparison_repository=live),
-            intent="use-repository", render=lambda *_: live, symlink_authorized=row.symlink_authorized,
+            intent="use-repository", capture=self._capture, render=lambda *_: live,
+            symlink_authorized=row.symlink_authorized,
         )
         return self._finalize_proposal(observation, replace(
             proposal, primary_source_change=repository if repository != observation.repository else None,

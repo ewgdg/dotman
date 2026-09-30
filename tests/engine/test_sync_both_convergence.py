@@ -406,3 +406,25 @@ def test_editor_opens_the_selected_resolution_before_review(tmp_path, monkeypatc
         assert session.view.rows[0].proposal is None
         command(session, EditProposal, "main:app.unit")
         assert seen.read_bytes() == expected
+
+
+def test_use_repository_republishes_unchanged_bytes_when_capture_sees_other_live_state(tmp_path, monkeypatch):
+    # Like a settings dump: the live file is only what a push hook applies, and
+    # Capture reads the applied state, so equal file bytes can hide real drift.
+    applied = tmp_path / "applied"
+    applied.write_bytes(b"user-set\n")
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("unit", "both", b"reset\n", b"reset\n",
+         f'capture = "cat {applied}"\n[targets.unit.hooks]\npost_push = "cp $DOTMAN_LIVE_PATH {applied}"'),
+    ])
+    with open_session(engine, preview=False) as session:
+        row = session.view.rows[0]
+        assert row.intent == "use-repository"
+        command(session, SetApproval, row.row_id, True)
+        proposal = session.view.rows[0].proposal
+        assert proposal.capture == FilePresent(b"user-set\n")
+        assert [(effect.kind, effect.content) for effect in proposal.publication_effects] == [("write", b"reset\n")]
+        assert session.execute().result.units[0].status == "converged"
+    assert applied.read_bytes() == b"reset\n"
+    with open_session(engine) as session:
+        assert not session.view.rows

@@ -5,7 +5,8 @@ from dotman.cli_style import render_sync_term
 from dotman.sync_base_store import FilePresent, SyncBaseRecord
 from dotman.sync_deck import CommandDeck, row_resolution
 from dotman.sync_deck_command import sync_document
-from dotman.sync_session import AuxiliaryRow, SyncSession
+from dotman.sync_session import AuxiliaryRow, SetApproval, SyncSession
+from tests.engine.test_sync_convergence import command
 from tests.engine.test_sync_session import make_engine
 
 
@@ -149,3 +150,14 @@ def test_unavailable_base_store_warns_only_base_eligible_units(tmp_path, monkeyp
         assert set(rows) == {"shared"}
         assert any(item.code == "base-unavailable" for item in rows["shared"].observation.diagnostics)
         assert row_resolution(rows["shared"]) == "In sync"
+
+
+def test_review_explains_republishing_unchanged_bytes_instead_of_drift(tmp_path, monkeypatch):
+    applied = tmp_path / "applied"
+    applied.write_bytes(b"user-set\n")
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"reset\n", b"reset\n", f'capture = "cat {applied}"')])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        command(session, SetApproval, session.view.rows[0].row_id, True)
+        text = CommandDeck(session, use_color=False).review_text()
+        assert "Rewrites unchanged bytes: Capture differs, so push hooks reapply live state" in text
+        assert ":: Drift" not in text and "keeps appearing" not in text

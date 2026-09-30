@@ -554,7 +554,11 @@ class CommandDeck:
             if repository_effect:
                 sections.append(effect_preview("repository", observation.repository, proposal.repository, notes))
             if not pull_only:
-                sections.append(effect_preview("live", observation.live, proposal.live))
+                republish = proposal.live == observation.live and any(
+                    effect.kind == "write" for effect in proposal.publication_effects)
+                notes = (ReviewNote("Rewrites unchanged bytes: Capture differs, so push hooks reapply live state"),
+                         ) if republish else ()
+                sections.append(effect_preview("live", observation.live, proposal.live, notes))
         # Drift explains a drifted row only when no outcome preview shows a change,
         # e.g. Capture reproduces the repository while the compared copies differ.
         writes_nothing = proposal is None or (
@@ -563,8 +567,8 @@ class CommandDeck:
                 and observation.state == "drifted" and writes_nothing):
             drift = [
                 ReviewNote(NOOP_NOTICE if proposal.noop else "Nothing will be written; Approval records the Sync Base"),
-                # No write means Capture already reproduces the repository, so only the
-                # compare projection sees drift; that is a configuration mismatch.
+                # A Capture differing from the outcome forces a write (see materialize), so
+                # no write means only the compare projection sees drift: a configuration mismatch.
                 ReviewNote("compare does not match Capture, so this unit keeps appearing; align them to stop it"),
             ] if proposal else []
             drift += [ReviewFact("Repository comparison", observation.compare_repo),

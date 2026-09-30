@@ -212,6 +212,11 @@ repository-effect and publication previews. When a drifted unit writes nothing,
 for example because Capture returns the unchanged repository representation, it
 adds a Drift section with the Pull View diff that explains the drifted state. Returning preserves
 the workset.
+A both-policy outcome whose live bytes already match can still differ from Capture when
+Capture reads state that push hooks apply from the live file, such as a settings dump.
+When the Pull Views drift and Capture's content differs from the repository outcome, the
+Proposal rewrites the unchanged bytes so publication runs those hooks; review notes the rewrite
+in the live preview instead of blaming the `compare` configuration.
 Changing Resolution Intent preserves Approval, discards the prior Proposal, and
 rematerializes approved work. Review exposes Capture and Reconciliation evidence
 separately from repository and live effects. The [CLI reference](cli.md#sync)
