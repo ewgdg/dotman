@@ -529,6 +529,10 @@ class CommandDeck:
                 conflict_excerpt(conflict.content, description="merge output", full_context=full_context),
             )))
 
+        # Capture differs while the live bytes already match, so publication
+        # rewrites them for push hooks to reapply (see materialize).
+        republish = proposal is not None and proposal.live == observation.live and any(
+            effect.kind == "write" for effect in proposal.publication_effects)
         if proposal is not None:
             effects = []
             for effect in proposal.publication_effects:
@@ -554,23 +558,22 @@ class CommandDeck:
             if repository_effect:
                 sections.append(effect_preview("repository", observation.repository, proposal.repository, notes))
             if not pull_only:
-                republish = proposal.live == observation.live and any(
-                    effect.kind == "write" for effect in proposal.publication_effects)
                 notes = (ReviewNote("Rewrites unchanged bytes: Capture differs, so push hooks reapply live state"),
                          ) if republish else ()
                 sections.append(effect_preview("live", observation.live, proposal.live, notes))
         # Drift explains a drifted row only when no outcome preview shows a change,
-        # e.g. Capture reproduces the repository while the compared copies differ.
+        # e.g. Capture reproduces the repository while the compared copies differ,
+        # or a republish whose rewritten bytes equal live.
         writes_nothing = proposal is None or (
             proposal.primary_source_change is None and not proposal.publication_effects)
         if (observation.effective_policy in ("both", "pull-only")
-                and observation.state == "drifted" and writes_nothing):
+                and observation.state == "drifted" and (writes_nothing or republish)):
             drift = [
                 ReviewNote(NOOP_NOTICE if proposal.noop else "Nothing will be written; Approval records the Sync Base"),
                 # A Capture differing from the outcome forces a write (see materialize), so
                 # no write means only the compare projection sees drift: a configuration mismatch.
                 ReviewNote("compare does not match Capture, so this unit keeps appearing; align them to stop it"),
-            ] if proposal else []
+            ] if proposal and writes_nothing else []
             drift += [ReviewFact("Repository comparison", observation.compare_repo),
                       ReviewFact("Live comparison", observation.compare_live)]
             drift.extend(difference(

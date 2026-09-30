@@ -216,7 +216,8 @@ A both-policy outcome whose live bytes already match can still differ from Captu
 Capture reads state that push hooks apply from the live file, such as a settings dump.
 When the Pull Views drift and Capture's content differs from the repository outcome, the
 Proposal rewrites the unchanged bytes so publication runs those hooks; review notes the rewrite
-in the live preview instead of blaming the `compare` configuration.
+in the live preview and keeps the Drift section's Pull View diff, without blaming the `compare`
+configuration.
 Changing Resolution Intent preserves Approval, discards the prior Proposal, and
 rematerializes approved work. Review exposes Capture and Reconciliation evidence
 separately from repository and live effects. The [CLI reference](cli.md#sync)
