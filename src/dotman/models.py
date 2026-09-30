@@ -428,8 +428,9 @@ class HookPlan:
     scope_kind: str = "package"
     io: HookCommandIO = "pipe"
     elevation: ElevationMode = "none"
-    env: dict[str, str] | None = field(default=None, repr=False)
     run_noop: bool = False
+    # Planning owns the full hook env; required so a missing env fails at construction.
+    env: dict[str, str] = field(kw_only=True, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -847,13 +848,10 @@ class TargetPlan:
 class PackagePlan:
     operation: str
     selection: ResolvedPackageSelection
-    variables: dict[str, Any]
     hooks: dict[str, list[HookPlan]]
     target_plans: list[TargetPlan]
     hook_plans: dict[str, list[HookPlan]] | None = field(default=None, repr=False)
     repo_root: Path | None = None
-    state_path: Path | None = None
-    inferred_os: str | None = None
 
     @property
     def repo_name(self) -> str:

@@ -101,6 +101,7 @@ def test_nested_scope_order_and_snapshot_after_pre_hooks(tmp_path, monkeypatch):
     def hook(scope, phase, target=None):
         label = target or scope
         return HookPlan(
+            env={},
             hook_name=f"{phase}_push",
             command=f"printf '{phase}:{label}\\n' >> {log}",
             cwd=tmp_path, repo_name="main",

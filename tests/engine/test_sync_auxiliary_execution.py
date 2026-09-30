@@ -17,6 +17,7 @@ def test_auxiliary_nested_hooks_without_payload(tmp_path, monkeypatch, operation
     def hook(scope, phase, noop):
         label = f"{phase}:{scope}:{noop}"
         return HookPlan(
+            env={},
             hook_name=f"{phase}_{operation}", command=f"echo {label} >> {log}",
             cwd=tmp_path, repo_name="main", scope_kind=scope,
             package_id="app" if scope != "repo" else None,
@@ -55,7 +56,7 @@ def test_hook_only_empty_package_scope(tmp_path, monkeypatch, operation, scope):
     metadata, _ = prepare(tmp_path, monkeypatch, [("first", "both", b"repo", b"live", "")])
     log = tmp_path / "order"
     def hook(kind, name, noop=True):
-        return HookPlan(hook_name=name, command=f"echo {kind}:{name} >> {log}",
+        return HookPlan(env={}, hook_name=name, command=f"echo {kind}:{name} >> {log}",
             cwd=tmp_path, repo_name="main", package_id="app" if kind == "package" else None,
             scope_kind=kind, run_noop=noop)
     metadata = replace(metadata,
@@ -87,7 +88,7 @@ def test_probe_coalesces_with_file_work_and_snapshot_excludes_probe(tmp_path, mo
     probe = replace(package.target_plans[1], target_kind="probe",
                     live_path=tmp_path / "nonexistent-probe", repo_path=tmp_path / "nonexistent-source")
     log = tmp_path / "order"
-    hook = HookPlan(hook_name=f"pre_{operation}", command=f"echo repo >> {log}",
+    hook = HookPlan(env={}, hook_name=f"pre_{operation}", command=f"echo repo >> {log}",
                     cwd=tmp_path, repo_name="main", scope_kind="repo")
     metadata = replace(metadata, packages=(replace(package, target_plans=[package.target_plans[0], probe]),),
                        repo_hooks=(("main", (hook,)),))

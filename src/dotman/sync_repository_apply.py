@@ -57,9 +57,8 @@ def prepare_repository_apply(
         # Guards already narrowed capability during Observation and never rerun.
         hooks = {name: values for name, values in hooks.items() if not name.startswith("guard_")}
         packages.append(PackagePlan(
-            operation="pull", selection=item.selection, variables=dict(context.variables),
+            operation="pull", selection=item.selection,
             hooks=hooks, target_plans=targets, repo_root=item.repo.root,
-            state_path=item.repo.config.state_path, inferred_os=context.inferred_os,
         ))
         if item.repo.config.name not in repos:
             repos[item.repo.config.name] = tuple(

@@ -32,7 +32,7 @@ def test_frozen_repository_only_and_completion(tmp_path, monkeypatch):
 def test_no_write_stays_ordered_and_does_not_activate_hooks(tmp_path, monkeypatch):
     metadata, units = prepare(tmp_path, monkeypatch, ["first", "second"])
     marker = tmp_path / "hook"
-    hook = HookPlan(hook_name="pre_pull", command=f"touch {marker}", cwd=tmp_path,
+    hook = HookPlan(env={}, hook_name="pre_pull", command=f"touch {marker}", cwd=tmp_path,
                     repo_name="main", scope_kind="repo")
     metadata = replace(metadata, repo_hooks=(("main", (hook,)),))
     completed = []
@@ -52,7 +52,7 @@ def test_failure_preserves_prior_completion_and_skips_remaining(tmp_path, monkey
             raise RuntimeError("ack failed")
         completed.append(unit.row_id)
     if failure == "post_hook":
-        hook = HookPlan(hook_name="post_pull", command="exit 7", cwd=tmp_path,
+        hook = HookPlan(env={}, hook_name="post_pull", command="exit 7", cwd=tmp_path,
                         repo_name="main", package_id="app", scope_kind="target", target_name="second")
         metadata = replace(metadata, packages=(replace(metadata.packages[0], hooks={"post_pull": [hook]}),))
     if failure == "write":
@@ -70,7 +70,7 @@ def test_delete_and_nested_hooks_ack_before_post(tmp_path, monkeypatch):
     metadata, units = prepare(tmp_path, monkeypatch, ["first"])
     log = tmp_path / "order"
     def hook(scope, phase):
-        return HookPlan(hook_name=f"{phase}_pull", command=f"echo {phase}:{scope} >> {log}",
+        return HookPlan(env={}, hook_name=f"{phase}_pull", command=f"echo {phase}:{scope} >> {log}",
                         cwd=tmp_path, repo_name="main", scope_kind=scope,
                         package_id="app" if scope != "repo" else None,
                         target_name="first" if scope == "target" else None)

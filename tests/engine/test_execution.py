@@ -32,41 +32,17 @@ def _run_hook_step(
 
 
 @pytest.mark.parametrize(("unattended", "expected_value"), [(False, "0"), (True, "1")])
-def test_hook_step_env_carries_package_context_and_unattended_policy(
-    tmp_path: Path, unattended: bool, expected_value: str,
-) -> None:
-    package_hook = _hook_step(
-        HookPlan(package_id="app", hook_name="pre_push", command="echo package", cwd=Path("/repo/app")),
-        variables={"feature": {"flag": "on"}},
-        repo_root=tmp_path / "repo",
-        state_path=tmp_path / "state",
-        inferred_os="linux",
-    )
-    explicit_env_hook = _hook_step(HookPlan(
-        repo_name="fixture", scope_kind="repo", hook_name="pre_push", command="echo repo", cwd=Path("/repo"),
-        env={"DOTMAN_REPO_NAME": "fixture", "EXISTING_REPO_ENV": "repo"},
+def test_hook_step_env_is_planned_env_plus_unattended_policy(unattended: bool, expected_value: str) -> None:
+    planned_env = {"DOTMAN_REPO_NAME": "fixture", "DOTMAN_OS": "linux", "DOTMAN_VAR_feature__flag": "on"}
+    step = _hook_step(HookPlan(
+        package_id="app", hook_name="pre_push", command="echo package", cwd=Path("/repo/app"), env=planned_env,
     ))
-    runtime = MemoryCommandRuntime([CommandResult(exit_code=0)] * 2)
+    runtime = MemoryCommandRuntime([CommandResult(exit_code=0)])
 
-    for step in (package_hook, explicit_env_hook):
-        assert _run_hook_step(step, runtime, unattended=unattended).status == "ok"
+    assert _run_hook_step(step, runtime, unattended=unattended).status == "ok"
 
-    envs = {request.command.source: dict(request.env) for request in runtime.requests}
-    assert envs["echo package"] == {
-        "DOTMAN_REPO_NAME": "fixture",
-        "DOTMAN_PACKAGE_ID": "app",
-        "DOTMAN_PROFILE": "default",
-        "DOTMAN_OPERATION": "push",
-        "DOTMAN_REPO_ROOT": str(tmp_path / "repo"),
-        "DOTMAN_STATE_PATH": str(tmp_path / "state"),
-        "DOTMAN_PACKAGE_ROOT": "/repo/app",
-        "DOTMAN_OS": "linux",
-        "DOTMAN_VAR_feature__flag": "on",
-        "DOTMAN_UNATTENDED": expected_value,
-    }
-    assert envs["echo repo"] == {
-        "DOTMAN_REPO_NAME": "fixture", "EXISTING_REPO_ENV": "repo", "DOTMAN_UNATTENDED": expected_value,
-    }
+    request, = runtime.requests
+    assert dict(request.env) == {**planned_env, "DOTMAN_UNATTENDED": expected_value}
 
 
 @pytest.mark.parametrize("interactive", [False, True])
@@ -96,7 +72,7 @@ def test_tty_hook_step_fails_without_terminal(monkeypatch) -> None:
     for stream in ("stdin", "stdout", "stderr"):
         monkeypatch.setattr(f"sys.{stream}.isatty", lambda: False)
     runtime = MemoryCommandRuntime()
-    step = _hook_step(HookPlan(package_id="app", hook_name="pre_push", command="echo tty", cwd=Path("/repo/app"), io="tty"))
+    step = _hook_step(HookPlan(env={}, package_id="app", hook_name="pre_push", command="echo tty", cwd=Path("/repo/app"), io="tty"))
 
     result = _run_hook_step(step, runtime)
 
@@ -107,7 +83,7 @@ def test_tty_hook_step_fails_without_terminal(monkeypatch) -> None:
 
 def test_hook_step_marks_command_exit_130_as_interrupted() -> None:
     runtime = MemoryCommandRuntime([CommandResult(exit_code=130)])
-    step = _hook_step(HookPlan(package_id="app", hook_name="pre_push", command="python hook.py", cwd=Path("/repo/app")))
+    step = _hook_step(HookPlan(env={}, package_id="app", hook_name="pre_push", command="python hook.py", cwd=Path("/repo/app")))
 
     result = _run_hook_step(step, runtime)
 

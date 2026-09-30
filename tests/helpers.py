@@ -81,13 +81,10 @@ def make_package_plan(
     source_kind: str = "selector_query",
     source_selector: str | None = None,
     owner_identity: ResolvedPackageIdentity | None = None,
-    variables: dict | None = None,
     hooks: dict | None = None,
     target_plans: list | None = None,
     hook_plans: dict | None = None,
     repo_root: Path | None = None,
-    state_path: Path | None = None,
-    inferred_os: str | None = None,
 ) -> PackagePlan:
     return PackagePlan(
         operation=operation,
@@ -101,13 +98,10 @@ def make_package_plan(
             source_selector=source_selector,
             owner_identity=owner_identity,
         ),
-        variables=variables or {},
         hooks=hooks or {},
         target_plans=target_plans or [],
         hook_plans=hook_plans,
         repo_root=repo_root,
-        state_path=state_path,
-        inferred_os=inferred_os,
     )
 
 

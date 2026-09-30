@@ -216,38 +216,7 @@ def _require_interactive_terminal(*, setting_name: str) -> None:
 
 
 def _build_hook_env(step: ExecutionStep, *, unattended: bool) -> dict[str, str]:
-    hook_plan = step.hook_plan
-    if hook_plan is not None and hook_plan.env is not None:
-        env = dict(hook_plan.env)
-    else:
-        env = {}
-        plan = step.package_plan
-        if plan is not None:
-            env.setdefault("DOTMAN_REPO_NAME", plan.repo_name)
-            if step.package_id is not None:
-                env.setdefault("DOTMAN_PACKAGE_ID", step.package_id)
-            env.setdefault("DOTMAN_PROFILE", plan.requested_profile)
-            env.setdefault("DOTMAN_OPERATION", plan.operation)
-            if plan.repo_root is not None:
-                env.setdefault("DOTMAN_REPO_ROOT", str(plan.repo_root))
-            if plan.state_path is not None:
-                env.setdefault("DOTMAN_STATE_PATH", str(plan.state_path))
-            if hook_plan is not None:
-                env.setdefault("DOTMAN_PACKAGE_ROOT", str(hook_plan.cwd))
-            if plan.inferred_os is not None:
-                env.setdefault("DOTMAN_OS", plan.inferred_os)
-            for key, value in plan.variables.items():
-                _flatten_vars(env, prefix=f"DOTMAN_VAR_{key}", value=value)
-    env["DOTMAN_UNATTENDED"] = "1" if unattended else "0"
-    return env
-
-
-def _flatten_vars(output: dict[str, str], *, prefix: str, value: object) -> None:
-    if isinstance(value, dict):
-        for nested_key, nested_value in value.items():
-            _flatten_vars(output, prefix=f"{prefix}__{nested_key}", value=nested_value)
-        return
-    output[prefix] = str(value)
+    return {**step.hook_plan.env, "DOTMAN_UNATTENDED": "1" if unattended else "0"}
 
 
 __all__ = [
