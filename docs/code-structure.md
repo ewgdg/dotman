@@ -87,7 +87,6 @@ Current responsibility split:
 - `sync_auxiliary.py` — immutable Probe/hook rows, one-shot Probe activity and Guard-admitted directional hook retention
 - `operation_lock.py` — manager-wide non-blocking real-operation ownership shared by sessions and Push/Pull command workflows
 - `sync_base_lifecycle.py` — configured-policy Base eligibility, applicability inspection, and per-unit checkpoint acknowledgment/deletion decisions
-- `migrations/sync_base_drop_fingerprint.py` — one-off epoch-1 → epoch-2 Sync Base record rewrite, kept outside runtime reads
 - `sync_base_inspection.py` — metadata-only list/info, exact manager-locked reset, and aggregate doctor diagnostics using shared static resolution and Base applicability
 - `sync_base_store.py` — secure per-repository file storage with self-contained Sync Base records and atomic per-unit replacement
 

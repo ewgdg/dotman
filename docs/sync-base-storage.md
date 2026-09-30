@@ -33,11 +33,6 @@ null content, content digest, size, and executable fields. Exact canonical
 encoding, identity binding, record shape, and both integrity checks are validated
 before use.
 
-Epoch `1` records also carried an interpretation fingerprint and are rejected as
-corrupt. Rewrite them once, with no Push, Pull, or Sync running:
-`python -m dotman.migrations.sync_base_drop_fingerprint [manager-state-root]`.
-It rewrites only intact epoch-1 records and keeps payloads unchanged.
-
 Metadata and payload are replaced together using a private temporary file and
 atomic replacement in the same directory. A failure before replacement leaves
 the previous authoritative record intact. Rename is the logical commit boundary:
