@@ -578,3 +578,13 @@ def initialize_git_repository(repo_root: Path) -> None:
             CommandRequest(ArgvCommand(("git", *arguments)), cwd=repo_root)
         )
         assert result.exit_code == 0, result.stderr
+
+
+def resolved_child_metadata(engine, child_path: str):
+    """Effective projection settings for one child of the scope's only directory target."""
+    from dotman.sync_directory import child_metadata
+    from dotman.sync_observation import _resolve_inputs
+
+    inputs, _ = _resolve_inputs(engine._planning_context, engine.resolve_sync_scope())
+    (directory,) = [metadata for _item, metadata in inputs.values() if metadata.target.target_type == "directory"]
+    return child_metadata(directory, child_path)

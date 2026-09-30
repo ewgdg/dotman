@@ -4,6 +4,7 @@ from dotman.engine import DotmanEngine
 from dotman.sync_base_store import DirectoryChildPresent, Missing
 from dotman.sync_session import SyncSession
 from tests.engine.test_sync_session import make_engine
+from tests.helpers import resolved_child_metadata
 
 
 def directory_engine(tmp_path, monkeypatch, *, extra='', policy='both', inferred=False):
@@ -133,9 +134,8 @@ guard_pull = "echo rule-pull >> {log}"
             assert unit.repository == Missing()
             assert unit.configured_policy == 'both'
             assert unit.effective_policy == 'pull-only'
-            assert unit.inputs.render == 'printf rendered'
-            assert unit.inputs.capture == 'printf captured'
-            assert unit.inputs.path_rules == ('incoming',)
+            resolved = resolved_child_metadata(engine, name)
+            assert (resolved.render_command, resolved.capture_command) == ('printf rendered', 'printf captured')
             assert (unit.compare_repo, unit.compare_live, unit.chmod) == ('render', 'raw', '0700')
         assert units['outgoing'].effective_policy == 'push-only'
         assert log.read_text().splitlines() == ['target-push', 'target-pull', 'rule-push', 'rule-pull']
@@ -223,7 +223,6 @@ def test_live_directory_links_keep_lexical_identity_and_failures_local(tmp_path,
         assert set(units) == {'good', 'link/child'}
         assert units['link/child'].live == DirectoryChildPresent(b'live', False)
         assert units['link/child'].live_path == live / 'link/child'
-        assert units['link/child'].inputs.dir_symlink_mode == 'follow'
 
 
 def test_inferred_directory_and_root_marker_do_not_become_payloads(tmp_path, monkeypatch):

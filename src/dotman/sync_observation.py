@@ -13,13 +13,11 @@ from dotman.sync_path_policy import SyncPathError
 from dotman import planning, projection
 from dotman.file_access import read_bytes
 from dotman.manifest import resolve_sync_policy, sync_policy_allows_operation
-from dotman.models import GuardSkip, ResolvedSyncScope, ResolvedSyncTarget, target_path_rule_matches
+from dotman.models import GuardSkip, ResolvedSyncScope, ResolvedSyncTarget
 from dotman.planning_guards import evaluate_directional_guards, evaluate_directory_path_rule_guards
 from dotman.progress import ProgressSink
 from dotman.sync_directory import census_directory, child_metadata
 from dotman.sync_base_lifecycle import (
-    BaseInputs,
-    BaseProfileContext,
     BaseUnit,
     FrozenBaseUnit,
     SyncBaseLifecycle,
@@ -62,7 +60,7 @@ class Observation:
     state: ObservationState
     configured_policy: str
     effective_policy: str
-    inputs: BaseInputs
+    file_symlink_mode: Literal["prompt", "follow"]
     compare_repo: str
     compare_live: str
     base: BaseEvidence
@@ -190,26 +188,8 @@ def _resolve_inputs(
     return ordered, directional
 
 
-def _base_unit(
-    context: planning.PlanningContext,
-    identity: ResolvedSyncTarget,
-    item: planning.PackagePlanningInput,
-    metadata: projection.TargetMetadata,
-) -> BaseUnit:
-    return BaseUnit(
-        identity,
-        metadata.repo_path.relative_to(item.repo.root).as_posix(),
-        resolve_sync_policy(package=metadata.package, target=metadata.target),
-        BaseInputs(
-            render=metadata.render_command or "raw",
-            capture=metadata.capture_command or "raw",
-            path_rules=tuple(rule.name for rule in metadata.path_rules
-                             if identity.child_path is not None and target_path_rule_matches(identity.child_path, rule.pattern)),
-            profile_context=BaseProfileContext(item.package_context.context),
-            file_symlink_mode=context.config.file_symlink_mode,
-            dir_symlink_mode=context.config.dir_symlink_mode,
-        ),
-    )
+def _base_unit(identity: ResolvedSyncTarget, metadata: projection.TargetMetadata) -> BaseUnit:
+    return BaseUnit(identity, resolve_sync_policy(package=metadata.package, target=metadata.target))
 
 
 def _observe_file(
@@ -226,7 +206,7 @@ def _observe_file(
         "observation-failed",
         unit.configured_policy,
         effective,
-        unit.inputs,
+        context.config.file_symlink_mode,
         metadata.compare_repo,
         metadata.compare_live,
         base,
@@ -358,7 +338,7 @@ def _discard_ineligible_bases(
     with ExitStack() as resources:
         stores = {}
         for identity, (item, metadata) in inputs.items():
-            unit = _base_unit(context, identity, item, metadata)
+            unit = _base_unit(identity, metadata)
             # Absent storage holds nothing to discard; do not create it.
             if unit.eligible or identity.repo not in stores and not _base_store_exists(context, item):
                 continue
@@ -474,7 +454,7 @@ def observe_scope(
         for relative, (child_identity, child, failures) in children.items():
             child_topology[child_identity] = (census.blockers(relative, repository=True), census.blockers(relative, repository=False), tuple(path for path, failures in census.entries if not failures))
             expanded_inputs[child_identity] = (item, child)
-            unit = _base_unit(context, child_identity, item, child)
+            unit = _base_unit(child_identity, child)
             child_policies[child_identity] = _effective_policy(unit.configured_policy, relative in child_admitted["push"], relative in child_admitted["pull"])
             child_failures[child_identity] = failures
 
@@ -488,7 +468,7 @@ def observe_scope(
             )) != "no-route"
         }
     units = {
-        identity: _base_unit(context, identity, item, metadata)
+        identity: _base_unit(identity, metadata)
         for identity, (item, metadata) in inputs.items()
     }
     if sink is not None:
@@ -536,7 +516,7 @@ def observe_scope(
             )
             if lifecycle is not None:
                 try:
-                    inspection = lifecycle.maintain(unit)
+                    inspection = lifecycle.inspect(unit)
                     base = replace(
                         base, status=inspection.status, reason=inspection.reason,
                         record=inspection.record,
@@ -548,7 +528,7 @@ def observe_scope(
             if child_failures.get(identity):
                 observation = Observation(
                     identity, "observation-failed", unit.configured_policy, effective,
-                    unit.inputs, metadata.compare_repo, metadata.compare_live, base,
+                    context.config.file_symlink_mode, metadata.compare_repo, metadata.compare_live, base,
                     chmod=metadata.chmod, repository_path=metadata.repo_path, live_path=metadata.live_path,
                     diagnostics=tuple(Diagnostic(failure.code, failure.message) for failure in child_failures[identity]),
                 )

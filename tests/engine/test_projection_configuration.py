@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
 from dotman.engine import DotmanEngine
-from tests.helpers import initialize_git_repository, write_single_repo_config, write_tracked_packages_state
+from tests.helpers import initialize_git_repository, resolved_child_metadata, write_single_repo_config, write_tracked_packages_state
 
 def repo(tmp_path, target_lines, directory=False):
     root=tmp_path/"repo"; (root/"packages"/"app"/"files").mkdir(parents=True); (root/"profiles").mkdir()
@@ -77,8 +77,8 @@ def test_matching_path_rules_compose_each_field_without_resetting_lower_priority
     e = tracked_engine(tmp_path, root)
     with e.open_push_session(e.resolve_sync_scope(), preview=True) as session:
         child, = session.view.observations
-    assert child.inputs.path_rules == ("base", "high")
-    assert (child.inputs.render, child.inputs.capture) == ("jinja", "printf captured")
+    resolved = resolved_child_metadata(e, child.identity.child_path)
+    assert (resolved.render_command, resolved.capture_command) == ("jinja", "printf captured")
     assert (child.compare_repo, child.compare_live) == ("render", "raw")
 
 

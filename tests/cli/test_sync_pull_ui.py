@@ -85,7 +85,7 @@ def test_mixed_cli_reports_repository_and_live_effects(tmp_path, monkeypatch, ca
     }
     assert pull["effects"] == []
     assert pull["base"] == {
-        "status": "unavailable", "fingerprint": None,
+        "status": "unavailable",
         "qualified": True, "acknowledged": not dry_run,
     }
     assert push["base"]["acknowledged"] is False

@@ -19,7 +19,7 @@ from typing import Final, Self, TypeAlias
 
 from dotman.config import validate_state_key
 
-STORE_EPOCH: Final = 1
+STORE_EPOCH: Final = 2
 RECORD_FILE_PREFIX: Final = "sync-base-"
 LOCK_FILE_NAME: Final = "sync-bases.lock"
 _PRIVATE_DIRECTORY_MODE: Final = 0o700
@@ -107,30 +107,14 @@ SyncBasePayload: TypeAlias = Missing | FilePresent | DirectoryChildPresent
 
 
 @dataclass(frozen=True)
-class SyncBaseEnvelope:
-    fingerprint: str
-
-    def __post_init__(self) -> None:
-        if (
-            type(self.fingerprint) is not str
-            or re.fullmatch(r"[0-9a-f]{64}", self.fingerprint) is None
-        ):
-            raise ValueError("invalid effective-input fingerprint")
-
-
-@dataclass(frozen=True)
 class SyncBaseRecord:
     identity: bytes
     payload: SyncBasePayload
-    envelope: SyncBaseEnvelope
 
     def __post_init__(self) -> None:
         _require_bytes(
             self.identity, field_name="canonical identity", allow_empty=False
         )
-        if type(self.envelope) is not SyncBaseEnvelope:
-            raise TypeError("Sync Base envelope must be a SyncBaseEnvelope")
-        SyncBaseEnvelope(self.envelope.fingerprint)
         if type(self.payload) not in (Missing, FilePresent, DirectoryChildPresent):
             raise TypeError("Sync Base payload must have an exact supported type")
         if type(self.payload) is FilePresent:
@@ -405,7 +389,6 @@ def _encode(record: SyncBaseRecord) -> bytes:
     body = {
         "epoch": STORE_EPOCH,
         "identity": base64.b64encode(record.identity).decode("ascii"),
-        "fingerprint": record.envelope.fingerprint,
         "shape": "missing"
         if isinstance(payload, Missing)
         else "file"
@@ -436,7 +419,6 @@ def _decode(
         if type(body) is not dict or set(body) != {
             "epoch",
             "identity",
-            "fingerprint",
             "shape",
             "content",
             "executable",
@@ -457,7 +439,6 @@ def _decode(
             or (expected_identity is not None and identity != expected_identity)
         ):
             raise ValueError("record identity mismatch")
-        envelope = SyncBaseEnvelope(body["fingerprint"])
         shape = body["shape"]
         if shape == "missing":
             if any(
@@ -498,7 +479,7 @@ def _decode(
                 if shape == "file"
                 else DirectoryChildPresent(raw, body["executable"])
             )
-        result = SyncBaseRecord(identity, payload, envelope)
+        result = SyncBaseRecord(identity, payload)
         # A single canonical representation rejects duplicate fields and ambiguous encodings.
         if _encode(result) != content:
             raise ValueError("noncanonical record encoding")
@@ -705,7 +686,7 @@ class SyncBaseStore:
                 try:
                     record = self._read_name(name)
                 except SyncBaseRecordCorruptionError:
-                    # A broken envelope may have no recoverable identity. Count the
+                    # A broken record may have no recoverable identity. Count the
                     # self-contained file rather than trusting corrupted metadata.
                     corrupt_count += 1
                     continue
@@ -726,7 +707,7 @@ class SyncBaseStore:
     def replace(self, record: SyncBaseRecord) -> None:
         if type(record) is not SyncBaseRecord:
             raise TypeError("record must be a SyncBaseRecord")
-        record = SyncBaseRecord(record.identity, record.payload, record.envelope)
+        record = SyncBaseRecord(record.identity, record.payload)
         content = _encode(record)
         name = _record_name(record.identity)
         with self._write_transaction():

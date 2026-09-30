@@ -4,17 +4,15 @@ import pytest
 
 from dotman.models import ResolvedSyncTarget
 from dotman.sync_base_lifecycle import (
-    BaseInputs, BaseProfileContext, BaseUnit, FrozenBaseUnit,
-    ProposalCompletion, SyncBaseLifecycle,
+    BaseUnit, FrozenBaseUnit, ProposalCompletion, SyncBaseLifecycle,
 )
 from dotman.sync_base_store import (
     DirectoryChildPresent, FilePresent, Missing, SyncBaseStore, SyncBaseStoreError,
 )
 
 
-def unit(policy="both", child=None, **inputs):
-    return BaseUnit(ResolvedSyncTarget("main", "app", "config", child_path=child),
-                    "source", policy, BaseInputs(**inputs))
+def unit(policy="both", child=None):
+    return BaseUnit(ResolvedSyncTarget("main", "app", "config", child_path=child), policy)
 
 
 @pytest.mark.parametrize("operation", ["push", "pull", "sync"])
@@ -29,7 +27,6 @@ def test_completion_saves_frozen_repository_outcome(tmp_path, operation, payload
         assert result.converged and result.acknowledged
         record = store.read(selected.identity_bytes)
         assert record.payload == payload
-        assert record.envelope.fingerprint == selected.fingerprint
         assert lifecycle.inspect(selected).record == record
 
 
@@ -95,18 +92,15 @@ def test_checkpoint_read_failure_is_inspectable_without_guessing_a_winner():
     class Unavailable:
         def read(self, identity):
             raise failure
-    result = SyncBaseLifecycle(Unavailable(), operation="sync").maintain(unit())
+    result = SyncBaseLifecycle(Unavailable(), operation="sync").inspect(unit())
     assert result.status == "unavailable" and result.failure is failure
 
 
-def test_interpretation_change_invalidates_but_policy_does_not(tmp_path):
+def test_eligible_policy_change_keeps_base(tmp_path):
     with SyncBaseStore.open(tmp_path / "state" / "dotman", "main") as store:
         lifecycle = SyncBaseLifecycle(store, operation="sync")
         lifecycle.direct_agreement(FrozenBaseUnit(unit(), FilePresent(b"outcome")))
         assert lifecycle.inspect(unit("pull-only")).status == "usable"
-        assert lifecycle.inspect(unit(render="transform")).reason == "inputs_changed"
-        assert lifecycle.maintain(unit(render="transform")).reason == "absent"
-        assert store.read(unit().identity_bytes) is None
 
 
 @pytest.mark.parametrize("operation", ["push", "pull", "sync"])
@@ -116,7 +110,6 @@ def test_preview_never_mutates(tmp_path, operation):
         lifecycle = SyncBaseLifecycle(store, operation=operation, preview=True)
         assert not lifecycle.direct_agreement(FrozenBaseUnit(unit(), FilePresent(b"new"))).acknowledged
         assert not lifecycle.complete(FrozenBaseUnit(unit(), FilePresent(b"new")), ProposalCompletion("use-live", True)).converged
-        lifecycle.maintain(unit(render="changed"))
         assert store.read(unit().identity_bytes).payload == Missing()
 
 
@@ -145,17 +138,6 @@ def test_corruption_is_unavailable_without_automatic_deletion():
             raise SyncBaseRecordCorruptionError("broken", affected_identities=(identity,))
         def delete(self, identity):
             pytest.fail("must not delete rejected storage automatically")
-    result = SyncBaseLifecycle(Corrupt(), operation="sync").maintain(unit())
+    result = SyncBaseLifecycle(Corrupt(), operation="sync").inspect(unit())
     assert result.status == "unavailable"
     assert result.failure is not None
-
-
-def test_profile_context_is_frozen_and_fingerprint_ignores_policy():
-    source = {"nested": [1, True]}
-    context = BaseProfileContext(source)
-    frozen = unit(profile_context=context)
-    fingerprint = frozen.fingerprint
-    source["nested"].append("later")
-    assert frozen.fingerprint == fingerprint
-    assert replace(frozen, configured_policy="pull-only").fingerprint == fingerprint
-    assert replace(frozen, primary_source="elsewhere").fingerprint != fingerprint

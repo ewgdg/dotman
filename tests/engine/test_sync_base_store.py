@@ -10,7 +10,6 @@ from dotman.sync_base_store import (
     DirectoryChildPresent,
     FilePresent,
     Missing,
-    SyncBaseEnvelope,
     SyncBaseRecord,
     SyncBaseRecordCorruptionError,
     SyncBaseStore,
@@ -22,11 +21,7 @@ from dotman.sync_base_store import (
 
 
 def record(identity=b"unit", payload=None):
-    return SyncBaseRecord(
-        identity,
-        payload if payload is not None else FilePresent(b"data"),
-        SyncBaseEnvelope("a" * 64),
-    )
+    return SyncBaseRecord(identity, payload if payload is not None else FilePresent(b"data"))
 
 
 def record_path(store):
@@ -247,7 +242,7 @@ def test_identity_binding_and_integrity(tmp_path):
         other.write_bytes(original)
         with pytest.raises(SyncBaseRecordCorruptionError):
             store.read(b"other")
-        first.write_bytes(original.replace(b'"fingerprint":"a', b'"fingerprint":"b'))
+        first.write_bytes(original.replace(b'"shape":"file"', b'"shape":"missing"'))
         with pytest.raises(SyncBaseRecordCorruptionError):
             store.read(b"unit")
 
@@ -259,7 +254,7 @@ def test_identity_binding_and_integrity(tmp_path):
         ("content", "YmFkIQ==", "payload_corrupt"),
         ("content", "!invalid-base64!", "payload_corrupt"),
         ("content", None, "payload_corrupt"),
-        ("fingerprint", "b" * 64, "record_corrupt"),
+        ("shape", "missing", "record_corrupt"),
     ],
 )
 def test_payload_corruption_is_distinct_from_record_corruption(

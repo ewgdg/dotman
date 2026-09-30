@@ -19,20 +19,24 @@ state; resetting a Base does not change tracked packages or snapshots.
 
 ## Records and atomic acknowledgment
 
-A record contains its canonical Sync Unit identity, interpretation fingerprint,
-and typed repository-space payload: `Missing`, `Present(bytes)`, or a directory
+A record contains its canonical Sync Unit identity and typed repository-space payload: `Missing`, `Present(bytes)`, or a directory
 child's `Present(bytes, executable)`. Missing is a stored value, not the absence
 of a checkpoint. File targets do not store executable state; exact live chmod
 is never a Base payload.
 
-Records use canonical compact ASCII JSON, format epoch `1`, with a `record`
+Records use canonical compact ASCII JSON, format epoch `2`, with a `record`
 object and metadata `digest`. The record stores base64 identity and content,
-interpretation fingerprint, payload shape, executable state, and content SHA-256
+payload shape, executable state, and content SHA-256
 and byte count. The metadata digest covers every record field except content;
 content is checked against its separately protected digest and size. Missing has
 null content, content digest, size, and executable fields. Exact canonical
 encoding, identity binding, record shape, and both integrity checks are validated
 before use.
+
+Epoch `1` records also carried an interpretation fingerprint and are rejected as
+corrupt. Rewrite them once, with no Push, Pull, or Sync running:
+`python -m dotman.migrations.sync_base_drop_fingerprint [manager-state-root]`.
+It rewrites only intact epoch-1 records and keeps payloads unchanged.
 
 Metadata and payload are replaced together using a private temporary file and
 atomic replacement in the same directory. A failure before replacement leaves
@@ -85,7 +89,7 @@ One corrupt record does not hide healthy records: coherent inventory returns
 validated records and an aggregate corruption count, including damaged records
 whose identity cannot be recovered. Exact info reads only the requested record.
 Read-only inspection performs no cleanup. Real operations may perform normal
-record-level applicability maintenance only inside safely accessible storage;
+record-level policy and obsolete-child maintenance only inside safely accessible storage;
 unsafe or unreadable storage is never automatically recreated or repaired beyond
 the mode tightening above.
 
@@ -137,12 +141,11 @@ proof; preview and aborted sessions do no reclamation.
 Info reports `usable`, `unavailable`, or human `not applicable` (structured
 `not-applicable`). Unavailable/ineligible inspection succeeds; invalid identities
 and store failures are errors. Unavailability reasons are `absent`, `ineligible`,
-`inputs changed`, or `corrupt`. Structured reason codes distinguish
-`inputs_changed`, `record_corrupt`, and `payload_corrupt`.
+or `corrupt`. Structured reason codes distinguish `record_corrupt` and
+`payload_corrupt`.
 
 List and info expose canonical identity, policy, eligibility, status/reason,
-payload kind, size, digest, and child executable state, with integrity and
-fingerprint checks. Unknown/not-performed checks are null. Unavailable output
+payload kind, size, digest, and child executable state, with the integrity check. Unknown/not-performed checks are null. Unavailable output
 does not disclose stale payload metadata; payload bytes are never output.
 Reset reports identity and `reset` or `already_absent`.
 

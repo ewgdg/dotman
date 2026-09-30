@@ -85,7 +85,7 @@ def test_directory_link_introduced_after_observation_is_rejected(tmp_path, monke
     assert (tmp_path / "elsewhere/child").read_bytes() == b"old"
 
 
-def test_follow_directory_retarget_preserves_identity_and_fingerprint(tmp_path, monkeypatch):
+def test_follow_directory_retarget_preserves_identity(tmp_path, monkeypatch):
     from dotman.sync_base_lifecycle import BaseUnit
     engine = configured(directory_engine(tmp_path, monkeypatch, policy="push-only"), tmp_path, directory="follow")
     repo, live = tmp_path / "repo/packages/app/tree", tmp_path / "live/tree"
@@ -98,7 +98,7 @@ def test_follow_directory_retarget_preserves_identity_and_fingerprint(tmp_path, 
     with open_directory(engine, preview=False) as session:
         row, = session.view.rows
         observed = row.observation
-        first_base = BaseUnit(observed.identity, "packages/app/tree/nested/child", "push-only", observed.inputs)
+        first_base = BaseUnit(observed.identity, "push-only")
         command(session, SetApproval, row.row_id, True)
         (live / "nested").unlink()
         (live / "nested").symlink_to(second, target_is_directory=True)
@@ -106,10 +106,9 @@ def test_follow_directory_retarget_preserves_identity_and_fingerprint(tmp_path, 
         assert result.units[0].status == "converged"
     with open_directory(engine) as session:
         observed = session.view.observations[0]
-        second_base = BaseUnit(observed.identity, "packages/app/tree/nested/child", "push-only", observed.inputs)
+        second_base = BaseUnit(observed.identity, "push-only")
         assert observed.identity.canonical == "main:app.tree/nested/child"
         assert first_base.identity_bytes == second_base.identity_bytes
-        assert first_base.fingerprint == second_base.fingerprint
     assert (first / "child").read_bytes() == b"old"
     assert (second / "child").read_bytes() == b"frozen"
 

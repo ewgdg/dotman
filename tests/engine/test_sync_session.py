@@ -294,7 +294,6 @@ def test_base_facts_freeze_and_real_direct_agreement_acknowledges(
         base = later.view.observations[0].base
         assert base.status == "usable"
         assert base.record.payload == FilePresent(b"same")
-        assert later.view.observations[0].inputs == before.inputs
 
 
 def test_real_direct_dirty_agreement_checkpoints_repository_outcome(
@@ -759,24 +758,21 @@ def test_cancelled_session_does_not_poison_next_operation_on_same_engine(tmp_pat
 
 
 @pytest.mark.parametrize('preview', [False, True])
-def test_stale_base_is_reclaimed_only_by_real_selected_operation(tmp_path, monkeypatch, preview):
-    from dataclasses import replace
-    from dotman.sync_base_store import SyncBaseStore
+def test_interpretation_change_keeps_drifted_base_usable(tmp_path, monkeypatch, preview):
+    # A Base is the last agreed repository-side content; a later vars or
+    # projection change must not discard it, or drifted units lose their Merge ancestor.
+    from dotman.sync_base_store import FilePresent, SyncBaseStore
 
     engine = make_engine(tmp_path, monkeypatch, [('config', 'both', b'repo', b'repo', '')])
-    established = open_session(engine, preview=False)
-    established.abort()
-    state = tmp_path / 'state' / 'dotman'
-    identity = b'main:app.config'
-    with SyncBaseStore.open(state, 'main') as store:
-        record = store.read(identity)
-        store.replace(replace(record, envelope=replace(record.envelope, fingerprint='0' * 64)))
-    (tmp_path / 'live' / 'config').write_bytes(b'drift')
+    open_session(engine, preview=False).abort()
+    (tmp_path / 'repo/profiles/default.toml').write_text('[vars]\nadded = "later"\n')
+    (tmp_path / 'live/config').write_bytes(b'drift')
+    engine = DotmanEngine(engine.config)
     session = open_session(engine, preview=preview)
-    assert session.view.observations[0].base.reason == ('inputs_changed' if preview else 'absent')
-    with SyncBaseStore.open(state, 'main', read_only=True) as store:
-        assert (store.read(identity) is not None) is preview
+    assert session.view.observations[0].base.status == 'usable'
     session.abort()
+    with SyncBaseStore.open(tmp_path / 'state/dotman', 'main', read_only=True) as store:
+        assert store.read(b'main:app.config').payload == FilePresent(b'repo')
 
 
 def test_policy_ineligibility_cleanup_survives_later_guard_failure(tmp_path, monkeypatch):
@@ -794,30 +790,6 @@ def test_policy_ineligibility_cleanup_survives_later_guard_failure(tmp_path, mon
     assert isinstance(result, SessionOpenFailed)
     with SyncBaseStore.open(tmp_path / 'state/dotman', 'main', read_only=True) as store:
         assert store.read(b'main:app.unit') is None
-
-
-def test_selected_stale_maintenance_retains_unselected_peer(tmp_path, monkeypatch):
-    from dataclasses import replace
-    from dotman.sync_base_store import SyncBaseStore
-
-    engine = make_engine(tmp_path, monkeypatch, [
-        ('selected', 'both', b'same', b'same', ''),
-        ('peer', 'both', b'same', b'same', ''),
-    ])
-    with open_session(engine, preview=False):
-        pass
-    state = tmp_path / 'state/dotman'
-    with SyncBaseStore.open(state, 'main') as store:
-        for identity in store.identities():
-            record = store.read(identity)
-            store.replace(replace(record, envelope=replace(record.envelope, fingerprint='0' * 64)))
-    (tmp_path / 'live/selected').write_bytes(b'drift')
-    scope = engine.resolve_sync_scope(['main:app.selected'])
-    with engine.open_sync_session(scope, preview=False) as session:
-        assert session.view.observations[0].base.reason == 'absent'
-    with SyncBaseStore.open(state, 'main', read_only=True) as store:
-        assert store.read(b'main:app.selected') is None
-        assert store.read(b'main:app.peer') is not None
 
 
 @pytest.mark.parametrize('guard_scope', ['repo', 'package', 'target'])

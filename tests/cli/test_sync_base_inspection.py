@@ -5,9 +5,7 @@ import pytest
 
 from dotman.cli import main
 from dotman.operation_lock import OperationLock, OperationBusy
-from dotman.sync_base_inspection import _identity, _unit
-from dotman.sync_base_store import SyncBaseEnvelope, SyncBaseRecord, SyncBaseStore, FilePresent, Missing
-from dotman.sync_observation import _resolve_inputs
+from dotman.sync_base_store import SyncBaseRecord, SyncBaseStore, FilePresent, Missing
 from tests.engine.test_sync_session import make_engine
 
 
@@ -15,13 +13,9 @@ def fixture_engine(tmp_path, monkeypatch, policy="both", extra=""):
     return make_engine(tmp_path, monkeypatch, [("unit", policy, b"secret-base-payload", b"live", extra)])
 
 
-def store_record(engine, *, payload=None, fingerprint=None, identity="main:app.unit"):
-    context = engine._planning_context
-    inputs, _ = _resolve_inputs(context, engine.resolve_sync_scope())
-    unit = _unit(context, inputs, _identity(identity))
-    envelope = SyncBaseEnvelope(fingerprint or unit.fingerprint)
+def store_record(engine, *, payload=None, identity="main:app.unit"):
     with SyncBaseStore.open(engine._tracked_state_context.state_root, "main") as store:
-        store.replace(SyncBaseRecord(identity=identity.encode(), envelope=envelope, payload=payload if payload is not None else FilePresent(b"secret-base-payload")))
+        store.replace(SyncBaseRecord(identity=identity.encode(), payload=payload if payload is not None else FilePresent(b"secret-base-payload")))
         return store.record_path(identity.encode())
 
 
@@ -42,7 +36,7 @@ def test_usable_details_list_and_reset_are_metadata_only(tmp_path, monkeypatch, 
     assert info["reason"] is None
     assert info["policy"] == "both" and info["eligibility"] is True
     assert "commit" not in info and "provenance" not in info
-    assert set(info["checks"]) == {"integrity", "fingerprint_match"}
+    assert info["checks"] == {"integrity": True}
     assert all(info["checks"].values())
     assert "secret-base-payload" not in json.dumps(info)
     assert database.read_bytes() == before
@@ -68,22 +62,8 @@ def test_absent_and_ineligible_succeed_without_creating_store(tmp_path, monkeypa
     assert sorted(str(path.relative_to(state)) for path in state.rglob("*")) == before
 
 
-@pytest.mark.parametrize("reason,changes", [
-    ("inputs_changed", {"fingerprint": "f" * 64}),
-])
-def test_unavailable_never_exposes_stale_metadata(tmp_path, monkeypatch, reason, changes):
-    engine = fixture_engine(tmp_path, monkeypatch)
-    database = store_record(engine, **changes)
-    before = database.read_bytes()
-    info = engine.info_sync_base("main:app.unit")
-    assert info["status"] == "unavailable" and info["reason"] == reason
-    assert info["payload"] is None
-    assert engine.list_sync_bases() == []
-    assert database.read_bytes() == before
-
-
 @pytest.mark.parametrize("field,value,reason", [
-    ("fingerprint", "wrong", "record_corrupt"),
+    ("shape", "wrong", "record_corrupt"),
     ("content", "YmFk", "payload_corrupt"),
 ])
 def test_corruption_is_distinguished_without_cleanup_and_doctor_is_aggregate(tmp_path, monkeypatch, field, value, reason):
@@ -157,7 +137,7 @@ def test_inspection_never_executes_guards_projections_observation_or_verificatio
 def test_orphan_record_not_listed_but_counted(tmp_path, monkeypatch):
     engine = fixture_engine(tmp_path, monkeypatch)
     with SyncBaseStore.open(engine._tracked_state_context.state_root, "main") as store:
-        store.replace(SyncBaseRecord(b"main:app.gone", FilePresent(b"orphan"), SyncBaseEnvelope("f" * 64)))
+        store.replace(SyncBaseRecord(b"main:app.gone", FilePresent(b"orphan")))
     assert engine.list_sync_bases() == []
     check = next(check for check in engine.doctor().checks if check.key == "sync_bases_orphaned")
     assert check.detail == "1 orphaned Sync Bases" and check.status == "warn"
@@ -211,7 +191,7 @@ def test_store_failure_is_cli_error_and_doctor_failure_without_repair(tmp_path, 
 
 @pytest.mark.parametrize("reason,expected", [
     ("record_corrupt", "corrupt"), ("payload_corrupt", "corrupt"),
-    ("inputs_changed", "inputs changed"), ("absent", "absent"), ("ineligible", "ineligible"),
+    ("absent", "absent"), ("ineligible", "ineligible"),
 ])
 def test_human_reasons_and_styling(reason, expected, capsys):
     from dotman.cli_emit import emit_sync_base

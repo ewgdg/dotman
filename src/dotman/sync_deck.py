@@ -511,8 +511,7 @@ class CommandDeck:
         if base.reason:
             state.append(ReviewFact("Base reason", base.reason))
         if base.record:
-            state += [ReviewFact("Base fingerprint", base.record.envelope.fingerprint),
-                      ReviewFact("Base payload", presence(base.record.payload))]
+            state.append(ReviewFact("Base payload", presence(base.record.payload)))
         state += [
             ReviewFact("Primary Source Change", primary_value),
             ReviewFact("Capture", capture),

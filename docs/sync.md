@@ -475,8 +475,7 @@ Execution dereferences the current chain for each effect and checks shape,
 declared endpoint confinement and selected policy without re-observing payloads,
 rerendering, or comparing content. Retargeting alone does not invalidate frozen
 work. Enabled snapshots still read live preimages before mutation. Link chains
-and resolved referent paths are not identity or Input Fingerprint inputs;
-interpretation modes are.
+and resolved referent paths are not identity inputs.
 
 A real session owns the manager's non-blocking operation lock from opening until
 execute or abort. Real Push and Pull command workflows take the same lock before
@@ -519,21 +518,20 @@ See [public workflows](sync-base-storage.md#public-inspection-and-reset).
 
 ### Applicability
 
-A usable Base has a valid identity and envelope, intact payload, matching
-effective interpretation inputs, and a currently Base-Eligible unit. `Missing`
-is a valid usable payload. Git reset, checkout, branch changes, rewritten or
-unavailable history, and non-Git repositories do not by themselves invalidate or
-prevent checkpoints. A commit alone never advances one.
+A usable Base has a valid identity, an intact record and payload, and a
+currently Base-Eligible unit. `Missing` is a valid usable payload. Git reset,
+checkout, branch changes, rewritten or unavailable history, and non-Git
+repositories do not by themselves invalidate or prevent checkpoints. A commit
+alone never advances one.
 
-Interpretation includes the Primary Source, effective Render and Capture,
-profile context, applicable Path Rules, and symlink interpretation modes.
-Configured policy, Guard outcomes, Pull Views, exact chmod, and the live link
-chain or resolved referent are not fingerprint inputs.
-
-Ordinary source edits are changes to reconcile, not interpretation invalidation.
-Additional Source contents and external command dependencies are not recursively
-hashed. A stored checkpoint remains the starting point for independent edits on
-either side, including repository changes made by switching or resetting Git.
+Configuration changes never invalidate a Base. Render, Capture, profile
+variables, Path Rules, and symlink interpretation modes may change freely: the
+Base still records the last agreed repository-side content, which is exactly the
+ancestor Merge needs. Discarding it would strip drifted units of that ancestor.
+When a stored Base is known to be wrong, discard it with exact
+[reset](sync-base-storage.md#public-inspection-and-reset). A stored checkpoint
+remains the starting point for independent edits on either side, including
+repository changes made by switching or resetting Git.
 
 ### Acknowledgment and completion
 

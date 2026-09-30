@@ -2,7 +2,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from dotman.cli_style import render_sync_term
-from dotman.sync_base_store import FilePresent, SyncBaseEnvelope, SyncBaseRecord
+from dotman.sync_base_store import FilePresent, SyncBaseRecord
 from dotman.sync_deck import CommandDeck, row_resolution
 from dotman.sync_deck_command import sync_document
 from dotman.sync_session import AuxiliaryRow, SyncSession
@@ -34,16 +34,14 @@ def test_review_keeps_base_only_as_facts(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [("unit", "both", b"repo", b"live", "")])
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as opened:
         original = opened.view.rows[0]
-        record = SyncBaseRecord(b"unit", FilePresent(b"ancestor"), SyncBaseEnvelope(
-            "b" * 64,
-        ))
+        record = SyncBaseRecord(b"unit", FilePresent(b"ancestor"))
         observation = replace(original.observation,
                               base=replace(original.observation.base, status="usable", record=record))
         row = replace(original, observation=observation, intent="use-repository")
         session = SimpleNamespace(view=replace(opened.view, rows=(row,)))
         text = CommandDeck(session, use_color=False).review_text()
         # Sync Base stays summarized as facts; its payload gets no diff of its own.
-        assert "Base fingerprint: " + "b" * 64 in text
+        assert "Base payload: " in text
         assert "ancestor" not in text
         assert "Capture: not required" in text
 

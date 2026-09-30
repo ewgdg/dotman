@@ -25,10 +25,10 @@ from dotman.planning_guards import GuardPlanningError
 from dotman.progress import ProgressSink
 from dotman.sync_base_store import SyncBaseStore, SyncBaseStoreError, FilePresent, Missing, DirectoryChildPresent, SyncBasePayload
 from dotman.sync_base_lifecycle import (
-    FrozenBaseUnit, ProposalCompletion, SyncBaseLifecycle,
+    BaseUnit, FrozenBaseUnit, ProposalCompletion, SyncBaseLifecycle,
 )
 from dotman.operation_lock import OperationBusy, OperationLock, OperationLockError
-from dotman.sync_observation import Diagnostic, Observation, observe_scope, _resolve_inputs, _base_unit
+from dotman.sync_observation import Diagnostic, Observation, observe_scope, _resolve_inputs
 from dotman.sync_publication import HookActivation, PublicationResult, PublicationUnit, execute_publication, prepare_publication, freeze_child_metadata
 from dotman.sync_repository_apply import (
     RepositoryApplyUnit, apply_repository_source, execute_repository_apply, prepare_repository_apply,
@@ -159,7 +159,7 @@ def materialize(
             effects.append(PublicationEffect("chmod", path, mode=mode))
     if (
         effects and observation.live_is_symlink
-        and observation.inputs.file_symlink_mode == "prompt"
+        and observation.file_symlink_mode == "prompt"
         and any(effect.kind != "delete" for effect in effects)
     ):
         if not symlink_authorized:
@@ -564,7 +564,7 @@ class ProposalSession:
                     else "diagnostic",
                     unit.state == "drifted" and not has_errors(unit.diagnostics),
                     unit,
-                    (("authorize-symlink-replacement",) if unit.live_is_symlink and unit.inputs.file_symlink_mode == "prompt" and unit.effective_policy in ("push-only", "both") else ()) + ("set-included", "set-approval", "prepare-proposal-review", "set-resolution-intent", "retry-materialization", "edit-proposal")
+                    (("authorize-symlink-replacement",) if unit.live_is_symlink and unit.file_symlink_mode == "prompt" and unit.effective_policy in ("push-only", "both") else ()) + ("set-included", "set-approval", "prepare-proposal-review", "set-resolution-intent", "retry-materialization", "edit-proposal")
                     if supports_proposal(unit)
                     else ("set-included",)
                     if unit.state == "drifted" and not has_errors(unit.diagnostics)
@@ -699,7 +699,7 @@ class ProposalSession:
                     session._editor_input_errors[observation.identity] = str(exc)
             session._frozen_bases = {
                 observation.identity: FrozenBaseUnit(
-                    _base_unit(context, observation.identity, *resolved_inputs[0][observation.identity]),
+                    BaseUnit(observation.identity, observation.configured_policy),
                     observation.repository,
                 )
                 for observation in observations

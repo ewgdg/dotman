@@ -1106,7 +1106,7 @@ def emit_error(error: Exception, *, use_color: bool) -> None:
     )
 
 _SYNC_BASE_REASONS = {
-    "absent": "absent", "ineligible": "ineligible", "inputs_changed": "inputs changed",
+    "absent": "absent", "ineligible": "ineligible",
     "record_corrupt": "corrupt", "payload_corrupt": "corrupt",
 }
 
@@ -1129,7 +1129,7 @@ def emit_sync_base(*, detail, operation: str, json_output: bool, use_color: bool
             print(f'  Digest: {payload["digest"]}')
         if payload["executable"] is not None:
             print(f'  Executable: {"yes" if payload["executable"] else "no"}')
-        print("  Integrity: valid; inputs: match")
+        print("  Integrity: valid")
     return 0
 
 

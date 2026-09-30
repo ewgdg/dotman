@@ -35,11 +35,11 @@ def _identity(text: str) -> ResolvedSyncTarget:
     return identity
 
 
-def _unit(context, inputs, identity):
+def _unit(inputs, identity):
     entry = inputs.get(replace(identity, child_path=None))
     if entry is None:
         raise ValueError(f"Sync Unit '{identity.canonical}' is not currently tracked")
-    item, metadata = entry
+    _item, metadata = entry
     directory = metadata.target.target_type == "directory"
     if metadata.target.probe is not None:
         raise ValueError("Probe Work is not a Sync Unit")
@@ -47,7 +47,7 @@ def _unit(context, inputs, identity):
         raise ValueError("Sync Base requires a file target or an exact directory child")
     if directory:
         metadata = child_metadata(metadata, identity.child_path)
-    return _base_unit(context, identity, item, metadata)
+    return _base_unit(identity, metadata)
 
 
 def _store_exists(context, repo) -> bool:
@@ -80,7 +80,7 @@ def _detail(unit, inspection):
         "identity": unit.identity.canonical, "status": inspection.status,
         "reason": inspection.reason, "policy": unit.configured_policy,
         "eligibility": unit.eligible, "payload": None,
-        "checks": {"integrity": None, "fingerprint_match": None},
+        "checks": {"integrity": None},
     }
     # Do not reveal any authoritative-looking metadata from an unusable record.
     record = inspection.record
@@ -94,16 +94,10 @@ def _detail(unit, inspection):
                 "digest": None if missing else hashlib.sha256(payload.content).hexdigest(),
                 "executable": payload.executable if isinstance(payload, DirectoryChildPresent) else None,
             },
-            checks={"integrity": True, "fingerprint_match": True},
+            checks={"integrity": True},
         )
-    else:
-        reason = inspection.reason
-        checks = result["checks"]
-        if reason in ("record_corrupt", "payload_corrupt"):
-            checks["integrity"] = False
-        elif reason == "inputs_changed":
-            checks["integrity"] = True
-            checks["fingerprint_match"] = False
+    elif inspection.reason in ("record_corrupt", "payload_corrupt"):
+        result["checks"]["integrity"] = False
     return result
 
 
@@ -111,7 +105,7 @@ def info_sync_base(context, text: str):
     identity = _identity(text)
     scope = resolve_sync_scope(context, [text])
     inputs, _ = _resolve_inputs(context, scope)
-    unit = _unit(context, inputs, identity)
+    unit = _unit(inputs, identity)
     repo = context.repositories[identity.repo]
     if not _store_exists(context, repo):
         return _detail(unit, BaseInspection(
@@ -138,7 +132,7 @@ def list_sync_bases(context):
                     identity = _identity(key.decode("utf-8"))
                     if identity.repo != repo.config.name:
                         continue
-                    unit = _unit(context, inputs, identity)
+                    unit = _unit(inputs, identity)
                 except (ValueError, UnicodeError):
                     continue
                 if not unit.eligible:
@@ -154,7 +148,7 @@ def reset_sync_base(context, text: str):
     with OperationLock.acquire(context.tracked_state.state_root):
         scope = resolve_sync_scope(context, [text])
         inputs, _ = _resolve_inputs(context, scope)
-        _unit(context, inputs, identity)
+        _unit(inputs, identity)
         repo = context.repositories[identity.repo]
         deleted = False
         if _store_exists(context, repo):
@@ -199,7 +193,7 @@ def doctor_sync_bases(context):
                         continue
                     if inputs is not None:
                         try:
-                            _unit(context, inputs, identity)
+                            _unit(inputs, identity)
                         except ValueError:
                             orphaned += 1
                             continue

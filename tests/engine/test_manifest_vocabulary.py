@@ -171,7 +171,6 @@ def test_canonical_manifest_vocabulary_loads_unchanged(tmp_path: Path) -> None:
     with engine.open_push_session(engine.resolve_sync_scope(), preview=True) as session:
         child, = session.view.observations
     assert child.identity.child_path == "example.conf"
-    assert child.inputs.path_rules == ("rule",)
     assert (child.compare_repo, child.compare_live) == ("render", "raw")
 
 

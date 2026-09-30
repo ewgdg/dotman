@@ -528,7 +528,6 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "effects": [effect_summary(effect) for effect in proposal.publication_effects] if proposal else [],
             "base": {
                 "status": observation.base.status,
-                "fingerprint": observation.base.record.envelope.fingerprint if observation.base.record else None,
                 "qualified": proposal.checkpoint_qualified if proposal else None,
                 "acknowledged": outcome.acknowledged if outcome else observation.base.acknowledged,
             },

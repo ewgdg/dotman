@@ -262,7 +262,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   Each unit's `primary_source_change` describes its repository write/deletion
   (or is null); `effects` contains only live Publication Effects. Summary
   `repository_changes` counts selected Primary and Additional Source Changes. Base
-  `status` and `fingerprint` remain frozen opening evidence. `base.qualified`
+  `status` remains frozen opening evidence. `base.qualified`
   reports the materialized Proposal's checkpoint evidence (null without a Proposal);
   `base.acknowledged` reports successful real-operation persistence independently
   of the unit's completion result. Diagnostics include `code`, `message`, and

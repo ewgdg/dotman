@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
-from pathlib import PurePosixPath
+from dataclasses import dataclass
 from typing import Literal
 
 from dotman.models import ResolvedSyncTarget
 from dotman.sync_base_store import (
     DirectoryChildPresent,
     FilePresent,
-    SyncBaseEnvelope,
     SyncBasePayload,
     SyncBaseRecord,
     SyncBaseRecordCorruptionError,
@@ -24,76 +19,15 @@ from dotman.sync_base_store import (
 from dotman.sync_scope import sync_unit_identity_bytes
 
 
-@dataclass(frozen=True, init=False)
-class BaseProfileContext:
-    """An immutable, type-preserving snapshot of resolved profile/variable inputs."""
-
-    canonical_json: str
-
-    def __init__(self, context: Mapping[str, object] | None = None) -> None:
-        # Snapshot nested mappings/lists without retaining caller-owned mutability.
-        object.__setattr__(
-            self,
-            "canonical_json",
-            json.dumps(
-                {} if context is None else dict(context),
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=True,
-                allow_nan=False,
-            ),
-        )
-
-
-@dataclass(frozen=True)
-class BaseInputs:
-    """Effective interpretation only: never policy, Guards, Pull Views or live paths."""
-
-    render: str = "raw"
-    capture: str = "raw"
-    profile_context: BaseProfileContext = field(default_factory=BaseProfileContext)
-    path_rules: tuple[str, ...] = ()
-    file_symlink_mode: Literal["prompt", "follow"] = "prompt"
-    dir_symlink_mode: Literal["fail", "follow"] = "fail"
-
-    def __post_init__(self) -> None:
-        if self.file_symlink_mode not in ("prompt", "follow"):
-            raise ValueError("invalid file symlink interpretation")
-        if self.dir_symlink_mode not in ("fail", "follow"):
-            raise ValueError("invalid directory symlink interpretation")
-        if not isinstance(self.render, str) or not isinstance(self.capture, str):
-            raise TypeError("effective projections must be strings")
-        if type(self.path_rules) is not tuple or any(
-            type(name) is not str for name in self.path_rules
-        ):
-            raise TypeError("Path Rule names must be an immutable string tuple")
-        if type(self.profile_context) is not BaseProfileContext:
-            raise TypeError("profile context must be a frozen BaseProfileContext")
-
-
 @dataclass(frozen=True)
 class BaseUnit:
     """One successfully statically resolved, selected file or directory child."""
 
     identity: ResolvedSyncTarget
-    primary_source: str
     configured_policy: str
-    inputs: BaseInputs
 
     def __post_init__(self) -> None:
         sync_unit_identity_bytes(self.identity)
-        path = PurePosixPath(self.primary_source)
-        if (
-            not path.parts
-            or path.is_absolute()
-            or path.as_posix() != self.primary_source
-            or any(part in (".", "..", ".git") for part in path.parts)
-            or "\x00" in self.primary_source
-            or "\\" in self.primary_source
-        ):
-            raise ValueError(
-                "Primary Source must be a normalized repository-relative file"
-            )
         if self.configured_policy not in (
             "push-only",
             "pull-only",
@@ -110,17 +44,6 @@ class BaseUnit:
     def eligible(self) -> bool:
         return self.configured_policy in ("pull-only", "both")
 
-    @property
-    def fingerprint(self) -> str:
-        inputs = asdict(self.inputs)
-        content = json.dumps(
-            {"primary_source": self.primary_source, "inputs": inputs},
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-        ).encode()
-        return hashlib.sha256(content).hexdigest()
-
 
 @dataclass(frozen=True)
 class FrozenBaseUnit:
@@ -130,11 +53,7 @@ class FrozenBaseUnit:
     payload: SyncBasePayload
 
     def record(self) -> SyncBaseRecord:
-        return SyncBaseRecord(
-            self.unit.identity_bytes,
-            self.payload,
-            SyncBaseEnvelope(self.unit.fingerprint),
-        )
+        return SyncBaseRecord(self.unit.identity_bytes, self.payload)
 
 
 @dataclass(frozen=True)
@@ -256,20 +175,7 @@ class SyncBaseLifecycle:
                 "unavailable", "record_corrupt",
                 failure=SyncBaseStoreError("checkpoint does not match Sync Unit identity"),
             )
-        if record.envelope.fingerprint != unit.fingerprint:
-            return BaseInspection("unavailable", "inputs_changed")
         return BaseInspection("usable", record=record)
-
-    def maintain(self, unit: BaseUnit) -> BaseInspection:
-        """Reclaim interpretation-invalid records, never recreate rejected storage."""
-        inspected = self.inspect(unit)
-        if not self.preview and inspected.reason == "inputs_changed":
-            try:
-                self.store.delete(unit.identity_bytes)
-            except SyncBaseStoreError as exc:
-                return BaseInspection("unavailable", "inputs_changed", failure=exc)
-            return BaseInspection("unavailable", "absent")
-        return inspected
 
     def direct_agreement(
         self,
