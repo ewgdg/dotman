@@ -31,7 +31,7 @@ from textual.widgets import DataTable, Input, OptionList, Static
 
 from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
-from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text
+from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_resolution, resolution_label, live_counts, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SessionRow, SyncSession, conflict_diagnostic
@@ -409,7 +409,16 @@ class CommandDeck:
              ("auxiliary", auxiliary_count), ("repos", repository_changes)),
             live=live, use_color=self.use_color,
         )
-        return f":: {verb}? — {stats}"
+        if selected or additional_count or auxiliary_count:
+            return f":: {verb}? — {stats}"
+        # An empty set still confirms ("nothing to do" is a valid decision), but
+        # warn so an accidental confirm is not read as a clean state.
+        pending = sum(isinstance(row, SessionRow) and row.kind == "drift" and row.included
+                      for row in self.session.view.rows)
+        warning = (f"Nothing selected; {pending} drifted Sync Unit{'s' if pending != 1 else ''} "
+                   f"stay{'' if pending != 1 else 's'} pending.")
+        styled = style_text(warning, *SYNC_TERM_STYLE_BY_NAME["warning"]) if self.use_color else warning
+        return f":: {verb}? — {stats}\n{styled}"
 
     def review_text(self) -> str:
         document = self.displayed_document()

@@ -166,7 +166,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   `X` opens one compact confirmation with selected units, repository changes,
   and changed live targets, each counted once whether written, deleted,
   mode-changed, or reapplied; deletions and reapplies are also shown in brackets
-  (`live: 3 (1 deleted, 1 reapplied)`). Cancelling returns without
+  (`live: 3 (1 deleted, 1 reapplied)`). Confirming with nothing selected is allowed
+  (nothing to do is a valid decision) but adds a warning that the drift stays pending. Cancelling returns without
   changing Approval, inclusion or focus. Real execution is offered only for valid,
   completed approved Proposals; confirming executes the already-reviewed set without
   further materialization. Review scroll position is retained per target; arrow keys, `j`/`k`,

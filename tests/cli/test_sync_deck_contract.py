@@ -65,6 +65,23 @@ def test_confirmation_cancel_preserves_reviewed_selection(tmp_path, monkeypatch)
         assert not deck.confirming
         assert session.view == reviewed
 
+
+def test_empty_confirmation_warns_that_drift_stays_pending(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [
+        ("one", "push-only", b"repo", b"live", ""),
+        ("two", "push-only", b"repo", b"live", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        deck = CommandDeck(session, use_color=False)
+        # "Nothing to do" is a legitimate decision, so an empty set still confirms.
+        deck.confirm()
+        assert deck.confirming
+        assert "Nothing selected; 2 drifted Sync Units stay pending." in deck.confirmation_text()
+        deck.back()
+        deck.focus = 0
+        deck.select()
+        assert "Nothing selected" not in deck.confirmation_text()
+
 def test_single_resolution_is_static_and_blocked_rows_remain_visible(tmp_path, monkeypatch):
     import asyncio
     from textual.widgets import OptionList
