@@ -265,7 +265,7 @@ Resolution source:
 - `profile` comes from the selected selector+profile form, for example `...@basic`
 - template vars come from `package vars -> composed profile vars -> repo local override vars`
 - `os` is the inferred target OS for that selector/profile context
-- `cpu_arch` is the host CPU architecture, the same value `uname -m` prints (for example `x86_64`, `aarch64` on Linux ARM, `arm64` on Apple Silicon); set a string `cpu_arch` var to override it
+- `cpu_arch` is the host CPU architecture from `uname -m`, normalized so one CPU has one name on every OS: `x86_64` (also for `amd64`) and `arm64` (also for Linux `aarch64`); other values such as `riscv64` pass through unchanged. Set a string `cpu_arch` var, `--cpu-arch`, or `DOTMAN_CPU_ARCH` to override it; overrides are normalized the same way. Map to an upstream's own names (for example Go's `amd64` or Rust's `aarch64`) at the call site
 
 Injected env:
 

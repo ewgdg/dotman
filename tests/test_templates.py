@@ -168,13 +168,25 @@ def test_discover_template_file_dependencies_rejects_dynamic_refs(tmp_path: Path
         discover_template_file_dependencies(template_path)
 
 
-def test_template_context_exposes_host_cpu_arch() -> None:
+@pytest.mark.parametrize(
+    ("host_machine", "expected"),
+    [("x86_64", "x86_64"), ("aarch64", "arm64"), ("arm64", "arm64"), ("amd64", "x86_64"), ("riscv64", "riscv64")],
+)
+def test_template_context_normalizes_host_cpu_arch(monkeypatch, host_machine: str, expected: str) -> None:
+    monkeypatch.setattr(platform, "machine", lambda: host_machine)
+
     context = build_template_context({}, profile="basic", inferred_os="linux")
 
-    assert context["cpu_arch"] == platform.machine()
+    assert context["cpu_arch"] == expected
 
 
-def test_template_context_cpu_arch_can_be_overridden_by_var() -> None:
+def test_template_context_cpu_arch_var_override_is_normalized() -> None:
     context = build_template_context({"cpu_arch": "aarch64"}, profile="basic", inferred_os="linux")
 
-    assert context["cpu_arch"] == "aarch64"
+    assert context["cpu_arch"] == "arm64"
+
+
+def test_template_context_cpu_arch_explicit_override_is_normalized() -> None:
+    context = build_template_context({}, profile="basic", inferred_os="linux", cpu_arch="amd64")
+
+    assert context["cpu_arch"] == "x86_64"

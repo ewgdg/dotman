@@ -103,12 +103,22 @@ def _resolve_vars_templates(variables: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
+# `uname -m` names one CPU differently per OS (Linux `aarch64` vs macOS `arm64`,
+# FreeBSD `amd64` vs `x86_64`). Fold them so templates compare against a single
+# value; the canonical pair matches macOS `uname -m` and electron-builder assets.
+CPU_ARCH_ALIASES = {"aarch64": "arm64", "amd64": "x86_64"}
+
+
 def resolve_cpu_arch(variables: dict[str, Any], override: str | None = None) -> str:
     # Like `os`, an explicit `cpu_arch` var wins so a repo can render for another machine.
-    if override:
-        return override
     explicit = variables.get("cpu_arch")
-    return explicit if isinstance(explicit, str) else platform.machine()
+    if override:
+        cpu_arch = override
+    elif isinstance(explicit, str):
+        cpu_arch = explicit
+    else:
+        cpu_arch = platform.machine()
+    return CPU_ARCH_ALIASES.get(cpu_arch, cpu_arch)
 
 
 def build_template_context(

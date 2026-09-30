@@ -97,6 +97,7 @@ def test_push_render_keeps_push_workflow_identity(tmp_path, monkeypatch):
 
 
 def test_commands_and_hooks_receive_cpu_arch_env(tmp_path, monkeypatch):
+    monkeypatch.setattr(platform, "machine", lambda: "aarch64")
     hook_log = tmp_path / "hooks.log"
     engine = make_engine(tmp_path, monkeypatch, [(
         "unit", "both", b"repo", b"live",
@@ -107,5 +108,5 @@ def test_commands_and_hooks_receive_cpu_arch_env(tmp_path, monkeypatch):
     )])
     with engine.open_push_session(engine.resolve_sync_scope()) as session:
         assert session.execute().result.status == "completed"
-    assert (tmp_path / "live/unit").read_text() == platform.machine()
-    assert sorted(hook_log.read_text().splitlines()) == [f"package {platform.machine()}", f"target {platform.machine()}"]
+    assert (tmp_path / "live/unit").read_text() == "arm64"
+    assert sorted(hook_log.read_text().splitlines()) == ["package arm64", "target arm64"]
