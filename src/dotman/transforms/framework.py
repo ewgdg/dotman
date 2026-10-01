@@ -17,6 +17,9 @@ from typing import Any, ClassVar, Iterable, Protocol, runtime_checkable
 from dotman.atomic_files import write_bytes_atomic, write_text_atomic
 
 STDIN_PATH = Path("-")
+# A selector with this prefix removes paths from the selection instead of adding them.
+EXCLUSION_PREFIX = "not:"
+KeyPath = tuple[str, ...]
 
 
 class TransformMode(StrEnum):
@@ -42,6 +45,42 @@ def compile_selector_regexes(
                 f"invalid {selector_description} regex {raw_regex!r}: {error}"
             ) from error
     return tuple(compiled_regexes)
+
+
+def has_prefix_in(key_path: KeyPath, key_paths: set[KeyPath]) -> bool:
+    """Whether key_path or one of its ancestors is in key_paths."""
+    return any(key_path[:length] in key_paths for length in range(1, len(key_path) + 1))
+
+
+def subtract_excluded_key_paths(
+    document_key_paths: tuple[KeyPath, ...],
+    selected_key_paths: tuple[KeyPath, ...] | None,
+    excluded_key_paths: tuple[KeyPath, ...],
+) -> tuple[KeyPath, ...]:
+    """Drop excluded paths and their subtrees from a selection.
+
+    document_key_paths lists every key path of the base, and a selection of None
+    stands for the whole document. A selected path holds its whole subtree, so
+    one that contains an excluded path gives way to its children in the base,
+    down to the excluded path.
+    """
+    if selected_key_paths is None:
+        selected_key_paths = tuple(key_path for key_path in document_key_paths if len(key_path) == 1)
+    selected = set(selected_key_paths)
+    # Exclusions match the base like other selectors, so an exact exclusion the
+    # base lacks excludes nothing and splits no selection.
+    excluded = set(excluded_key_paths) & set(document_key_paths)
+    excluded_ancestors = {
+        key_path[:length] for key_path in excluded for length in range(1, len(key_path))
+    }
+    candidates = dict.fromkeys((*selected_key_paths, *document_key_paths))
+    return tuple(
+        key_path
+        for key_path in candidates
+        if has_prefix_in(key_path, selected)
+        and not has_prefix_in(key_path, excluded)
+        and key_path not in excluded_ancestors
+    )
 
 
 def split_quoted_key_path(raw_key: str, format_name: str) -> tuple[str, ...]:
@@ -157,6 +196,7 @@ class TransformRequest:
     selectors_by_type: Mapping[str, tuple[str, ...]]
     overlay_path: Path | None = None
     engine_options: Mapping[str, Any] = field(default_factory=dict)
+    excluded_selectors_by_type: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def validate_basic(self) -> None:
         if self.mode == TransformMode.MERGE and self.overlay_path is None:
@@ -168,6 +208,18 @@ class TransformRequest:
 
     def selector_values(self, selector_type: str) -> tuple[str, ...]:
         return self.selectors_by_type.get(selector_type, ())
+
+    def excluded_selector_values(self, selector_type: str) -> tuple[str, ...]:
+        return self.excluded_selectors_by_type.get(selector_type, ())
+
+    def has_included_selectors(self) -> bool:
+        return any(self.selectors_by_type.values())
+
+    def has_excluded_selectors(self) -> bool:
+        return any(self.excluded_selectors_by_type.values())
+
+    def has_selectors(self) -> bool:
+        return self.has_included_selectors() or self.has_excluded_selectors()
 
     def engine_option(self, option_name: str, default: Any = None) -> Any:
         return self.engine_options.get(option_name, default)
@@ -309,6 +361,7 @@ def emit_transform_output(
 @runtime_checkable
 class TransformEngine(Protocol):
     name: str
+    SUPPORTS_EXCLUDED_SELECTORS: bool
 
     @classmethod
     def selector_specs(cls) -> tuple[SelectorSpec, ...]:
@@ -336,6 +389,7 @@ class TransformEngine(Protocol):
 class BaseTransformEngine(ABC):
     name: ClassVar[str]
     SELECTOR_SPECS: ClassVar[tuple[SelectorSpec, ...]]
+    SUPPORTS_EXCLUDED_SELECTORS: ClassVar[bool] = False
 
     @classmethod
     def selector_specs(cls) -> tuple[SelectorSpec, ...]:
@@ -360,13 +414,20 @@ class BaseTransformEngine(ABC):
 
     def validate_request(self, request: TransformRequest) -> None:
         request.validate_basic()
-        if self.requires_selectors() and not any(request.selectors_by_type.values()):
+        if self.requires_selectors() and not request.has_selectors():
             raise ValueError("at least one selector value is required")
+        if request.has_excluded_selectors() and not self.SUPPORTS_EXCLUDED_SELECTORS:
+            raise ValueError(f"{self.name} does not support {EXCLUSION_PREFIX} selectors")
 
         supported_specs = self.selector_spec_map()
+        selector_types = {
+            selector_type: request.selector_values(selector_type)
+            + request.excluded_selector_values(selector_type)
+            for selector_type in (*request.selectors_by_type, *request.excluded_selectors_by_type)
+        }
         unknown_selector_types = sorted(
             selector_type
-            for selector_type in request.selectors_by_type
+            for selector_type in selector_types
             if selector_type not in supported_specs
         )
         if unknown_selector_types:
@@ -376,9 +437,9 @@ class BaseTransformEngine(ABC):
 
         unsupported_mode_selector_types = sorted(
             selector_type
-            for selector_type in request.selectors_by_type
+            for selector_type, values in selector_types.items()
             if selector_type in supported_specs
-            and request.selector_values(selector_type)
+            and values
             and request.mode not in supported_specs[selector_type].supported_modes
         )
         if unsupported_mode_selector_types:

@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from dotman.transforms.framework import (
+    EXCLUSION_PREFIX,
     STDIN_PATH,
     SelectorAction,
     TransformEngine,
@@ -16,16 +17,25 @@ from dotman.transforms.framework import (
 )
 
 
-def parse_selectors(engine: TransformEngine, selectors: list[str]) -> dict[str, tuple[str, ...]]:
-    selectors_by_type: dict[str, list[str]] = {spec.name: [] for spec in engine.selector_specs()}
+def parse_selectors(
+    engine: TransformEngine, selectors: list[str]
+) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
+    """Split selectors into included and excluded values, each keyed by selector type."""
+    included_by_type: dict[str, list[str]] = {spec.name: [] for spec in engine.selector_specs()}
+    excluded_by_type: dict[str, list[str]] = {spec.name: [] for spec in engine.selector_specs()}
     prefix_to_spec = {f"{spec.prefix}:": spec for spec in engine.selector_specs()}
     default_spec = next((spec for spec in engine.selector_specs() if spec.is_default), None)
 
     for selector in selectors:
+        target_by_type = included_by_type
+        if selector.startswith(EXCLUSION_PREFIX):
+            selector = selector[len(EXCLUSION_PREFIX):]
+            target_by_type = excluded_by_type
+
         matched = False
         for prefix, spec in prefix_to_spec.items():
             if selector.startswith(prefix):
-                selectors_by_type[spec.name].append(selector[len(prefix):])
+                target_by_type[spec.name].append(selector[len(prefix):])
                 matched = True
                 break
         if not matched:
@@ -33,9 +43,12 @@ def parse_selectors(engine: TransformEngine, selectors: list[str]) -> dict[str, 
                 raise ValueError(
                     f"Engine {engine.name} has no default selector spec, but no prefix was matched for: {selector}"
                 )
-            selectors_by_type[default_spec.name].append(selector)
+            target_by_type[default_spec.name].append(selector)
 
-    return {name: tuple(values) for name, values in selectors_by_type.items()}
+    return (
+        {name: tuple(values) for name, values in included_by_type.items()},
+        {name: tuple(values) for name, values in excluded_by_type.items()},
+    )
 
 
 
@@ -50,7 +63,17 @@ def selector_help(engine: TransformEngine) -> str:
         if default_spec is not None
         else ""
     )
-    return f"Base-file selectors. {default_description}Prefixes: {prefix_descriptions}."
+    exclusion_description = (
+        f" Prefix any selector with {EXCLUSION_PREFIX} to remove its paths and their"
+        " subtrees from the selection; with only such selectors the rest of the"
+        " document is selected."
+        if engine.SUPPORTS_EXCLUDED_SELECTORS
+        else ""
+    )
+    return (
+        f"Base-file selectors. {default_description}Prefixes: {prefix_descriptions}."
+        f"{exclusion_description}"
+    )
 
 
 def configure_parser(parser: argparse.ArgumentParser, engine: TransformEngine) -> None:
@@ -114,7 +137,9 @@ def build_request(
     parsed_args: argparse.Namespace,
 ) -> TransformRequest:
     try:
-        selectors_by_type = parse_selectors(engine, getattr(parsed_args, "selectors", []))
+        selectors_by_type, excluded_selectors_by_type = parse_selectors(
+            engine, getattr(parsed_args, "selectors", [])
+        )
     except ValueError as e:
         parser.error(str(e))
 
@@ -126,6 +151,7 @@ def build_request(
             getattr(parsed_args, "selector_type", SelectorAction.RETAIN.value)
         ),
         selectors_by_type=selectors_by_type,
+        excluded_selectors_by_type=excluded_selectors_by_type,
         overlay_path=parsed_args.overlay_path,
         engine_options=engine.build_engine_options(parsed_args),
     )

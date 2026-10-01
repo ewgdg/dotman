@@ -35,6 +35,7 @@ from dotman.transforms.framework import (
     TransformOutput,
     TransformRequest,
     compile_selector_regexes,
+    subtract_excluded_key_paths,
     decode_reference_text,
     read_input_text,
     read_reference_bytes,
@@ -734,6 +735,30 @@ def matches_path_regex(item_path: tuple[str, ...], path_regexes: list[re.Pattern
     return any(path_regex.search(raw_item_path) for path_regex in path_regexes)
 
 
+def selection_without_excluded_paths(
+    base_doc: TOMLDocument,
+    key_paths: list[tuple[str, ...]] | None,
+    table_regexes: list[re.Pattern[str]],
+    excluded_key_paths: list[tuple[str, ...]],
+    excluded_table_regexes: list[re.Pattern[str]],
+) -> list[tuple[str, ...]]:
+    """Concrete selected paths of base_doc; None key paths select the whole document."""
+    document_paths = tuple(iter_item_paths_in_order(base_doc))
+
+    def matched_paths(
+        paths: list[tuple[str, ...]], regexes: list[re.Pattern[str]]
+    ) -> tuple[tuple[str, ...], ...]:
+        return (*paths, *(path for path in document_paths if matches_path_regex(path, regexes)))
+
+    return list(
+        subtract_excluded_key_paths(
+            document_paths,
+            None if key_paths is None else matched_paths(key_paths, table_regexes),
+            matched_paths(excluded_key_paths, excluded_table_regexes),
+        )
+    )
+
+
 def parse_key_paths(raw_key_paths: Iterable[str]) -> list[tuple[str, ...]]:
     return [parse_key_path(raw_key) for raw_key in raw_key_paths]
 
@@ -1135,6 +1160,7 @@ def build_merged_document_output(
 
 class TomlTransformEngine(BaseTransformEngine):
     name = "toml"
+    SUPPORTS_EXCLUDED_SELECTORS = True
     SELECTOR_SPECS = (
         SelectorSpec(
             name="key",
@@ -1169,6 +1195,8 @@ class TomlTransformEngine(BaseTransformEngine):
         super().validate_request(request)
         parse_key_paths(request.selector_values("key"))
         compile_table_regexes(request.selector_values("table_regex"))
+        parse_key_paths(request.excluded_selector_values("key"))
+        compile_table_regexes(request.excluded_selector_values("table_regex"))
 
     def transform(self, request: TransformRequest) -> TransformOutput:
         self.validate_request(request)
@@ -1176,6 +1204,17 @@ class TomlTransformEngine(BaseTransformEngine):
         table_regexes = compile_table_regexes(request.selector_values("table_regex"))
         compare_path = request.engine_option("compare_path")
         stdin_bytes = request.engine_option("stdin_bytes")
+        if request.has_excluded_selectors():
+            # Splitting a selection around an excluded path needs the base's
+            # concrete paths, so regexes are resolved against the base here.
+            key_paths = selection_without_excluded_paths(
+                load_document(request.base_path, stdin_bytes=stdin_bytes)[0],
+                key_paths if request.has_included_selectors() else None,
+                table_regexes,
+                parse_key_paths(request.excluded_selector_values("key")),
+                compile_table_regexes(request.excluded_selector_values("table_regex")),
+            )
+            table_regexes = []
 
         if request.mode == TransformMode.CLEANUP:
             if request.selector_action == SelectorAction.REMOVE:

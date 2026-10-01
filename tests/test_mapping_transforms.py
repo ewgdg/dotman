@@ -87,6 +87,51 @@ def test_merge_remove_keeps_live_keys_of_a_mapping_no_selector_reaches(
 
 
 @pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+def test_not_selector_keeps_a_key_at_any_depth_out_of_the_synced_region(transform_format, tmp_path) -> None:
+    # A regex cannot do this alone: selecting `settings.a` takes `a.cache` too.
+    selectors = ("--selectors", "settings", r"not:re:(^|\.)cache$")
+    live = {"state": 1, "settings": {"theme": "dark", "cache": "L0", "a": {"x": 1, "cache": "L1"}}}
+
+    captured = run_transform(transform_format, tmp_path, live, "--mode", "cleanup", *selectors)
+    assert captured == {"settings": {"theme": "dark", "a": {"x": 1}}}
+
+    repo = {"settings": {"theme": "light", "a": {"x": 9}}}
+    overlay_path = write_mapping(tmp_path / f"repo.{transform_format}", transform_format, repo)
+    rendered = run_transform(
+        transform_format,
+        tmp_path,
+        live,
+        "--mode", "merge", "--overlay-file", str(overlay_path), "--selector-type", "remove", *selectors,
+    )
+    assert rendered == {
+        "state": 1,
+        "settings": {"theme": "light", "cache": "L0", "a": {"x": 9, "cache": "L1"}},
+    }
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+@pytest.mark.parametrize(
+    "selectors",
+    [("settings.a.x", "not:settings.a"), ("not:settings.a", "settings.a.x")],
+)
+def test_exclusion_wins_over_an_include_inside_it(transform_format, selectors, tmp_path) -> None:
+    live = {"settings": {"a": {"x": 1}, "b": 2}}
+
+    assert run_transform(
+        transform_format, tmp_path, live, "--mode", "cleanup", "--selectors", *selectors
+    ) == {}
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+def test_only_not_selectors_select_the_rest_of_the_document(transform_format, tmp_path) -> None:
+    live = {"state": 1, "settings": {"theme": "dark", "cache": "L0"}}
+
+    assert run_transform(
+        transform_format, tmp_path, live, "--mode", "cleanup", "--selectors", "not:settings.cache"
+    ) == {"state": 1, "settings": {"theme": "dark"}}
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
 def test_quoted_empty_segment_selects_the_empty_key(transform_format, tmp_path) -> None:
     base = {"a": {"": "empty", "b": "kept"}, "": "top"}
 

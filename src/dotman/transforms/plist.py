@@ -19,6 +19,7 @@ from dotman.transforms.framework import (
     TransformRequest,
     STDIN_PATH,
     compile_selector_regexes,
+    subtract_excluded_key_paths,
     read_reference_bytes,
     split_quoted_key_path,
     values_strictly_equal,
@@ -347,6 +348,7 @@ def build_plist_output(
 
 class PlistTransformEngine(BaseTransformEngine):
     name = "plist"
+    SUPPORTS_EXCLUDED_SELECTORS = True
     SELECTOR_SPECS = (
         SelectorSpec(
             name="key",
@@ -391,6 +393,8 @@ class PlistTransformEngine(BaseTransformEngine):
         super().validate_request(request)
         parse_plist_key_paths(request.selector_values("key"))
         compile_key_regexes(request.selector_values("key_regex"))
+        parse_plist_key_paths(request.excluded_selector_values("key"))
+        compile_key_regexes(request.excluded_selector_values("key_regex"))
 
     def transform(self, request: TransformRequest) -> TransformOutput:
         self.validate_request(request)
@@ -406,11 +410,21 @@ class PlistTransformEngine(BaseTransformEngine):
             exact_key_paths,
             selected_key_regexes,
         )
+        if request.has_excluded_selectors():
+            selected_key_paths = subtract_excluded_key_paths(
+                iter_plist_key_paths(base_data),
+                selected_key_paths if request.has_included_selectors() else None,
+                selected_plist_key_paths(
+                    base_data,
+                    parse_plist_key_paths(request.excluded_selector_values("key")),
+                    compile_key_regexes(request.excluded_selector_values("key_regex")),
+                ),
+            )
         # Only an absent selector list means identity. Selectors that match
         # nothing must still select nothing.
         transformed_data = (
             select_plist_data(base_data, request.selector_action, selected_key_paths)
-            if exact_key_paths or selected_key_regexes
+            if request.has_selectors()
             else dict(base_data)
         )
 
@@ -425,9 +439,7 @@ class PlistTransformEngine(BaseTransformEngine):
                 overlay_data,
                 # Without selectors the whole base is one selection, so the overlay
                 # replaces each top-level key it shares with the base.
-                selected_key_paths
-                if exact_key_paths or selected_key_regexes
-                else (DOCUMENT_ROOT_KEY_PATH,),
+                selected_key_paths if request.has_selectors() else (DOCUMENT_ROOT_KEY_PATH,),
             )
 
         return build_plist_output(

@@ -270,11 +270,10 @@ between the two commands:
   app added since the last Capture.
 - A repository key outside the synced region is published once, then dropped
   by Capture, so the target never converges.
-- To sync a subtree except some keys, select its children with a
-  negative-lookahead regex, such as `'re:^settings\.(?!windowBounds$)[^.]+$'`.
-  The excluded live keys survive `render` even when they are the only live
-  children, because merge descends into every mapping it does not replace
-  whole.
+- To sync a subtree except some keys, add `not:` selectors, such as
+  `settings 'not:settings.windowBounds'`, or `settings 'not:re:(^|\.)cache$'`
+  for a key at any depth. The excluded live keys survive `render` because merge
+  descends into every mapping it does not replace whole.
 
 ```toml
 [vars.app]

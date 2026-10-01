@@ -557,3 +557,15 @@ def test_overlay_that_is_a_directory_is_an_error_not_an_empty_file(transform_for
     ]) != 0
     assert "Is a directory" in capsys.readouterr().err
     assert not output.exists()
+
+
+def test_xml_rejects_not_selectors(tmp_path, capsys) -> None:
+    from dotman import cli
+
+    base = tmp_path / "base.xml"
+    base.write_text("<config><a/></config>\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["transform", "xml", str(base), "--stdout", "--mode", "cleanup", "--selectors", "not:config/a"])
+    assert exit_info.value.code == 2
+    assert "not:" in capsys.readouterr().err

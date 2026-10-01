@@ -1861,3 +1861,27 @@ def test_compare_file_reuse_reads_array_comments_past_strings_holding_toml_synta
     )
 
     assert output == live
+
+
+def test_not_selector_keeps_a_key_at_any_depth_out_of_the_synced_region(tmp_path: Path) -> None:
+    selectors = ("--selectors", "settings", r"not:re:(^|\.)cache$")
+    live_text = (
+        "state = 1\n\n[settings]\ntheme = \"dark\"\ncache = \"L0\"\n\n"
+        "[settings.a]\nx = 1\ncache = \"L1\"\n"
+    )
+
+    captured = run_toml_transform(tmp_path, live_text, *selectors)
+    assert tomllib.loads(captured) == {"settings": {"theme": "dark", "a": {"x": 1}}}
+
+    rendered = run_toml_transform(
+        tmp_path,
+        live_text,
+        "--selector-type",
+        "remove",
+        *selectors,
+        overlay_text='[settings]\ntheme = "light"\n\n[settings.a]\nx = 9\n',
+    )
+    assert tomllib.loads(rendered) == {
+        "state": 1,
+        "settings": {"theme": "light", "cache": "L0", "a": {"x": 9, "cache": "L1"}},
+    }
