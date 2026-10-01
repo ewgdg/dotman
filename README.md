@@ -106,4 +106,4 @@ Contributors:
 - Architecture: [`docs/code-structure.md`](docs/code-structure.md)
 - Domain vocabulary: [`CONTEXT.md`](CONTEXT.md)
 
-Agents: the [`skills/dotman`](skills/dotman/SKILL.md) skill indexes these docs and adds noise-filtering guidance. Install it with `npx skills add ewgdg/dotman -g`.
+Agents: install the [`dotman` skill](skills/dotman/SKILL.md) with `npx skills add ewgdg/dotman -g`.
