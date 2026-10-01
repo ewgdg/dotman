@@ -6,6 +6,15 @@ Package-oriented dotfile manager: reproducible across machines, with reviewable 
 
 ## Design philosophy
 
+```text
+workflow = reconcile(derive(intent), host)
+```
+
+- **intent**: packages, profiles, and variables in your repo
+- **derive**: resolve packages and render templates into concrete files
+- **host**: the live machine
+- **reconcile**: `sync` — push, pull, or merge each difference
+
 Intuition over configuration.
 
 First principles over convention.
