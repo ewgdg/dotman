@@ -60,6 +60,33 @@ def test_merge_with_unmatched_retain_regex_keeps_only_overlay(transform_format, 
 
 
 @pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+@pytest.mark.parametrize("repo_settings", [{"theme": "light"}, {}])
+def test_merge_remove_keeps_live_keys_of_a_mapping_no_selector_reaches(
+    transform_format, repo_settings, tmp_path
+) -> None:
+    # Live `settings` holds only the key the regex excludes, so no selector
+    # reaches `settings`. The merge must still descend into it rather than let
+    # the repo's copy replace the live-only `windowBounds`.
+    overlay_path = write_mapping(
+        tmp_path / f"overlay.{transform_format}", transform_format, {"settings": repo_settings}
+    )
+
+    assert run_transform(
+        transform_format,
+        tmp_path,
+        {"settings": {"windowBounds": [1, 2]}, "state": 1},
+        "--mode",
+        "merge",
+        "--overlay-file",
+        str(overlay_path),
+        "--selector-type",
+        "remove",
+        "--selectors",
+        r"re:^settings\.(?!windowBounds$)[^.]+$",
+    ) == {"settings": {"windowBounds": [1, 2], **repo_settings}, "state": 1}
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
 def test_quoted_empty_segment_selects_the_empty_key(transform_format, tmp_path) -> None:
     base = {"a": {"": "empty", "b": "kept"}, "": "top"}
 

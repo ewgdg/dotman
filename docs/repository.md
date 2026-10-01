@@ -270,10 +270,11 @@ between the two commands:
   app added since the last Capture.
 - A repository key outside the synced region is published once, then dropped
   by Capture, so the target never converges.
-- Selectors cannot carve exclusions out of a selected subtree. A
-  negative-lookahead `re:` selector expands against the live file, so when the
-  live subtree holds only excluded keys it matches nothing and Render replaces
-  the whole subtree.
+- To sync a subtree except some keys, select its children with a
+  negative-lookahead regex, such as `'re:^settings\.(?!windowBounds$)[^.]+$'`.
+  The excluded live keys survive `render` even when they are the only live
+  children, because merge descends into every mapping it does not replace
+  whole.
 
 ```toml
 [vars.app]

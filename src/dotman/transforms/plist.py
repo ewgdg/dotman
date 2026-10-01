@@ -27,6 +27,8 @@ from dotman.transforms.framework import (
 
 PlistDict = dict[str, Any]
 PlistKeyPath = tuple[str, ...]
+# The empty key path selects the whole document.
+DOCUMENT_ROOT_KEY_PATH: PlistKeyPath = ()
 KeyRegex = re.Pattern[str]
 _MISSING = object()
 
@@ -218,8 +220,12 @@ def select_plist_data(
     return filter_retained_keys(data, selected_key_paths, selected_key_regexes)
 
 
-def should_recurse_overlay(selector: PlistPathSelector | None) -> bool:
-    return selector is not None and not selector.include_subtree and bool(selector.children)
+def child_overlay_selector(selector: PlistPathSelector, key: str) -> PlistPathSelector:
+    # Everything under a whole selection is whole too. A key no selector
+    # reaches gets an empty selector, so merge still descends into it.
+    if selector.include_subtree:
+        return selector
+    return selector.children.get(key) or PlistPathSelector()
 
 
 def overlay_plist_dicts(
@@ -233,14 +239,17 @@ def overlay_plist_dicts(
     for key in original_base_data:
         overlay_has_key = key in overlay_data
         preserved_has_key = key in preserved_base_data
-        child_selector = path_selector.children.get(key)
+        child_selector = child_overlay_selector(path_selector, key)
 
         if overlay_has_key and preserved_has_key:
             overlay_value = overlay_data[key]
             preserved_value = preserved_base_data[key]
             base_value = original_base_data[key]
+            # A whole selection is one value, so the overlay's copy replaces it. Any
+            # other mapping on both sides merges key by key, so the live keys left in
+            # it after selection survive.
             if (
-                should_recurse_overlay(child_selector)
+                not child_selector.include_subtree
                 and isinstance(base_value, dict)
                 and isinstance(preserved_value, dict)
                 and isinstance(overlay_value, dict)
@@ -414,7 +423,11 @@ class PlistTransformEngine(BaseTransformEngine):
                 base_data,
                 transformed_data,
                 overlay_data,
-                selected_key_paths,
+                # Without selectors the whole base is one selection, so the overlay
+                # replaces each top-level key it shares with the base.
+                selected_key_paths
+                if exact_key_paths or selected_key_regexes
+                else (DOCUMENT_ROOT_KEY_PATH,),
             )
 
         return build_plist_output(
