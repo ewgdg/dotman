@@ -3,6 +3,7 @@
 - Core package code lives in `src/dotman/`.
 - CLI and engine coverage lives in `tests/`.
 - Example repo layouts and sample config live in `examples/repo/`.
+- The dotman agent skill lives in `skills/dotman/`. When a change alters user-facing behavior (commands, flags, selector syntax, workflows), update the skill along with `docs/`.
 
 ## UI design
 
