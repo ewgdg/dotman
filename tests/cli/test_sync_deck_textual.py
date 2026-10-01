@@ -302,11 +302,11 @@ def test_fixed_resolution_is_recessive_and_offers_no_intent_key(tmp_path, monkey
 
         async def interact():
             async with app.run_test(size=(140, 24)) as pilot:
-                assert "R intent" in help_text(app)
+                assert "r intent" in help_text(app)
                 await pilot.press("down")
-                assert "R intent" not in help_text(app)
+                assert "r intent" not in help_text(app)
                 await pilot.press("down")
-                assert "R intent" not in help_text(app)
+                assert "r intent" not in help_text(app)
         run(interact())
 
 
@@ -401,9 +401,9 @@ def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monke
                 styled = {segment.text.strip() for strip in strips for segment in strip if segment.style != plain}
                 assert {"main", "bad", "error"} <= styled
                 hints = app.query_one("#help", Static).render()
-                assert hints.plain.startswith("Q abort · X confirm")
+                assert hints.plain.startswith("q abort · x confirm")
                 bold = {hints.plain[span.start:span.end] for span in hints.spans if "bold" in str(span.style)}
-                assert {"Q", "X", "Space"} <= bold and "confirm" not in bold
+                assert {"q", "x", "Space"} <= bold and "confirm" not in bold
         run(interact())
 
 
@@ -590,7 +590,7 @@ def test_help_area_click_cannot_authorize_after_clear_key(tmp_path, monkeypatch)
                 rendered_help = " ".join(
                     help_widget.render_line(y).text for y in range(help_widget.size.height)
                 )
-                assert "Q abort" in rendered_help and "X confirm" in rendered_help
+                assert "q abort" in rendered_help and "x confirm" in rendered_help
         run(interact())
 
 
@@ -1180,7 +1180,7 @@ def test_workset_filter_narrows_rows_and_scopes_bulk_selection(tmp_path, monkeyp
                 await pilot.press("enter")
                 await pilot.pause()
                 assert "/Zsh 2/4" in help_text(app)
-                assert "Q abort" not in help_text(app)
+                assert "q abort" not in help_text(app)
                 await pilot.press("a")
                 assert {row.row_id for row in session.view.rows if row.approved} == {
                     "main:app.zsh_env", "main:app.zsh_rc"}
@@ -1211,7 +1211,7 @@ def test_workset_filter_narrows_rows_and_scopes_bulk_selection(tmp_path, monkeyp
                 await pilot.pause()
                 assert table_row_ids(app) == [f"main:app.{name}" for name in FILTER_UNITS]
                 assert "hidden" not in title_text(app)
-                assert "Q abort" in help_text(app)
+                assert "q abort" in help_text(app)
         run(interact())
 
 

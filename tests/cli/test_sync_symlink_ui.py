@@ -41,7 +41,7 @@ def test_deck_authorization_is_explicit_and_separate_from_selection(tmp_path, mo
 
 
 def test_workset_hints_list_bulk_selection_and_copy_within_two_rows_at_80_columns(tmp_path, monkeypatch):
-    # A link row adds Shift+L, the longest workset hint bar.
+    # A link row adds L, the longest workset hint bar.
     engine, _path, _referent = linked_file(tmp_path, monkeypatch)
     with open_session(engine) as session:
         app = SyncDeckApp(CommandDeck(session, use_color=False))
@@ -54,7 +54,7 @@ def test_workset_hints_list_bulk_selection_and_copy_within_two_rows_at_80_column
                         help_widget.render_line(y).text for y in range(help_widget.size.height)
                     )
                     assert help_widget.size.height <= 2
-                    for hint in ("A/U all/none", "Y copy", "Shift+L authorize link replacement"):
+                    for hint in ("a/u all/none", "y copy", "L authorize link replacement"):
                         assert hint in rendered, (focus, rendered)
                     await pilot.press("tab")
                     await pilot.pause()

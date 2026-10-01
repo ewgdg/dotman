@@ -1169,14 +1169,14 @@ class SyncDeckApp(App[bool]):
         return self.focused is self.query_one("#detail")
 
     def update_hints(self) -> None:
-        review_scroll = ("↑/↓/J/K", "scroll")
-        bulk_selection = ("A/U", "all/none")
+        review_scroll = ("↑/↓/j/k", "scroll")
+        bulk_selection = ("a/u", "all/none")
         body = self.query_one(ReviewBody)
         if body.search:
             review_lead = [(f"/{body.search}", f"{self._match_index + 1}/{len(body.match_rows)}"),
-                           ("N/Shift+N", "next/previous match"), ("Esc", "clear")]
+                           ("n/N", "next/previous match"), ("Esc", "clear")]
         elif self.deck.full_view is not None:
-            review_lead = [("Esc", "return"), ("N/Shift+N", "next/previous change"), ("/", "search")]
+            review_lead = [("Esc", "return"), ("n/N", "next/previous change"), ("/", "search")]
         else:
             review_lead = [("Esc", "return"), ("/", "search")]
         if self._search_open:
@@ -1184,34 +1184,34 @@ class SyncDeckApp(App[bool]):
             hints = [("Enter", "search" if self.deck.reviewing else "filter"), ("↑/↓", "history"),
                      ("Ctrl+U", "clear"), ("Esc", "cancel"), ("Ctrl+C", "abort")]
         elif self.query_one(OptionList).display:
-            hints = [("↑/↓/J/K", self._menu_hint), ("Enter", "select"), ("Esc", "dismiss")]
+            hints = [("↑/↓/j/k", self._menu_hint), ("Enter", "select"), ("Esc", "dismiss")]
         elif self.deck.confirming:
             hints = [("Enter", "confirm"), ("Esc", "return"), ("Ctrl+C", "abort")]
         elif self.deck.full_view is not None:
-            hints = [*review_lead, ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
+            hints = [*review_lead, ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            hints = [*review_lead, ("Space", "approval"), ("V", "full view"), ("Y", "copy"), review_scroll,
+            hints = [*review_lead, ("Space", "approval"), ("v", "full view"), ("y", "copy"), review_scroll,
                      ("Ctrl+C", "abort")]
         elif self.deck.reviewing:
-            hints = [*review_lead, ("Space", "approval"), ("E", "edit"), ("T", "retry"), ("V", "full view"),
-                     ("Y", "copy"), review_scroll, ("Ctrl+C", "abort")]
+            hints = [*review_lead, ("Space", "approval"), ("e", "edit"), ("t", "retry"), ("v", "full view"),
+                     ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.detail_focused:
             hints = [("Tab/Esc", "return"), review_scroll, ("Space", "mark"), bulk_selection,
-                     ("Enter", "view"), ("E", "edit"), ("T", "retry"), ("Y", "copy")]
+                     ("Enter", "view"), ("e", "edit"), ("t", "retry"), ("y", "copy")]
         elif self.deck.filter:
             hints = [(f"/{self.deck.filter}", f"{len(self.deck.visible_rows)}/{len(self.deck.session.view.rows)}"),
-                     ("Esc", "clear"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
-                     ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
+                     ("Esc", "clear"), ("x", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
+                     ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         else:
-            hints = [("Q", "abort"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("/", "filter"),
-                     ("Enter", "view"), ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
+            hints = [("q", "abort"), ("x", "confirm"), ("Space", "mark"), bulk_selection, ("/", "filter"),
+                     ("Enter", "view"), ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
                 and not self._search_open and self.deck.full_view is None):
-            hints.append(("Shift+L", "authorize link replacement"))
+            hints.append(("L", "authorize link replacement"))
         if (resolution_choosable(row) and not self.deck.reviewing and not self._search_open
                 and not self.query_one(OptionList).display and not self.deck.confirming):
-            hints.append(("R", "intent"))
+            hints.append(("r", "intent"))
         self.query_one("#help", Static).update(Text.from_ansi(render_key_hints(hints, use_color=self.deck.use_color)))
 
     def update_detail(self) -> None:
@@ -1244,7 +1244,7 @@ class SyncDeckApp(App[bool]):
         if not self.busy and not self.deck.reviewing and not self.deck.confirming:
             self.sync_focus()
             self.update_detail()
-            # Row-specific hints (R, Shift+L) follow the focused row.
+            # Row-specific hints (r, L) follow the focused row.
             self.update_hints()
 
     def show_workset(self) -> None:

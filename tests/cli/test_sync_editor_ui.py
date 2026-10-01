@@ -97,7 +97,7 @@ def test_editor_key_saves_in_place_and_is_disabled_after_confirmation(tmp_path, 
 
         async def interact():
             async with app.run_test(size=(100, 24)) as pilot:
-                assert "E edit" in str(app.query_one("#help", Static).render())
+                assert "e edit" in str(app.query_one("#help", Static).render())
                 await pilot.press("space", "enter")
                 assert session.view.rows[0].approved
                 await pilot.press("e")

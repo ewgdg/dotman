@@ -98,7 +98,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   (every target in sync, no warnings, hooks or probes; Guard skips alone do not count), it skips the Deck and
   logs directly, printing any Guard skips above the summary.
   Its Textual table aligns Selection (headed `✓`), Target, Policy, and Resolution columns.
-  `Space` toggles Selection, `A` selects eligible rows, and `U` clears Selection.
+  `Space` toggles Selection, `a` selects eligible rows, and `u` clears Selection.
   Selection means independent Proposal or Additional Source Change Approval,
   or direct auxiliary inclusion. Batch actions establish all final states before
   rematerializing dependent Proposals.
@@ -107,7 +107,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   filter, `Ctrl+U` clears the line, `Esc` restores the previous filter, and `Ctrl+C` still
   aborts. A filter without matches reports
   `No match for …` and is dropped. While filtered, the help text shows the filter and
-  its count (`/zsh 2/4`), `A`/`U` act only on visible rows, and the title reports
+  its count (`/zsh 2/4`), `a`/`u` act only on visible rows, and the title reports
   selections the filter hides (`(3 selected hidden)`), since confirmation still
   executes them. `q` does not abort a filtered workset; `Esc` clears the filter first.
   The filter survives opening and leaving a review.
@@ -118,7 +118,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   the terminal width; the focused detail line shows the full identity. Arrow keys
   and vim-style `h`/`j`/`k`/`l` navigate; terminals too narrow even for shortened targets scroll horizontally,
   and long worksets scroll vertically without losing column alignment.
-- `R`, or a click in the Resolution cell, changes the focused row's Resolution:
+- `r`, or a click in the Resolution cell, changes the focused row's Resolution:
   with two allowed intents it toggles between them; with three or more it opens a menu.
   A saved Editor outcome adds **Edited** as an intent for the rest of the session, so
   switching away never loses it: a one-way Policy toggles with Edited, a two-way one opens the menu.
@@ -143,27 +143,27 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   color removed, added and hunk lines. Long lines wrap to the terminal width, with
   continuations hanging under their value or after the diff marker, and rewrap on
   resize. A notice answers the previous key, so the next key press or click clears
-  it; clicking the notice dismisses it without other effects. The `Y` copy
+  it; clicking the notice dismisses it without other effects. The `y` copy
   confirmation and `No match for …` also clear themselves after a moment.
-  `V` in review opens Full View: one diff or merge-conflict section with the whole
+  `v` in review opens Full View: one diff or merge-conflict section with the whole
   file as context instead of three lines. With several such sections (for example,
   repository and live effect previews, or Merge conflicts and Drift) it first offers a
   menu; with one it opens directly. Full View opens at the top unless the first change
-  starts below the screen, in which case it lands on that change; `n` and `Shift+N`
+  starts below the screen, in which case it lands on that change; `n` and `N`
   step to the next and previous change block. Full View is read-only: it scrolls and
-  copies with `Y`, and `Esc` returns to the review at its prior position.
+  copies with `y`, and `Esc` returns to the review at its prior position.
   `/` in review or Full View opens a search line above the help text; while it is open,
   deck keys type into it. `Enter` highlights every case-insensitive match and lands on
   the first one at or below the current position; `Ctrl+U` clears the line, `Esc` cancels,
   and `Ctrl+C` still aborts. While a search is
-  active the help text shows it with the match count (`/zsh 3/12`), and `n`/`Shift+N`
+  active the help text shows it with the match count (`/zsh 3/12`), and `n`/`N`
   step to the next and previous match, wrapping around, instead of change blocks.
   `Esc` clears the search before it leaves the view, and leaving the view clears it too.
   A search without matches reports `No match for …` and is not kept.
   In both search lines `↑`/`↓` recall the last 10 queries, newest first; workset
   filters and reader searches keep separate histories for the session, and `↓` past
   the newest query restores the text typed before recalling.
-  `X` opens one compact confirmation with selected units, repository changes,
+  `x` opens one compact confirmation with selected units, repository changes,
   and changed live targets, each counted once whether written, deleted,
   mode-changed, or reapplied; deletions and reapplies are also shown in brackets
   (`live: 3 (1 deleted, 1 reapplied)`). Confirming with nothing selected is allowed
@@ -172,7 +172,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   completed approved Proposals; confirming executes the already-reviewed set without
   further materialization. Review scroll position is retained per target; arrow keys, `j`/`k`,
   Page Up/Down, and the mouse wheel scroll frozen evidence.
-  `Y` copies to the terminal clipboard (OSC 52): the full Target identity from the
+  `y` copies to the terminal clipboard (OSC 52): the full Target identity from the
   workset; in review, the mouse-dragged selection when there is one, otherwise the
   whole review text. `Ctrl+C` stays Abort; outside review, most terminals bypass
   the deck's mouse capture with Shift+drag for ad-hoc selection.
@@ -190,7 +190,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   Successful editing preserves Approval; cancellation preserves the previous
   Proposal. Failed materialization clears only that unit's Approval.
   **T** retries materialization; Editor attempts can be retried with **E**.
-  `Shift+L` explicitly authorizes prompt-mode live-link replacement for the focused
+  `L` explicitly authorizes prompt-mode live-link replacement for the focused
   Proposal; it does not select or approve it. Review shows authorization in the
   shared warning/success colors. Unattended Sync cannot supply this decision.
   During editing, `Ctrl+C` or OS SIGINT cancels only the Editor attempt,
@@ -455,7 +455,7 @@ workset and Command Deck with Sync and Pull, but its only resolution is
   repository-space outcome as a Sync Base. Checkpoint-only failures warn without
   stopping later work.
 - `file_symlink_mode = prompt` requires explicit per-row link replacement
-  authorization (Shift+L); unattended Push cannot grant it. A dangling live link
+  authorization (`L`); unattended Push cannot grant it. A dangling live link
   is replaceable the same way for push-only work; anything with pull capability
   still rejects it, so it is never read as a deleted live file. `follow` writes through
   to the resolved target. `dir_symlink_mode = fail` rejects symlinked directory
