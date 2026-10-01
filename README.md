@@ -1,14 +1,8 @@
 # dotman
 
-Package-oriented dotfile manager with reviewable two-way sync.
+Package-oriented dotfile manager: reproducible across machines, with reviewable two-way sync.
 
 <img src="docs/assets/selection-ui.svg" alt="dotman interactive selection UI mockup" width="720">
-
-## Why
-
-Modern development workflows are encoded in dotfiles, editor state, helper scripts, and selected system configuration.
-
-`dotman` is for deploying that workflow reproducibly across machines by treating it as a packageable, reviewable, and synchronizable configuration graph.
 
 ## Design philosophy
 
