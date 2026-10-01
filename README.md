@@ -15,12 +15,6 @@ workflow = reconcile(derive(intent), host)
 - **host**: the live machine
 - **reconcile**: `sync` — push, pull, or merge each difference
 
-Intuition over configuration.
-
-First principles over convention.
-
-Declarative over imperative.
-
 ## Platform support
 
 `dotman` follows XDG-style paths and UNIX-like filesystem and process conventions.
