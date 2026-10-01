@@ -1,18 +1,35 @@
 # dotman
 
-Package-oriented dotfile manager with planning, diff review, and two-way sync.
+Package-oriented dotfile manager. `dotman sync` reviews drift between your dotfiles repo and your machine, then converges both sides in one pass.
 
 <img src="docs/assets/selection-ui.svg" alt="dotman interactive selection UI mockup" width="720">
-
-## Inspiration
-
-`dotman` is inspired by tools like [`pacman`](https://wiki.archlinux.org/title/Pacman) and [`yay`](https://github.com/jguer/yay), especially in its CLI ergonomics, selection flows, and review-oriented workflow.
 
 ## Why
 
 Modern development workflows are encoded in dotfiles, editor state, helper scripts, and selected system configuration.
 
 `dotman` is for deploying that workflow reproducibly across machines by treating it as a packageable, reviewable, and synchronizable configuration graph.
+
+## `dotman sync`
+
+One command compares every tracked target between the repo and the live system, then lets you settle each difference on one review screen, the Command Deck.
+
+- **Per-target choice**: Use repository, Use live, or Merge.
+- **Three-way merge**: dotman keeps a Sync Base, the last state both sides agreed on, so Merge knows which side changed.
+- **Frozen review**: dotman observes once; what you review is exactly what gets written.
+- **Nothing written until you confirm**: open any row for its diff, edit the outcome, then confirm.
+- **Policy-aware**: `sync_policy` limits a target to `push-only`, `pull-only`, `both`, or `push-only-delete`.
+- **Scriptable**: `--dry-run`, `--json`, and `--unattended` for previews and automation. Unattended sync skips drift it would have to guess.
+
+```sh
+dotman sync                                # review all tracked targets
+dotman sync example:note                   # narrow to one package or target
+dotman sync --dry-run                      # preview without writing
+dotman --json --unattended sync --dry-run  # machine-readable plan
+```
+
+`push` and `pull` stay available as one-way shortcuts on the same Command Deck.
+See [`docs/sync.md`](docs/sync.md) for the lifecycle.
 
 ## Design philosophy
 
@@ -44,20 +61,13 @@ uv tool install git+https://github.com/ewgdg/dotman.git
 development build past it such as `0.10.2.dev3+g1a2b3c4`. The version is fixed at
 install time, so reinstall to refresh it.
 
-### Optional dependencies
-
-- `fzf` for long interactive selector lists
-- `less` for paged diff review fallback
-- `nvim` for review and reconciliation flows; set `VISUAL=nvim` or `EDITOR=nvim` to use it
-- `sudo` for managing protected system paths
-
 ### Diagnose setup
 
 ```sh
 dotman doctor
 ```
 
-This checks manager config, repo paths, tracked package state files, and external dependencies such as `git`, with optional dependency hints for tools like `fzf`.
+This checks manager config, repo paths, tracked package state files, and external dependencies such as `git`.
 
 ## Quick start
 
@@ -79,6 +89,13 @@ Track and push one simple package from the example repo. This writes the example
 dotman track example:note@basic
 dotman push --dry-run
 dotman push
+```
+
+Edit the live note, then let `sync` bring the change back into the repo:
+
+```sh
+echo "edited on this machine" >> ~/.config/dotman-example/note.txt
+dotman sync example:note
 ```
 
 For a larger real-world example repo, see [ewgdg/dotfiles](https://github.com/ewgdg/dotfiles).
@@ -129,21 +146,15 @@ dotman edit config
 
 ### Two-way sync
 
-- `push` applies managed changes from the repo to the live system
-- `pull` updates the repo from the live system
-- `sync` opens an opt-in Command Deck for frozen push-only and pull-only file convergence
+- `sync` reviews drift in both directions and converges each target by Use repository, Use live, or Merge
+- `push` applies repo changes to the live system
+- `pull` copies live changes back into the repo
 
-Example:
+See [`dotman sync`](#dotman-sync) above.
 
-```sh
-dotman push
-dotman pull
-dotman --unattended sync --dry-run main:app.settings
-```
+### Interactive selection and review
 
-### Interactive selection and review workflow
-
-Support partial selector matching, interactive disambiguation, combined selection flows, and diff review before execution, with a workflow inspired by `yay` for a more familiar terminal experience.
+Partial selectors resolve to canonical targets, with a menu when input is ambiguous. Every change is reviewed as a diff before it runs.
 
 ### Snapshots and restore
 
