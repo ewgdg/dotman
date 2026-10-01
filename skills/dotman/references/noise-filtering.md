@@ -36,44 +36,17 @@ Done when every top-level key, and every mapping you plan to split, has a verdic
 
 Ask: when the app adds a new key upstream, should it sync by default?
 
-- **Denylist** (yes): a preferences file with a few noisy keys. List the noise.
-- **Allowlist** (no): a file that is mostly app state, such as `~/.claude.json` or Electron app data. List the portable keys.
-
-An allowlist cannot yet exclude keys inside a selected subtree (ewgdg/dotman#97). List the subtree's portable children one by one. A negative-lookahead regex such as `re:^settings\.(?!windowBounds)` deletes the excluded live keys when nothing else in that subtree exists live (repro in #97).
+- **Denylist** (yes): a preferences file with a few noisy keys. List the noise. Pull or sync before pushing, or push deletes keys the app added since the last capture.
+- **Allowlist** (no): a file that is mostly app state, such as `~/.claude.json` or Electron app data. List the portable keys. To leave a few keys of a portable subtree live-local, list the subtree's portable children one by one (ewgdg/dotman#97 tracks exclusions).
 
 ## 4. Write the transform pair
 
-`render` builds the live file (repo → live); `capture` builds the repo file (live → repo). Both use the **live file as base**, so noise never enters the repo and is never overwritten on the machine. `--selector-type` flips between the two:
+Follow `docs/repository.md` § Partial structured files: the render/capture table, the example target, and the deletion and convergence rules.
 
-| Strategy | Selector list | `render` (`--mode merge`) | `capture` (`--mode cleanup`) |
-| --- | --- | --- | --- |
-| Allowlist | portable keys | `--selector-type remove` | `--selector-type retain` |
-| Denylist | noise keys | `--selector-type retain` | `--selector-type remove` |
-
-Within the synced region, the repo copy wins on push: a synced key absent from the repo is deleted live. For a denylist this includes every key the app added since the last capture, so pull or sync before pushing.
-
-If the repo already defines shorthand vars for these commands (for example `JSON_RENDER` in a profile), reuse them. Otherwise:
-
-```toml
-[vars.app]
-# Everything else in app.json is window and session state and stays live-local.
-synced_selectors = ["theme", "editor.fontSize", "keybindings"]
-
-[targets.f_config_app_app_json]
-source = "files/config/app/app.json"
-path = "~/.config/app/app.json"
-render = 'dotman transform json "$DOTMAN_LIVE_PATH" --stdout --mode merge --overlay-file "$DOTMAN_REPO_PATH" --compare-file "$DOTMAN_LIVE_PATH" --selector-type remove --selectors {{ vars.app.synced_selectors|shell_args }}'
-capture = 'dotman transform json "$DOTMAN_LIVE_PATH" --stdout --mode cleanup --compare-file "$DOTMAN_REPO_PATH" --selector-type retain --selectors {{ vars.app.synced_selectors|shell_args }}'
-```
-
+- If the repo already defines shorthand vars for these commands (for example `JSON_RENDER` in a profile), reuse them.
 - Keep the selector list in `[vars.<package>]`, grouped, with a comment per group saying why it syncs or stays local.
-- `--compare-file` reuses the existing bytes when content is semantically equal, so reformatting never shows up as a change. Render compares against live; capture compares against repo.
-- `{{ list|shell_args }}` passes each selector as exactly one argument. Always pass selector lists through it.
-- Home paths in values (text formats only; the rewrite requires UTF-8): in render, pipe `dotman rewrite home expand "$DOTMAN_REPO_PATH" |` and use `--overlay-file -`. In capture, pipe `dotman rewrite home collapse "$DOTMAN_LIVE_PATH" |` and use base `-`.
-- Leave `compare.repo` and `compare.live` unset; the defaults already fit a transform pair.
 - Add `chmod = "600"` when the live file holds anything private.
-- Edit the repo file only within the synced region. A key outside it is pushed live once, then dropped by capture, and shows as changed on every sync.
-- Selector syntax, list handling and per-format flags: `docs/cli.md` § Structured JSON transforms, or `dotman transform <format> --help`.
+- Selector syntax and per-format flags: `docs/cli.md` § Structured JSON transforms, or `dotman transform <format> --help`.
 
 ## 5. Verify the round-trip
 

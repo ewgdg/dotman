@@ -249,6 +249,57 @@ The `jinja-editor`, `jinja-patch`, and `jinja-patch-editor` presets expand
 into these flat fields. Explicit fields override preset values. See
 [template targets](templates.md) for complete examples.
 
+## Partial structured files
+
+A settings file that mixes portable keys with app-written state syncs only the
+portable region through a `render`/`capture` pair of
+[structured transforms](cli.md#structured-json-transforms). Both commands use
+the live file as base, so live-only keys never enter the repository and are
+never overwritten on the machine. The selector list names either the synced
+keys (allowlist) or the live-only keys (denylist), and `--selector-type` flips
+between the two commands:
+
+| Strategy | Selectors name | `render` (`--mode merge`) | `capture` (`--mode cleanup`) |
+| --- | --- | --- | --- |
+| Allowlist | synced keys | `--selector-type remove` | `--selector-type retain` |
+| Denylist | live-only keys | `--selector-type retain` | `--selector-type remove` |
+
+- An allowlist keeps new upstream keys live-only; a denylist syncs them.
+- Within the synced region the repository copy wins: a synced key absent from
+  the repository is deleted live. For a denylist that includes every key the
+  app added since the last Capture.
+- A repository key outside the synced region is published once, then dropped
+  by Capture, so the target never converges.
+- Selectors cannot carve exclusions out of a selected subtree. A
+  negative-lookahead `re:` selector expands against the live file, so when the
+  live subtree holds only excluded keys it matches nothing and Render replaces
+  the whole subtree.
+
+```toml
+[vars.app]
+# Everything else in app.json is window and session state.
+synced_selectors = ["theme", "editor.fontSize", "keybindings"]
+
+[targets.f_config_app_app_json]
+source = "files/config/app/app.json"
+path = "~/.config/app/app.json"
+render = 'dotman transform json "$DOTMAN_LIVE_PATH" --stdout --mode merge --overlay-file "$DOTMAN_REPO_PATH" --compare-file "$DOTMAN_LIVE_PATH" --selector-type remove --selectors {{ vars.app.synced_selectors|shell_args }}'
+capture = 'dotman transform json "$DOTMAN_LIVE_PATH" --stdout --mode cleanup --compare-file "$DOTMAN_REPO_PATH" --selector-type retain --selectors {{ vars.app.synced_selectors|shell_args }}'
+```
+
+- `--compare-file` reuses existing bytes for semantically equal content:
+  Render compares against live, Capture against the repository.
+- `{{ list|shell_args }}` passes each selector as one argument
+  ([safe shell argument arrays](templates.md#safe-shell-argument-arrays)).
+- For home paths inside values, Render pipes
+  `dotman rewrite home expand "$DOTMAN_REPO_PATH"` into `--overlay-file -` and
+  Capture pipes `dotman rewrite home collapse "$DOTMAN_LIVE_PATH"` into base
+  `-` ([home path rewrites](cli.md#home-path-rewrites)). The rewrite requires
+  UTF-8, so binary plists cannot use it.
+- The default `compare` pair already fits; leave it unset.
+- For child files of a directory target, put the same pair on a `path_rules`
+  entry.
+
 ## Unified exclusions
 
 | Scope | Accepted `ignore` keys |
