@@ -339,6 +339,7 @@ dotman --unattended sync main:app.settings
 
 ## Diagnostics And Catalog Inspection
 
+- `dotman --version` shows the installed build: a release tag such as `0.10.1`, or a development build past it such as `0.10.2.dev3+g1a2b3c4`. The version is fixed at install time, so reinstall to refresh it.
 - `dotman doctor` checks manager configuration, configured repo paths, tracked state, required external tools, and aggregate corrupt/orphaned Sync Base counts. Store failures include repository, path, and cause; no repair is performed.
 - `dotman list sync-bases` lists only currently usable Sync Bases.
 - `dotman info sync-base <sync-unit>` shows metadata and applicability for one exact repo-qualified file target or directory child; unavailable and ineligible results succeed.
