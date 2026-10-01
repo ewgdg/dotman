@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "dotman sync model",
+    "output": ".archify/sync-model/sync-model.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "components": [
+    {
+      "id": "repo",
+      "type": "frontend",
+      "label": "Repo",
+      "sublabel": "declared dotfiles",
+      "pos": [
+        80,
+        100
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "live",
+      "type": "external",
+      "label": "Live system",
+      "sublabel": "files on this machine",
+      "pos": [
+        680,
+        100
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "merge",
+      "type": "backend",
+      "label": "sync: Merge",
+      "sublabel": "3-way, writes both sides",
+      "pos": [
+        380,
+        240
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "base",
+      "type": "database",
+      "label": "Sync Base",
+      "sublabel": "last agreed state",
+      "pos": [
+        380,
+        400
+      ],
+      "size": [
+        180,
+        64
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "push",
+      "from": "repo",
+      "to": "live",
+      "label": "push \u00b7 Use repository",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "pull",
+      "from": "live",
+      "to": "repo",
+      "label": "pull \u00b7 Use live",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "top"
+    },
+    {
+      "id": "repo-side",
+      "from": "repo",
+      "to": "merge",
+      "label": "repo side",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          170,
+          272
+        ]
+      ]
+    },
+    {
+      "id": "live-side",
+      "from": "live",
+      "to": "merge",
+      "label": "live side",
+      "fromSide": "bottom",
+      "toSide": "right",
+      "via": [
+        [
+          770,
+          272
+        ]
+      ]
+    },
+    {
+      "id": "ancestor",
+      "from": "base",
+      "to": "merge",
+      "label": "ancestor",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "checkpoint",
+      "from": "repo",
+      "to": "base",
+      "label": "saved after real push / pull / sync",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "left",
+      "via": [
+        [
+          40,
+          132
+        ],
+        [
+          40,
+          432
+        ]
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Who reads the Base",
+      "items": [
+        "Only sync's Merge reads it",
+        "push and pull save it but never read it",
+        "No usable Base: Merge is unavailable and sync guesses Use repository"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "When it changes",
+      "items": [
+        "Saved in repo form after a successful real run",
+        "--dry-run and unselected rows never save it",
+        "Git commits and checkouts do not reset it"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Which targets keep one",
+      "items": [
+        "sync_policy both or pull-only",
+        "push-only targets have no Base"
+      ]
+    }
+  ]
+}
