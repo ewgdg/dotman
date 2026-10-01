@@ -22,23 +22,24 @@ Done when every top-level key, and every mapping you plan to split, has a verdic
 | Migration markers | schema versions, `migrated*` flags | live-local; the app rewrites them |
 | Accounts and secrets | tokens, emails, org IDs | live-local; secrets never enter the repo |
 | Home paths inside portable values | `/home/me/...` | portable, stored as `~/...` with the home path rewrite |
-| Values that differ per OS or host | fonts, scale factors | portable, through vars or a Jinja template (`docs/templates.md`) |
+| Values that differ per OS or host | fonts, scale factors | live-local inside a transform pair; a templated value cannot round-trip through `capture` |
 
 ## 2. Pick the lowest tier that expresses the split
 
 - Whole file portable → plain target, no projection.
-- Noise is whole files or subtrees of a directory target → `ignore.patterns` or `path_rules` (`docs/repository.md` § Unified exclusions, § Targets).
-- Noise is keys inside one JSON, YAML, TOML, plist or XML file → **transform pair** (below).
-- The split depends on values, not key paths (for example rendering `null` instead of `""`) → Jinja template or a package-local script.
+- Noise is whole files or subtrees of a directory target → `ignore.patterns` (`docs/repository.md` § Unified exclusions).
+- Noise is keys inside one JSON, YAML, TOML, plist or XML file → **transform pair** (below) on the file target.
+- Noise is keys inside child files of a directory target → the same transform pair as `render` and `capture` on a `path_rules.<name>` entry matching those files (`docs/repository.md` § Targets).
+- The split depends on values, not key paths (for example rendering `null` instead of `""`) → a Jinja template for the whole file (`docs/templates.md`) or a package-local script.
 
 ## 3. Choose allowlist or denylist
 
 Ask: when the app adds a new key upstream, should it sync by default?
 
 - **Denylist** (yes): a preferences file with a few noisy keys. List the noise.
-- **Allowlist** (no): a file that is mostly app state, such as `~/.claude.json` or Electron app data. List the portable keys. Deleting a synced key in the repo deletes it live.
+- **Allowlist** (no): a file that is mostly app state, such as `~/.claude.json` or Electron app data. List the portable keys.
 
-An allowlist cannot yet exclude keys inside a selected subtree (ewgdg/dotman#97). List the subtree's portable children one by one instead of selecting the parent.
+An allowlist cannot yet exclude keys inside a selected subtree (ewgdg/dotman#97). List the subtree's portable children one by one. A negative-lookahead regex such as `re:^settings\.(?!windowBounds)` deletes the excluded live keys when nothing else in that subtree exists live (repro in #97).
 
 ## 4. Write the transform pair
 
@@ -48,6 +49,8 @@ An allowlist cannot yet exclude keys inside a selected subtree (ewgdg/dotman#97)
 | --- | --- | --- | --- |
 | Allowlist | portable keys | `--selector-type remove` | `--selector-type retain` |
 | Denylist | noise keys | `--selector-type retain` | `--selector-type remove` |
+
+Within the synced region, the repo copy wins on push: a synced key absent from the repo is deleted live. For a denylist this includes every key the app added since the last capture, so pull or sync before pushing.
 
 If the repo already defines shorthand vars for these commands (for example `JSON_RENDER` in a profile), reuse them. Otherwise:
 
@@ -66,9 +69,10 @@ capture = 'dotman transform json "$DOTMAN_LIVE_PATH" --stdout --mode cleanup --c
 - Keep the selector list in `[vars.<package>]`, grouped, with a comment per group saying why it syncs or stays local.
 - `--compare-file` reuses the existing bytes when content is semantically equal, so reformatting never shows up as a change. Render compares against live; capture compares against repo.
 - `{{ list|shell_args }}` passes each selector as exactly one argument. Always pass selector lists through it.
-- Home paths in values: in render, pipe `dotman rewrite home expand "$DOTMAN_REPO_PATH" |` and use `--overlay-file -`. In capture, pipe `dotman rewrite home collapse "$DOTMAN_LIVE_PATH" |` and use base `-`.
+- Home paths in values (text formats only; the rewrite requires UTF-8): in render, pipe `dotman rewrite home expand "$DOTMAN_REPO_PATH" |` and use `--overlay-file -`. In capture, pipe `dotman rewrite home collapse "$DOTMAN_LIVE_PATH" |` and use base `-`.
 - Leave `compare.repo` and `compare.live` unset; the defaults already fit a transform pair.
-- If the repo source does not exist yet (the first pull creates it), set `type = "file"`. Add `chmod = "600"` when the live file holds anything private.
+- Add `chmod = "600"` when the live file holds anything private.
+- Edit the repo file only within the synced region. A key outside it is pushed live once, then dropped by capture, and shows as changed on every sync.
 - Selector syntax, list handling and per-format flags: `docs/cli.md` § Structured JSON transforms, or `dotman transform <format> --help`.
 
 ## 5. Verify the round-trip
@@ -79,7 +83,7 @@ Run both commands by hand against the real live file, substituting paths for `$D
 - Render output equals the live file except for the portable keys taken from the repo.
 - Capturing the render output reproduces the repo file.
 
-Then preview with `dotman --unattended sync --dry-run <repo>:<package>.<target>`.
+Then, with the package tracked, `dotman --unattended pull --dry-run <repo>:<package>.<target>` shows `[would-apply] repository write` for a new target, and `push --dry-run` shows the expected live change. A `sync --dry-run` on a new target only reports that it needs a first review, so it verifies nothing.
 
 ## Pitfalls
 
