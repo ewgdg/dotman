@@ -37,7 +37,7 @@ Done when every top-level key, and every mapping you plan to split, has a verdic
 Ask: when the app adds a new key upstream, should it sync by default?
 
 - **Denylist** (yes): a preferences file with a few noisy keys. List the noise. Pull or sync before pushing, or push deletes keys the app added since the last capture.
-- **Allowlist** (no): a file that is mostly app state, such as `~/.claude.json` or Electron app data. List the portable keys. To leave a few keys of a portable subtree live-local, list the subtree's portable children one by one (ewgdg/dotman#97 tracks exclusions).
+- **Allowlist** (no): a file that is mostly app state, such as `~/.claude.json` or Electron app data. List the portable keys. To leave a few keys of a portable subtree live-local, select the subtree and exclude them with `not:`: `settings 'not:settings.windowBounds'`, or `'not:re:(^|\.)cache$'` for a key at any depth. XML has no `not:`.
 
 ## 4. Write the transform pair
 
@@ -62,4 +62,4 @@ Then, with the package tracked, `dotman --unattended pull --dry-run <repo>:<pack
 
 - Lists are atomic: select a whole list or split at its parent.
 - An app that holds the file in memory rewrites it on exit. Note in a comment that push should run while the app is closed.
-- A secret that shares a subtree with portable keys: move the selector boundary down so the secret stays out.
+- A secret that shares a subtree with portable keys: exclude it with `not:` so it never enters the repo.
