@@ -127,6 +127,8 @@ dotman edit config
 
 `sync` compares every tracked target between the repo and the live system, then lets you settle each difference on one review screen, the Command Deck.
 
+<img src="docs/assets/sync-model.svg" alt="dotman sync model: push and pull move one way between repo and live; sync's Merge combines both sides with the Sync Base as ancestor" width="720">
+
 - **Per-target choice**: Use repository, Use live, or Merge.
 - **Three-way merge**: dotman keeps a Sync Base, the last state both sides agreed on, so Merge knows which side changed.
 - **Frozen review**: dotman observes once; what you review is exactly what gets written.
