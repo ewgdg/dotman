@@ -793,6 +793,9 @@ class WorksetTable(DataTable):
 
     def on_resize(self, event: events.Resize) -> None:
         self.fit_targets()
+        # DataTable only scrolls on cursor moves; a detail that grows after the move
+        # (wrapped paths) shrinks the table and would otherwise hide the focused row.
+        self.move_cursor(row=self.cursor_row)
 
     def on_click(self, event: events.Click) -> None:
         if event.style.meta.get("row", -1) >= 0:

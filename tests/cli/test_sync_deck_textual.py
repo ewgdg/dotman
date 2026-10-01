@@ -1336,3 +1336,26 @@ def test_notice_clears_on_the_next_key_press_or_click(tmp_path, monkeypatch):
                 assert app.deck.focused_row.row_id == focused
                 assert not any(row.approved for row in session.view.rows)
         run(interact())
+
+
+def test_workset_keeps_cursor_visible_when_wrapped_detail_grows(tmp_path, monkeypatch):
+    # The last row's long paths wrap, so focusing it grows the detail and shrinks the table.
+    long_name = "zz_" + "very_long_segment_" * 4
+    engine = make_engine(tmp_path, monkeypatch, [
+        *[(f"t{index:02}", "push-only", b"repo", b"live", "") for index in range(30)],
+        (long_name, "push-only", b"repo", b"live", ""),
+    ])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(80, 30)) as pilot:
+                table = app.query_one(WorksetTable)
+                await pilot.pause()
+                for _ in range(30):
+                    await pilot.press("down")
+                await pilot.pause()
+                assert table.cursor_row == 30
+                visible = [table.render_line(y).text for y in range(table.size.height)]
+                assert any("main:app.zz_" in line for line in visible)
+        run(interact())
