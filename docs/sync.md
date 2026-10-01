@@ -16,9 +16,10 @@ claims are configuration errors before Observation, even for a narrower scope.
 
 A SyncSession observes its resolved file targets, directory children and auxiliary
 work once. Guards run in repository → package → target order across both
-directional families before endpoint reads and comparison. After directory
-census and child policy resolution, active named Path Rule Guards run by priority
-then name, once per rule and directional family.
+directional families before endpoint reads, directory census, `ignore.command`,
+and comparison. A directory target denied in every direction is not scanned.
+After directory census and child policy resolution, active named Path Rule Guards
+run by priority then name, once per rule and directional family.
 Exit 0 retains capability, 100 removes that direction within the Guard's scope,
 and other non-zero exits abort planning. Review and execution never rerun Guards.
 Each removed direction appears once per Guard scope as a dimmed, unselectable
@@ -592,7 +593,9 @@ without bypassing storage safety checks or automatically recreating rejected sto
 
 After static configuration successfully resolves a selected unit as ineligible,
 real Push or Sync deletes its old Base **before Guards and review**, without
-waiting for drift, Approval, effects, or convergence. Later interactive exclusion
+waiting for drift, Approval, effects, or convergence. Directory children are
+found among the target's stored Bases, not by discovery, so an excluded or absent
+child with an ineligible configured policy is maintained too. Later interactive exclusion
 does not undo or prevent that maintenance. Pull, preview, read-only inspection,
 incomplete resolution, and unrelated partial selection do not perform it.
 Returning a deleted identity to an eligible policy requires fresh establishment.

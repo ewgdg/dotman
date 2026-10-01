@@ -107,3 +107,24 @@ def test_ignore_command_failure_aborts_session_open(tmp_path, monkeypatch, opera
 def test_ignore_command_manifest_validation(tmp_path, monkeypatch, target, error):
     with pytest.raises(ValueError, match=error):
         directory_engine(tmp_path, monkeypatch, extra=target).resolve_sync_scope()
+
+
+@pytest.mark.parametrize(
+    ("operation", "guards"),
+    [
+        ("push", 'guard_push = "exit 100"'),
+        ("pull", 'guard_pull = "exit 100"'),
+        ("sync", 'guard_push = "exit 100"\nguard_pull = "exit 100"'),
+    ],
+)
+def test_guarded_out_target_never_runs_its_ignore_command(tmp_path, monkeypatch, operation, guards):
+    engine = directory_engine(tmp_path, monkeypatch, extra=(
+        "[targets.tree.ignore]\ncommand = 'echo lock missing >&2; exit 3'\n"
+        f"[targets.tree.hooks]\n{guards}\n"
+    ))
+    put(roots(tmp_path)[1], "visible")
+
+    opened = open_session(engine, operation)
+
+    assert not isinstance(opened, SessionOpenFailed), opened
+    opened.abort()

@@ -327,7 +327,7 @@ package manager's lock file:
   all static layers. Empty output adds nothing.
 - Lines must not start with `!`, so a command can only narrow what syncs.
 - It runs once per Push, Pull, or Sync session, when the directory target is
-  scanned. It uses the same template rendering, working directory, and
+  scanned after target Guards admit it. It uses the same template rendering, working directory, and
   environment as `probe`, and must be side-effect-free and cheap. Other
   commands, such as `info`, and target collision checks never run it.
 - A non-zero exit, non-UTF-8 output, or a negation line fails planning. To
@@ -506,7 +506,7 @@ commands = [
 - Hook and guard command lists run in declaration order and stop on first non-zero exit.
 - Repo, package, and target `guard_*` hooks are non-interactive planning eligibility rules. They run after static ownership resolution and before host-state work for their scopes.
 - Guard order is repository, package, then target, followed by active named Path Rule Guards. Each outcome applies within its declared scope; sibling scopes remain independently eligible.
-- Target guards run before file projection, directory scanning, and probe commands.
+- Target guards run before file projection, directory scanning, `ignore.command`, and probe commands. A directory target denied in every direction is not scanned.
 - Exit `0` retains the Guard's directional capability; `100` removes it within
   that scope; any other non-zero exit aborts planning. One-sided Push and Pull
   omit work denied by their operation's Guard.

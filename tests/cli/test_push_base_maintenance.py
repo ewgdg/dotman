@@ -75,7 +75,7 @@ def test_push_without_bases_does_not_create_base_store(tmp_path, monkeypatch, ca
     assert not list(engine._tracked_state_context.state_root.rglob(LOCK_FILE_NAME))
 
 
-def test_push_child_policy_cleanup_retains_ignored_missing_and_eligible_children(tmp_path, monkeypatch, capsys):
+def test_push_child_policy_cleanup_follows_configuration_not_discovery(tmp_path, monkeypatch, capsys):
     from tests.engine.test_sync_directory_observation import directory_engine, put
 
     engine = directory_engine(tmp_path, monkeypatch)
@@ -94,15 +94,19 @@ sync_policy = "push-only"
 [targets.tree.path_rules.ignored]
 pattern = "ignored"
 sync_policy = "push-only"
+[targets.tree.path_rules.missing]
+pattern = "missing"
+sync_policy = "push-only"
 [targets.tree.hooks]
 guard_push = "exit 9"
 ''')
     assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push']) != 0
     capsys.readouterr()
+    # Ineligibility is configured, so exclusion or absence cannot keep a stale Base.
     with SyncBaseStore.open(engine._tracked_state_context.state_root, 'main', read_only=True) as store:
-        assert store.read(b'main:app.tree/selected') is None
-        for child in ('ignored', 'eligible', 'missing'):
-            assert store.read(f'main:app.tree/{child}'.encode()) is not None
+        for child in ('selected', 'ignored', 'missing'):
+            assert store.read(f'main:app.tree/{child}'.encode()) is None
+        assert store.read(b'main:app.tree/eligible') is not None
 
 
 def test_push_ineligible_base_maintenance_failure_warns_without_blocking(tmp_path, monkeypatch, capsys):

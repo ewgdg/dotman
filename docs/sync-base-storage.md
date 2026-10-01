@@ -154,9 +154,10 @@ directory-child Base remains inspectable until a real operation safely reclaims 
 Real Push performs configured-ineligibility cleanup while holding the manager
 operation lock, after successful static ownership/conflict resolution and before
 Guards and review. Only selected configured `push-only` or `push-only-delete`
-file units and successfully discovered, unexcluded children lose existing Bases.
-Eligible and unrelated units remain untouched; missing or failed child discovery
-does not prove obsolescence. Cleanup does not create missing storage.
+file units and directory children lose existing Bases. Children come from the
+target's stored records and their configured Path Rules, not from discovery, so
+excluded and absent children are maintained alike. Eligible and unrelated units
+remain untouched. Cleanup does not create missing storage.
 
 Dry-run and ordinary engine planning remain read-only. Cleanup is separate from
 successful eligible publication and direct-agreement acknowledgment, which use

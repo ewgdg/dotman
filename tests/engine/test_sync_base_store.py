@@ -378,3 +378,14 @@ def test_failed_unit_replacement_does_not_prevent_another_unit(tmp_path, monkeyp
         store.replace(record(b"other"))
         assert store.read(b"unit") == record()
         assert store.read(b"other") == record(b"other")
+
+
+def test_target_records_return_only_that_targets_units(tmp_path):
+    with SyncBaseStore.open(tmp_path, "main") as store:
+        for identity in (b"main:app.tree/a", b"main:app.tree/nested/b", b"main:app.tree2/a", b"main:app.file"):
+            store.replace(record(identity))
+        assert [item.identity for item in store.target_records(b"main:app.tree")] == [
+            b"main:app.tree/a", b"main:app.tree/nested/b",
+        ]
+        assert [item.identity for item in store.target_records(b"main:app.file")] == [b"main:app.file"]
+        assert store.target_records(b"main:app.absent") == ()

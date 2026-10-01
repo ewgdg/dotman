@@ -325,6 +325,39 @@ def _base_store_exists(context: planning.PlanningContext, item: planning.Package
         return False
 
 
+def _stored_children(
+    context: planning.PlanningContext,
+    directory_inputs: _ResolvedInputs,
+    selected_children: dict[ResolvedSyncTarget, set[str | None]],
+) -> _ResolvedInputs:
+    """Selected directory children that hold a stored Base, from configuration alone."""
+    children, stores, unavailable = {}, {}, set()
+    with ExitStack() as resources:
+        for identity, (item, metadata) in directory_inputs.items():
+            if identity.repo in unavailable or not _base_store_exists(context, item):
+                continue
+            target = identity.canonical.encode()
+            try:
+                if identity.repo not in stores:
+                    stores[identity.repo] = resources.enter_context(SyncBaseStore.open(
+                        context.tracked_state.state_root, item.repo.config.state_key, read_only=True,
+                    ))
+                records = stores[identity.repo].target_records(target)
+            except (OSError, ValueError, SyncBaseStoreError):
+                # Observation reports the unavailable store on every eligible unit.
+                unavailable.add(identity.repo)
+                continue
+            selected = selected_children[identity]
+            for record in records:
+                # A record of the bare target identity is not a child.
+                if not record.identity.startswith(target + b"/"):
+                    continue
+                relative = record.identity[len(target) + 1:].decode()
+                if None in selected or relative in selected:
+                    children[replace(identity, child_path=relative)] = (item, child_metadata(metadata, relative))
+    return children
+
+
 def _discard_ineligible_bases(
     context: planning.PlanningContext,
     inputs: _ResolvedInputs,
@@ -387,13 +420,39 @@ def observe_scope(
     directory_inputs = {identity: value for identity, value in inputs.items() if value[1].target.target_type == "directory"}
     ordered_inputs = inputs
     inputs = {identity: value for identity, value in inputs.items() if identity not in directory_inputs}
-    maintenance, checkpoint_warnings = _discard_ineligible_bases(context, inputs, preview=preview) if read_bases else ({}, {})
-    # Resolve the control-aware child workset before volatile ancestor Guards;
-    # configured ineligibility must survive a later Guard failure. Reuse this
-    # census for Observation rather than discovering children a second time.
+    selected_children = {
+        identity: {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
+        for identity in directory_inputs
+    }
+    # Configured ineligibility must survive a later Guard failure. It depends
+    # only on configuration, so stored child Bases stand in for discovery.
+    stored_children = {
+        child_identity: (item, child)
+        for child_identity, (item, child) in _stored_children(context, directory_inputs, selected_children).items()
+        if participates(child)
+    } if read_bases and not preview else {}
+    maintenance, checkpoint_warnings = _discard_ineligible_bases(
+        context, {**inputs, **stored_children}, preview=preview,
+    ) if read_bases else ({}, {})
+    configured_directional = directional
+    eligibility = evaluate_directional_guards(
+        directional, command_runtime=context.projection.command_runtime, run_noop=run_noop,
+    )
+    directional = {direction: value.inputs for direction, value in eligibility.items()}
+    guard_skips = [(direction, skip) for direction, value in eligibility.items() for skip in value.guard_skips]
+    admitted = {
+        direction: {_identity(metadata) for item in survivors for metadata in item.target_metadata}
+        for direction, survivors in directional.items()
+    }
+    # Guards gate host-state work: a target denied in every direction is never
+    # scanned and never runs its ignore command.
+    directory_inputs = {
+        identity: value for identity, value in directory_inputs.items()
+        if any(identity in survivors for survivors in admitted.values())
+    }
     resolved_directories = {}
     for identity, (item, metadata) in directory_inputs.items():
-        selected_paths = {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
+        selected_paths = selected_children[identity]
         census = census_directory(
             projection.resolve_ignore_command(context.projection.command_runtime, metadata),
             follow_live_directories=context.config.dir_symlink_mode == "follow",
@@ -406,23 +465,7 @@ def observe_scope(
             child = child_metadata(metadata, relative)
             if participates(child):
                 children[relative] = (replace(identity, child_path=relative or None), child, failures)
-        child_maintenance, child_warnings = _discard_ineligible_bases(context, {
-            child_identity: (item, child) for child_identity, child, failures in children.values()
-            if child_identity.child_path is not None and not failures
-        }, preview=preview) if read_bases else ({}, {})
-        maintenance.update(child_maintenance)
-        checkpoint_warnings.update(child_warnings)
         resolved_directories[identity] = (selected_paths, census, children)
-    configured_directional = directional
-    eligibility = evaluate_directional_guards(
-        directional, command_runtime=context.projection.command_runtime, run_noop=run_noop,
-    )
-    directional = {direction: value.inputs for direction, value in eligibility.items()}
-    guard_skips = [(direction, skip) for direction, value in eligibility.items() for skip in value.guard_skips]
-    admitted = {
-        direction: {_identity(metadata) for item in survivors for metadata in item.target_metadata}
-        for direction, survivors in directional.items()
-    }
 
     child_policies, child_failures, child_topology = {}, {}, {}
     directory_censuses = []

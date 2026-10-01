@@ -700,6 +700,14 @@ class SyncBaseStore:
                 corrupt_count,
             )
 
+    def target_records(self, target: bytes) -> tuple[SyncBaseRecord, ...]:
+        """Return healthy records of one file target or one directory target's children."""
+        target = _require_bytes(target, field_name="target identity", allow_empty=False)
+        return tuple(
+            record for record in self.scan().records
+            if record.identity == target or record.identity.startswith(target + b"/")
+        )
+
     def identities(self) -> tuple[bytes, ...]:
         """Return only identities whose records passed integrity validation."""
         return tuple(record.identity for record in self.scan().records)
