@@ -1,6 +1,6 @@
 # dotman
 
-Package-oriented dotfile manager. `dotman sync` reviews drift between your dotfiles repo and your machine, then converges both sides in one pass.
+Package-oriented dotfile manager with reviewable two-way sync.
 
 <img src="docs/assets/selection-ui.svg" alt="dotman interactive selection UI mockup" width="720">
 
@@ -9,27 +9,6 @@ Package-oriented dotfile manager. `dotman sync` reviews drift between your dotfi
 Modern development workflows are encoded in dotfiles, editor state, helper scripts, and selected system configuration.
 
 `dotman` is for deploying that workflow reproducibly across machines by treating it as a packageable, reviewable, and synchronizable configuration graph.
-
-## `dotman sync`
-
-One command compares every tracked target between the repo and the live system, then lets you settle each difference on one review screen, the Command Deck.
-
-- **Per-target choice**: Use repository, Use live, or Merge.
-- **Three-way merge**: dotman keeps a Sync Base, the last state both sides agreed on, so Merge knows which side changed.
-- **Frozen review**: dotman observes once; what you review is exactly what gets written.
-- **Nothing written until you confirm**: open any row for its diff, edit the outcome, then confirm.
-- **Policy-aware**: `sync_policy` limits a target to `push-only`, `pull-only`, `both`, or `push-only-delete`.
-- **Scriptable**: `--dry-run`, `--json`, and `--unattended` for previews and automation. Unattended sync skips drift it would have to guess.
-
-```sh
-dotman sync                                # review all tracked targets
-dotman sync example:note                   # narrow to one package or target
-dotman sync --dry-run                      # preview without writing
-dotman --json --unattended sync --dry-run  # machine-readable plan
-```
-
-`push` and `pull` stay available as one-way shortcuts on the same Command Deck.
-See [`docs/sync.md`](docs/sync.md) for the lifecycle.
 
 ## Design philosophy
 
@@ -146,11 +125,23 @@ dotman edit config
 
 ### Two-way sync
 
-- `sync` reviews drift in both directions and converges each target by Use repository, Use live, or Merge
-- `push` applies repo changes to the live system
-- `pull` copies live changes back into the repo
+`sync` compares every tracked target between the repo and the live system, then lets you settle each difference on one review screen, the Command Deck.
 
-See [`dotman sync`](#dotman-sync) above.
+- **Per-target choice**: Use repository, Use live, or Merge.
+- **Three-way merge**: dotman keeps a Sync Base, the last state both sides agreed on, so Merge knows which side changed.
+- **Frozen review**: dotman observes once; what you review is exactly what gets written.
+- **Nothing written until you confirm**: open any row for its diff, edit the outcome, then confirm.
+- **Scriptable**: `--dry-run`, `--json`, and `--unattended` for previews and automation.
+
+`push` (repo → live) and `pull` (live → repo) remain as one-way shortcuts on the same Command Deck.
+
+Example:
+
+```sh
+dotman sync
+dotman sync example:note
+dotman --json --unattended sync --dry-run
+```
 
 ### Interactive selection and review
 
