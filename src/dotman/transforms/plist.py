@@ -372,13 +372,13 @@ class PlistTransformEngine(BaseTransformEngine):
         parser.add_argument(
             "--compare-file",
             type=Path,
-            help="Optional plist to compare against for semantic no-op byte reuse.",
+            help="Optional plist to compare against for semantic no-op byte reuse",
         )
         parser.add_argument(
             "--output-format",
             choices=("xml", "binary"),
             default="xml",
-            help="Serialization format for the output plist.",
+            help="Serialization format for the output plist",
         )
 
     def build_engine_options(self, parsed_args) -> dict[str, Any]:

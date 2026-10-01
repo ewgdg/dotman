@@ -174,11 +174,11 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   Page Up/Down, and the mouse wheel scroll frozen evidence.
   `Y` copies to the terminal clipboard (OSC 52): the full Target identity from the
   workset; in review, the mouse-dragged selection when there is one, otherwise the
-  whole review text. `Ctrl-C` stays Abort; outside review, most terminals bypass
+  whole review text. `Ctrl+C` stays Abort; outside review, most terminals bypass
   the deck's mouse capture with Shift+drag for ad-hoc selection.
-  `q` from the idle workset or `Ctrl-C` aborts; `Esc` only steps back and does nothing at the workset. During Capture, Merge, and Render,
+  `q` from the idle workset or `Ctrl+C` aborts; `Esc` only steps back and does nothing at the workset. During Capture, Merge, and Render,
   the visible deck animates a busy indicator; other keyboard/mouse actions are
-  ignored until materialization finishes. `Ctrl-C` or OS SIGINT cancels running
+  ignored until materialization finishes. `Ctrl+C` or OS SIGINT cancels running
   materialization and the remaining batch, waits for owned process cleanup, and
   exits 130. Completed effects are not rolled back; detached descendants are not
   covered by owned-process cleanup.
@@ -190,10 +190,10 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   Successful editing preserves Approval; cancellation preserves the previous
   Proposal. Failed materialization clears only that unit's Approval.
   **T** retries materialization; Editor attempts can be retried with **E**.
-  **Shift+L** explicitly authorizes prompt-mode live-link replacement for the focused
+  `Shift+L` explicitly authorizes prompt-mode live-link replacement for the focused
   Proposal; it does not select or approve it. Review shows authorization in the
   shared warning/success colors. Unattended Sync cannot supply this decision.
-  During editing, **Ctrl-C** or OS SIGINT cancels only the Editor attempt,
+  During editing, `Ctrl+C` or OS SIGINT cancels only the Editor attempt,
   including a broker-triggered sudo password prompt. Prompt cleanup and terminal
   restoration finish before the deck resumes; **E** can start a fresh attempt.
   Terminal Editors take terminal ownership temporarily and return to the same

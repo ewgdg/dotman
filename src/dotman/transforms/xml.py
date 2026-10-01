@@ -517,13 +517,13 @@ class XmlTransformEngine(BaseTransformEngine):
         parser.add_argument(
             "--compare-file",
             type=Path,
-            help="Optional XML file to compare against for semantic no-op byte reuse.",
+            help="Optional XML file to compare against for semantic no-op byte reuse",
         )
         parser.add_argument(
             "--sort-attributes",
             action="store_true",
             dest="sort_attributes",
-            help="Sort attributes of each element alphabetically.",
+            help="Sort attributes of each element alphabetically",
         )
         parser.add_argument(
             "--sort-children",
@@ -531,8 +531,8 @@ class XmlTransformEngine(BaseTransformEngine):
             default=[],
             metavar="NODE_PATH",
             help=(
-                "Sort immediate children under matching XML node paths. "
-                "Accepts repeated flags and comma-separated values."
+                "Sort immediate children under matching XML node paths; "
+                "accepts repeated flags and comma-separated values"
             ),
         )
 

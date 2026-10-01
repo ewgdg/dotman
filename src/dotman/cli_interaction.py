@@ -514,7 +514,7 @@ def print_review_command_help() -> None:
     print("  l, list    list review items")
     print("  s, skip    skip remaining review")
     print("  Esc        abort")
-    print('  "?"        show this help')
+    print("  ?          show this help")
 
 
 class InteractionRequiredError(ValueError):

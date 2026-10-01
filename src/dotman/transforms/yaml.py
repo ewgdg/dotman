@@ -594,7 +594,7 @@ class YamlTransformEngine(BaseTransformEngine):
         parser.add_argument(
             "--compare-file",
             type=Path,
-            help="Optional YAML file to compare against for semantic no-op text reuse.",
+            help="Optional YAML file to compare against for semantic no-op text reuse",
         )
 
     def build_engine_options(self, parsed_args) -> dict[str, Any]:

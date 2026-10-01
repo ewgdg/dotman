@@ -1169,7 +1169,7 @@ class SyncDeckApp(App[bool]):
         return self.focused is self.query_one("#detail")
 
     def update_hints(self) -> None:
-        review_scroll = ("↑/↓/j/k", "scroll")
+        review_scroll = ("↑/↓/J/K", "scroll")
         bulk_selection = ("A/U", "all/none")
         body = self.query_one(ReviewBody)
         if body.search:
@@ -1184,7 +1184,7 @@ class SyncDeckApp(App[bool]):
             hints = [("Enter", "search" if self.deck.reviewing else "filter"), ("↑/↓", "history"),
                      ("Ctrl+U", "clear"), ("Esc", "cancel"), ("Ctrl+C", "abort")]
         elif self.query_one(OptionList).display:
-            hints = [("↑/↓/j/k", self._menu_hint), ("Enter", "select"), ("Esc", "dismiss")]
+            hints = [("↑/↓/J/K", self._menu_hint), ("Enter", "select"), ("Esc", "dismiss")]
         elif self.deck.confirming:
             hints = [("Enter", "confirm"), ("Esc", "return"), ("Ctrl+C", "abort")]
         elif self.deck.full_view is not None:

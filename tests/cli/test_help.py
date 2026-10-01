@@ -327,7 +327,7 @@ def test_run_diff_review_menu_shows_help_then_skips_review(monkeypatch, capsys) 
     assert "  l, list    list review items" in output
     assert "  s, skip    skip remaining review" in output
     assert "  Esc        abort" in output
-    assert '  "?"        show this help' in output
+    assert "  ?          show this help" in output
 
 
 def test_run_diff_review_menu_uses_full_paths_when_requested(monkeypatch, capsys) -> None:

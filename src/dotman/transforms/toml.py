@@ -1181,7 +1181,7 @@ class TomlTransformEngine(BaseTransformEngine):
         parser.add_argument(
             "--compare-file",
             type=Path,
-            help="Optional TOML file to compare against for exact no-op text reuse.",
+            help="Optional TOML file to compare against for exact no-op text reuse",
         )
 
     def build_engine_options(self, parsed_args) -> dict[str, Any]:

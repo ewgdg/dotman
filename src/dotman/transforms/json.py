@@ -448,7 +448,7 @@ class JsonTransformEngine(BaseTransformEngine):
         parser.add_argument(
             "--compare-file",
             type=Path,
-            help="Optional JSON file to compare against for semantic no-op text reuse.",
+            help="Optional JSON file to compare against for semantic no-op text reuse",
         )
 
     def build_engine_options(self, parsed_args) -> dict[str, Any]:

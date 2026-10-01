@@ -80,32 +80,32 @@ def configure_parser(parser: argparse.ArgumentParser, engine: TransformEngine) -
     parser.add_argument(
         "base_path",
         type=Path,
-        help="Base file. Selectors always apply to this file.",
+        help="Base file; selectors always apply to this file",
     )
     parser.add_argument(
         "output_path",
         nargs="?",
         type=Path,
-        help="Transformed output path. Optional when --stdout is used.",
+        help="Transformed output path; optional when --stdout is used",
     )
     parser.add_argument(
         "--mode",
         choices=[mode.value for mode in TransformMode],
         required=True,
-        help="Transform mode.",
+        help="Transform mode",
     )
     parser.add_argument(
         "--overlay-file",
         "--merge-file",
         dest="overlay_path",
         type=Path,
-        help="Overlay file applied on top of the filtered base. Required when --mode=merge.",
+        help="Overlay file applied on top of the filtered base; required when --mode=merge",
     )
     parser.add_argument(
         "--selector-type",
         choices=[action.value for action in SelectorAction],
         default=SelectorAction.RETAIN.value,
-        help="Preserve or remove the selected region from the base file.",
+        help="Preserve or remove the selected region from the base file",
     )
     parser.add_argument(
         "--selectors",
@@ -116,7 +116,7 @@ def configure_parser(parser: argparse.ArgumentParser, engine: TransformEngine) -
     parser.add_argument(
         "--stdout",
         action="store_true",
-        help="Write the transformed output to stdout instead of a file.",
+        help="Write the transformed output to stdout instead of a file",
     )
 
     engine.configure_parser(parser)
