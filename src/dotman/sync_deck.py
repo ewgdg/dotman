@@ -1203,7 +1203,7 @@ class SyncDeckApp(App[bool]):
                      ("Esc", "clear"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
                      ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
         else:
-            hints = [("q", "abort"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("/", "filter"),
+            hints = [("Q", "abort"), ("X", "confirm"), ("Space", "mark"), bulk_selection, ("/", "filter"),
                      ("Enter", "view"), ("E", "edit"), ("T", "retry"), ("Y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
