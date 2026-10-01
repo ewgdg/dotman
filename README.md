@@ -92,7 +92,7 @@ For a larger real-world example repo, see [ewgdg/dotfiles](https://github.com/ew
 - Domain vocabulary: [`CONTEXT.md`](CONTEXT.md)
 - Repository configuration: [`docs/repository.md`](docs/repository.md)
 - Template targets: [`docs/templates.md`](docs/templates.md)
-- Agent skill indexing these docs, plus noise-filtering guidance: [`skills/dotman`](skills/dotman/SKILL.md), installable with `npx skills add ewgdg/dotman`
+- Agent skill indexing these docs, plus noise-filtering guidance: [`skills/dotman`](skills/dotman/SKILL.md), installable with `npx skills add ewgdg/dotman -g`
 
 ## Features
 
