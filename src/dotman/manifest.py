@@ -27,7 +27,7 @@ TARGET_PATH_RULE_KEYS = frozenset(
      "preset", "render", "sync_policy"}
 )
 
-TARGET_IGNORE_KEYS = frozenset({"patterns"})
+TARGET_IGNORE_KEYS = frozenset({"command", "patterns"})
 
 
 def validate_supported_keys(
@@ -331,16 +331,16 @@ def normalize_target_type(value: Any) -> str | None:
     return normalize_optional_string_enum(value, key="target type", allowed=VALID_TARGET_TYPE_VALUES)
 
 
-def normalize_probe_command(value: Any, *, manifest_path: Path, target_name: str) -> str | None:
+def normalize_target_command(value: Any, *, field_name: str, manifest_path: Path, target_name: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
         raise ValueError(
-            f"package manifest {manifest_path} target '{target_name}' probe must be a string"
+            f"package manifest {manifest_path} target '{target_name}' {field_name} must be a string"
         )
     if not value.strip():
         raise ValueError(
-            f"package manifest {manifest_path} target '{target_name}' probe must not be empty"
+            f"package manifest {manifest_path} target '{target_name}' {field_name} must not be empty"
         )
     return value
 
@@ -583,7 +583,7 @@ def build_target_spec(
         return target_payload[key] if key in target_payload else preset_payload.get(key, default)
     source = value("source")
     path = value("path")
-    probe = normalize_probe_command(value("probe"), manifest_path=manifest_path, target_name=target_name)
+    probe = normalize_target_command(value("probe"), field_name="probe", manifest_path=manifest_path, target_name=target_name)
     target_type = normalize_target_type(value("type"))
     sync_policy = normalize_sync_policy(value("sync_policy"))
     chmod = value("chmod")
@@ -637,6 +637,10 @@ def build_target_spec(
     ignore_payload = read_target_ignore_table(target_payload=target_payload, preset_payload=preset_payload,
                                               manifest_path=manifest_path, target_name=target_name)
     patterns = normalize_string_list(ignore_payload.get("patterns")) if ignore_payload is not None else None
+    ignore_command = normalize_target_command(
+        ignore_payload.get("command") if ignore_payload is not None else None,
+        field_name="ignore command", manifest_path=manifest_path, target_name=target_name,
+    )
     hooks_payload = target_payload.get("hooks")
     hooks = None
     if hooks_payload is not None:
@@ -667,7 +671,7 @@ def build_target_spec(
             "source": source, "path": path, "type": target_type, "chmod": chmod,
             "render": None if render == "raw" else render, "capture": None if capture == "raw" else capture,
             "compare": compare_payload, "editor": None if editor == EditorSpec() else editor,
-            "ignore": patterns, "path_rules": path_rules or None,
+            "ignore": patterns if patterns is not None else ignore_command, "path_rules": path_rules or None,
         }.items() if item is not None)
         if forbidden:
             raise ValueError(f"package manifest {manifest_path} target '{target_name}' uses probe and must not define: {', '.join(forbidden)}")
@@ -682,7 +686,7 @@ def build_target_spec(
                       compare_repo_explicit=(isinstance(compare_payload, dict) and "repo" in compare_payload) or isinstance(preset_payload.get("compare"), dict) and "repo" in preset_payload["compare"],
                       compare_live_explicit=(isinstance(compare_payload, dict) and "live" in compare_payload) or isinstance(preset_payload.get("compare"), dict) and "live" in preset_payload["compare"],
                       editor_explicit=("editor" in target_payload or "editor" in preset_payload),
-                      ignore_patterns=patterns,
+                      ignore_patterns=patterns, ignore_command=ignore_command,
                       path_rules=path_rules, hooks=hooks,
                       disabled=bool(value("disabled", False)))
 
@@ -864,6 +868,7 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         additional_source_entries=editor.source_entries(),
         additional_sources_root=editor.additional_sources_root,
         ignore_patterns=override.ignore_patterns if override.ignore_patterns is not None else base.ignore_patterns,
+        ignore_command=override.ignore_command if override.ignore_command is not None else base.ignore_command,
         path_rules=tuple(sorted(base_rules.values(), key=lambda r: (r.priority, r.name))),
         hooks=hooks, disabled=override.disabled or base.disabled,
     )

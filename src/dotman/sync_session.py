@@ -18,7 +18,7 @@ from dotman.sync_capture import capture_observation
 from dotman.sync_observation import _identity
 from dotman.sync_auxiliary import AuxiliaryRow, guard_skip_rows, plan_auxiliary, retain_directional_hooks
 from dotman.sync_reconciliation import reconcile, unresolved_conflict_blocks, ReconciliationConflict, ReconciliationFailed
-from dotman.projection import ProbeCommandError, project_file_view
+from dotman.projection import PlanningCommandError, project_file_view
 from dotman.models import GuardSkip, ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
 from dotman.planning_guards import GuardPlanningError
@@ -673,7 +673,7 @@ class ProposalSession:
                 return SessionOpenFailed(Diagnostic(
                     "planning-failed", f"{scope}{pattern} {exc.hook_name} failed with exit {exc.exit_code}",
                 ), output_line=exc.output_line)
-            except ProbeCommandError as exc:
+            except PlanningCommandError as exc:
                 return SessionOpenFailed(Diagnostic("planning-failed", str(exc)), output_line=exc.output_line)
             except ValueError as exc:
                 return SessionOpenFailed(Diagnostic("planning-failed", str(exc)))

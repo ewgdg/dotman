@@ -28,6 +28,7 @@ Done when every top-level key, and every mapping you plan to split, has a verdic
 
 - Whole file portable → plain target, no projection.
 - Noise is whole files or subtrees of a directory target → `ignore.patterns` (`docs/repository.md` § Unified exclusions).
+- Those subtrees are listed in live state, such as a package manager's lock file → `ignore.command`, which prints the exclusion lines. Do not copy the list into `patterns`; it drifts.
 - Noise is keys inside one JSON, YAML, TOML, plist or XML file → **transform pair** (below) on the file target.
 - Noise is keys inside child files of a directory target → the same transform pair as `render` and `capture` on a `path_rules.<name>` entry matching those files (`docs/repository.md` § Targets).
 - The split depends on values, not key paths (for example rendering `null` instead of `""`) → a Jinja template for the whole file (`docs/templates.md`) or a package-local script.

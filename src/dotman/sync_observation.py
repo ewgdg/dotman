@@ -395,7 +395,8 @@ def observe_scope(
     for identity, (item, metadata) in directory_inputs.items():
         selected_paths = {target.child_path for target in scope.targets if replace(target, child_path=None) == identity}
         census = census_directory(
-            metadata, follow_live_directories=context.config.dir_symlink_mode == "follow",
+            projection.resolve_ignore_command(context.projection.command_runtime, metadata),
+            follow_live_directories=context.config.dir_symlink_mode == "follow",
             selected_paths=tuple(sorted(path for path in selected_paths if path is not None)),
         )
         children = {}

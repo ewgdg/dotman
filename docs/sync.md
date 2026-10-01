@@ -75,7 +75,7 @@ and Merge uses frozen repository and Base evidence with the Capture output.
 A directory target is a discovery scope, never an aggregate Sync Unit. One
 census inspects both trees, combines skip-marker subtrees found on either side,
 and applies repository-source Git ignore controls and repository/package/target
-exclusions symmetrically. Live `.gitignore` content does not define policy.
+exclusions, including a target's computed `ignore.command` lines, symmetrically. Live `.gitignore` content does not define policy.
 Control files, directory nodes and empty directories are not payloads. Ignored
 paths receive no Observation or Base maintenance. Git ignore matching preserves
 [excluded-parent semantics](https://git-scm.com/docs/gitignore): a nested negation

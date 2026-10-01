@@ -306,7 +306,7 @@ capture = 'dotman transform json "$DOTMAN_LIVE_PATH" --stdout --mode cleanup --c
 | --- | --- |
 | Repository | `gitignore`, `patterns`, `skip_markers` |
 | Package | `gitignore`, `patterns` |
-| Target | `patterns` |
+| Target | `patterns`, `command` |
 
 `gitignore` is a boolean, disabled by default. Package enablement overrides the
 repository default; targets cannot override it. When enabled, the normal Git
@@ -319,6 +319,19 @@ trailing `/`, and `!` negation, with excluded-parent semantics.
 Skip markers are repository-level basenames, such as `.dotman-skip`; finding
 one on either side excludes that subtree on both sides. Marker contents do not
 matter. Control files are never payloads and cannot be re-included by negation.
+
+A target `command` computes extra exclusions from current state, such as a
+package manager's lock file:
+
+- It prints Git ignore lines relative to the target root and is appended after
+  all static layers. Empty output adds nothing.
+- Lines must not start with `!`, so a command can only narrow what syncs.
+- It runs once per Push, Pull, or Sync session, when the directory target is
+  scanned. It uses the same template rendering, working directory, and
+  environment as `probe`, and must be side-effect-free and cheap. Other
+  commands, such as `info`, and target collision checks never run it.
+- A non-zero exit, non-UTF-8 output, or a negation line fails planning. To
+  tolerate a missing input, handle it explicitly in the command.
 
 All exclusions apply identically to Push, Pull, and Sync. Excluded paths are
 neither observed, changed, nor acknowledged as Sync Bases. Directory writes and
@@ -345,6 +358,19 @@ skip_markers = [".dotman-skip"]
 ```
 
 With that marker config, `files/config/app/cache/.dotman-skip` makes dotman ignore all of `files/config/app/cache/`, including `state.db` or other siblings, during directory target scans.
+
+Example computed exclusion for skills installed by a package manager:
+
+```toml
+[targets.agents]
+source = "files/agents"
+path = "~/.agents"
+
+[targets.agents.ignore]
+patterns = ["tools/"]
+# Prints one "/skills/<name>/" line per lock entry.
+command = "sh hooks/managed-skill-ignores.sh"
+```
 
 Example sync policy split:
 

@@ -160,7 +160,8 @@ def census_directory(
         # A directory exclusion must also hide diagnostics on a directory link.
         and not (relative in directories and (git.matches_directory(relative) or exclusions.matches_directory(relative)))
     ), tuple(sorted(leaves[True])), tuple(sorted(leaves[False])),
-       not metadata.ignore_patterns and not markers and not git_controls
+       # An unresolved ignore command (inspection) may exclude anything.
+       not metadata.ignore_patterns and metadata.ignore_command is None and not markers and not git_controls
        and not any(failures for failures in entries.values()))
 
 

@@ -173,6 +173,7 @@ class TargetSpec:
     compare_live_explicit: bool = field(default=False, repr=False, compare=False)
     editor_explicit: bool = field(default=False, repr=False, compare=False)
     ignore_patterns: tuple[str, ...] | None = None
+    ignore_command: str | None = None
     path_rules: tuple[TargetPathRule, ...] = ()
     hooks: dict[str, "HookSpec"] | None = None
     disabled: bool = False

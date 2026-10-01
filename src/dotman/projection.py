@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,7 @@ from dotman.models import (
     ResolvedPackageSelection,
     TargetPathRule,
     TargetSpec,
+    repo_qualified_target_text,
     target_path_rule_matches,
 )
 from dotman.repository import Repository
@@ -76,6 +77,8 @@ class TargetMetadata:
     additional_sources_root: Path | None = None
     live_path_is_symlink: bool = False
     live_path_symlink_target: str | None = None
+    # Rendered but unresolved; observation runs it once per session.
+    ignore_command: str | None = None
 
 
 def _metadata_collision_tuple(metadata: TargetMetadata):
@@ -112,7 +115,7 @@ def validate_probe_target_config(*, package: PackageSpec, target: TargetSpec) ->
             if target.compare_repo_explicit or target.compare_live_explicit
             else None
         ),
-        "ignore": target.ignore_patterns,
+        "ignore": target.ignore_patterns if target.ignore_patterns is not None else target.ignore_command,
         "path_rules": target.path_rules or None,
     }
     forbidden = sorted(name for name, value in forbidden_probe_fields.items() if value is not None)
@@ -288,6 +291,11 @@ def build_target_metadata(
                     additional_sources_root=target.additional_sources_root,
                     live_path_is_symlink=live_path_is_symlink,
                     live_path_symlink_target=live_path_symlink_target,
+                    ignore_command=(
+                        render_template_string(target.ignore_command, context, base_dir=target.declared_in, source_path=target.declared_in)
+                        if target.ignore_command is not None
+                        else None
+                    ),
                 )
             )
 
@@ -482,9 +490,9 @@ def file_is_executable(mode: int) -> bool:
 
 
 
-class ProbeCommandError(ValueError):
-    # Probe output is untrusted command data, not public diagnostic metadata:
-    # the message stays output-free and `output_line` is for human output only.
+class PlanningCommandError(ValueError):
+    # Command output is untrusted data, not public diagnostic metadata: the
+    # message stays output-free and `output_line` is for human output only.
     def __init__(self, message: str, *, output_line: str | None) -> None:
         super().__init__(message)
         self.output_line = output_line
@@ -505,7 +513,7 @@ def run_probe_command(command_runtime: CommandRuntime, metadata: TargetMetadata)
         return True
     if result.exit_code == 100:
         return False
-    raise ProbeCommandError(
+    raise PlanningCommandError(
         f"probe failed for {metadata.package_id}:{metadata.target_name} "
         f"with status {result.exit_code}",
         output_line=first_output_line(
@@ -514,6 +522,36 @@ def run_probe_command(command_runtime: CommandRuntime, metadata: TargetMetadata)
         ),
     )
 
+
+
+def resolve_ignore_command(command_runtime: CommandRuntime, metadata: TargetMetadata) -> TargetMetadata:
+    """Append the command's exclusions after the static layers and clear it."""
+    if metadata.ignore_command is None:
+        return metadata
+    label = repo_qualified_target_text(repo_name=metadata.repo_name, package_id=metadata.package_id,
+                                       target_name=metadata.target_name, bound_profile=metadata.bound_profile)
+    result = command_runtime.run(
+        CommandRequest(command=ShellCommand(metadata.ignore_command), cwd=metadata.command_cwd, env=metadata.command_env)
+    )
+    raise_for_command_interruption(result)
+    if result.exit_code != 0:
+        raise PlanningCommandError(
+            f"ignore command failed for {label} with status {result.exit_code}",
+            output_line=first_output_line(
+                result.stderr.decode("utf-8", errors="replace"),
+                result.stdout.decode("utf-8", errors="replace"),
+            ),
+        )
+    try:
+        lines = tuple(line for line in result.stdout.decode("utf-8").splitlines() if line)
+    except UnicodeDecodeError:
+        raise PlanningCommandError(f"ignore command for {label} printed non-UTF-8 output", output_line=None) from None
+    # Computed lines come last, so a negation could reopen statically excluded
+    # paths; keep live state able only to narrow what syncs.
+    negation = next((line for line in lines if line.startswith("!")), None)
+    if negation is not None:
+        raise PlanningCommandError(f"ignore command for {label} printed a negation pattern", output_line=negation)
+    return replace(metadata, ignore_patterns=(*metadata.ignore_patterns, *lines), ignore_command=None)
 
 
 def build_target_command_env(
