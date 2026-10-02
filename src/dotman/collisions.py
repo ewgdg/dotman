@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -113,30 +114,36 @@ def validate_target_collisions(
             chain = GitIgnoreChain(chain.target, controls.controls)
         return IgnoreMatcher.from_patterns(patterns, gitignore=chain)
 
+    write_paths = [
+        operation_write_path(repo_path=repo_path, live_path=live_path, operation=operation)
+        for _package, _target, repo_path, live_path, *_rest in rendered_targets
+    ]
+    write_path_texts = [str(path) for path in write_paths]
     for index, (package, target, repo_path, live_path, ignore_patterns, _live_path_is_symlink, _live_path_symlink_target) in enumerate(rendered_targets):
-        path = operation_write_path(repo_path=repo_path, live_path=live_path, operation=operation)
-        for (
-            other_package,
-            other_target,
-            other_repo_path,
-            other_live_path,
-            other_ignore_patterns,
-            _other_live_path_is_symlink,
-            _other_live_path_symlink_target,
-        ) in rendered_targets[index + 1 :]:
-            other_path = operation_write_path(repo_path=other_repo_path, live_path=other_live_path, operation=operation)
-            if path == other_path:
+        path, path_text = write_paths[index], write_path_texts[index]
+        for other_index in range(index + 1, len(rendered_targets)):
+            (
+                other_package,
+                other_target,
+                other_repo_path,
+                other_live_path,
+                other_ignore_patterns,
+                _other_live_path_is_symlink,
+                _other_live_path_symlink_target,
+            ) = rendered_targets[other_index]
+            other_path, other_path_text = write_paths[other_index], write_path_texts[other_index]
+            if path_text == other_path_text:
                 raise ValueError(
                     f"conflicting target ownership: {package.id}:{target.name} and {other_package.id}:{other_target.name} both map to {path}"
                 )
-            if path in other_path.parents:
+            if _contains_path_text(path_text, other_path_text):
                 relative = other_path.relative_to(path).as_posix()
                 parent_ignore = parent_matcher(repo_path, live_path, relative, ignore_patterns)
                 if not parent_ignore.matches(relative):
                     raise ValueError(
                         f"incompatible nested targets: {package.id}:{target.name} contains {other_package.id}:{other_target.name}"
                     )
-            elif other_path in path.parents:
+            elif _contains_path_text(other_path_text, path_text):
                 relative = path.relative_to(other_path).as_posix()
                 parent_ignore = parent_matcher(other_repo_path, other_live_path, relative, other_ignore_patterns)
                 if not parent_ignore.matches(relative):
@@ -199,4 +206,13 @@ def validate_reserved_path_claims(
 
 
 def paths_conflict(left: Path, right: Path) -> bool:
-    return left == right or left in right.parents or right in left.parents
+    left_text, right_text = str(left), str(right)
+    return left_text == right_text or _contains_path_text(left_text, right_text) or _contains_path_text(right_text, left_text)
+
+
+def _contains_path_text(ancestor: str, descendant: str) -> bool:
+    # Collision checks compare every target pair; `Path.parents` builds a Path
+    # per level and dominated sync startup. Rendered paths are absolute and
+    # normalized, so ancestry is a separator-bounded string prefix.
+    prefix = ancestor if ancestor.endswith(os.sep) else ancestor + os.sep
+    return descendant.startswith(prefix)
