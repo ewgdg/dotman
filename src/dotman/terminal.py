@@ -4,10 +4,6 @@ import sys
 from contextlib import contextmanager
 from typing import Iterator, Sequence
 
-from prompt_toolkit import prompt as prompt_toolkit_prompt
-from prompt_toolkit.formatted_text import ANSI
-from prompt_toolkit.key_binding import KeyBindings
-
 try:
     import termios
 except ImportError:  # pragma: no cover - non-POSIX platforms do not expose termios.
@@ -99,6 +95,12 @@ def _prompt_toolkit_supported(*, input_stream: object, output_stream: object) ->
 
 
 def _prompt_with_toolkit(message: str, *, escape_result: str | None = None) -> str:
+    # Imported on first prompt: prompt_toolkit costs ~30ms at startup, and
+    # most commands never prompt.
+    from prompt_toolkit import prompt as prompt_toolkit_prompt
+    from prompt_toolkit.formatted_text import ANSI
+    from prompt_toolkit.key_binding import KeyBindings
+
     prompt_message: str | ANSI
     if "\x1b[" in message:
         prompt_message = ANSI(message)

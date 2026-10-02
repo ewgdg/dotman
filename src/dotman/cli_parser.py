@@ -3,8 +3,6 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
-from dotman import __version__
-
 
 _EDIT_SUGAR_TOP_LEVEL_OPTIONS_WITH_VALUES = {"--config", "--file-symlink-mode", "--dir-symlink-mode"}
 
@@ -187,12 +185,26 @@ def hide_subparser_from_help(subparsers, name: str) -> None:
     ]
 
 
+class _PrintVersionAction(argparse.Action):
+    """`--version` that reads package metadata only when asked: importing
+    importlib.metadata costs every command ~12ms of startup."""
+
+    def __init__(self, option_strings: Sequence[str], dest: str = argparse.SUPPRESS, help: str | None = None) -> None:
+        super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, help=help or "show program's version number and exit")
+
+    def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace, values: object, option_string: str | None = None) -> None:
+        from importlib.metadata import version
+
+        print(f"{parser.prog} {version('dotman')}")
+        parser.exit()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dotman", description="dotman CLI")
     # Keep optional command flags present on every parsed namespace so command
     # dispatch can read a consistent attribute shape.
     parser.set_defaults(full_path=None)
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--version", action=_PrintVersionAction)
     parser.add_argument("--config", metavar="<config-path>", help="Path to dotman config.toml")
     parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
     parser.add_argument("--unattended", action="store_true", help="Use policy defaults without menus, editors, pagers, or prompts")

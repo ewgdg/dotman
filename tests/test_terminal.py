@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import prompt_toolkit
 from prompt_toolkit.keys import Keys
 
 import dotman.terminal as terminal
@@ -133,7 +134,7 @@ def test_read_prompt_line_uses_prompt_toolkit_for_interactive_stdio(monkeypatch)
         prompt_options.append(options)
         return "  n  "
 
-    monkeypatch.setattr(terminal, "prompt_toolkit_prompt", fake_prompt)
+    monkeypatch.setattr(prompt_toolkit, "prompt", fake_prompt)
 
     assert terminal.read_prompt_line("Review command: ", escape_result="\x1b") == "n"
     assert len(prompt_messages) == 1

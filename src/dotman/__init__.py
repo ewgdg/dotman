@@ -1,9 +1,1 @@
 """dotman engine and tracked-package state manager."""
-
-from importlib.metadata import version
-
-__all__ = [
-    "__version__",
-]
-
-__version__ = version("dotman")
