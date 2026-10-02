@@ -229,7 +229,6 @@ def _format_profile_conflict_contender(selection: ResolvedPackageSelection) -> s
 
 @dataclass(frozen=True)
 class PackagePlanningContext:
-    root_identity: ResolvedPackageIdentity
     related_package_ids: list[str]
     resolved_packages: list[PackageSpec]
     variables: dict[str, Any]
@@ -250,8 +249,9 @@ def build_package_planning_context(
     repo: Repository,
     selection: ResolvedPackageSelection,
 ) -> PackagePlanningContext:
-    root_identity = selection.owner_identity or selection.identity
-    related_package_ids = resolve_package_ids(repo, root_identity.package_id, "package")
+    # A package renders from its own dependency closure, never its dependents':
+    # `depends` means "needs", so who pulled a package in must not change it.
+    related_package_ids = resolve_package_ids(repo, selection.identity.package_id, "package")
     resolved_packages = [repo.resolve_package(package_id) for package_id in related_package_ids]
     profile_vars, lineage = repo.compose_profile(selection.requested_profile)
     package_vars: dict[str, Any] = {}
@@ -261,7 +261,6 @@ def build_package_planning_context(
     inferred_os = infer_profile_os(selection.requested_profile, lineage, variables)
     context = build_template_context(variables, profile=selection.requested_profile, inferred_os=inferred_os)
     return PackagePlanningContext(
-        root_identity=root_identity,
         related_package_ids=related_package_ids,
         resolved_packages=resolved_packages,
         variables=variables,
