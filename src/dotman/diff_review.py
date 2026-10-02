@@ -16,7 +16,7 @@ from dotman.command_runtime import (
     current_command_runtime,
     raise_for_command_interruption,
 )
-from dotman.models import AdditionalSource
+from dotman.models import AdditionalSource, EditorSpec
 from dotman.ui_context import current_ui_config
 
 
@@ -43,7 +43,7 @@ class ReviewItem:
     after_bytes_loader: ReviewBytesLoader | None = field(default=None, repr=False, compare=False)
     before_mode: int | None = None
     after_mode: int | None = None
-    editor: Any = None
+    editor: EditorSpec | None = None
     editor_explicit: bool = False
     additional_sources: tuple[str, ...] = ()
     additional_source_entries: tuple[AdditionalSource, ...] = field(default=(), repr=False, compare=False)
