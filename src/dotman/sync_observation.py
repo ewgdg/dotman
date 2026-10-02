@@ -12,7 +12,7 @@ from dotman.sync_path_policy import SyncPathError
 from dotman import planning, projection
 from dotman.file_access import read_bytes
 from dotman.manifest import resolve_sync_policy, sync_policy_allows_operation
-from dotman.models import GuardSkip, ResolvedSyncScope, ResolvedSyncTarget
+from dotman.models import GuardSkip, ResolvedSyncScope, ResolvedSyncTarget, resolved_package_selection_key
 from dotman.planning_guards import evaluate_directional_guards, evaluate_directory_path_rule_guards
 from dotman.progress import ProgressSink
 from dotman.sync_directory import census_directory, child_metadata
@@ -124,8 +124,20 @@ _ResolvedInputs = dict[
 ]
 
 
+def _scope_planning_inputs(scope: ResolvedSyncScope, direction: str) -> list[planning.PackagePlanningInput]:
+    """The scope's static planning for its own packages, in scope order."""
+    planned: dict[tuple[str, str, str | None, str], planning.PackagePlanningInput] = {}
+    for item in scope.planning_inputs[direction]:
+        # A package pulled in by several tracked roots renders identically.
+        planned.setdefault(resolved_package_selection_key(item.selection), item)
+    # Sessions carry the scope's public selections, not tracked-graph provenance.
+    return [
+        replace(planned[resolved_package_selection_key(selection)], selection=selection)
+        for selection in scope.package_selections
+    ]
+
+
 def _resolve_inputs(
-    context: planning.PlanningContext,
     scope: ResolvedSyncScope,
     *,
     operation: str = "sync",
@@ -134,11 +146,7 @@ def _resolve_inputs(
     inputs = {}
     directional = {}
     for direction in ("push", "pull"):
-        candidates, _ = planning.collect_static_target_candidates(
-            context,
-            list(scope.package_selections),
-            operation=direction,
-        )
+        candidates = _scope_planning_inputs(scope, direction)
         narrowed = []
         for item in candidates:
             metadata = [
@@ -156,7 +164,7 @@ def _resolve_inputs(
             narrowed.append(replace(item, target_metadata=metadata))
         directional[direction] = narrowed
     if inputs.keys() != selected:
-        raise ValueError("resolved Sync scope no longer matches selected configuration")
+        raise ValueError("resolved Sync scope planning does not cover its selected targets")
     # Directional metadata collection must not move pull-only files to the end.
     ordered = {replace(identity, child_path=None): inputs[replace(identity, child_path=None)] for identity in scope.targets}
     # Full targets need every potentially configured child direction. Exact
@@ -392,7 +400,7 @@ def observe_scope(
     omit_no_route: bool = False,
     sink: ProgressSink | None = None,
 ) -> ObservedScope:
-    inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(context, scope, operation=operation)
+    inputs, directional = resolved_inputs if resolved_inputs is not None else _resolve_inputs(scope, operation=operation)
     # Auxiliary planning visits every resolved probe target, even ones this
     # direction filter drops, so progress counts them from the same set.
     probe_target_count = sum(1 for _item, metadata in inputs.values() if metadata.probe_command is not None)

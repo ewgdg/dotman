@@ -11,6 +11,8 @@ After tracked ownership selects its winners, their Primary Sources must be
 exclusive across all Sync Policies, including push-only targets whose Proposal
 Editors can write repository sources. Duplicate or unexcluded nested source
 claims are configuration errors before Observation, even for a narrower scope.
+Scope resolution plans the tracked graph once per direction; Observation reuses
+that planning, so it sees exactly the paths ownership and collisions validated.
 
 ## Frozen Observation
 

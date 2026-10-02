@@ -35,7 +35,7 @@ def _info_live_paths(engine) -> set[str]:
 
 
 def _sync_live_paths(engine) -> set[str]:
-    inputs, _ = _resolve_inputs(engine._planning_context, engine.resolve_sync_scope())
+    inputs, _ = _resolve_inputs(engine.resolve_sync_scope())
     return {metadata.live_path.name for _item, metadata in inputs.values()}
 
 

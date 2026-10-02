@@ -283,10 +283,14 @@ def resolve_sync_scope(
     # Static ownership and collision resolution runs against the full tracked graph
     # before narrowing to the requested identities.
     winner_keys_by_operation: dict[str, set[tuple[str, str, str | None, str]]] = {}
+    planning_inputs_by_operation: dict[str, tuple[planning.PackagePlanningInput, ...]] = {}
     primary_targets = {}
     primary_gitignore = {}
     for operation in ("push", "pull"):
-        candidates = planning.collect_tracked_ownership_candidates(context, operation=operation)
+        planning_inputs, candidates = planning.collect_static_target_candidates(
+            context, all_selections, operation=operation
+        )
+        planning_inputs_by_operation[operation] = tuple(planning_inputs)
         winners = resolve_tracked_target_winners(candidates)
         winner_keys_by_operation[operation] = {
             (
@@ -302,9 +306,6 @@ def resolve_sync_scope(
 
         # Validate path nesting after ownership has selected the winning target
         # at each live/repository write path.
-        planning_inputs, _static_candidates = planning.collect_static_target_candidates(
-            context, all_selections, operation=operation
-        )
         winning_target_keys = winner_keys_by_operation[operation]
         rendered_targets = []
         for planning_input in planning_inputs:
@@ -419,6 +420,7 @@ def resolve_sync_scope(
         selectors=normalized_selectors,
         package_selections=public_selections,
         targets=tuple(selected_targets),
+        planning_inputs=planning_inputs_by_operation,
     )
 
 

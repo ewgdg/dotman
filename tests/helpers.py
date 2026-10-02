@@ -585,6 +585,6 @@ def resolved_child_metadata(engine, child_path: str):
     from dotman.sync_directory import child_metadata
     from dotman.sync_observation import _resolve_inputs
 
-    inputs, _ = _resolve_inputs(engine._planning_context, engine.resolve_sync_scope())
+    inputs, _ = _resolve_inputs(engine.resolve_sync_scope())
     (directory,) = [metadata for _item, metadata in inputs.values() if metadata.target.target_type == "directory"]
     return child_metadata(directory, child_path)

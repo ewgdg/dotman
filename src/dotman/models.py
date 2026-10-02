@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from dotman.planning import PackagePlanningInput
 
 
 def _serialized_projection(value: str) -> str | dict[str, str]:
@@ -406,6 +409,9 @@ class ResolvedSyncScope:
     selectors: tuple[str, ...]
     package_selections: tuple[ResolvedPackageSelection, ...]
     targets: tuple[ResolvedSyncTarget, ...]
+    # The full tracked graph's static planning by direction, kept so a session
+    # observes exactly what ownership and collisions validated without planning again.
+    planning_inputs: dict[str, tuple[PackagePlanningInput, ...]] = field(compare=False, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {

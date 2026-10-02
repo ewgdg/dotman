@@ -99,7 +99,7 @@ def _detail(unit, inspection):
 def info_sync_base(context, text: str):
     identity = _identity(text)
     scope = resolve_sync_scope(context, [text])
-    inputs, _ = _resolve_inputs(context, scope)
+    inputs, _ = _resolve_inputs(scope)
     unit = _unit(inputs, identity)
     repo = context.repositories[identity.repo]
     if not _store_exists(context, repo):
@@ -114,7 +114,7 @@ def info_sync_base(context, text: str):
 
 def list_sync_bases(context):
     scope = resolve_sync_scope(context)
-    inputs, _ = _resolve_inputs(context, scope)
+    inputs, _ = _resolve_inputs(scope)
     entries = []
     for repo_config in context.config.ordered_repos:
         repo = context.repositories[repo_config.name]
@@ -142,7 +142,7 @@ def reset_sync_base(context, text: str):
     identity = _identity(text)
     with OperationLock.acquire(context.tracked_state.state_root):
         scope = resolve_sync_scope(context, [text])
-        inputs, _ = _resolve_inputs(context, scope)
+        inputs, _ = _resolve_inputs(scope)
         _unit(inputs, identity)
         repo = context.repositories[identity.repo]
         deleted = False
@@ -159,7 +159,7 @@ def doctor_sync_bases(context):
     # Failed static resolution is not evidence that stored identities are orphaned.
     try:
         scope = resolve_sync_scope(context)
-        inputs, _ = _resolve_inputs(context, scope)
+        inputs, _ = _resolve_inputs(scope)
     except ValueError:
         inputs = None
     censuses = {}

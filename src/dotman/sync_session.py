@@ -616,7 +616,7 @@ class ProposalSession:
                     lock = resources.enter_context(
                         OperationLock.acquire(context.tracked_state.state_root)
                     )
-                resolved_inputs = _resolve_inputs(context, scope, operation=cls.operation)
+                resolved_inputs = _resolve_inputs(scope, operation=cls.operation)
                 observed = cls._observe(
                     context, scope, preview=preview, run_noop=run_noop, resolved_inputs=resolved_inputs,
                     operation=cls.operation, sink=sink,
