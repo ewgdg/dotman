@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from dotman import elevation, file_access
@@ -26,6 +27,20 @@ def test_elevation_request_cli_is_parseable_and_hidden_helper(monkeypatch, capsy
 
     assert exit_code == 1
     assert "requires DOTMAN_ELEVATION_BROKER" in capsys.readouterr().err
+
+
+def test_elevation_broker_closes_without_waiting_for_a_poll_tick() -> None:
+    # Every broker/intercept command opens and closes a broker; guards run
+    # several before the sync progress bar can appear.
+    cycles = 5
+    started = time.perf_counter()
+    for _ in range(cycles):
+        broker = elevation.ElevationBroker()
+        broker.start()
+        broker.close()
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.02 * cycles
 
 
 def test_elevation_request_contacts_broker_and_requests_sudo(monkeypatch) -> None:

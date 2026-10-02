@@ -46,7 +46,6 @@ class ElevationBroker:
         try:
             server.bind(str(self.socket_path))
             server.listen(8)
-            server.settimeout(0.1)
         except Exception:
             server.close()
             raise
@@ -70,11 +69,12 @@ class ElevationBroker:
             if threading.current_thread() in self._connections or threading.current_thread() is self._thread:
                 raise RuntimeError("elevation broker cannot close from its own serving thread")
         self._stop_event.set()
-        if self._server is not None:
-            self._server.close()
         if self._thread is not None:
+            self._wake_accept_loop()
             self._thread.join()
             self._thread = None
+        if self._server is not None:
+            self._server.close()
         self._server = None
         with self._connections_lock:
             connections = tuple(self._connections.items())
@@ -100,6 +100,14 @@ class ElevationBroker:
             else:
                 path.unlink(missing_ok=True)
         self._root.rmdir()
+
+    def _wake_accept_loop(self) -> None:
+        # Closing a listening socket does not interrupt a blocked accept() on
+        # every platform, and polling it on a timeout made each broker close
+        # wait up to a full tick. A throwaway connection returns accept() at
+        # once; the serve loop sees the stop flag and drops it.
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as wake:
+            wake.connect(str(self.socket_path))
 
     def env(self, *, reason: str | None = None, intercept: bool = False) -> dict[str, str]:
         self.start()
@@ -136,8 +144,6 @@ class ElevationBroker:
         while not self._stop_event.is_set():
             try:
                 connection, _ = server.accept()
-            except TimeoutError:
-                continue
             except OSError:
                 break
             # Each connection adds another thread boundary, so propagate the
