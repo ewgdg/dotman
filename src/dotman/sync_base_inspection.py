@@ -5,7 +5,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import replace
 import hashlib
-import os
 
 from dotman.models import ResolvedSyncTarget
 from dotman.operation_lock import OperationLock
@@ -13,7 +12,7 @@ from dotman.sync_base_lifecycle import (
     BaseInspection, SyncBaseLifecycle, record_matches_identity,
 )
 from dotman.sync_base_store import (
-    RECORD_FILE_PREFIX, LOCK_FILE_NAME, Missing, DirectoryChildPresent,
+    Missing, DirectoryChildPresent,
     SyncBaseStore, SyncBaseStoreError,
 )
 from dotman.sync_directory import census_directory, child_metadata
@@ -51,14 +50,10 @@ def _unit(inputs, identity):
 
 
 def _store_exists(context, repo) -> bool:
-    directory = context.tracked_state.state_root / "repos" / repo.config.state_key
     try:
-        return any(name == LOCK_FILE_NAME or name.startswith(RECORD_FILE_PREFIX)
-                   for name in os.listdir(directory))
-    except FileNotFoundError:
-        return False
-    except OSError as exc:
-        raise SyncBaseStoreError(f"{repo.config.name}: {directory}: {exc}") from exc
+        return SyncBaseStore.exists(context.tracked_state.state_root, repo.config.state_key)
+    except SyncBaseStoreError as exc:
+        raise SyncBaseStoreError(f"{repo.config.name}: {exc}") from exc
 
 
 @contextmanager

@@ -44,8 +44,8 @@ pre_push = "echo push >> {log}"
         assert result.status == 'completed'
         assert result.units == ()
     assert log.read_text().splitlines() == ['guard', 'probe', 'push']
-    from dotman.sync_base_store import RECORD_FILE_PREFIX, LOCK_FILE_NAME
-    assert not list((tmp_path / 'state').rglob(RECORD_FILE_PREFIX + '*'))
+    from dotman.sync_base_store import BASES_DIRECTORY_NAME, LOCK_FILE_NAME
+    assert not list((tmp_path / 'state').rglob(BASES_DIRECTORY_NAME))
     assert not list((tmp_path / 'state').rglob(LOCK_FILE_NAME))
 
 

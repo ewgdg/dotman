@@ -70,8 +70,8 @@ def test_push_without_bases_does_not_create_base_store(tmp_path, monkeypatch, ca
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'push-only', b'same', b'same', '')])
     assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push']) == 0
     capsys.readouterr()
-    from dotman.sync_base_store import RECORD_FILE_PREFIX, LOCK_FILE_NAME
-    assert not list(engine._tracked_state_context.state_root.rglob(RECORD_FILE_PREFIX + '*'))
+    from dotman.sync_base_store import BASES_DIRECTORY_NAME, LOCK_FILE_NAME
+    assert not list(engine._tracked_state_context.state_root.rglob(BASES_DIRECTORY_NAME))
     assert not list(engine._tracked_state_context.state_root.rglob(LOCK_FILE_NAME))
 
 
@@ -114,7 +114,7 @@ def test_push_ineligible_base_maintenance_failure_warns_without_blocking(tmp_pat
 
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'push-only', b'repo', b'live', '')])
     record = store_record(engine)
-    lock = record.with_name(LOCK_FILE_NAME)
+    lock = record.parents[2] / LOCK_FILE_NAME
     # A hard link is unrepairable; loose modes would self-heal on writable open.
     os.link(lock, tmp_path / 'lock-alias')
     before = record.read_bytes()
@@ -139,3 +139,31 @@ def test_push_lock_contention_never_cleans_bases(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     with SyncBaseStore.open(engine._tracked_state_context.state_root, 'main', read_only=True) as store:
         assert store.read(b'main:app.unit') is not None
+
+
+def test_first_push_on_flat_store_migrates_before_child_policy_cleanup(tmp_path, monkeypatch, capsys):
+    from dotman.sync_base_store import FilePresent, SyncBaseRecord
+    from tests.engine.test_sync_base_migration import legacy_store
+    from tests.engine.test_sync_directory_observation import directory_engine, put
+
+    engine = directory_engine(tmp_path, monkeypatch)
+    state_root = engine._tracked_state_context.state_root
+    for child in ('selected', 'eligible'):
+        put(tmp_path / 'repo/packages/app/tree', child)
+    directory = legacy_store(state_root, [
+        SyncBaseRecord(f'main:app.tree/{child}'.encode(), FilePresent(b'')) for child in ('selected', 'eligible')
+    ])
+    manifest = tmp_path / 'repo/packages/app/package.toml'
+    manifest.write_text(manifest.read_text() + '''
+[targets.tree.path_rules.selected]
+pattern = "selected"
+sync_policy = "push-only"
+[targets.tree.hooks]
+guard_push = "exit 9"
+''')
+    main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push'])
+    capsys.readouterr()
+    assert not list(directory.glob('sync-base-*'))
+    with SyncBaseStore.open(state_root, 'main', read_only=True) as store:
+        assert store.read(b'main:app.tree/selected') is None
+        assert store.read(b'main:app.tree/eligible') is not None

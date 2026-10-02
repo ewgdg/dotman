@@ -22,6 +22,34 @@ def target_ref_text(*, package_id: str, target_name: str, bound_profile: str | N
     return f"{package_ref_text(package_id=package_id, bound_profile=bound_profile)}.{target_name}"
 
 
+def target_separator_index(package_text: str, text: str) -> int:
+    """Return the index of the package/target ``.``, or -1 when absent."""
+    # A profile instance may contain dots (for example ``app<work.v2>``).
+    # The target separator is therefore the first dot after the profile's
+    # closing angle bracket, when an instance is present.
+    separator = package_text.find(".")
+    profile_start = package_text.find("<")
+    # Child paths may contain angle brackets; only treat ``<`` as an
+    # instance opener when it occurs before the package-target separator.
+    if profile_start >= 0 and (separator < 0 or profile_start < separator):
+        profile_end = package_text.find(">", profile_start + 1)
+        if profile_end < 0:
+            raise ValueError(f"sync scope '{text}' is not canonical")
+        separator = package_text.find(".", profile_end + 1)
+    return separator
+
+
+def sync_unit_target_identity(canonical: str) -> str:
+    """Return the target part of a canonical file or directory-child identity."""
+    repo, colon, remainder = canonical.partition(":")
+    separator = target_separator_index(remainder, canonical) if colon else -1
+    if not repo or separator < 0:
+        raise ValueError(f"'{canonical}' is not a canonical Sync Unit identity")
+    # Target names never contain `/`, so the first one after the separator starts the child path.
+    child = remainder.find("/", separator)
+    return canonical if child < 0 else f"{repo}:{remainder[:child]}"
+
+
 def repo_qualified_target_text(*, repo_name: str, package_id: str, target_name: str, bound_profile: str | None = None) -> str:
     return f"{repo_name}:{target_ref_text(package_id=package_id, target_name=target_name, bound_profile=bound_profile)}"
 

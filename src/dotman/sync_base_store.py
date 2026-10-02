@@ -10,7 +10,7 @@ import os
 import re
 import stat
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,10 +18,12 @@ from types import TracebackType
 from typing import Final, Self, TypeAlias
 
 from dotman.config import validate_state_key
+from dotman.models import sync_unit_target_identity
 
 STORE_EPOCH: Final = 2
-RECORD_FILE_PREFIX: Final = "sync-base-"
 LOCK_FILE_NAME: Final = "sync-bases.lock"
+BASES_DIRECTORY_NAME: Final = "bases"
+RECORD_FILE_SUFFIX: Final = ".json"
 _PRIVATE_DIRECTORY_MODE: Final = 0o700
 _PRIVATE_FILE_MODE: Final = 0o600
 
@@ -174,18 +176,26 @@ def _repair_mode(path: Path, descriptor: int, *, directory: bool) -> None:
         os.fchmod(descriptor, expected_mode)
 
 
-def _is_store_file(name: str) -> bool:
-    return name.startswith(RECORD_FILE_PREFIX) or name == LOCK_FILE_NAME
+Directory: TypeAlias = tuple[Path, int]
 
 
 class _PrivateLayout:
-    """Pin the private tree; never follow a replaced directory during Python I/O."""
+    """Pin the private tree; never follow a replaced directory during Python I/O.
+
+    The repository directory chain stays pinned for the store's lifetime. The
+    `bases` directory is pinned on first use, and a target group only while an
+    operation uses it, so one read validates a bounded set of paths.
+    """
 
     def __init__(
         self, manager_root: Path, state_key: str, *, create: bool, repair: bool
     ) -> None:
         self.directory = manager_root / "repos" / state_key
-        self._directories: list[tuple[Path, int]] = []
+        self.bases_directory = self.directory / BASES_DIRECTORY_NAME
+        self._repair = repair
+        self._directories: list[Directory] = []
+        self._bases: Directory | None = None
+        self._groups: dict[str, Directory] = {}
         self._files: dict[str, int] = {}
         self._parent_descriptor: int | None = None
         try:
@@ -197,46 +207,99 @@ class _PrivateLayout:
             )
             parent_descriptor = self._parent_descriptor
             for path in (manager_root, manager_root / "repos", self.directory):
-                if create:
-                    try:
-                        os.mkdir(
-                            path.name, _PRIVATE_DIRECTORY_MODE, dir_fd=parent_descriptor
-                        )
-                        os.fsync(parent_descriptor)
-                    except FileExistsError:
-                        pass
-                before = os.stat(
-                    path.name, dir_fd=parent_descriptor, follow_symlinks=False
-                )
-                _validate_inode(path, before, directory=True)
-                descriptor = os.open(
-                    path.name,
-                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                    dir_fd=parent_descriptor,
-                )
+                descriptor = self._pin(path, parent_descriptor, create=create)
+                if descriptor is None:
+                    raise FileNotFoundError(errno.ENOENT, "Sync Base store is absent", str(path))
                 self._directories.append((path, descriptor))
-                opened = os.fstat(descriptor)
-                if _identity(opened) != _identity(before):
-                    raise SyncBaseStoreSecurityError(
-                        f"Sync Base directory changed while opening: {path}"
-                    )
-                if repair:
-                    _repair_mode(path, descriptor, directory=True)
-                _validate_status(path, os.fstat(descriptor), directory=True)
                 self.check_directories()
                 parent_descriptor = descriptor
-            if repair:
-                self._repair_file_modes()
         except BaseException:
             self.close()
             raise
+
+    def _pin(self, path: Path, parent_descriptor: int, *, create: bool) -> int | None:
+        """Open one private directory below a pinned parent; None when absent."""
+        if create:
+            try:
+                os.mkdir(path.name, _PRIVATE_DIRECTORY_MODE, dir_fd=parent_descriptor)
+                os.fsync(parent_descriptor)
+            except FileExistsError:
+                pass
+        try:
+            before = os.stat(path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        _validate_inode(path, before, directory=True)
+        descriptor = os.open(
+            path.name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_descriptor,
+        )
+        try:
+            if _identity(os.fstat(descriptor)) != _identity(before):
+                raise SyncBaseStoreSecurityError(
+                    f"Sync Base directory changed while opening: {path}"
+                )
+            if self._repair:
+                _repair_mode(path, descriptor, directory=True)
+            _validate_status(path, os.fstat(descriptor), directory=True)
+        except BaseException:
+            os.close(descriptor)
+            raise
+        return descriptor
 
     @property
     def descriptor(self) -> int:
         return self._directories[-1][1]
 
+    @property
+    def root(self) -> Directory:
+        return self._directories[-1]
+
+    def bases(self, *, create: bool) -> Directory | None:
+        if self._bases is None:
+            descriptor = self._pin(self.bases_directory, self.descriptor, create=create)
+            if descriptor is not None:
+                self._bases = (self.bases_directory, descriptor)
+        return self._bases
+
+    @contextmanager
+    def group(self, name: str, *, create: bool = False) -> Iterator[Directory | None]:
+        """Pin one target group for the duration of an operation."""
+        self.check_directories()
+        bases = self.bases(create=create)
+        path = self.bases_directory / name
+        descriptor = None if bases is None else self._pin(path, bases[1], create=create)
+        if descriptor is None:
+            yield None
+            return
+        self._groups[name] = (path, descriptor)
+        try:
+            self.check_directories()
+            yield path, descriptor
+        finally:
+            entry = self._groups.pop(name, None)
+            if entry is not None:
+                os.close(entry[1])
+
+    def group_names(self) -> list[str]:
+        bases = self.bases(create=False)
+        return [] if bases is None else sorted(self.file_names(bases[1]))
+
+    def remove_group_if_empty(self, name: str) -> None:
+        path, descriptor = self._groups[name]
+        if self.file_names(descriptor):
+            return
+        bases = self._bases
+        assert bases is not None
+        del self._groups[name]
+        os.close(descriptor)
+        os.rmdir(name, dir_fd=bases[1])
+        os.fsync(bases[1])
+
     def check_directories(self) -> None:
-        for path, descriptor in self._directories:
+        pinned = [*self._directories, *([self._bases] if self._bases else []), *self._groups.values()]
+        for path, descriptor in pinned:
             current = path.lstat()
             opened = os.fstat(descriptor)
             _validate_status(path, current, directory=True)
@@ -247,23 +310,24 @@ class _PrivateLayout:
                 )
 
     def open_file(self, name: str, *, create: bool = False) -> int:
-        descriptor = self._open_file_descriptor(name, create=create)
+        descriptor = self._open_file_descriptor(self.root, name, create=create)
         self._files[name] = descriptor
         return descriptor
 
-    def _open_file_descriptor(self, name: str, *, create: bool = False) -> int:
+    def _open_file_descriptor(self, directory: Directory, name: str, *, create: bool = False) -> int:
         self.check_directories()
-        path = self.directory / name
+        directory_path, directory_descriptor = directory
+        path = directory_path / name
         before = (
             None
             if create
-            else os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
+            else os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
         )
         if before is not None:
             _validate_inode(path, before, directory=False)
         flags = os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
         flags |= (os.O_RDWR | os.O_CREAT | os.O_EXCL) if create else os.O_RDONLY
-        descriptor = os.open(name, flags, _PRIVATE_FILE_MODE, dir_fd=self.descriptor)
+        descriptor = os.open(name, flags, _PRIVATE_FILE_MODE, dir_fd=directory_descriptor)
         try:
             opened = os.fstat(descriptor)
             if before is not None and _identity(opened) != _identity(before):
@@ -271,7 +335,7 @@ class _PrivateLayout:
                     f"Sync Base file changed while opening: {path}"
                 )
             _validate_status(path, os.fstat(descriptor), directory=False)
-            current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
+            current = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
             _validate_status(path, current, directory=False)
             if _identity(current) != _identity(opened):
                 raise SyncBaseStoreSecurityError(
@@ -283,54 +347,77 @@ class _PrivateLayout:
             raise
         return descriptor
 
-    def file_names(self) -> set[str]:
+    @staticmethod
+    def file_names(directory_descriptor: int) -> set[str]:
         # Reusing a scanned directory's open file description can miss newly
         # created entries on Btrfs. Open a fresh stream relative to the pinned
         # directory; dup would share the old enumeration state.
         descriptor = os.open(
             ".",
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-            dir_fd=self.descriptor,
+            dir_fd=directory_descriptor,
         )
         try:
             return set(os.listdir(descriptor))
         finally:
             os.close(descriptor)
 
-    def _repair_file_modes(self) -> None:
-        for name in filter(_is_store_file, self.file_names()):
+    def root_names(self) -> set[str]:
+        return self.file_names(self.descriptor) & {LOCK_FILE_NAME, BASES_DIRECTORY_NAME}
+
+    def _validate_file(self, directory: Directory, name: str) -> None:
+        directory_path, directory_descriptor = directory
+        if self._repair:
             # O_NONBLOCK keeps a planted FIFO from hanging before type validation.
             descriptor = os.open(
                 name,
                 os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
-                dir_fd=self.descriptor,
+                dir_fd=directory_descriptor,
             )
             try:
-                _repair_mode(self.directory / name, descriptor, directory=False)
+                _repair_mode(directory_path / name, descriptor, directory=False)
             finally:
                 os.close(descriptor)
+        current = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+        _validate_status(directory_path / name, current, directory=False)
 
-    def check(self) -> set[str]:
+    def validate_tree(self, extra_root_files: Iterable[str] = ()) -> None:
+        """Validate (and when writable, repair) every store path once."""
+        for name in sorted({*(self.root_names() - {BASES_DIRECTORY_NAME}), *extra_root_files}):
+            self._validate_file(self.root, name)
+        for group_name in self.group_names():
+            with self.group(group_name) as directory:
+                assert directory is not None
+                for name in sorted(self.file_names(directory[1])):
+                    self._validate_file(directory, name)
+
+    def check(self) -> None:
+        """Re-validate pinned directories and held files before each use."""
         self.check_directories()
-        names = set(filter(_is_store_file, self.file_names()))
-        for name in names:
+        for name, descriptor in self._files.items():
             path = self.directory / name
-            current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
+            try:
+                current = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                raise SyncBaseStoreSecurityError(
+                    f"an opened Sync Base file disappeared: {path}"
+                ) from None
             _validate_status(path, current, directory=False)
-            if name in self._files and _identity(current) != _identity(
-                os.fstat(self._files[name])
-            ):
+            if _identity(current) != _identity(os.fstat(descriptor)):
                 raise SyncBaseStoreSecurityError(
                     f"Sync Base file was substituted: {path}"
                 )
-        if not self._files.keys() <= names:
-            raise SyncBaseStoreSecurityError("an opened Sync Base file disappeared")
-        return names
 
     def close(self) -> None:
         for descriptor in self._files.values():
             os.close(descriptor)
         self._files.clear()
+        for _, descriptor in self._groups.values():
+            os.close(descriptor)
+        self._groups.clear()
+        if self._bases is not None:
+            os.close(self._bases[1])
+            self._bases = None
         for _, descriptor in reversed(self._directories):
             os.close(descriptor)
         self._directories.clear()
@@ -373,8 +460,17 @@ def _canonical_json(value: object) -> bytes:
     ).encode("ascii")
 
 
-def _record_name(identity: bytes) -> str:
-    return f"{RECORD_FILE_PREFIX}{hashlib.sha256(identity).hexdigest()}.json"
+RecordLocation: TypeAlias = tuple[str, str]
+
+
+def _target_group(target: bytes) -> str:
+    return hashlib.sha256(target).hexdigest()
+
+
+def _record_location(identity: bytes) -> RecordLocation:
+    """Group a record under its target; hashes avoid length and case-folding limits."""
+    target = sync_unit_target_identity(identity.decode("utf-8")).encode("utf-8")
+    return _target_group(target), f"{hashlib.sha256(identity).hexdigest()}{RECORD_FILE_SUFFIX}"
 
 
 def _metadata_digest(body: dict[str, object]) -> str:
@@ -409,7 +505,12 @@ def _encode(record: SyncBaseRecord) -> bytes:
 
 
 def _decode(
-    content: bytes, name: str, expected_identity: bytes | None
+    content: bytes,
+    name: str,
+    expected_identity: bytes | None,
+    *,
+    location: object,
+    locate: Callable[[bytes], object] = _record_location,
 ) -> SyncBaseRecord:
     try:
         container = json.loads(content)
@@ -435,7 +536,7 @@ def _decode(
         identity = base64.b64decode(body["identity"], validate=True)
         if (
             not identity
-            or _record_name(identity) != name
+            or locate(identity) != location
             or (expected_identity is not None and identity != expected_identity)
         ):
             raise ValueError("record identity mismatch")
@@ -521,6 +622,17 @@ class SyncBaseStore:
         self._reading = False
         self._closed = False
 
+    @staticmethod
+    def exists(manager_state_root: str | Path, repo_state_key: str) -> bool:
+        """Whether storage was ever created, without opening or creating it."""
+        directory = Path(manager_state_root) / "repos" / repo_state_key
+        try:
+            return bool(set(os.listdir(directory)) & {LOCK_FILE_NAME, BASES_DIRECTORY_NAME})
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise SyncBaseStoreError(f"{directory}: {exc}") from exc
+
     @classmethod
     def open(
         cls,
@@ -535,6 +647,8 @@ class SyncBaseStore:
         Read-only opens never change storage. Wrong owner, type, symlinks, and
         hard links are always rejected rather than repaired.
         """
+        from dotman.sync_base_migration import flat_record_names, migrate_flat_records
+
         manager_root = Path(manager_state_root)
         if not manager_root.is_absolute():
             raise ValueError("manager state root must be absolute")
@@ -546,8 +660,10 @@ class SyncBaseStore:
                 manager_root, state_key, create=create, repair=not read_only
             )
             try:
-                names = layout.check()
+                names = layout.root_names()
                 if LOCK_FILE_NAME in names:
+                    # Repair before opening: opening validates the private mode.
+                    layout._validate_file(layout.root, LOCK_FILE_NAME)
                     lock = layout.open_file(LOCK_FILE_NAME)
                 elif create and not names:
                     lock = layout.open_file(LOCK_FILE_NAME, create=True)
@@ -555,18 +671,31 @@ class SyncBaseStore:
                     os.fsync(layout.descriptor)
                 else:
                     raise SyncBaseStoreSecurityError("Sync Base store lock is missing")
+                flat_records = flat_record_names(layout)
                 with _locked(lock, write=False):
-                    layout.check()
-                return cls(manager_root, state_key, layout, lock, read_only=read_only)
+                    layout.validate_tree(flat_records)
+                store = cls(manager_root, state_key, layout, lock, read_only=read_only)
             except BaseException:
                 layout.close()
                 raise
+        if flat_records:
+            try:
+                if read_only:
+                    raise SyncBaseStoreError(
+                        f"Sync Base store {layout.directory} uses the flat layout; "
+                        "run a real push, pull, or sync to migrate it"
+                    )
+                migrate_flat_records(store)
+            except BaseException:
+                store.close()
+                raise
+        return store
 
     @staticmethod
     def _check_runtime() -> None:
         dir_fd_functions = {function.__name__ for function in os.supports_dir_fd}
         if (
-            not {"open", "mkdir", "stat", "rename", "unlink"} <= dir_fd_functions
+            not {"open", "mkdir", "stat", "rename", "unlink", "rmdir"} <= dir_fd_functions
             or "listdir" not in {function.__name__ for function in os.supports_fd}
             or "stat"
             not in {function.__name__ for function in os.supports_follow_symlinks}
@@ -618,12 +747,19 @@ class SyncBaseStore:
             self._layout.check()
             yield
 
-    def _read_name(
-        self, name: str, identity: bytes | None = None
+    def _read_file(
+        self,
+        directory: Directory,
+        name: str,
+        identity: bytes | None = None,
+        *,
+        location: object,
+        locate: Callable[[bytes], object] = _record_location,
     ) -> SyncBaseRecord | None:
+        directory_path, directory_descriptor = directory
         self._layout.check()
         try:
-            descriptor = self._layout._open_file_descriptor(name)
+            descriptor = self._layout._open_file_descriptor(directory, name)
         except FileNotFoundError:
             return None
         try:
@@ -639,9 +775,7 @@ class SyncBaseStore:
                     )
                 content.extend(chunk)
             after = os.fstat(descriptor)
-            current = os.stat(
-                name, dir_fd=self._layout.descriptor, follow_symlinks=False
-            )
+            current = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
             if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
                 after.st_size,
                 after.st_mtime_ns,
@@ -649,42 +783,25 @@ class SyncBaseStore:
             ) or _identity(current) != _identity(after):
                 raise SyncBaseStoreSecurityError("Sync Base record changed during read")
             self._layout.check()
-            return _decode(bytes(content), name, identity)
+            return _decode(
+                bytes(content), str(directory_path / name), identity,
+                location=location, locate=locate,
+            )
         finally:
             os.close(descriptor)
 
-    def record_path(self, identity: bytes) -> Path:
-        """Locate one record for diagnostics without opening or creating storage."""
-        identity = _require_bytes(
-            identity, field_name="canonical identity", allow_empty=False
-        )
-        return self.repo_state_directory / _record_name(identity)
-
-    def read(self, identity: bytes) -> SyncBaseRecord | None:
-        identity = _require_bytes(
-            identity, field_name="canonical identity", allow_empty=False
-        )
-        self._require_open()
-        if not self._reading:
-            with self.read_transaction():
-                return self.read(identity)
-        with _store_errors():
-            return self._read_name(_record_name(identity), identity)
-
-    def scan(self) -> SyncBaseScan:
-        """Read a coherent inventory; record corruption never hides healthy units."""
-        self._require_open()
-        if not self._reading:
-            with self.read_transaction():
-                return self.scan()
-        with _store_errors():
-            records = []
-            corrupt_count = 0
-            for name in sorted(self._layout.check()):
-                if not name.startswith(RECORD_FILE_PREFIX):
+    def _scan_group(self, group: str) -> SyncBaseScan:
+        records = []
+        corrupt_count = 0
+        with self._layout.group(group) as directory:
+            if directory is None:
+                return SyncBaseScan((), 0)
+            for name in sorted(self._layout.file_names(directory[1])):
+                # Interrupted replacements leave hidden temporaries, never records.
+                if name.startswith(".") or not name.endswith(RECORD_FILE_SUFFIX):
                     continue
                 try:
-                    record = self._read_name(name)
+                    record = self._read_file(directory, name, location=(group, name))
                 except SyncBaseRecordCorruptionError:
                     # A broken record may have no recoverable identity. Count the
                     # self-contained file rather than trusting corrupted metadata.
@@ -695,18 +812,58 @@ class SyncBaseStore:
                         "Sync Base record disappeared during enumeration"
                     )
                 records.append(record)
-            return SyncBaseScan(
-                tuple(sorted(records, key=lambda record: record.identity)),
-                corrupt_count,
-            )
+        return SyncBaseScan(tuple(records), corrupt_count)
+
+    def record_path(self, identity: bytes) -> Path:
+        """Locate one record for diagnostics without opening or creating storage."""
+        identity = _require_bytes(
+            identity, field_name="canonical identity", allow_empty=False
+        )
+        group, name = _record_location(identity)
+        return self._layout.bases_directory / group / name
+
+    def read(self, identity: bytes) -> SyncBaseRecord | None:
+        identity = _require_bytes(
+            identity, field_name="canonical identity", allow_empty=False
+        )
+        location = _record_location(identity)
+        self._require_open()
+        if not self._reading:
+            with self.read_transaction():
+                return self.read(identity)
+        with _store_errors(), self._layout.group(location[0]) as directory:
+            if directory is None:
+                return None
+            return self._read_file(directory, location[1], identity, location=location)
+
+    def scan(self) -> SyncBaseScan:
+        """Read a coherent inventory; record corruption never hides healthy units."""
+        self._require_open()
+        if not self._reading:
+            with self.read_transaction():
+                return self.scan()
+        with _store_errors():
+            groups = [self._scan_group(group) for group in self._layout.group_names()]
+        return SyncBaseScan(
+            tuple(sorted(
+                (record for group in groups for record in group.records),
+                key=lambda record: record.identity,
+            )),
+            sum(group.corrupt_count for group in groups),
+        )
 
     def target_records(self, target: bytes) -> tuple[SyncBaseRecord, ...]:
         """Return healthy records of one file target or one directory target's children."""
         target = _require_bytes(target, field_name="target identity", allow_empty=False)
-        return tuple(
-            record for record in self.scan().records
-            if record.identity == target or record.identity.startswith(target + b"/")
-        )
+        if sync_unit_target_identity(target.decode("utf-8")).encode("utf-8") != target:
+            raise ValueError(f"{target!r} is not a target identity")
+        self._require_open()
+        if not self._reading:
+            with self.read_transaction():
+                return self.target_records(target)
+        with _store_errors():
+            records = self._scan_group(_target_group(target)).records
+        return tuple(sorted(records, key=lambda record: record.identity))
 
     def identities(self) -> tuple[bytes, ...]:
         """Return only identities whose records passed integrity validation."""
@@ -716,25 +873,31 @@ class SyncBaseStore:
         if type(record) is not SyncBaseRecord:
             raise TypeError("record must be a SyncBaseRecord")
         record = SyncBaseRecord(record.identity, record.payload)
-        content = _encode(record)
-        name = _record_name(record.identity)
+        _record_location(record.identity)
         with self._write_transaction():
+            self._replace_locked(record)
+
+    def _replace_locked(self, record: SyncBaseRecord) -> None:
+        content = _encode(record)
+        location = _record_location(record.identity)
+        with self._layout.group(location[0], create=True) as directory:
+            assert directory is not None
+            directory_path, directory_descriptor = directory
+            name = location[1]
             # A corrupt record is unavailable, not permission to overwrite it silently.
-            self._read_name(name, record.identity)
-            temporary = f".sync-base-{uuid.uuid4().hex}.tmp"
-            descriptor = self._layout._open_file_descriptor(temporary, create=True)
+            self._read_file(directory, name, record.identity, location=location)
+            temporary = f".{uuid.uuid4().hex}.tmp"
+            descriptor = self._layout._open_file_descriptor(directory, temporary, create=True)
             try:
                 with os.fdopen(descriptor, "wb", closefd=False) as stream:
                     stream.write(content)
                     stream.flush()
                     os.fsync(descriptor)
-                self._layout.check()
+                self._layout.check_directories()
                 current = os.stat(
-                    temporary, dir_fd=self._layout.descriptor, follow_symlinks=False
+                    temporary, dir_fd=directory_descriptor, follow_symlinks=False
                 )
-                _validate_status(
-                    self.repo_state_directory / temporary, current, directory=False
-                )
+                _validate_status(directory_path / temporary, current, directory=False)
                 if _identity(current) != _identity(os.fstat(descriptor)):
                     raise SyncBaseStoreSecurityError(
                         "Sync Base temporary file was substituted"
@@ -742,43 +905,43 @@ class SyncBaseStore:
                 os.replace(
                     temporary,
                     name,
-                    src_dir_fd=self._layout.descriptor,
-                    dst_dir_fd=self._layout.descriptor,
+                    src_dir_fd=directory_descriptor,
+                    dst_dir_fd=directory_descriptor,
                 )
                 try:
-                    os.fsync(self._layout.descriptor)
+                    os.fsync(directory_descriptor)
                 except OSError as exc:
                     # Rename is the logical commit: rollback would be another
                     # fallible mutation, not restoration of the pre-commit guarantee.
                     raise SyncBaseStoreDurabilityError(
-                        f"Sync Base checkpoint committed at {self.record_path(record.identity)}; "
+                        f"Sync Base checkpoint committed at {directory_path / name}; "
                         f"crash durability is uncertain: {exc}"
                     ) from exc
             finally:
                 os.close(descriptor)
                 try:
-                    os.unlink(temporary, dir_fd=self._layout.descriptor)
+                    os.unlink(temporary, dir_fd=directory_descriptor)
                 except FileNotFoundError:
                     pass
-
-    def _delete(self, identity: bytes) -> bool:
-        name = _record_name(identity)
-        self._layout.check()
-        try:
-            descriptor = self._layout._open_file_descriptor(name)
-        except FileNotFoundError:
-            return False
-        os.close(descriptor)
-        os.unlink(name, dir_fd=self._layout.descriptor)
-        os.fsync(self._layout.descriptor)
-        return True
 
     def delete(self, identity: bytes) -> bool:
         identity = _require_bytes(
             identity, field_name="canonical identity", allow_empty=False
         )
-        with self._write_transaction():
-            return self._delete(identity)
+        group, name = _record_location(identity)
+        with self._write_transaction(), self._layout.group(group) as directory:
+            if directory is None:
+                return False
+            try:
+                descriptor = self._layout._open_file_descriptor(directory, name)
+            except FileNotFoundError:
+                return False
+            os.close(descriptor)
+            os.unlink(name, dir_fd=directory[1])
+            os.fsync(directory[1])
+            # Empty groups would otherwise accumulate for every untracked target.
+            self._layout.remove_group_if_empty(group)
+            return True
 
     def close(self) -> None:
         if self._reading:

@@ -9,6 +9,7 @@ from dotman.models import (
     ResolvedPackageSelection,
     ResolvedSyncScope,
     ResolvedSyncTarget,
+    target_separator_index,
 )
 from dotman.package_resolution import parse_package_ref_text
 from dotman.collisions import (
@@ -57,23 +58,6 @@ class _ScopeSelector:
     child_path: str | None
 
 
-def _target_separator_index(package_text: str, text: str) -> int:
-    """Return the index of the package/target ``.``, or -1 when absent."""
-    # A profile instance may contain dots (for example ``app<work.v2>``).
-    # The target separator is therefore the first dot after the profile's
-    # closing angle bracket, when an instance is present.
-    separator = package_text.find(".")
-    profile_start = package_text.find("<")
-    # Child paths may contain angle brackets; only treat ``<`` as an
-    # instance opener when it occurs before the package-target separator.
-    if profile_start >= 0 and (separator < 0 or profile_start < separator):
-        profile_end = package_text.find(">", profile_start + 1)
-        if profile_end < 0:
-            raise ValueError(f"sync scope '{text}' is not canonical")
-        separator = package_text.find(".", profile_end + 1)
-    return separator
-
-
 def split_scope_child_path(text: str) -> tuple[str, str | None]:
     """Split ``[repo:]package.target/child`` into its target part and child path.
 
@@ -81,7 +65,7 @@ def split_scope_child_path(text: str) -> tuple[str, str | None]:
     starts a directory-child path.
     """
     package_text = text.partition(":")[2] if ":" in text else text
-    separator = _target_separator_index(package_text, text)
+    separator = target_separator_index(package_text, text)
     child_start = package_text.find("/", separator) if separator >= 0 else -1
     if child_start < 0:
         return text, None
@@ -103,7 +87,7 @@ def _parse_scope_selector(text: str) -> _ScopeSelector:
     child_path: str | None = None
     package_ref = remainder
     if "." in remainder:
-        separator = _target_separator_index(remainder, text)
+        separator = target_separator_index(remainder, text)
         if separator >= 0:
             if separator == len(remainder) - 1:
                 raise ValueError(f"sync scope '{text}' is not canonical")

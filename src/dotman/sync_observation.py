@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import stat
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
@@ -23,8 +22,6 @@ from dotman.sync_base_lifecycle import (
     SyncBaseLifecycle,
 )
 from dotman.sync_base_store import (
-    RECORD_FILE_PREFIX,
-    LOCK_FILE_NAME,
     FilePresent,
     DirectoryChildPresent,
     SyncBasePayload,
@@ -318,11 +315,7 @@ class ObservedScope:
 
 
 def _base_store_exists(context: planning.PlanningContext, item: planning.PackagePlanningInput) -> bool:
-    directory = context.tracked_state.state_root / "repos" / item.repo.config.state_key
-    try:
-        return any(name == LOCK_FILE_NAME or name.startswith(RECORD_FILE_PREFIX) for name in os.listdir(directory))
-    except FileNotFoundError:
-        return False
+    return SyncBaseStore.exists(context.tracked_state.state_root, item.repo.config.state_key)
 
 
 def _stored_children(
@@ -339,8 +332,10 @@ def _stored_children(
             target = identity.canonical.encode()
             try:
                 if identity.repo not in stores:
+                    # Real operations only: a writable open migrates a flat store
+                    # before cleanup reads it; read-only would refuse it.
                     stores[identity.repo] = resources.enter_context(SyncBaseStore.open(
-                        context.tracked_state.state_root, item.repo.config.state_key, read_only=True,
+                        context.tracked_state.state_root, item.repo.config.state_key, create=False,
                     ))
                 records = stores[identity.repo].target_records(target)
             except (OSError, ValueError, SyncBaseStoreError):

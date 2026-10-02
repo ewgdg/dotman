@@ -20,12 +20,12 @@ from dotman.sync_base_store import (
 )
 
 
-def record(identity=b"unit", payload=None):
+def record(identity=b"main:app.unit", payload=None):
     return SyncBaseRecord(identity, payload if payload is not None else FilePresent(b"data"))
 
 
 def record_path(store):
-    return next(store.repo_state_directory.glob("sync-base-*.json"))
+    return next(store.repo_state_directory.glob("bases/*/*.json"))
 
 
 @pytest.mark.parametrize(
@@ -42,19 +42,19 @@ def test_typed_payload_roundtrip(tmp_path, payload):
     root = tmp_path / "manager"
     with SyncBaseStore.open(root, "repo") as store:
         store.replace(record(payload=payload))
-        assert store.record_path(b"unit").is_file()
-        assert store.record_path(b"unit").parent == store.repo_state_directory
+        assert store.record_path(b"main:app.unit").is_file()
+        assert store.record_path(b"main:app.unit").parent.parent == store.repo_state_directory / "bases"
     with SyncBaseStore.open(root, "repo", read_only=True) as store:
-        assert store.read(b"unit") == record(payload=payload)
-        assert store.read(b"absent") is None
-        assert store.identities() == (b"unit",)
+        assert store.read(b"main:app.unit") == record(payload=payload)
+        assert store.read(b"main:app.absent") is None
+        assert store.identities() == (b"main:app.unit",)
 
 
 def test_private_self_contained_records(tmp_path):
     with SyncBaseStore.open(tmp_path / "manager", "repo") as store:
-        store.replace(record(b"a"))
-        store.replace(record(b"b"))
-        files = list(store.repo_state_directory.glob("sync-base-*.json"))
+        store.replace(record(b"main:app.a"))
+        store.replace(record(b"main:app.b"))
+        files = list(store.repo_state_directory.glob("bases/*/*.json"))
         assert len(files) == 2
         for path in (tmp_path / "manager").rglob("*"):
             assert path.stat().st_mode & 0o777 == (0o700 if path.is_dir() else 0o600)
@@ -66,32 +66,32 @@ def test_corruption_is_per_unit_and_explicitly_discardable(tmp_path):
     with SyncBaseStore.open(tmp_path / "manager", "repo") as store:
         store.replace(record())
         path = record_path(store)
-        store.replace(record(b"healthy"))
-        path.write_bytes(b"broken")
+        store.replace(record(b"main:app.healthy"))
+        path.write_bytes(b"main:app.broken")
         with pytest.raises(SyncBaseRecordCorruptionError) as error:
-            store.read(b"unit")
-        assert error.value.affected_identities == (b"unit",)
-        assert store.read(b"healthy") == record(b"healthy")
-        assert store.delete(b"unit")
-        assert store.read(b"healthy") == record(b"healthy")
-        assert store.read(b"unit") is None
+            store.read(b"main:app.unit")
+        assert error.value.affected_identities == (b"main:app.unit",)
+        assert store.read(b"main:app.healthy") == record(b"main:app.healthy")
+        assert store.delete(b"main:app.unit")
+        assert store.read(b"main:app.healthy") == record(b"main:app.healthy")
+        assert store.read(b"main:app.unit") is None
 
 
 def test_scan_isolates_corruption_without_cleanup(tmp_path):
     with SyncBaseStore.open(tmp_path / "manager", "repo") as store:
-        store.replace(record(b"healthy"))
-        store.replace(record(b"broken"))
-        broken_path = store.record_path(b"broken")
-        broken_path.write_bytes(b"broken")
+        store.replace(record(b"main:app.healthy"))
+        store.replace(record(b"main:app.broken"))
+        broken_path = store.record_path(b"main:app.broken")
+        broken_path.write_bytes(b"main:app.broken")
         before = broken_path.read_bytes()
         with store.read_transaction():
             scanned = store.scan()
-            assert scanned.records == (record(b"healthy"),)
+            assert scanned.records == (record(b"main:app.healthy"),)
             assert scanned.corrupt_count == 1
-            assert store.identities() == (b"healthy",)
-            assert store.read(b"healthy") == record(b"healthy")
+            assert store.identities() == (b"main:app.healthy",)
+            assert store.read(b"main:app.healthy") == record(b"main:app.healthy")
             with pytest.raises(SyncBaseRecordCorruptionError):
-                store.read(b"broken")
+                store.read(b"main:app.broken")
         assert broken_path.read_bytes() == before
 
 
@@ -105,8 +105,8 @@ def test_failed_replacement_preserves_previous_record(tmp_path, monkeypatch):
         monkeypatch.setattr(os, "replace", fail)
         with pytest.raises(SyncBaseStoreError):
             store.replace(record(payload=FilePresent(b"new")))
-        assert store.read(b"unit") == record()
-        assert len(list(store.repo_state_directory.glob("sync-base-*.json"))) == 1
+        assert store.read(b"main:app.unit") == record()
+        assert len(list(store.repo_state_directory.glob("bases/*/*.json"))) == 1
 
 
 def test_read_transaction_excludes_writer_and_refreshes(tmp_path):
@@ -117,15 +117,15 @@ def test_read_transaction_excludes_writer_and_refreshes(tmp_path):
     ):
         first.replace(record())
         with first.read_transaction():
-            assert first.read(b"unit") == record()
+            assert first.read(b"main:app.unit") == record()
             with pytest.raises(SyncBaseStoreLockedError):
                 second.replace(record(payload=Missing()))
             with second.read_transaction():
-                assert second.read(b"unit") == record()
+                assert second.read(b"main:app.unit") == record()
             with pytest.raises(SyncBaseStoreError):
-                first.delete(b"unit")
+                first.delete(b"main:app.unit")
         second.replace(record(payload=Missing()))
-        assert first.read(b"unit") == record(payload=Missing())
+        assert first.read(b"main:app.unit") == record(payload=Missing())
 
 
 def _loosen_modes(root):
@@ -143,7 +143,7 @@ def test_writable_open_repairs_owned_nonprivate_modes(tmp_path):
         store.replace(record())
     _loosen_modes(root)
     with SyncBaseStore.open(root, "repo") as store:
-        assert store.read(b"unit") == record()
+        assert store.read(b"main:app.unit") == record()
     assert all(
         mode == (0o700 if path.is_dir() else 0o600)
         for path, mode in _modes(root).items()
@@ -180,7 +180,7 @@ def test_rejects_record_mode_changed_while_open(tmp_path, mode):
         path = record_path(store)
         path.chmod(mode)
         with pytest.raises(SyncBaseStoreSecurityError):
-            store.read(b"unit")
+            store.read(b"main:app.unit")
         with pytest.raises(SyncBaseStoreSecurityError):
             store.scan()
         with pytest.raises(SyncBaseStoreSecurityError):
@@ -197,9 +197,9 @@ def test_rejects_symlink_record_and_directory(tmp_path):
         path.rename(outside)
         path.symlink_to(outside)
         with pytest.raises(SyncBaseStoreSecurityError):
-            store.read(b"unit")
+            store.read(b"main:app.unit")
         with pytest.raises(SyncBaseStoreSecurityError):
-            store.delete(b"unit")
+            store.delete(b"main:app.unit")
         assert outside.exists()
     root.rename(tmp_path / "moved")
     root.symlink_to(tmp_path / "moved", target_is_directory=True)
@@ -220,9 +220,9 @@ def test_read_only_never_creates_and_cannot_mutate(tmp_path):
         if p.is_file()
     }
     with SyncBaseStore.open(root, "repo", read_only=True) as store:
-        assert store.read(b"unit") == record()
+        assert store.read(b"main:app.unit") == record()
         with pytest.raises(SyncBaseStoreError):
-            store.delete(b"unit")
+            store.delete(b"main:app.unit")
     assert before == {
         p: (p.read_bytes(), p.stat().st_mtime_ns)
         for p in root.rglob("*")
@@ -235,16 +235,16 @@ def test_identity_binding_and_integrity(tmp_path):
         store.replace(record())
         first = record_path(store)
         original = first.read_bytes()
-        store.replace(record(b"other"))
+        store.replace(record(b"main:app.other"))
         other = next(
-            p for p in store.repo_state_directory.glob("sync-base-*.json") if p != first
+            p for p in store.repo_state_directory.glob("bases/*/*.json") if p != first
         )
         other.write_bytes(original)
         with pytest.raises(SyncBaseRecordCorruptionError):
-            store.read(b"other")
+            store.read(b"main:app.other")
         first.write_bytes(original.replace(b'"shape":"file"', b'"shape":"missing"'))
         with pytest.raises(SyncBaseRecordCorruptionError):
-            store.read(b"unit")
+            store.read(b"main:app.unit")
 
 
 @pytest.mark.parametrize(
@@ -262,26 +262,26 @@ def test_payload_corruption_is_distinct_from_record_corruption(
 ):
     with SyncBaseStore.open(tmp_path / "manager", "repo") as store:
         store.replace(record())
-        path = store.record_path(b"unit")
+        path = store.record_path(b"main:app.unit")
         encoded = json.loads(path.read_bytes())
         encoded["record"][field] = value
         path.write_text(json.dumps(encoded, sort_keys=True, separators=(",", ":")))
         before = path.read_bytes()
         with pytest.raises(SyncBaseRecordCorruptionError) as error:
-            store.read(b"unit")
+            store.read(b"main:app.unit")
         assert error.value.reason == reason
-        assert error.value.affected_identities == (b"unit",)
+        assert error.value.affected_identities == (b"main:app.unit",)
         assert store.scan().corrupt_count == 1
         assert path.read_bytes() == before
-        assert store.delete(b"unit")
+        assert store.delete(b"main:app.unit")
 
 
 def test_delete_contract(tmp_path):
     with SyncBaseStore.open(tmp_path / "manager", "repo") as store:
-        assert not store.delete(b"unit")
+        assert not store.delete(b"main:app.unit")
         store.replace(record())
-        assert store.delete(b"unit")
-        assert not store.delete(b"unit")
+        assert store.delete(b"main:app.unit")
+        assert not store.delete(b"main:app.unit")
         assert store.identities() == ()
 
 
@@ -295,8 +295,8 @@ def test_failed_file_flush_preserves_previous_record(tmp_path, monkeypatch):
         monkeypatch.setattr(os, "fsync", fail)
         with pytest.raises(SyncBaseStoreError):
             store.replace(record(payload=Missing()))
-        assert store.read(b"unit") == record()
-        assert not list(store.repo_state_directory.glob("*.tmp"))
+        assert store.read(b"main:app.unit") == record()
+        assert not list(store.repo_state_directory.rglob("*.tmp"))
 
 
 @pytest.mark.parametrize("has_previous", [False, True])
@@ -307,24 +307,32 @@ def test_post_commit_flush_failure_reports_committed_but_uncertain_durability(
     with SyncBaseStore.open(root, "repo") as store:
         if has_previous:
             store.replace(record())
-        original_fsync = os.fsync
+        original_fsync, original_replace = os.fsync, os.replace
+        renamed = False
 
+        def rename(*args, **kwargs):
+            nonlocal renamed
+            original_replace(*args, **kwargs)
+            renamed = True
+
+        # Creating a target group flushes directories before the commit too.
         def fail_directory_flush(descriptor):
-            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            if renamed and stat.S_ISDIR(os.fstat(descriptor).st_mode):
                 raise OSError("injected post-rename directory flush failure")
             original_fsync(descriptor)
 
         with monkeypatch.context() as injected:
+            injected.setattr(os, "replace", rename)
             injected.setattr(os, "fsync", fail_directory_flush)
             with pytest.raises(SyncBaseStoreDurabilityError) as error:
                 store.replace(record(payload=Missing()))
         assert error.value.committed is True
         assert error.value.durability_uncertain is True
-        assert store.read(b"unit") == record(payload=Missing())
-        store.replace(record(b"other"))
-        assert store.read(b"other") == record(b"other")
+        assert store.read(b"main:app.unit") == record(payload=Missing())
+        store.replace(record(b"main:app.other"))
+        assert store.read(b"main:app.other") == record(b"main:app.other")
     with SyncBaseStore.open(root, "repo", read_only=True) as store:
-        assert store.read(b"unit") == record(payload=Missing())
+        assert store.read(b"main:app.unit") == record(payload=Missing())
 
 
 def test_rejects_hardlinked_record(tmp_path):
@@ -332,9 +340,9 @@ def test_rejects_hardlinked_record(tmp_path):
         store.replace(record())
         os.link(record_path(store), tmp_path / "alias")
         with pytest.raises(SyncBaseStoreSecurityError):
-            store.read(b"unit")
+            store.read(b"main:app.unit")
         with pytest.raises(SyncBaseStoreSecurityError):
-            store.delete(b"unit")
+            store.delete(b"main:app.unit")
 
 
 def test_missing_lock_is_not_recreated_over_existing_records(tmp_path):
@@ -357,7 +365,7 @@ def test_pinned_directory_substitution_is_rejected(tmp_path):
         directory.rename(directory.with_name("moved"))
         directory.mkdir(mode=0o700)
         with pytest.raises(SyncBaseStoreSecurityError):
-            store.read(b"unit")
+            store.read(b"main:app.unit")
         with pytest.raises(SyncBaseStoreSecurityError):
             store.replace(record())
         assert list(directory.iterdir()) == []
@@ -375,9 +383,9 @@ def test_failed_unit_replacement_does_not_prevent_another_unit(tmp_path, monkeyp
         monkeypatch.setattr(os, "replace", fail_once)
         with pytest.raises(SyncBaseStoreError):
             store.replace(record(payload=Missing()))
-        store.replace(record(b"other"))
-        assert store.read(b"unit") == record()
-        assert store.read(b"other") == record(b"other")
+        store.replace(record(b"main:app.other"))
+        assert store.read(b"main:app.unit") == record()
+        assert store.read(b"main:app.other") == record(b"main:app.other")
 
 
 def test_target_records_return_only_that_targets_units(tmp_path):
@@ -389,3 +397,25 @@ def test_target_records_return_only_that_targets_units(tmp_path):
         ]
         assert [item.identity for item in store.target_records(b"main:app.file")] == [b"main:app.file"]
         assert store.target_records(b"main:app.absent") == ()
+
+
+def test_records_are_grouped_by_target(tmp_path):
+    with SyncBaseStore.open(tmp_path, "main") as store:
+        for identity in (b"main:app<work.v2>.tree/a/b", b"main:app<work.v2>.tree/c", b"main:group/app.file"):
+            store.replace(record(identity))
+        first, second, other = (store.record_path(identity).parent for identity in (
+            b"main:app<work.v2>.tree/a/b", b"main:app<work.v2>.tree/c", b"main:group/app.file"))
+        assert first == second != other
+        assert other.parent == first.parent == store.repo_state_directory / "bases"
+
+
+def test_deleting_a_targets_last_record_removes_its_group(tmp_path):
+    with SyncBaseStore.open(tmp_path, "main") as store:
+        store.replace(record(b"main:app.tree/a"))
+        store.replace(record(b"main:app.tree/b"))
+        group = store.record_path(b"main:app.tree/a").parent
+        assert store.delete(b"main:app.tree/a")
+        assert group.is_dir()
+        assert store.delete(b"main:app.tree/b")
+        assert not group.exists()
+        assert store.target_records(b"main:app.tree") == ()

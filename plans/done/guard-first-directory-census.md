@@ -71,10 +71,21 @@ Step 2, grouped layout (internal to `SyncBaseStore`):
 
 - [x] Step 1 tests (5 failed first for the expected reasons)
 - [x] Step 1 implementation, docs, commit (full suite: 2043 passed)
-- [ ] Step 2 tests
-- [ ] Step 2 implementation, docs, commit
+- [x] Step 2 tests (store, migration, first push on a flat store)
+- [x] Step 2 implementation, docs, commit (full suite green)
 
 ## Surprises and discoveries
+
+- Each read cost O(N): `check()` re-stat'ed every record file before every
+  read. On the real store (368 records) that was 1.5 ms per read and 0.39 s per
+  scan. Grouping alone would not fix it; `check()` now covers only pinned
+  directories and the lock.
+- Package ids may contain `/` and profiles may contain `.`, so a target identity
+  cannot be split at the first `/`. The split now reuses the scope parser's
+  separator logic (`sync_unit_target_identity` in `models.py`).
+- The first real Push after upgrading opened the store read-only for child
+  cleanup, so a flat store was refused and, with the target guarded out, never
+  migrated. Cleanup now opens writable without create.
 
 ## Decisions
 
@@ -82,5 +93,16 @@ Step 2, grouped layout (internal to `SyncBaseStore`):
   target, and a package is the union of its targets' groups.
 - Interface first (`target_records` over the flat layout), then the layout
   change hidden behind it, so each step ships working.
+- Subdirectories (B) over hash-prefixed flat names (A): weighted matrix 84 vs
+  76 once security and simplicity weights were dropped; listing one directory
+  is the OS's job, prefix filtering still enumerates everything.
+- Migration lives in `sync_base_migration.py`. It validates every flat record
+  before moving any and is resumable (write group record, then unlink flat).
+- Read-only opens of a flat store fail with a migrate-by-real-run message
+  rather than reading the old layout: no dual-layout runtime path.
 
 ## Outcomes and retrospective
+
+- Migrated a copy of the real store losslessly (368 records, 127 groups) in
+  0.06 s. Exact read 1.5 ms to 0.11 ms; scan 0.39 s to 0.03 s; one directory
+  target's 121 children listed in 9 ms.

@@ -184,7 +184,7 @@ def test_store_failure_is_cli_error_and_doctor_failure_without_repair(tmp_path, 
     assert code == 2
     assert str(database) in error and "main" in error
     check = next(check for check in engine.doctor().checks if check.key == "sync_bases_store")
-    assert check.status == "failed" and check.path == database.parent and check.repo_name == "main"
+    assert check.status == "failed" and check.path == database.parents[2] and check.repo_name == "main"
     assert database.stat().st_mode & 0o777 == 0o644
     assert database.read_bytes() == before
 
@@ -274,7 +274,7 @@ def test_reset_rejects_missing_lock_without_repair(tmp_path, monkeypatch):
 
     engine = fixture_engine(tmp_path, monkeypatch)
     database = store_record(engine)
-    database.with_name(LOCK_FILE_NAME).unlink()
+    (database.parents[2] / LOCK_FILE_NAME).unlink()
     def artifacts():
         return {
             entry.name: (entry.stat().st_ino, entry.stat().st_mode, entry.read_bytes())

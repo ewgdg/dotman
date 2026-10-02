@@ -9,13 +9,24 @@ The layout under `${XDG_STATE_HOME:-$HOME/.local/state}/dotman/` is:
 ```text
 repos/<state_key>/
   sync-bases.lock
-  sync-base-<sha256-of-canonical-identity-bytes>.json
+  bases/<sha256-of-target-identity>/<sha256-of-unit-identity>.json
 ```
 
 `state_key` is the configured repository storage key, not its filesystem path.
-Record names are hashes, but the record also retains and validates the complete
-identity. These files share the repository state directory with tracked-package
-state; resetting a Base does not change tracked packages or snapshots.
+Records are grouped by target: a file target's group holds its one record, and
+a directory target's group holds its children's records. An exact read opens
+one computed path and a target-scoped read lists one group, so neither costs
+more as the store grows. Names are hashes to avoid length, case-folding, and
+file/directory clashes; each record also retains and validates its complete
+identity and its location. These files share the repository state directory
+with tracked-package state; resetting a Base does not change tracked packages
+or snapshots. Deleting a group's last record removes the group.
+
+Stores written before grouping kept flat `sync-base-<sha256>.json` records in
+the repository state directory. The first writable open moves them into groups
+under the exclusive storage lock, after validating every record; a corrupt
+record aborts the move before anything changes. Read-only opens of a flat store
+fail and ask for a real Push, Pull, or Sync to migrate it.
 
 ## Records and atomic acknowledgment
 
