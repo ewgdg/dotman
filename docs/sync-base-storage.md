@@ -8,6 +8,7 @@ The layout under `${XDG_STATE_HOME:-$HOME/.local/state}/dotman/` is:
 
 ```text
 repos/<state_key>/
+  sync-bases.layout
   sync-bases.lock
   bases/<sha256-of-target-identity>/<sha256-of-unit-identity>.json
 ```
@@ -22,11 +23,11 @@ identity and its location. These files share the repository state directory
 with tracked-package state; resetting a Base does not change tracked packages
 or snapshots. Deleting a group's last record removes the group.
 
-Stores written before grouping kept flat `sync-base-<sha256>.json` records in
-the repository state directory. The first writable open moves them into groups
-under the exclusive storage lock, after validating every record; a corrupt
-record aborts the move before anything changes. Read-only opens of a flat store
-fail and ask for a real Push, Pull, or Sync to migrate it.
+`sync-bases.layout` holds the layout version (`2`), separate from the record
+format epoch: a layout change moves records without changing their bytes, so
+record epochs cannot detect it. Every open requires the current layout and
+fails otherwise, so a store in another layout never reads as empty. Creation
+writes the layout file before the lock and before any record.
 
 ## Records and atomic acknowledgment
 

@@ -10,7 +10,7 @@ import os
 import re
 import stat
 import uuid
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +21,10 @@ from dotman.config import validate_state_key
 from dotman.models import sync_unit_target_identity
 
 STORE_EPOCH: Final = 2
+# Where records live, versioned separately from the record format (STORE_EPOCH):
+# a layout change moves records without changing their bytes.
+STORE_LAYOUT: Final = 2
+LAYOUT_FILE_NAME: Final = "sync-bases.layout"
 LOCK_FILE_NAME: Final = "sync-bases.lock"
 BASES_DIRECTORY_NAME: Final = "bases"
 RECORD_FILE_SUFFIX: Final = ".json"
@@ -53,6 +57,10 @@ class SyncBaseStoreLockedError(SyncBaseStoreError):
 
 class SyncBaseStoreEpochError(SyncBaseStoreError):
     """A record uses an unsupported format epoch."""
+
+
+class SyncBaseStoreLayoutError(SyncBaseStoreError):
+    """The store uses a layout this version cannot read."""
 
 
 class SyncBaseRecordCorruptionError(SyncBaseStoreError):
@@ -363,7 +371,9 @@ class _PrivateLayout:
             os.close(descriptor)
 
     def root_names(self) -> set[str]:
-        return self.file_names(self.descriptor) & {LOCK_FILE_NAME, BASES_DIRECTORY_NAME}
+        return self.file_names(self.descriptor) & {
+            LAYOUT_FILE_NAME, LOCK_FILE_NAME, BASES_DIRECTORY_NAME,
+        }
 
     def _validate_file(self, directory: Directory, name: str) -> None:
         directory_path, directory_descriptor = directory
@@ -381,9 +391,9 @@ class _PrivateLayout:
         current = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
         _validate_status(directory_path / name, current, directory=False)
 
-    def validate_tree(self, extra_root_files: Iterable[str] = ()) -> None:
+    def validate_tree(self) -> None:
         """Validate (and when writable, repair) every store path once."""
-        for name in sorted({*(self.root_names() - {BASES_DIRECTORY_NAME}), *extra_root_files}):
+        for name in sorted(self.root_names() - {BASES_DIRECTORY_NAME}):
             self._validate_file(self.root, name)
         for group_name in self.group_names():
             with self.group(group_name) as directory:
@@ -509,8 +519,7 @@ def _decode(
     name: str,
     expected_identity: bytes | None,
     *,
-    location: object,
-    locate: Callable[[bytes], object] = _record_location,
+    location: RecordLocation,
 ) -> SyncBaseRecord:
     try:
         container = json.loads(content)
@@ -536,7 +545,7 @@ def _decode(
         identity = base64.b64decode(body["identity"], validate=True)
         if (
             not identity
-            or locate(identity) != location
+            or _record_location(identity) != location
             or (expected_identity is not None and identity != expected_identity)
         ):
             raise ValueError("record identity mismatch")
@@ -627,7 +636,9 @@ class SyncBaseStore:
         """Whether storage was ever created, without opening or creating it."""
         directory = Path(manager_state_root) / "repos" / repo_state_key
         try:
-            return bool(set(os.listdir(directory)) & {LOCK_FILE_NAME, BASES_DIRECTORY_NAME})
+            return bool(set(os.listdir(directory)) & {
+                LAYOUT_FILE_NAME, LOCK_FILE_NAME, BASES_DIRECTORY_NAME,
+            })
         except FileNotFoundError:
             return False
         except OSError as exc:
@@ -647,8 +658,6 @@ class SyncBaseStore:
         Read-only opens never change storage. Wrong owner, type, symlinks, and
         hard links are always rejected rather than repaired.
         """
-        from dotman.sync_base_migration import flat_record_names, migrate_flat_records
-
         manager_root = Path(manager_state_root)
         if not manager_root.is_absolute():
             raise ValueError("manager state root must be absolute")
@@ -665,31 +674,61 @@ class SyncBaseStore:
                     # Repair before opening: opening validates the private mode.
                     layout._validate_file(layout.root, LOCK_FILE_NAME)
                     lock = layout.open_file(LOCK_FILE_NAME)
-                elif create and not names:
+                elif create and names <= {LAYOUT_FILE_NAME}:
+                    # The layout is written first, so an interrupted creation
+                    # never leaves an unversioned store holding records.
+                    if not names:
+                        cls._create_layout_marker(layout)
                     lock = layout.open_file(LOCK_FILE_NAME, create=True)
                     os.fsync(lock)
                     os.fsync(layout.descriptor)
                 else:
                     raise SyncBaseStoreSecurityError("Sync Base store lock is missing")
-                flat_records = flat_record_names(layout)
                 with _locked(lock, write=False):
-                    layout.validate_tree(flat_records)
-                store = cls(manager_root, state_key, layout, lock, read_only=read_only)
+                    layout.validate_tree()
+                    cls._require_layout(layout)
+                return cls(manager_root, state_key, layout, lock, read_only=read_only)
             except BaseException:
                 layout.close()
                 raise
-        if flat_records:
+
+    @staticmethod
+    def _create_layout_marker(layout: _PrivateLayout) -> None:
+        temporary = f".{uuid.uuid4().hex}.tmp"
+        descriptor = layout._open_file_descriptor(layout.root, temporary, create=True)
+        try:
+            os.write(descriptor, f"{STORE_LAYOUT}\n".encode("ascii"))
+            os.fsync(descriptor)
+            os.replace(
+                temporary, LAYOUT_FILE_NAME,
+                src_dir_fd=layout.descriptor, dst_dir_fd=layout.descriptor,
+            )
+        finally:
+            os.close(descriptor)
             try:
-                if read_only:
-                    raise SyncBaseStoreError(
-                        f"Sync Base store {layout.directory} uses the flat layout; "
-                        "run a real push, pull, or sync to migrate it"
-                    )
-                migrate_flat_records(store)
-            except BaseException:
-                store.close()
-                raise
-        return store
+                os.unlink(temporary, dir_fd=layout.descriptor)
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _require_layout(layout: _PrivateLayout) -> None:
+        expected = f"{STORE_LAYOUT}\n".encode("ascii")
+        try:
+            descriptor = layout._open_file_descriptor(layout.root, LAYOUT_FILE_NAME)
+        except FileNotFoundError:
+            found = "an unversioned layout"
+        else:
+            try:
+                content = os.pread(descriptor, len(expected) + 1, 0)
+            finally:
+                os.close(descriptor)
+            if content == expected:
+                return
+            found = f"layout {content[:16]!r}"
+        raise SyncBaseStoreLayoutError(
+            f"Sync Base store {layout.directory} uses {found}; "
+            f"this dotman reads layout {STORE_LAYOUT}"
+        )
 
     @staticmethod
     def _check_runtime() -> None:
@@ -753,8 +792,7 @@ class SyncBaseStore:
         name: str,
         identity: bytes | None = None,
         *,
-        location: object,
-        locate: Callable[[bytes], object] = _record_location,
+        location: RecordLocation,
     ) -> SyncBaseRecord | None:
         directory_path, directory_descriptor = directory
         self._layout.check()
@@ -784,8 +822,7 @@ class SyncBaseStore:
                 raise SyncBaseStoreSecurityError("Sync Base record changed during read")
             self._layout.check()
             return _decode(
-                bytes(content), str(directory_path / name), identity,
-                location=location, locate=locate,
+                bytes(content), str(directory_path / name), identity, location=location
             )
         finally:
             os.close(descriptor)

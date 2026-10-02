@@ -332,10 +332,8 @@ def _stored_children(
             target = identity.canonical.encode()
             try:
                 if identity.repo not in stores:
-                    # Real operations only: a writable open migrates a flat store
-                    # before cleanup reads it; read-only would refuse it.
                     stores[identity.repo] = resources.enter_context(SyncBaseStore.open(
-                        context.tracked_state.state_root, item.repo.config.state_key, create=False,
+                        context.tracked_state.state_root, item.repo.config.state_key, read_only=True,
                     ))
                 records = stores[identity.repo].target_records(target)
             except (OSError, ValueError, SyncBaseStoreError):

@@ -83,9 +83,6 @@ Step 2, grouped layout (internal to `SyncBaseStore`):
 - Package ids may contain `/` and profiles may contain `.`, so a target identity
   cannot be split at the first `/`. The split now reuses the scope parser's
   separator logic (`sync_unit_target_identity` in `models.py`).
-- The first real Push after upgrading opened the store read-only for child
-  cleanup, so a flat store was refused and, with the target guarded out, never
-  migrated. Cleanup now opens writable without create.
 
 ## Decisions
 
@@ -96,13 +93,19 @@ Step 2, grouped layout (internal to `SyncBaseStore`):
 - Subdirectories (B) over hash-prefixed flat names (A): weighted matrix 84 vs
   76 once security and simplicity weights were dropped; listing one directory
   is the OS's job, prefix filtering still enumerates everything.
-- Migration lives in `sync_base_migration.py`. It validates every flat record
-  before moving any and is resumable (write group record, then unlink flat).
-- Read-only opens of a flat store fail with a migrate-by-real-run message
-  rather than reading the old layout: no dual-layout runtime path.
+- Store layout gets its own version file (`sync-bases.layout`, `2`). The
+  record epoch cannot detect a layout change: records keep their bytes, and
+  the new layout never reads the old files. Every open requires the current
+  layout, so an unmigrated store fails fast instead of reading as empty.
+- No migration in runtime. The live stores were migrated once (with the
+  auto-migrating version, commit `4720b64`), then all old-layout handling was
+  deleted, as in `bb755b3`. A store elsewhere in the flat layout can be
+  migrated by running `4720b64` once.
 
 ## Outcomes and retrospective
 
 - Migrated a copy of the real store losslessly (368 records, 127 groups) in
   0.06 s. Exact read 1.5 ms to 0.11 ms; scan 0.39 s to 0.03 s; one directory
   target's 121 children listed in 9 ms.
+- Live stores `main` (368) and `knowledgebase` (70) migrated byte-identical,
+  backed up first.

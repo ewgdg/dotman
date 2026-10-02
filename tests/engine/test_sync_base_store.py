@@ -419,3 +419,42 @@ def test_deleting_a_targets_last_record_removes_its_group(tmp_path):
         assert store.delete(b"main:app.tree/b")
         assert not group.exists()
         assert store.target_records(b"main:app.tree") == ()
+
+
+def _tree(root):
+    return {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+@pytest.mark.parametrize("layout", [None, b"1\n", b"two"])
+def test_unsupported_store_layout_fails_every_open_without_changes(tmp_path, layout, read_only):
+    from dotman import sync_base_store
+
+    root = tmp_path / "manager"
+    with SyncBaseStore.open(root, "repo") as store:
+        store.replace(record())
+        marker = store.repo_state_directory / sync_base_store.LAYOUT_FILE_NAME
+    # An unversioned store would otherwise look empty, silently dropping every Base.
+    if layout is None:
+        marker.unlink()
+    else:
+        marker.write_bytes(layout)
+    before = _tree(root)
+
+    with pytest.raises(SyncBaseStoreError, match="layout"):
+        SyncBaseStore.open(root, "repo", read_only=read_only)
+
+    assert _tree(root) == before
+
+
+def test_creation_interrupted_after_layout_marker_completes_on_next_open(tmp_path):
+    from dotman import sync_base_store
+
+    root = tmp_path / "manager"
+    with SyncBaseStore.open(root, "repo") as store:
+        directory = store.repo_state_directory
+    (directory / sync_base_store.LOCK_FILE_NAME).unlink()
+
+    with SyncBaseStore.open(root, "repo") as store:
+        store.replace(record())
+        assert store.read(b"main:app.unit") == record()
