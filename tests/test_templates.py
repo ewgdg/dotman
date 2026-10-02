@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shlex
 import subprocess
@@ -56,6 +57,31 @@ def test_render_template_string_preserves_default_block_whitespace(tmp_path: Pat
     )
 
     assert rendered == "alpha\n\nbeta\n\ngamma\n"
+
+
+def test_render_template_string_resolves_includes_from_each_base_dir(tmp_path: Path) -> None:
+    template = "{% include 'part.txt' %}"
+    first, second = tmp_path / "first", tmp_path / "second"
+    for base_dir in (first, second):
+        base_dir.mkdir()
+        (base_dir / "part.txt").write_text(base_dir.name, encoding="utf-8")
+
+    assert render_template_string(template, {}, base_dir=first) == "first"
+    assert render_template_string(template, {}, base_dir=second) == "second"
+
+
+def test_render_template_string_rereads_edited_includes(tmp_path: Path) -> None:
+    template = "{% include 'part.txt' %}"
+    part = tmp_path / "part.txt"
+    part.write_text("before", encoding="utf-8")
+    assert render_template_string(template, {}, base_dir=tmp_path) == "before"
+
+    # Same size and mtime second: only a fresh read can see the edit.
+    stat = part.stat()
+    part.write_text("after!", encoding="utf-8")
+    os.utime(part, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    assert render_template_string(template, {}, base_dir=tmp_path) == "after!"
 
 
 @pytest.mark.parametrize(

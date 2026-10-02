@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+import functools
 import platform
 import shlex
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound, TemplateSyntaxError, Undefined, UndefinedError, meta
+from jinja2 import Environment, FileSystemLoader, Template, TemplateNotFound, TemplateSyntaxError, Undefined, UndefinedError, meta
 
 
 class DotmanUndefined(Undefined):
@@ -39,19 +41,26 @@ def _register_filters(environment: Environment) -> Environment:
     return environment
 
 
-def _base_environment(base_dir: Path) -> Environment:
+@functools.cache
+def _string_environment(base_dir: Path) -> Environment:
     return _register_filters(
         Environment(
             autoescape=False,
             loader=FileSystemLoader(str(base_dir)),
             undefined=DotmanUndefined,
             keep_trailing_newline=True,
+            # This environment lives for the whole process; its include cache
+            # would only trust mtimes, so re-read included files on every render.
+            cache_size=0,
         )
     )
 
 
-def _string_environment(base_dir: Path) -> Environment:
-    return _base_environment(base_dir)
+@functools.cache
+def _compiled_string_template(base_dir: Path, value: str) -> Template:
+    # Planning re-resolves the same vars and target strings for every package,
+    # so compiling each distinct string once dominates sync startup.
+    return _string_environment(base_dir).from_string(value)
 
 
 def _file_environment(base_dir: Path) -> Environment:
@@ -81,8 +90,7 @@ def template_syntax_tokens(source: str) -> tuple[tuple[str, str], ...]:
 def _resolve_node(value: Any, context: dict[str, Any]) -> Any:
     """Recursively resolve Jinja2 references in a var value using the given context."""
     if isinstance(value, str) and ("{{" in value or "{%" in value):
-        env = _string_environment(Path("."))
-        return _render_template(env, value, context)
+        return _render_template(lambda: _compiled_string_template(Path("."), value), context)
     if isinstance(value, dict):
         return {k: _resolve_node(v, context) for k, v in value.items()}
     return value
@@ -143,14 +151,13 @@ def format_jinja_render_error(error: JinjaRenderError) -> str:
 
 
 def _render_template(
-    env: Environment,
-    value: str,
+    compile_template: Callable[[], Template],
     context: dict[str, Any],
     *,
     source_path: Path | None = None,
 ) -> str:
     try:
-        return env.from_string(value).render(context)
+        return compile_template().render(context)
     except (TemplateNotFound, TemplateSyntaxError, UndefinedError, ValueError) as exc:
         raise JinjaRenderError(path=source_path, detail=str(exc)) from exc
 
@@ -162,7 +169,7 @@ def render_template_string(
     base_dir: Path,
     source_path: Path | None = None,
 ) -> str:
-    return _render_template(_string_environment(base_dir), value, context, source_path=source_path)
+    return _render_template(lambda: _compiled_string_template(base_dir, value), context, source_path=source_path)
 
 
 def discover_template_file_dependencies(path: Path) -> tuple[Path, ...]:
@@ -222,5 +229,5 @@ def render_template_file(
     except UnicodeDecodeError as exc:
         raise JinjaRenderError(path=path, detail="source file must be UTF-8 text") from exc
 
-    rendered = _render_template(_file_environment(path.parent), source_text, context, source_path=path)
+    rendered = _render_template(lambda: _file_environment(path.parent).from_string(source_text), context, source_path=path)
     return rendered.encode("utf-8"), "template"
