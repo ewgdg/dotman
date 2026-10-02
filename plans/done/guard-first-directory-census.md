@@ -100,7 +100,8 @@ Step 2, grouped layout (internal to `SyncBaseStore`):
 - No migration in runtime. The live stores were migrated once (with the
   auto-migrating version, commit `4720b64`), then all old-layout handling was
   deleted, as in `bb755b3`. A store elsewhere in the flat layout can be
-  migrated by running `4720b64` once.
+  migrated by opening it writable once with `4720b64`, then writing `2` to
+  `sync-bases.layout` (mode 0600).
 
 ## Outcomes and retrospective
 
