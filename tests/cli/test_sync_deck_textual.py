@@ -877,6 +877,49 @@ def test_materialization_keeps_deck_responsive_and_gates_actions(tmp_path, monke
         run(interact())
 
 
+def post_cell_mouse(app, event_type, offset):
+    table = app.query_one(DataTable)
+    x, y = table.region.x + offset[0], table.region.y + offset[1]
+    app.post_message(event_type(app.screen, x, y, 0, 0, 1, False, False, False, screen_x=x, screen_y=y))
+
+
+def test_press_dropped_while_busy_cannot_toggle_on_a_later_release(tmp_path, monkeypatch):
+    import threading
+    from dotman.sync_base_store import FilePresent
+
+    engine = make_engine(tmp_path, monkeypatch, [("unit", "pull-only", b"repo", b"live", "")])
+    ready, release = threading.Event(), threading.Event()
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        def capture(observation):
+            ready.set()
+            assert release.wait(2)
+            return FilePresent(b"live")
+        monkeypatch.setattr(session, "_capture", capture)
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test() as pilot:
+                post_cell_mouse(app, events.MouseDown, (2, 1))
+                await pilot.pause()
+                app.action_select()
+                for _ in range(100):
+                    if ready.is_set():
+                        break
+                    await asyncio.sleep(.01)
+                # Busy drops this release, leaving the earlier press unanswered.
+                post_cell_mouse(app, events.MouseUp, (2, 1))
+                await pilot.pause()
+                release.set()
+                for _ in range(100):
+                    if session.view.rows[0].approved and not app.busy:
+                        break
+                    await asyncio.sleep(.01)
+                post_cell_mouse(app, events.MouseUp, (2, 1))
+                await pilot.pause()
+                assert not app.busy and session.view.rows[0].approved
+        run(interact())
+
+
 def test_abort_waits_for_materialization_before_terminalizing_and_stops_batch(tmp_path, monkeypatch):
     import threading
     from dotman.sync_base_store import FilePresent

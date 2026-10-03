@@ -1088,8 +1088,9 @@ class SyncDeckApp(App[bool]):
         if self.busy and isinstance(event, events.InputEvent):
             if isinstance(event, events.Key) and event.key == "ctrl+c":
                 self.action_abort()
-            # A dropped press must not pair with a later release on a chip.
+            # A dropped press must not pair with a later release on a chip or row.
             self._pressed_hint_action = None
+            self._workset_mouse_down = False
             event.stop()
             event.prevent_default()
             return
