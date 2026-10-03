@@ -28,9 +28,10 @@ _INTERRUPT_GRACE_SECONDS = 0.5
 _CANCELLATION_POLL_SECONDS = 0.05
 _EXIT_POLL_SECONDS = 0.005
 # Planning children are mostly CPU-bound interpreter startups (`uv run`, nested
-# `dotman transform`). Four workers capture most of the overlap without
-# oversubscribing small machines.
-PLANNING_COMMAND_CONCURRENCY = min(4, os.cpu_count() or 1)
+# `dotman transform`), so at most one worker per core avoids oversubscribing.
+# Eight captures most of the overlap: a 24-core plan measured ~940ms at eight
+# workers versus ~850ms at 24, and the cap keeps big machines from bursting wide.
+PLANNING_COMMAND_CONCURRENCY = min(8, os.cpu_count() or 1)
 
 _T = TypeVar("_T")
 

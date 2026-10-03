@@ -193,3 +193,7 @@ Each step is its own commit.
   with 24 idle cores; smaller machines will see less.
 - Lesson: never revert a single line in a dirty file with `git checkout -p`.
   It reverted the wrong hunk, and step 3 had to be amended.
+- Revised 2026-10-02: the bound is now `min(8, os.cpu_count())`. After cheaper
+  helper startup, the dotfiles plan measured ~1125ms at 4 workers, ~940ms at 8,
+  ~867ms at 12 and ~850ms at 24 on 24 cores. Eight keeps most of that gain
+  without bursting across every core of a large machine.

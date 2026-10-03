@@ -54,7 +54,7 @@ InSync**, **Drifted**, or **Observation Failed**. Direct agreement has no drift
 row; drift has one stable canonical row, initially unapproved.
 Observation failures stay visible and non-approvable. Base read or acknowledgment
 failures are warnings, not failed Observations. Endpoint reads and comparison
-commands for different units run concurrently, up to four at a time. Base reads
+commands for different units run concurrently, up to eight at a time (fewer on machines with fewer cores). Base reads
 and acknowledgments stay serial, and results keep target order. An unavailable Base uses the
 normal no-Base resolution rules; explicit Merge remains blocked without a usable Base.
 A Guard-removed route is a visible diagnostic, not permission to use the opposite
