@@ -11,7 +11,8 @@ from dotman.ui_context import ui_config_scope
 
 
 def test_render_tracked_binding_label_uses_selection_menu_style(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
 
     assert cli.render_full_spec_selector_label(repo_name="example", selector="git", profile="basic") == (
         "\033[2;34mexample\033[0m"
@@ -20,9 +21,7 @@ def test_render_tracked_binding_label_uses_selection_menu_style(monkeypatch) -> 
         "\033[2m@basic\033[0m"
     )
 
-def test_render_package_label_can_prioritize_package_name(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
+def test_render_package_label_can_prioritize_package_name() -> None:
     assert cli.render_package_label(
         repo_name="example",
         package_id="git",
@@ -30,9 +29,7 @@ def test_render_package_label_can_prioritize_package_name(monkeypatch) -> None:
         include_repo_context=True,
     ) == "example:git"
 
-def test_render_full_spec_selector_label_can_prioritize_selector_name(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
+def test_render_full_spec_selector_label_can_prioritize_selector_name() -> None:
     assert cli.render_full_spec_selector_label(
         repo_name="example",
         selector="git",
@@ -42,7 +39,8 @@ def test_render_full_spec_selector_label_can_prioritize_selector_name(monkeypatc
 
 
 def test_render_package_target_label_uses_dot_separator_and_target_style(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
 
     assert cli.render_package_target_label(repo_name="example", package_id="git", target_name="gitconfig") == (
         "\033[2;34mexample\033[0m"
@@ -53,9 +51,7 @@ def test_render_package_target_label_uses_dot_separator_and_target_style(monkeyp
     )
 
 
-def test_render_package_target_label_renders_package_instance_targets(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
+def test_render_package_target_label_renders_package_instance_targets() -> None:
     assert cli.render_package_target_label(
         repo_name="example",
         package_id="profiled",
@@ -140,7 +136,6 @@ def test_resolve_candidate_match_routes_unique_partial_through_menu_by_default(m
 
 
 def test_select_menu_option_with_prompt_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
     monkeypatch.setattr(cli, "ui_menus_bottom_up_enabled", lambda: True)
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
 
@@ -220,7 +215,6 @@ def test_run_diff_review_menu_prints_separator_before_each_diff_for_all(
 
     monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu(review_items, operation="push") is True
 
@@ -254,7 +248,6 @@ def test_run_diff_review_menu_prints_footer_after_single_inspect(
 
     monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: None)
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu([review_item], operation="push") is True
 
@@ -284,7 +277,6 @@ def test_run_diff_review_menu_list_command_reprints_menu(
     prompts = iter(["list", "s"])
 
     monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu([review_item], operation="push") is True
 
@@ -297,6 +289,9 @@ def test_print_review_diff_header_dims_metadata_prefix_when_colored(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
     review_item = cli.ReviewItem(
         selection_label="example:git@basic",
         package_id="git",
@@ -311,7 +306,6 @@ def test_print_review_diff_header_dims_metadata_prefix_when_colored(
         after_bytes=b"after\n",
     )
 
-    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
 
     cli.print_review_diff_header(review_item, index=1, total=1)
 
@@ -326,6 +320,9 @@ def test_print_review_diff_header_renders_probe_no_files_as_hint_text(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
     review_item = cli.ReviewItem(
         selection_label="sandbox:app@default",
         package_id="app",
@@ -339,7 +336,6 @@ def test_print_review_diff_header_renders_probe_no_files_as_hint_text(
         is_probe=True,
     )
 
-    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
 
     cli.print_review_diff_header(review_item, index=1, total=1)
 
@@ -385,7 +381,6 @@ def test_run_diff_review_menu_default_command_views_next_diff(
 
     monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu(review_items, operation="push") is True
 
@@ -445,7 +440,6 @@ def test_run_diff_review_menu_next_command_uses_last_viewed_file(
 
     monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu(review_items, operation="push") is True
 
@@ -479,7 +473,6 @@ def test_run_diff_review_menu_next_command_at_end_prompts_for_continue(monkeypat
 
     monkeypatch.setattr(cli, "prompt", fake_prompt)
     monkeypatch.setattr(cli, "run_review_item_diff", lambda item: inspected.append(item.target_name))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu([review_item], operation="push") is True
 
@@ -491,16 +484,12 @@ def test_run_diff_review_menu_next_command_at_end_prompts_for_continue(monkeypat
     ]
 
 
-def test_print_selection_header_prepends_blank_line(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
+def test_print_selection_header_prepends_blank_line(capsys) -> None:
     cli.print_selection_header("Review pending diffs for pull:")
 
     assert capsys.readouterr().out == "\nReview pending diffs for pull:\n"
 
-def test_review_menu_prompt_prepends_blank_line(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
+def test_review_menu_prompt_prepends_blank_line() -> None:
     assert cli.review_menu_prompt() == '\nReview command ("?", number, "n", "a", "l", "s", Esc; default: next): '
 
 
@@ -537,7 +526,6 @@ def test_confirm_review_continue_skips_prompt_when_unattended(monkeypatch) -> No
 def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) -> None:
     monkeypatch.delenv("DOTMAN_MENU_BOTTOM_UP", raising=False)
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     selected_index = cli.select_menu_option(
         header_text="Select a profile:",
@@ -551,7 +539,6 @@ def test_select_menu_option_renders_bottom_up_by_default(monkeypatch, capsys) ->
 def test_select_menu_option_can_disable_bottom_up_with_env(monkeypatch, capsys) -> None:
     monkeypatch.setenv("DOTMAN_MENU_BOTTOM_UP", "0")
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     selected_index = cli.select_menu_option(
         header_text="Select a profile:",
@@ -566,7 +553,6 @@ def test_select_menu_option_can_disable_bottom_up_with_env(monkeypatch, capsys) 
 def test_select_menu_option_uses_manager_bottom_up_default(monkeypatch, capsys) -> None:
     monkeypatch.delenv("DOTMAN_MENU_BOTTOM_UP", raising=False)
     monkeypatch.setattr(cli, "prompt", lambda _message: "")
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     with ui_config_scope(UiConfig(menus=UiMenusConfig(bottom_up=False))):
         selected_index = cli.select_menu_option(
@@ -579,7 +565,7 @@ def test_select_menu_option_uses_manager_bottom_up_default(monkeypatch, capsys) 
     assert output.index("  1) basic") < output.index("  2) work") < output.index("  3) host/linux")
 
 
-def test_print_review_item_compacts_long_paths(monkeypatch, capsys) -> None:
+def test_print_review_item_compacts_long_paths(capsys) -> None:
     review_item = cli.ReviewItem(
         selection_label="example:git@basic",
         package_id="git",
@@ -594,7 +580,6 @@ def test_print_review_item_compacts_long_paths(monkeypatch, capsys) -> None:
         after_bytes=b"after\n",
     )
 
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     cli.print_review_item(1, review_item)
 
@@ -605,7 +590,7 @@ def test_print_review_item_compacts_long_paths(monkeypatch, capsys) -> None:
     assert str(Path.home()) not in output
 
 
-def test_print_review_item_shows_unavailable_badge(monkeypatch, capsys) -> None:
+def test_print_review_item_shows_unavailable_badge(capsys) -> None:
     review_item = cli.ReviewItem(
         selection_label="example:git@basic",
         package_id="git",
@@ -621,7 +606,6 @@ def test_print_review_item_shows_unavailable_badge(monkeypatch, capsys) -> None:
         diff_unavailable_reason="diff preview is unavailable",
     )
 
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     cli.print_review_item(1, review_item)
 
@@ -630,7 +614,7 @@ def test_print_review_item_shows_unavailable_badge(monkeypatch, capsys) -> None:
     assert "~/.../git/config -> ~/.../git/config" in output
 
 
-def test_print_review_item_shows_probe_badge_like_selection_menu(monkeypatch, capsys) -> None:
+def test_print_review_item_shows_probe_badge_like_selection_menu(capsys) -> None:
     review_item = cli.ReviewItem(
         selection_label="sandbox:app@default",
         package_id="app",
@@ -645,14 +629,13 @@ def test_print_review_item_shows_probe_badge_like_selection_menu(monkeypatch, ca
         hook_command_summaries=("pre_push: echo target pre",),
     )
 
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     cli.print_review_item(1, review_item)
 
     assert capsys.readouterr().out == "   1) [install] sandbox:app.version [probe]\n"
 
 
-def test_print_review_item_preserves_root_prefix_for_system_paths(monkeypatch, capsys) -> None:
+def test_print_review_item_preserves_root_prefix_for_system_paths(capsys) -> None:
     review_item = cli.ReviewItem(
         selection_label="main:sddm@basic",
         package_id="sddm",
@@ -667,7 +650,6 @@ def test_print_review_item_preserves_root_prefix_for_system_paths(monkeypatch, c
         after_bytes=b"after\n",
     )
 
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     cli.print_review_item(1, review_item)
 

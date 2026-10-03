@@ -934,7 +934,6 @@ def test_pull_cli_editor_is_explicit_deck_action_with_approval(
          ('capture = "false"\ncompare = {repo = "raw", live = "raw"}\n' if capture_fails else "")
          + 'editor = {run = "printf edited > \\"$DOTMAN_SOURCE\\"", io = "pipe"}'),
     ])
-    monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
 

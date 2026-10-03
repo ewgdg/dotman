@@ -277,16 +277,13 @@ def test_rewrite_home_action_help_is_stdout_only(capsys, action: str) -> None:
     assert "--stdout" not in output
     assert "output" not in output.lower()
 
-def test_selection_prompt_mentions_help(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
-
+def test_selection_prompt_mentions_help() -> None:
     assert cli.selection_prompt() == 'Select a number ("?"; default: 1): '
 
 def test_select_menu_option_shows_help_then_accepts_selection(monkeypatch, capsys) -> None:
     prompts = iter(["?", "2"])
 
     monkeypatch.setattr(cli, "prompt", lambda _message: next(prompts))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     selected_index = cli.select_menu_option(
         header_text="Select a profile:",
@@ -316,7 +313,6 @@ def test_run_diff_review_menu_shows_help_then_skips_review(monkeypatch, capsys) 
     prompts = iter(["?", "s"])
 
     monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu([review_item], operation="push") is True
 
@@ -347,7 +343,6 @@ def test_run_diff_review_menu_uses_full_paths_when_requested(monkeypatch, capsys
     prompts = iter(["s"])
 
     monkeypatch.setattr(cli, "prompt", lambda _message, **_options: next(prompts))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     assert cli.run_diff_review_menu([review_item], operation="push", full_paths=True) is True
 

@@ -488,11 +488,12 @@ def test_untrack_cli_uses_rendered_binding_label_for_terminal_output(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
-    monkeypatch.setattr("dotman.cli.colors_enabled", lambda: True)
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"

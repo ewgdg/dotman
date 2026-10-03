@@ -93,7 +93,7 @@ def test_unattended_rejects_editor_commands_before_opening(command, capsys, monk
 
 def test_interaction_required_error_colors_follow_stderr(capsys, monkeypatch) -> None:
     # The error is written to stderr, so `2>log` must stay plain even when stdout is a terminal.
-    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("NO_COLOR")
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
     monkeypatch.setattr("sys.stderr.isatty", lambda: False)
     assert main(["--unattended", "edit", "config"]) == 1

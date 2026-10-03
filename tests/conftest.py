@@ -48,6 +48,14 @@ def isolate_xdg_state_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.fixture(autouse=True)
+def disable_colors(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Output stays plain even under `pytest -s` in a real terminal. Tests that
+    # check styling unset NO_COLOR and patch sys.stdout.isatty in the test body:
+    # capsys swaps sys.stdout between setup and call, so a fixture cannot.
+    monkeypatch.setenv("NO_COLOR", "1")
+
+
+@pytest.fixture(autouse=True)
 def mock_sudo_for_tests() -> Iterator[None]:
     production = ProductionCommandRuntime()
 

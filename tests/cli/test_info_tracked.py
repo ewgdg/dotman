@@ -189,7 +189,6 @@ def test_info_tracked_cli_emits_readable_text_output(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
@@ -376,7 +375,6 @@ def test_info_var_cli_emits_readable_text_output(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
@@ -634,7 +632,6 @@ def test_info_tracked_cli_uses_resolver_for_ambiguous_multi_instance_identity_in
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
     monkeypatch.setattr(cli, "interactive_mode_enabled", lambda *, json_output: True)
     monkeypatch.setattr(cli, "select_menu_option", lambda **_kwargs: 1)
 

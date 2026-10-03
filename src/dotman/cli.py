@@ -8,17 +8,13 @@ from dotman.cli_parser import build_parser, normalize_edit_query_argv
 from dotman.command_runtime import command_operation
 from dotman.interaction_policy import InteractionRequiredError, interaction_scope
 from dotman.standalone_commands import StandaloneCommandRunner
-from dotman.terminal import colors_enabled as terminal_colors_enabled, emit_interrupt_notice
+from dotman.terminal import colors_enabled, emit_interrupt_notice
 
 if TYPE_CHECKING:
     from dotman.interaction import Interaction
 
 
 INTERRUPTED_EXIT_CODE = 130
-
-
-def colors_enabled() -> bool:
-    return terminal_colors_enabled(sys.stdout)
 
 
 def main(
@@ -38,13 +34,13 @@ def main(
         with command_operation(), interaction_scope(unattended=args.unattended):
             return selected_runner.run(args)
     except InteractionRequiredError as exc:
-        _emit_error(exc, use_color=terminal_colors_enabled(sys.stderr))
+        _emit_error(exc, use_color=colors_enabled(sys.stderr))
         return 1
     except KeyboardInterrupt:
         emit_interrupt_notice()
         return INTERRUPTED_EXIT_CODE
     except ValueError as exc:
-        _emit_error(exc, use_color=terminal_colors_enabled(sys.stderr))
+        _emit_error(exc, use_color=colors_enabled(sys.stderr))
         return 1 if unattended else 2
     except RuntimeError as exc:
         # Imported here because only repo commands load the Sync Base store.
@@ -52,7 +48,7 @@ def main(
 
         if not isinstance(exc, SyncBaseStoreError):
             raise
-        _emit_error(exc, use_color=terminal_colors_enabled(sys.stderr))
+        _emit_error(exc, use_color=colors_enabled(sys.stderr))
         return 1 if unattended else 2
 
 
@@ -84,7 +80,7 @@ def _repo_command_runner(args: Any, interaction: Interaction | None) -> Any:
         file_symlink_mode=args.file_symlink_mode,
         dir_symlink_mode=args.dir_symlink_mode,
     )
-    use_color = colors_enabled()
+    use_color = colors_enabled(sys.stdout)
     command_runners = (
         InspectionCommandRunner(
             engine_factory=engine_factory,

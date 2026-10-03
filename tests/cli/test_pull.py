@@ -13,7 +13,6 @@ from tests.helpers import write_tracked_packages_state
 
 @pytest.fixture
 def pull_repo(tmp_path, monkeypatch):
-    monkeypatch.setenv("NO_COLOR", "1")
     make_engine(tmp_path, monkeypatch, [
         ("first", "both", b"repository first", b"live first", ""),
         ("second", "both", b"repository second", b"live second", ""),

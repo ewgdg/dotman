@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import dotman.cli_interaction as cli
 from dotman.cli import main
 
 from tests.helpers import write_named_manager_config
@@ -67,11 +66,10 @@ def test_list_trackables_cli_emits_json_results(tmp_path: Path, capsys) -> None:
     assert payload["trackables"][2]["member_count"] == 2
 
 
-def test_list_trackables_cli_emits_readable_text_output(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_list_trackables_cli_emits_readable_text_output(tmp_path: Path, capsys) -> None:
     repo_root = tmp_path / "trackables-repo"
     write_trackables_repo(repo_root)
     config_path = write_named_manager_config(tmp_path, {"fixture": repo_root})
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     exit_code = main(["--config", str(config_path), "list", "trackables"])
 

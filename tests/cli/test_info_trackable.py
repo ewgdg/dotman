@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from dotman import cli
 from dotman.cli import main
 from tests.helpers import write_manager_config, write_multi_instance_repo, write_named_manager_config
 
@@ -110,7 +109,6 @@ def test_info_trackable_cli_exposes_probe_targets_in_json_and_text(
     payload = json.loads(capsys.readouterr().out)
     assert payload["trackable"]["targets"][0]["probe_command"] == "exit 0"
 
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
     assert main(["--config", str(config_path), "info", "trackable", "sample"]) == 0
     assert "version [probe]" in capsys.readouterr().out
 
@@ -123,7 +121,6 @@ def test_info_trackable_cli_emits_partial_group_status_in_text_output(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     repo_root = tmp_path / "repo"
     (repo_root / "profiles").mkdir(parents=True)
@@ -249,7 +246,6 @@ def test_info_trackable_cli_omits_instance_list_for_singleton_package_text_outpu
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
@@ -286,7 +282,6 @@ def test_info_trackable_cli_keeps_instance_list_for_multi_instance_package_text_
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     repo_root = tmp_path / "repo"
     write_multi_instance_repo(repo_root)

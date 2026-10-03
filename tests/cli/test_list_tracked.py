@@ -26,7 +26,8 @@ from tests.helpers import (
 
 
 def test_render_tracked_state_uses_warning_colors_for_orphan_and_invalid(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: True)
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
 
     assert cli.render_tracked_state("explicit") == "\x1b[2mexplicit\x1b[0m"
     assert cli.render_tracked_state("implicit") == "\x1b[2mimplicit\x1b[0m"
@@ -110,8 +111,7 @@ def test_list_repo_cli_emits_configured_repos_in_json(tmp_path: Path, capsys) ->
     ]
 
 
-def test_list_repo_cli_emits_readable_text_output(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
+def test_list_repo_cli_emits_readable_text_output(tmp_path: Path, capsys) -> None:
     config_path = write_named_manager_config(tmp_path, {"example": EXAMPLE_REPO})
 
     exit_code = main(["--config", str(config_path), "list", "repo"])
@@ -142,7 +142,6 @@ def test_list_tracked_cli_emits_readable_text_output(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
@@ -259,7 +258,6 @@ def test_list_vars_cli_emits_readable_text_output(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
@@ -354,7 +352,6 @@ def test_list_tracked_cli_reports_invalid_package_entries_in_json_and_human_outp
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
 
     config_path = write_manager_config(tmp_path)
     state_dir = tmp_path / "state" / "dotman" / "repos" / "example"
@@ -431,7 +428,6 @@ def test_list_tracked_cli_human_output_sorts_orphans_before_invalids_after_packa
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "colors_enabled", lambda: False)
     state_home = tmp_path / "xdg-state"
     state_home.mkdir()
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
