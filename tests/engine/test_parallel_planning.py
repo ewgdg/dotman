@@ -30,3 +30,39 @@ def test_comparison_projections_overlap_and_keep_target_order(tmp_path, monkeypa
         ("first", "directly-in-sync", ()),
         ("second", "directly-in-sync", ()),
     ]
+
+
+def test_probes_overlap_and_keep_target_order(tmp_path, monkeypatch):
+    from tests.engine.test_sync_auxiliary import auxiliary_engine
+
+    signals = tmp_path / "signals"
+    signals.mkdir()
+    engine = auxiliary_engine(tmp_path, monkeypatch, f"""
+[targets.first]
+probe = '{_rendezvous(signals, "first", "second", "true")}'
+[targets.second]
+probe = '{_rendezvous(signals, "second", "first", "true")}'
+""")
+    with open_session(engine) as session:
+        rows = session.view.rows
+
+    assert [(row.kind, row.scope) for row in rows] == [
+        ("probe", "main:app.first"),
+        ("probe", "main:app.second"),
+    ]
+
+
+def test_failing_probes_report_the_earlier_target(tmp_path, monkeypatch):
+    from dotman.sync_session import SessionOpenFailed
+    from tests.engine.test_sync_auxiliary import auxiliary_engine
+
+    engine = auxiliary_engine(tmp_path, monkeypatch, """
+[targets.first]
+probe = "sleep 0.3; exit 3"
+[targets.second]
+probe = "exit 4"
+""")
+    opened = engine.open_sync_session(engine.resolve_sync_scope(), preview=True)
+
+    assert isinstance(opened, SessionOpenFailed)
+    assert "app:first with status 3" in opened.diagnostic.message

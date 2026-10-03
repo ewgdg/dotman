@@ -159,7 +159,8 @@ Each step is its own commit.
 - [x] 2. sudo ticket lock: one module lock around `request_sudo`.
 - [x] 3. parallel observation: `run_ordered` in `command_runtime`. Real repo
   wall ~4.4s -> ~2.75s; push/pull `-d` JSON identical to a bound of 1.
-- [ ] 4. parallel probes
+- [x] 4. parallel probes. Real repo wall ~2.75s -> ~1.8s (baseline ~4.6s);
+  push/pull `-d` JSON identical to a bound of 1.
 - [ ] 5. docs and skill
 
 ## Surprises & Discoveries
