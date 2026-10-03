@@ -193,7 +193,8 @@ preset = "jinja-patch"
 - Targets may set `on_demand = true` (boolean, default `false`) for expensive or
   update-only work that should run only when asked. An on-demand target enters
   Push, Pull or Sync scope only through an exact target selector
-  (`repo:package.target`); package selectors and selector-less runs skip it.
+  (`repo:package.target`); package selectors and selector-less runs leave it
+  out silently.
   It applies to file, directory and probe targets, and `sync_policy` still gates
   it by operation. An overriding package may set it but cannot
   clear an inherited `true`.

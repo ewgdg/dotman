@@ -22,7 +22,7 @@ This file is an index. Read only the entries your task needs.
 - Every other command (`push`, `pull`, `sync`, `restore`, `track`, `untrack`, `add`, `capture`, `reset`, ...) writes to the user's machine, repo or dotman state. Run it only when the user asks. `reset sync-base` has no confirmation and no dry-run.
 - Leave elevation (sudo) prompts to the user.
 - Name targets as `repo:package.target` and package instances as `repo:package<profile>.target`.
-- `on_demand = true` targets run only when named exactly (`dotman push repo:package.target`); package selectors and plain `push`/`pull`/`sync` skip them (`docs/cli.md` § Sync scope resolution).
+- `on_demand = true` targets run only when named exactly (`dotman push repo:package.target`); package selectors and plain `push`/`pull`/`sync` leave them out without any output (`docs/cli.md` § Sync scope resolution).
 
 ## Index
 

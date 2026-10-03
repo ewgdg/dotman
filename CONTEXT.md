@@ -53,7 +53,7 @@ An active probe target presented by Sync as selectable auxiliary work that may a
 _Avoid_: Sync Unit, Proposal
 
 **On-demand Target**:
-A target declared `on_demand = true` that enters Push, Pull or Sync scope only when selected by exact target selector. Package selectors and selector-less runs skip it; a package selector names the skipped targets of its own package. Ownership and collision validation still include it.
+A target declared `on_demand = true` that enters Push, Pull or Sync scope only when selected by exact target selector. Package selectors and selector-less runs leave it out silently, because that is its declared intent rather than a skipped outcome. Ownership and collision validation still include it.
 _Avoid_: Explicit target, opt-in target, manual target
 
 **Directory Root Work**:

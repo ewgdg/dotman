@@ -180,7 +180,6 @@ class SyncDeckCommandRunner:
                 "code": "interrupted", "message": f"{self.operation.title()} preflight interrupted",
             })
             return 130
-        on_demand_skips = scope.on_demand_skips_for(self.operation)
         ui = engine.config.ui
         if getattr(args, 'full_path', None) is not None:
             ui = replace(ui, full_paths=args.full_path)
@@ -188,7 +187,7 @@ class SyncDeckCommandRunner:
             timeline = None if args.json_output or args.dry_run else SyncTimelineRenderer(use_color=self._use_color)
             opened = self._open(engine, scope, args, timeline)
             if isinstance(opened, SessionOpenFailed):
-                self._emit(args, None, None, on_demand_skips=on_demand_skips, diagnostic={
+                self._emit(args, None, None, diagnostic={
                     "code": opened.diagnostic.code, "message": opened.diagnostic.message,
                 }, output_line=opened.output_line)
                 return 130 if opened.diagnostic.code == "interrupted" else 1
@@ -207,7 +206,7 @@ class SyncDeckCommandRunner:
                         confirmed = False
                     if not confirmed:
                         aborted = session.abort()
-                        self._emit(args, session, aborted.result, on_demand_skips=on_demand_skips, diagnostic={
+                        self._emit(args, session, aborted.result, diagnostic={
                             "code": "interrupted", "message": f"{self.operation.title()} aborted",
                         }, deck_dismissed=True)
                         return 130
@@ -226,7 +225,7 @@ class SyncDeckCommandRunner:
                         for row in session.view.rows
                         for item in row_diagnostics(row)
                     )
-                    self._emit(args, session, None, on_demand_skips=on_demand_skips, diagnostic={
+                    self._emit(args, session, None, diagnostic={
                         "code": "interrupted", "message": f"{self.operation.title()} materialization interrupted",
                     } if interrupted else None)
                     return 130 if interrupted else 1
@@ -235,7 +234,7 @@ class SyncDeckCommandRunner:
                     and "set-approval" not in row.allowed_commands
                     for row in session.view.rows
                 ):
-                    self._emit(args, session, None, on_demand_skips=on_demand_skips, diagnostic={
+                    self._emit(args, session, None, diagnostic={
                         "code": "unattended-decision",
                         "message": "Participating drift has no supported automatic resolution.",
                     })
@@ -248,25 +247,22 @@ class SyncDeckCommandRunner:
                         self._print_header(args)
                         # Guard skips are planning results shown where work is reviewed:
                         # the Deck when it opened, otherwise above the timeline.
-                        # On-demand skips never become Deck rows, so they always print here.
                         # A report carries them itself.
-                        if not getattr(args, "report", False):
+                        if not deck_review and not getattr(args, "report", False):
                             self._print_planning_skips(
-                                () if deck_review else guard_skip_summaries(
-                                    row for row in session.view.rows if isinstance(row, AuxiliaryRow)),
-                                () if deck_review else no_base_skip_summaries(args, session.view.rows),
-                                on_demand_skip_summaries(on_demand_skips))
+                                guard_skip_summaries(row for row in session.view.rows if isinstance(row, AuxiliaryRow)),
+                                no_base_skip_summaries(args, session.view.rows))
                     dispatched = session.execute()
                 if isinstance(dispatched, CommandRejected):
-                    self._emit(args, session, None, on_demand_skips=on_demand_skips, diagnostic={
+                    self._emit(args, session, None, diagnostic={
                         "code": dispatched.diagnostics[0].code if dispatched.diagnostics else "command-rejected",
                         "message": dispatched.diagnostics[0].message if dispatched.diagnostics else dispatched.reason,
                     })
                     return 1
-                self._emit(args, session, dispatched.result, on_demand_skips=on_demand_skips, timeline=timeline)
+                self._emit(args, session, dispatched.result, timeline=timeline)
                 return dispatched.result.exit_code
 
-    def _print_planning_skips(self, guard_skips, no_base_skips, on_demand_skips) -> None:
+    def _print_planning_skips(self, guard_skips, no_base_skips) -> None:
         for skip in guard_skips:
             label = guard_skip_label(skip["identity"], skip["direction"], skip["path_rule_pattern"], use_color=False)
             reason = f": {skip['reason']}" if skip["reason"] else ""
@@ -276,17 +272,13 @@ class SyncDeckCommandRunner:
         for skip in no_base_skips:
             print(f"  [{render_sync_term('skipped', use_color=self._use_color)}] {skip['identity']} (no Base)")
             print(f"      {NO_BASE_SKIP_HINT}")
-        # Skipping is the declared default, so these stay recessive like Guard skips.
-        for skip in on_demand_skips:
-            print(f"  {dim_when(f'[skipped] {skip['identity']} ({ON_DEMAND_SKIP_ANNOTATION})', use_color=self._use_color)}")
 
     def _print_header(self, args) -> None:
         print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""), flush=True)
 
     def _emit(self, args, session: SyncSession | None, result, *, diagnostic=None, output_line=None,
-              timeline: SyncTimelineRenderer | None = None, deck_dismissed: bool = False,
-              on_demand_skips=()) -> None:
-        payload = sync_document(args, session, result, diagnostic=diagnostic, on_demand_skips=on_demand_skips)
+              timeline: SyncTimelineRenderer | None = None, deck_dismissed: bool = False) -> None:
+        payload = sync_document(args, session, result, diagnostic=diagnostic)
         if args.json_output:
             print(json.dumps(payload))
             return
@@ -373,7 +365,7 @@ class SyncDeckCommandRunner:
         shown = timeline_errors | {item["message"] for entry in (*payload["sync_units"], *payload["additional_source_changes"])
                                    for item in entry["diagnostics"]}
         if not recap:
-            self._print_planning_skips(payload["guard_skips"], payload["no_base_skips"], payload["on_demand_skips"])
+            self._print_planning_skips(payload["guard_skips"], payload["no_base_skips"])
         summary = payload["summary"]
         stats = summary_stats(
             (("approved", summary["approved_units"]), ("repos", summary["repository_changes"])),
@@ -460,13 +452,6 @@ def no_base_skip_summaries(args, rows) -> list[dict]:
             for row in rows if needs_first_review(row) and not row.approved]
 
 
-ON_DEMAND_SKIP_ANNOTATION = "on-demand: select it by name to run it"
-
-
-def on_demand_skip_summaries(targets) -> list[dict]:
-    return [{"identity": target.canonical} for target in targets]
-
-
 def guard_skip_summaries(auxiliary) -> list[dict]:
     return [
         {"identity": row.scope, "direction": row.directions[0], "scope_kind": row.guard_skip.scope_kind,
@@ -498,7 +483,7 @@ def summary_stats(leading, *, live, trailing=(), use_color) -> str:
     return " · ".join(stats)
 
 
-def sync_document(args, session, result, *, diagnostic=None, on_demand_skips=()) -> dict:
+def sync_document(args, session, result, *, diagnostic=None) -> dict:
     """Project only public result metadata; frozen payload bytes never leave the session."""
     view = session.view if session is not None else None
     rows = {row.row_id: row for row in view.rows if not isinstance(row, (AuxiliaryRow, AdditionalRow))} if view else {}
@@ -603,7 +588,6 @@ def sync_document(args, session, result, *, diagnostic=None, on_demand_skips=())
         ],
         "guard_skips": guard_skip_summaries(auxiliary),
         "no_base_skips": no_base_skip_summaries(args, view.rows if view else ()),
-        "on_demand_skips": on_demand_skip_summaries(on_demand_skips),
         "probe_work": auxiliary_work("probe"),
         "directory_root_work": auxiliary_work("directory-root"),
         "hook_work": auxiliary_work("hook"),

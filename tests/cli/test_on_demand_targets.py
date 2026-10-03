@@ -41,49 +41,27 @@ def planned(document) -> set[str]:
 
 
 @pytest.mark.parametrize("operation", ["push", "pull"])
-def test_selector_less_run_skips_on_demand_targets_quietly(tmp_path, monkeypatch, capsys, operation):
+def test_selector_less_run_skips_on_demand_targets_silently(tmp_path, monkeypatch, capsys, operation):
     engine = on_demand_engine(tmp_path, monkeypatch)
     code, document = run(engine, capsys, operation, "--dry-run")
     assert code == 0
     assert not planned(document) & {"main:app.extra", "main:app.check"}
-    assert document["on_demand_skips"] == []
+    assert "on_demand_skips" not in document
     _code, output = run(engine, capsys, operation, "--dry-run", json_output=False)
     assert "on-demand" not in output
 
 
-def test_package_selector_skips_on_demand_targets_and_names_them(tmp_path, monkeypatch, capsys):
+def test_package_selector_skips_on_demand_targets_silently(tmp_path, monkeypatch, capsys):
+    # Skipping an unnamed on-demand target is intended, so it is not a [skipped] outcome.
     engine = on_demand_engine(tmp_path, monkeypatch)
     code, document = run(engine, capsys, "push", "--dry-run", "main:app")
     assert code == 0
     assert planned(document) == {"main:app.plain"}
-    assert document["on_demand_skips"] == [{"identity": "main:app.extra"}, {"identity": "main:app.check"}]
-    _code, output = run(engine, capsys, "push", "--dry-run", "main:app", json_output=False)
-    lines = [line.strip() for line in output.splitlines() if "on-demand" in line]
-    assert lines == [
-        "[skipped] main:app.extra (on-demand: select it by name to run it)",
-        "[skipped] main:app.check (on-demand: select it by name to run it)",
-    ]
-    assert not (tmp_path / "probe.log").exists()
-
-
-@pytest.mark.parametrize("operation,expected", [
-    ("pull", ["main:app.extra"]),
-    ("sync", ["main:app.extra", "main:app.check"]),
-])
-def test_package_selector_reports_only_on_demand_targets_the_operation_could_run(
-    tmp_path, monkeypatch, capsys, operation, expected,
-):
-    # main:app.check is push-only: naming it in a pull would plan nothing.
-    engine = on_demand_engine(tmp_path, monkeypatch)
-    _code, document = run(engine, capsys, operation, "--dry-run", "main:app")
-    assert [skip["identity"] for skip in document["on_demand_skips"]] == expected
-
-
-def test_executed_package_selector_names_skipped_targets_before_the_timeline(tmp_path, monkeypatch, capsys):
-    engine = on_demand_engine(tmp_path, monkeypatch)
+    assert "on_demand_skips" not in document
     code, output = run(engine, capsys, "push", "main:app", json_output=False)
     assert code == 0
-    assert "[skipped] main:app.check (on-demand: select it by name to run it)" in output
+    assert "on-demand" not in output
+    assert "main:app.check" not in output and "main:app.extra" not in output
     assert not (tmp_path / "probe.log").exists()
 
 
@@ -92,7 +70,6 @@ def test_exact_target_selector_runs_on_demand_probe(tmp_path, monkeypatch, capsy
     code, document = run(engine, capsys, "push", "main:app.check")
     assert code == 0
     assert planned(document) == {"main:app.check"}
-    assert document["on_demand_skips"] == []
     assert (tmp_path / "probe.log").read_text().splitlines() == ["probe"]
 
 
@@ -107,18 +84,16 @@ def test_executed_probe_without_hooks_reports_ok_not_pending(tmp_path, monkeypat
     assert "[ok] main:app.check" in report
 
 
-def test_exact_selector_beside_its_package_selector_is_not_reported_skipped(tmp_path, monkeypatch):
+def test_exact_selector_beside_its_package_selector_adds_the_on_demand_target(tmp_path, monkeypatch):
     engine = on_demand_engine(tmp_path, monkeypatch)
     scope = engine.resolve_sync_scope(["main:app", "main:app.check"])
     assert {target.canonical for target in scope.targets} == {"main:app.plain", "main:app.check"}
-    assert [target.canonical for target in scope.on_demand_skips_for("push")] == ["main:app.extra"]
 
 
 def test_on_demand_false_keeps_targets_in_every_scope(tmp_path, monkeypatch, capsys):
     engine = on_demand_engine(tmp_path, monkeypatch, on_demand="false")
     _code, document = run(engine, capsys, "push", "--dry-run")
     assert planned(document) == {"main:app.plain", "main:app.extra", "main:app.check"}
-    assert document["on_demand_skips"] == []
 
 
 def test_on_demand_sync_base_is_listed_and_not_orphaned(tmp_path, monkeypatch):

@@ -53,7 +53,7 @@ dotman --unattended push niri-custom-git.niri_custom_git_update
    selector's dependency closure): on-demand targets are not in scope.
 3. Exact target selector (`niri-custom-git.niri_custom_git_update`): the target
    is in scope as usual.
-4. Not silent: when a package selector skips on-demand targets of a package the
+4. (Superseded: notices were removed; see Decisions.) Not silent: when a package selector skips on-demand targets of a package the
    user selected, the human output shows one notice naming each skipped target
    and saying to select it by name, e.g.
    `on-demand target skipped: main:niri-custom-git.niri_custom_git_update (select it by name to run it)`.
@@ -105,9 +105,9 @@ dotman --unattended push niri-custom-git.niri_custom_git_update
 - `list sync-bases` and `doctor` resolve the selector-less scope. Filtering
   on-demand targets there would hide their Bases and count them as orphaned, so
   inspection asks for every tracked target (`include_on_demand=True`).
-- The plan says "of a package the user selected": the notice covers only the
-  selector's root package. Dependencies' on-demand targets skip quietly, like a
-  selector-less run, so habitual meta-package pushes stay quiet.
+- The plan says "of a package the user selected": the notice covered only the
+  selector's root package. Dependencies' on-demand targets skipped quietly, like
+  a selector-less run. (Superseded: the notice was later removed; see Decisions.)
 
 ## Decisions
 
@@ -118,17 +118,20 @@ dotman --unattended push niri-custom-git.niri_custom_git_update
   2.9 for package-only and 4.2 for both.
 - Field name `on_demand` over `manual`, `opt_in` (clashes with "Sync is
   opt-in"), and `selection = "explicit"` (clashes with two glossary terms).
-
-- Notice reuses the planning-skip lines (`[skipped] <identity> (...)`, dimmed
-  like Guard skips): `[skipped] main:app.check (on-demand: select it by name to
-  run it)`. It prints in the preview log, above the execution timeline (also
-  after the Deck, which has no row for it), and in `--report`. JSON adds
-  `on_demand_skips: [{"identity": ...}]`, shaped like `guard_skips`.
+- Skip notices removed (supersedes Behavior 4). The first version printed
+  `[skipped] main:app.check (on-demand: select it by name to run it)` and added
+  JSON `on_demand_skips` when a package selector left an on-demand target out.
+  Principle: `[skipped]` is reserved for unintended outcomes, such as a Guard
+  omitting work or drift without a Base. Leaving out an on-demand target that
+  was not named is the declared intent, so it is not a skip to report.
+  On-demand targets now behave like `disabled` ones, invisible unless selected
+  by exact target selector, in which case they run. Dropping the notice also
+  removed per-direction skip tracking and its `sync_policy` edge cases.
 
 ## Outcomes & Retrospective
 
-- Shipped as planned, target-level only. An exact selector next to its package
-  selector (`push app app.check`) runs the target and does not report it.
-- Follow-up candidate: an executed exact probe run logs `[pending]
-  main:app.check / Probe Work` because probe work has no execution stage; this
-  predates the feature.
+- Shipped target-level only, without skip notices (see Decisions). An exact
+  selector next to its package selector (`push app app.check`) runs the target.
+- An executed exact probe run used to log `[pending] main:app.check / Probe
+  Work` because probe work has no execution stage; a completed run now reports
+  an error-free probe as `ok`.

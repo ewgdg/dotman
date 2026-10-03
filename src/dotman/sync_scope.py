@@ -363,7 +363,6 @@ def resolve_sync_scope(
 
     selected_targets: list[ResolvedSyncTarget] = []
     selected_target_keys: set[tuple[str, str, str | None, str, str | None]] = set()
-    on_demand_candidates: list[ResolvedSyncTarget] = []
     for item, closure in zip(parsed, selected_closures if parsed else ()):
         repo = context.repositories[item.repo]
         root = _matching_selection(item, repo=repo, selections=all_selections)
@@ -398,10 +397,6 @@ def resolve_sync_scope(
                     if not any(_target_key(target) in keys for keys in winner_keys_by_operation.values()):
                         continue
                     if target_spec.on_demand and not include_on_demand:
-                        # Dependencies' on-demand targets skip quietly, as in a
-                        # selector-less run; only the named package reports them.
-                        if selection.identity == root.identity:
-                            on_demand_candidates.append(target)
                         continue
                     key = (*_target_key(target), None)
                     if key not in selected_target_keys:
@@ -428,17 +423,6 @@ def resolve_sync_scope(
                     selected_target_keys.add(key)
                     selected_targets.append(target)
 
-    # Another selector may name a skipped target exactly; then it is not skipped.
-    selected_keys_without_child = {_target_key(target) for target in selected_targets}
-    # Each direction's ownership winners already respect sync_policy.
-    on_demand_skips = {
-        direction: tuple(dict.fromkeys(
-            target for target in on_demand_candidates
-            if _target_key(target) not in selected_keys_without_child
-            and _target_key(target) in winner_keys_by_operation[direction]
-        ))
-        for direction in ("push", "pull")
-    }
     normalized_selectors = tuple(dict.fromkeys(raw_selectors))
     public_selections = tuple(
         replace(selection, owner_identity=None, owner_selection_label=None)
@@ -449,7 +433,6 @@ def resolve_sync_scope(
         package_selections=public_selections,
         targets=tuple(selected_targets),
         planning_inputs=planning_inputs_by_operation,
-        on_demand_skips=on_demand_skips,
     )
 
 
