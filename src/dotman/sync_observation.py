@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import stat
 from contextlib import ExitStack
+from functools import partial
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 from dotman.sync_path_policy import SyncPathError
 from dotman import planning, projection
+from dotman.command_runtime import run_ordered
 from dotman.file_access import read_bytes
 from dotman.manifest import resolve_sync_policy, sync_policy_allows_operation
 from dotman.models import GuardSkip, ResolvedSyncScope, ResolvedSyncTarget, resolved_package_selection_key
@@ -544,7 +546,10 @@ def observe_scope(
             except (OSError, ValueError, SyncBaseStoreError) as exc:
                 store_warnings[identity.repo] = Diagnostic("base-unavailable", str(exc), "warning")
 
-        observations = []
+        # Base inspection and acknowledgment use the store, so they stay on this
+        # thread in target order. Only endpoint reads and projections, which run
+        # user commands, overlap.
+        pending, tasks = [], []
         for identity, (item, metadata) in inputs.items():
             unit = units[identity]
             push, pull = identity in admitted["push"], identity in admitted["pull"]
@@ -571,16 +576,19 @@ def observe_scope(
                 except (OSError, ValueError, SyncBaseStoreError) as exc:
                     warning = Diagnostic("base-unavailable", str(exc), "warning")
             if child_failures.get(identity):
-                observation = Observation(
+                failed = Observation(
                     identity, "observation-failed", unit.configured_policy, effective,
                     context.config.file_symlink_mode, metadata.compare_repo, metadata.compare_live, base,
                     chmod=metadata.chmod, repository_path=metadata.repo_path, live_path=metadata.live_path,
                     diagnostics=tuple(Diagnostic(failure.code, failure.message) for failure in child_failures[identity]),
                 )
+                tasks.append(lambda failed=failed: failed)
             else:
-                observation = _observe_file(
-                    context, identity, item, metadata, unit, effective, base
-                )
+                tasks.append(partial(_observe_file, context, identity, item, metadata, unit, effective, base))
+            pending.append((identity, unit, lifecycle, base, warning))
+
+        observations = []
+        for (identity, unit, lifecycle, base, warning), observation in zip(pending, run_ordered(tasks), strict=True):
             if warning is None and observation.state == "directly-in-sync" and lifecycle is not None:
                 try:
                     result = lifecycle.direct_agreement(FrozenBaseUnit(unit, observation.repository))

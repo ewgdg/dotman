@@ -7,13 +7,14 @@ import sys
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
 from types import MappingProxyType
-from typing import Callable, Iterable, Iterator, Literal, Mapping, Protocol, TextIO, TypeAlias
+from typing import Callable, Iterable, Iterator, Literal, Mapping, Protocol, Sequence, TextIO, TypeAlias, TypeVar
 
 from dotman.models import ElevationMode
 from dotman.terminal import preserve_terminal_state
@@ -23,6 +24,12 @@ INTERRUPTED_EXIT_CODE = 130
 _INTERRUPT_GRACE_SECONDS = 0.5
 _CANCELLATION_POLL_SECONDS = 0.05
 _EXIT_POLL_SECONDS = 0.005
+# Planning children are mostly CPU-bound interpreter startups (`uv run`, nested
+# `dotman transform`). Four workers capture most of the overlap without
+# oversubscribing small machines.
+PLANNING_COMMAND_CONCURRENCY = min(4, os.cpu_count() or 1)
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -399,6 +406,41 @@ class ProductionCommandRuntime(_CancellationLatch):
             time.sleep(_EXIT_POLL_SECONDS)
         self.check_cancelled()
         return return_code
+
+
+def run_ordered(tasks: Sequence[Callable[[], _T]]) -> Iterator[_T]:
+    """Run independent tasks on a bounded pool; yield their results in task order.
+
+    Tasks share the caller's command operation, so cancelling it stops every
+    running command. The first failure in task order propagates; tasks that
+    have not started never start.
+    """
+    workers = min(PLANNING_COMMAND_CONCURRENCY, len(tasks))
+    if workers <= 1:
+        for task in tasks:
+            yield task()
+        return
+    operation = _ACTIVE_OPERATION.get() or CommandOperation()
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dotman-planning")
+    try:
+        futures = [executor.submit(_in_operation_context(operation, task)) for task in tasks]
+        for future in futures:
+            yield future.result()
+    except KeyboardInterrupt:
+        # Children own their process groups, so the terminal's SIGINT never
+        # reaches them. Only the shared latch stops the running siblings.
+        operation.request_cancel()
+        raise
+    finally:
+        with _defer_repeated_interrupts():
+            executor.shutdown(wait=True, cancel_futures=True)
+
+
+def _in_operation_context(operation: CommandOperation, task: Callable[[], _T]) -> Callable[[], _T]:
+    # A Context can be entered by one thread at a time, so each task gets its own copy.
+    context = copy_context()
+    context.run(_ACTIVE_OPERATION.set, operation)
+    return lambda: context.run(task)
 
 
 MemoryCommandOutcome: TypeAlias = (

@@ -483,3 +483,56 @@ def test_production_runtime_notices_exit_promptly() -> None:
     baseline = fastest(lambda: subprocess.run(command, check=True))
     observed = fastest(lambda: runtime.run(CommandRequest(command=ArgvCommand(command))))
     assert observed - baseline < 0.01
+
+
+def test_run_ordered_reports_the_first_failure_in_task_order() -> None:
+    import time
+    from dotman.command_runtime import run_ordered
+
+    def slow_failure():
+        time.sleep(0.2)
+        raise ValueError("first")
+
+    def fast_failure():
+        raise ValueError("second")
+
+    with pytest.raises(ValueError, match="first"):
+        list(run_ordered([slow_failure, fast_failure]))
+
+
+def test_interrupting_run_ordered_stops_every_running_command(tmp_path: Path) -> None:
+    import os
+    import threading
+    import time
+    from dotman.command_runtime import run_ordered
+
+    runtime = ProductionCommandRuntime()
+    pid_files = [tmp_path / f"child-{index}" for index in range(2)]
+
+    def task(pid_file: Path):
+        # Children ignore SIGINT and own their process group, as a stubborn
+        # projection would; only dotman's cancellation can stop them.
+        code = (
+            "import os, signal, time; from pathlib import Path; "
+            "signal.signal(signal.SIGINT, signal.SIG_IGN); "
+            f"Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+            "time.sleep(30)"
+        )
+        return lambda: runtime.run(CommandRequest(command=ArgvCommand((sys.executable, "-c", code))))
+
+    def interrupt_when_both_started():
+        deadline = time.monotonic() + 5
+        while not all(path.exists() for path in pid_files) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+
+    interrupter = Thread(target=interrupt_when_both_started, daemon=True)
+    started = time.monotonic()
+    with command_operation():
+        interrupter.start()
+        with pytest.raises(KeyboardInterrupt):
+            list(run_ordered([task(path) for path in pid_files]))
+    assert time.monotonic() - started < 10
+    for path in pid_files:
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(path.read_text()), 0)

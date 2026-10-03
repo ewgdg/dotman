@@ -157,7 +157,8 @@ Each step is its own commit.
 - [x] 1. `_wait` polling fix: fixed 5ms `poll()` loop. Real repo: summed
   command time 4.2-4.4s -> 4.0s, wall ~4.6s -> ~4.4s.
 - [x] 2. sudo ticket lock: one module lock around `request_sudo`.
-- [ ] 3. parallel observation
+- [x] 3. parallel observation: `run_ordered` in `command_runtime`. Real repo
+  wall ~4.4s -> ~2.75s; push/pull `-d` JSON identical to a bound of 1.
 - [ ] 4. parallel probes
 - [ ] 5. docs and skill
 
