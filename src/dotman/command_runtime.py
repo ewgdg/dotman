@@ -22,6 +22,7 @@ from dotman.terminal import preserve_terminal_state
 INTERRUPTED_EXIT_CODE = 130
 _INTERRUPT_GRACE_SECONDS = 0.5
 _CANCELLATION_POLL_SECONDS = 0.05
+_EXIT_POLL_SECONDS = 0.005
 
 
 @dataclass(frozen=True)
@@ -390,14 +391,14 @@ class ProductionCommandRuntime(_CancellationLatch):
         return CommandResult(exit_code=_normalize_return_code(return_code))
 
     def _wait(self, process: subprocess.Popen[bytes]) -> int:
-        while True:
+        # Popen.wait(timeout) restarts its backoff on every call, so a loop of
+        # them noticed exit up to ~18ms late on every command. A short fixed
+        # poll bounds both exit and cancellation latency.
+        while (return_code := process.poll()) is None:
             self.check_cancelled()
-            try:
-                return_code = process.wait(timeout=_CANCELLATION_POLL_SECONDS)
-            except subprocess.TimeoutExpired:
-                continue
-            self.check_cancelled()
-            return return_code
+            time.sleep(_EXIT_POLL_SECONDS)
+        self.check_cancelled()
+        return return_code
 
 
 MemoryCommandOutcome: TypeAlias = (

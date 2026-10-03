@@ -154,7 +154,8 @@ Each step is its own commit.
 
 ## Progress
 
-- [ ] 1. `_wait` polling fix
+- [x] 1. `_wait` polling fix: fixed 5ms `poll()` loop. Real repo: summed
+  command time 4.2-4.4s -> 4.0s, wall ~4.6s -> ~4.4s.
 - [ ] 2. sudo ticket lock
 - [ ] 3. parallel observation
 - [ ] 4. parallel probes
@@ -163,6 +164,9 @@ Each step is its own commit.
 ## Surprises & Discoveries
 
 - `_wait` polling latency (see Intention) turned up while profiling.
+- The `_wait` fix saved ~0.25s, not the estimated ~0.7s. The per-command
+  overshoot depends on where each exit lands in the backoff ladder, and the
+  real durations land in its gaps less often than assumed.
 - Projection staging reads protected files through sudo, so workers can reach
   the TTY prompt. Hence step 2.
 

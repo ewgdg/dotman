@@ -461,3 +461,25 @@ def test_default_runtime_can_run_a_later_operation_after_cancellation():
         with pytest.raises(InterruptedError):
             DEFAULT_COMMAND_RUNTIME.run(CommandRequest(command=ArgvCommand(("must-not-launch",))))
     assert DEFAULT_COMMAND_RUNTIME.run(CommandRequest(command=ArgvCommand(("true",)))).exit_code == 0
+
+
+def test_production_runtime_notices_exit_promptly() -> None:
+    import subprocess
+    import time
+
+    # 33ms lands in the widest gap of a restarting Popen.wait(timeout) backoff
+    # ladder, where exit used to be noticed ~17ms late. Minimums damp CI noise.
+    command = ("sleep", "0.033")
+    runtime = ProductionCommandRuntime()
+
+    def fastest(run) -> float:
+        durations = []
+        for _ in range(5):
+            started = time.perf_counter()
+            run()
+            durations.append(time.perf_counter() - started)
+        return min(durations)
+
+    baseline = fastest(lambda: subprocess.run(command, check=True))
+    observed = fastest(lambda: runtime.run(CommandRequest(command=ArgvCommand(command))))
+    assert observed - baseline < 0.01
