@@ -177,6 +177,10 @@ def find_tracked_target_matches(
             target_name=candidate.target_name,
             bound_profile=candidate.bound_profile,
         )
+        if candidate.target_kind == "probe":
+            # Probes join sync input matching only as [repo:]package.target; a
+            # bare probe or profile name would make a same-named package input ambiguous.
+            match_fields = tuple(field for field in match_fields if field.endswith(f".{candidate.target_name}"))
         if any(field == target_text for field in match_fields):
             exact_matches.append(candidate)
             continue

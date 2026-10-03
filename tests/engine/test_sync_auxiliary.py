@@ -280,3 +280,19 @@ def test_edit_query_never_resolves_to_a_probe_target(tmp_path, monkeypatch):
     resolver = EditResolver(engine.config, engine=engine, interaction=None, use_color=False)
     with pytest.raises(ValueError, match='did not match'):
         resolver.resolve_query_path('app.check')
+
+
+def test_bare_probe_target_name_never_shadows_a_package(tmp_path, monkeypatch, capsys):
+    import json
+    from dotman.cli import main
+    from tests.helpers import write_tracked_packages_state
+
+    engine = auxiliary_engine(tmp_path, monkeypatch, '[targets.tool]\nprobe = "true"\nsync_policy = "push-only"\n')
+    (tmp_path / 'repo/packages/tool').mkdir()
+    (tmp_path / 'repo/packages/tool/package.toml').write_text(
+        'id = "tool"\n[targets.run]\nprobe = "true"\nsync_policy = "push-only"\n')
+    write_tracked_packages_state(tmp_path / 'state', repo_name='main', entries=[('app', 'default'), ('tool', 'default')])
+    config = str(engine.config.config_path)
+    assert main(['--config', config, '--json', '--unattended', 'push', '--dry-run', 'tool']) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert [work['identity'] for work in document['probe_work']] == ['main:tool.run']
