@@ -83,6 +83,17 @@ def test_exact_target_selector_runs_on_demand_probe(tmp_path, monkeypatch, capsy
     assert (tmp_path / "probe.log").read_text().splitlines() == ["probe"]
 
 
+def test_executed_probe_without_hooks_reports_ok_not_pending(tmp_path, monkeypatch, capsys):
+    # The probe ran during planning and nothing else runs at its scope, so the
+    # finished run must not leave it looking unattempted.
+    engine = on_demand_engine(tmp_path, monkeypatch)
+    code, output = run(engine, capsys, "push", "main:app.check", json_output=False)
+    assert code == 0
+    assert "[pending]" not in output
+    _code, report = run(engine, capsys, "push", "--report", "main:app.check", json_output=False)
+    assert "[ok] main:app.check" in report
+
+
 def test_exact_selector_beside_its_package_selector_is_not_reported_skipped(tmp_path, monkeypatch):
     engine = on_demand_engine(tmp_path, monkeypatch)
     scope = engine.resolve_sync_scope(["main:app", "main:app.check"])

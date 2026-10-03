@@ -359,6 +359,7 @@ class SyncDeckCommandRunner:
         for kind, key in (("probe", "probe_work"), ("directory-root", "directory_root_work"), ("hook", "hook_work")):
             for work in payload[key]:
                 outcome = auxiliary_outcome(work["identity"], payload["stages"], preview=args.dry_run,
+                                            run_completed=payload["status"] == "completed",
                                             diagnostics=work["diagnostics"])
                 entry = visible_entry(work["selected"], outcome, work["diagnostics"])
                 if entry is None:
@@ -416,7 +417,7 @@ def entry_outcome(status: str | None, diagnostics) -> str:
     return ENTRY_OUTCOME_BY_STATUS[status]
 
 
-def auxiliary_outcome(identity: str, stages, *, preview: bool, diagnostics) -> str:
+def auxiliary_outcome(identity: str, stages, *, preview: bool, run_completed: bool, diagnostics) -> str:
     """Auxiliary Work has no unit result; derive its outcome from the steps run at its scope."""
     statuses = {stage["status"] for stage in stages if stage["scope_identity"] == identity}
     for status in ("failed", "interrupted"):
@@ -426,6 +427,10 @@ def auxiliary_outcome(identity: str, stages, *, preview: bool, diagnostics) -> s
         return "ok"
     if statuses:
         return "skipped"
+    # A probe already ran during planning; when it has no hooks of its own, a
+    # finished run leaves nothing at its scope, which is done rather than pending.
+    if run_completed and not preview:
+        return "ok"
     return entry_outcome("would-apply" if preview else None, diagnostics)
 
 
