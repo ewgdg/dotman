@@ -185,6 +185,11 @@ preset = "jinja-patch"
 - Planning runs probes concurrently, up to eight at a time (fewer on machines with fewer cores), so a probe must not depend on another probe or share scratch files with it.
 - Probe targets do not claim repo/live paths, do not participate in target ownership conflicts, do not create snapshots, and never execute file push/pull steps.
 - Use `sync_policy = "push-only"` for install/update probes that should run only before push-style setup.
+- Probes reject effective `push-only-delete`, including inherited package policy:
+  there is no live endpoint to delete.
+- Sync exposes active Probes as directly selectable auxiliary work only when a
+  capability survives Guards. They activate only surviving directional hook
+  families and never have file Proposals, Base acknowledgment or Converged results.
 - Targets may set `on_demand = true` (boolean, default `false`) for expensive or
   update-only work that should run only when asked. An on-demand target enters
   Push, Pull or Sync scope only through an exact target selector
@@ -201,11 +206,6 @@ probe = 'bash "$DOTMAN_PACKAGE_ROOT/scripts/needs_update.sh" --check-upstream'
 sync_policy = "push-only"
 on_demand = true
 ```
-- Probes reject effective `push-only-delete`, including inherited package policy:
-  there is no live endpoint to delete.
-- Sync exposes active Probes as directly selectable auxiliary work only when a
-  capability survives Guards. They activate only surviving directional hook
-  families and never have file Proposals, Base acknowledgment or Converged results.
 
 ## Projection and Editor configuration
 
