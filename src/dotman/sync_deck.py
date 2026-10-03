@@ -16,6 +16,7 @@ import time
 from rich.console import Group
 from rich.padding import Padding
 from rich.rule import Rule
+from rich.style import Style
 from rich.spinner import Spinner
 from rich.table import Table
 
@@ -31,7 +32,7 @@ from textual.widgets import DataTable, Input, OptionList, Static
 
 from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
-from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hints, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
+from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hint, render_key_hint_chip, render_key_hint_separator, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_resolution, resolution_label, live_counts, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SessionRow, SyncSession, conflict_diagnostic
@@ -70,6 +71,29 @@ REVIEW_CHANGE_KEY = "review_change"
 REVIEW_CHANGE_META = {REVIEW_CHANGE_KEY: True}
 # Invisible style metadata numbering each search match, so a match wrapped over two rows counts once.
 REVIEW_MATCH_KEY = "review_match"
+# Invisible style metadata naming the App action a clicked help chip runs.
+HINT_ACTION_KEY = "hint_action"
+
+
+@dataclass(frozen=True)
+class HintChip:
+    """A help hint that a click runs like its key, for confirmation without the keyboard."""
+    key: str
+    label: str
+    action: str
+
+
+def render_hint(hint: tuple[str, str] | HintChip, *, use_color: bool) -> Text:
+    if isinstance(hint, tuple):
+        return Text.from_ansi(render_key_hint(*hint, use_color=use_color))
+    chip = Text.from_ansi(render_key_hint_chip(hint.key, hint.label, use_color=use_color))
+    chip.stylize(Style(meta={HINT_ACTION_KEY: hint.action}))
+    return chip
+
+
+def render_hint_line(hints: list[tuple[str, str] | HintChip], *, use_color: bool) -> Text:
+    separator = Text.from_ansi(render_key_hint_separator(use_color=use_color))
+    return separator.join(render_hint(hint, use_color=use_color) for hint in hints)
 
 
 class SearchMarks:
@@ -926,6 +950,7 @@ class SyncDeckApp(App[bool]):
         self.deck = deck
         self.review_positions: dict[str, tuple[float, float]] = {}
         self._workset_mouse_down = False
+        self._pressed_hint_action: str | None = None
         self._detail_row_id: str | None = None
         self._lane = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sync-materialization")
         self._materialization: asyncio.Task | None = None
@@ -1079,11 +1104,16 @@ class SyncDeckApp(App[bool]):
             workset = isinstance(widget, WorksetTable) and not (
                 self.deck.reviewing or self.deck.confirming
             )
+            metadata = self.screen.get_style_at(event.screen_x, event.screen_y).meta
+            hint_action = metadata.get(HINT_ACTION_KEY)
             if isinstance(event, events.MouseDown):
                 self._workset_mouse_down = workset
+                self._pressed_hint_action = hint_action
             else:
-                if workset and self._workset_mouse_down:
-                    metadata = self.screen.get_style_at(event.screen_x, event.screen_y).meta
+                # Like a button, a chip runs only when pressed and released on it.
+                if hint_action is not None and hint_action == self._pressed_hint_action:
+                    getattr(self, f"action_{hint_action}")()
+                elif workset and self._workset_mouse_down:
                     row, column = metadata.get("row", -1), metadata.get("column", -1)
                     if row >= 0 and column >= 0 and not metadata.get("out_of_bounds"):
                         widget.move_cursor(row=row, column=column)
@@ -1095,6 +1125,7 @@ class SyncDeckApp(App[bool]):
                         if column == 3:
                             self.action_resolution()
                 self._workset_mouse_down = False
+                self._pressed_hint_action = None
         # Preserve native focus, mouse capture, selection cleanup and scrolling.
         await super().on_event(event)
 
@@ -1175,6 +1206,8 @@ class SyncDeckApp(App[bool]):
         review_scroll = ("↑/↓/j/k", "scroll")
         select_hint = ("x", "select")
         bulk_selection = ("a/u", "all/none")
+        # First, so a wrapped help line never pushes it out of sight.
+        confirm_chip = HintChip("c", "confirm", "confirm")
         body = self.query_one(ReviewBody)
         if body.search:
             review_lead = [(f"/{body.search}", f"{self._match_index + 1}/{len(body.match_rows)}"),
@@ -1190,7 +1223,9 @@ class SyncDeckApp(App[bool]):
         elif self.query_one(OptionList).display:
             hints = [("↑/↓/j/k", "move"), ("Enter", "choose"), ("Esc", "dismiss")]
         elif self.deck.confirming:
-            hints = [("Enter", "confirm"), ("Esc", "return"), ("Ctrl+C", "abort")]
+            verb = "preview" if self.deck.session.view.preview else "execute"
+            hints = [HintChip("Enter", verb, "review_or_confirm"), HintChip("Esc", "return", "back"),
+                     ("Ctrl+C", "abort")]
         elif self.deck.full_view is not None:
             hints = [*review_lead, ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
@@ -1203,11 +1238,11 @@ class SyncDeckApp(App[bool]):
             hints = [("Tab/Esc", "return"), review_scroll, select_hint, bulk_selection,
                      ("Enter", "review"), ("e", "edit"), ("t", "retry"), ("y", "copy")]
         elif self.deck.filter:
-            hints = [(f"/{self.deck.filter}", f"{len(self.deck.visible_rows)}/{len(self.deck.session.view.rows)}"),
-                     ("Esc", "clear"), ("c", "confirm"), select_hint, bulk_selection, ("Enter", "review"),
+            hints = [confirm_chip, (f"/{self.deck.filter}", f"{len(self.deck.visible_rows)}/{len(self.deck.session.view.rows)}"),
+                     ("Esc", "clear"), select_hint, bulk_selection, ("Enter", "review"),
                      ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         else:
-            hints = [("q", "abort"), ("c", "confirm"), select_hint, bulk_selection, ("/", "filter"),
+            hints = [confirm_chip, ("q", "abort"), select_hint, bulk_selection, ("/", "filter"),
                      ("Enter", "review"), ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
@@ -1216,7 +1251,7 @@ class SyncDeckApp(App[bool]):
         if (resolution_choosable(row) and not self.deck.reviewing and not self._search_open
                 and not self.query_one(OptionList).display and not self.deck.confirming):
             hints.append(("r", "intent"))
-        self.query_one("#help", Static).update(Text.from_ansi(render_key_hints(hints, use_color=self.deck.use_color)))
+        self.query_one("#help", Static).update(render_hint_line(hints, use_color=self.deck.use_color))
 
     def update_detail(self) -> None:
         row = self.deck.focused_row

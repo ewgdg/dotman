@@ -13,6 +13,7 @@ MENU_HEADER_MARKER_STYLE = ("1", "34")
 MENU_INDEX_STYLE = ("1", "36")
 MENU_PROMPT_STYLE = ("1",)
 MENU_HINT_STYLE = ("2",)
+KEY_HINT_SEPARATOR = " · "
 MENU_REPO_STYLE = ("2", "34")
 # Target segment needs stronger contrast than repo + separator, and should not
 # reuse cyan already used for indices/update actions.
@@ -409,13 +410,21 @@ def render_summary_stat(*, label: str, value: int, use_color: bool) -> str:
     return f"{style_text(f'{label}:', *MENU_HINT_STYLE)} {style_text(str(value), '1')}"
 
 
-def render_key_hints(hints: Sequence[tuple[str, str]], *, use_color: bool) -> str:
-    """Render `key action` pairs with bold keys and dimmed actions and separators."""
+def render_key_hint_separator(*, use_color: bool) -> str:
+    return style_text(KEY_HINT_SEPARATOR, *MENU_HINT_STYLE) if use_color else KEY_HINT_SEPARATOR
+
+
+def render_key_hint(key: str, action: str, *, use_color: bool) -> str:
+    """Render a `key action` pair with a bold key and a dimmed action."""
     if not use_color:
-        return " · ".join(f"{key} {action}" for key, action in hints)
-    return style_text(" · ", *MENU_HINT_STYLE).join(
-        f"{style_text(key, *MENU_PROMPT_STYLE)} {style_text(action, *MENU_HINT_STYLE)}" for key, action in hints
-    )
+        return f"{key} {action}"
+    return f"{style_text(key, *MENU_PROMPT_STYLE)} {style_text(action, *MENU_HINT_STYLE)}"
+
+
+def render_key_hint_chip(key: str, action: str, *, use_color: bool) -> str:
+    """Render a clickable hint. Brackets mark it with or without color; color only adds emphasis."""
+    chip = f"[{key} {action}]"
+    return style_text(chip, *MENU_PROMPT_STYLE) if use_color else chip
 
 
 def render_execution_action(action: str, *, use_color: bool) -> str:

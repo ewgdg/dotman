@@ -121,8 +121,12 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   executes them. `q` does not abort a filtered workset; `Esc` clears the filter first.
   The filter survives opening and leaving a review.
   A single click in the Selection column toggles that row; other cells only focus it.
-  The bottom help text lists keyboard shortcuts; it is not clickable. It adapts
-  to workset, review, and confirmation, wrapping to two lines on narrow terminals.
+  The bottom help text lists keyboard shortcuts. It adapts to workset, review, and
+  confirmation, wrapping to two lines on narrow terminals. Bracketed hints are
+  clickable chips that run like their key: `[c confirm]` leads the workset hints, and
+  confirmation offers `[Enter execute]` (`[Enter preview]` under `--dry-run`) and
+  `[Esc return]`. A chip runs only when the click is pressed and released on it.
+  Other hints are not clickable.
   Long Target identities are shortened in the middle (`…`) so every column fits
   the terminal width; the focused detail line shows the full identity. Arrow keys
   and vim-style `h`/`j`/`k`/`l` navigate; terminals too narrow even for shortened targets scroll horizontally,

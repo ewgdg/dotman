@@ -406,9 +406,10 @@ def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monke
                 styled = {segment.text.strip() for strip in strips for segment in strip if segment.style != plain}
                 assert {"main", "bad", "error"} <= styled
                 hints = app.query_one("#help", Static).render()
-                assert hints.plain.startswith("q abort · c confirm · x select")
+                assert hints.plain.startswith("[c confirm] · q abort · x select")
                 bold = {hints.plain[span.start:span.end] for span in hints.spans if "bold" in str(span.style)}
-                assert {"q", "c", "x"} <= bold and "confirm" not in bold
+                # The clickable chip stays undimmed; plain hints dim their action.
+                assert {"[c confirm]", "q", "x"} <= bold and "abort" not in bold
         run(interact())
 
 
@@ -597,6 +598,43 @@ def test_help_area_click_cannot_authorize_after_clear_key(tmp_path, monkeypatch)
                 )
                 assert "q abort" in rendered_help and "c confirm" in rendered_help
         run(interact())
+
+
+def post_help_click(app, label):
+    # Through App.on_event like post_cell_click, so a chip click keeps input order.
+    help_widget = app.query_one("#help", Static)
+    line = help_widget.render_line(0).text
+    x = help_widget.region.x + line.index(label) + 1
+    y = help_widget.region.y
+    for event_type in (events.MouseDown, events.MouseUp):
+        app.post_message(event_type(
+            app.screen, x, y, 0, 0, 1, False, False, False,
+            screen_x=x, screen_y=y,
+        ))
+
+
+def test_help_chips_click_through_confirmation(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", b"repo", b"live", "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(100, 24)) as pilot:
+                await pilot.press("x")
+                post_help_click(app, "[c confirm]")
+                await pilot.pause()
+                assert app.deck.confirming
+                assert help_text(app) == "[Enter preview] · [Esc return] · Ctrl+C abort"
+                post_help_click(app, "[Esc return]")
+                await pilot.pause()
+                assert not app.deck.confirming
+                post_help_click(app, "[c confirm]")
+                await pilot.pause()
+                post_help_click(app, "[Enter preview]")
+                await pilot.pause()
+                assert app.return_value is True
+        run(interact())
+        assert [row.approved for row in session.view.rows] == [True]
 
 
 def test_resolution_key_toggles_between_two_intents_without_menu(tmp_path, monkeypatch):
