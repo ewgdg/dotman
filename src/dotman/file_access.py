@@ -90,6 +90,9 @@ class _SudoLease:
 
 
 _active_sudo_lease: _SudoLease | None = None
+# Planning reads protected endpoints from worker threads. Without one owner,
+# each would find no ticket and prompt for a password on the same terminal.
+_sudo_request_lock = threading.Lock()
 _sudo_lease_depth = 0
 _sudo_atexit_registered = False
 
@@ -138,13 +141,14 @@ def _emit_sudo_notice(reason: str | None, *, password_required: bool) -> None:
 
 
 def request_sudo(reason: str | None = None) -> None:
-    try:
-        _current_sudo_lease().request(reason)
-    finally:
-        # A keepalive without an operation scope would retain the runtime that
-        # happened to request elevation and leak it into later operations.
-        if _sudo_lease_depth == 0:
-            _cleanup_active_sudo_lease()
+    with _sudo_request_lock:
+        try:
+            _current_sudo_lease().request(reason)
+        finally:
+            # A keepalive without an operation scope would retain the runtime that
+            # happened to request elevation and leak it into later operations.
+            if _sudo_lease_depth == 0:
+                _cleanup_active_sudo_lease()
 
 
 

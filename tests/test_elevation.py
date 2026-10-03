@@ -153,3 +153,33 @@ def test_intercept_sudo_shim_normalizes_real_sudo_interruption(
         assert completed.returncode == 130
     finally:
         broker.close()
+
+
+def test_concurrent_sudo_requests_prompt_for_a_password_once(monkeypatch) -> None:
+    import threading
+    from contextvars import copy_context
+
+    ticket = threading.Event()
+    prompting = threading.Event()
+
+    def sudo(request):
+        if request.io == "tty":
+            prompting.set()
+            # Hold the prompt open so the second request arrives mid-prompt.
+            time.sleep(0.2)
+            ticket.set()
+            return CommandResult(exit_code=0)
+        return CommandResult(exit_code=0 if ticket.is_set() else 1)
+
+    runtime = MemoryCommandRuntime([sudo] * 4)
+    monkeypatch.setattr(file_access.os, "geteuid", lambda: 1000)
+    with file_access.sudo_session(), command_runtime_session(runtime):
+        first = threading.Thread(target=copy_context().run, args=(file_access.request_sudo,))
+        first.start()
+        assert prompting.wait(5)
+        second = threading.Thread(target=copy_context().run, args=(file_access.request_sudo,))
+        second.start()
+        first.join(5)
+        second.join(5)
+
+    assert [request.io for request in runtime.requests].count("tty") == 1
