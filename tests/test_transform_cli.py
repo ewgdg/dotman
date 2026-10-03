@@ -177,21 +177,6 @@ def test_transform_file_output_failure_preserves_existing_destination(
     assert list(tmp_path.glob(".dotman-*.tmp")) == []
 
 
-def test_root_cli_json_transform_is_standalone(tmp_path, monkeypatch, capsys) -> None:
-    from dotman import cli
-
-    base = tmp_path / "base.json"
-    base.write_text('{"managed": 1, "local": 2}\n', encoding="utf-8")
-    monkeypatch.setattr(
-        cli.DotmanEngine,
-        "from_config_path",
-        classmethod(lambda cls, *args, **kwargs: (_ for _ in ()).throw(AssertionError("engine created"))),
-    )
-
-    assert cli.main(["transform", "json", str(base), "--mode", "cleanup", "--selectors", "managed", "--stdout"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"managed": 1}
-
-
 def test_root_cli_supports_stdin_and_output_dash(monkeypatch, capsys) -> None:
     from dotman import cli
 

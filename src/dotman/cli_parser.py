@@ -670,38 +670,43 @@ def build_parser() -> argparse.ArgumentParser:
     from dotman.transforms.cli import configure_parser
     from dotman.transforms.json import JsonTransformEngine
 
-    configure_parser(json_parser, JsonTransformEngine())
-    json_parser.set_defaults(transform_parser=json_parser)
+    json_engine = JsonTransformEngine()
+    configure_parser(json_parser, json_engine)
+    json_parser.set_defaults(transform_parser=json_parser, transform_engine=json_engine)
 
     toml_parser = transform_subparsers.add_parser(
         "toml", help="Transform TOML documents", description="Clean up or merge TOML documents"
     )
     from dotman.transforms.toml import TomlTransformEngine
 
-    configure_parser(toml_parser, TomlTransformEngine())
-    toml_parser.set_defaults(transform_parser=toml_parser)
+    toml_engine = TomlTransformEngine()
+    configure_parser(toml_parser, toml_engine)
+    toml_parser.set_defaults(transform_parser=toml_parser, transform_engine=toml_engine)
 
     plist_parser = transform_subparsers.add_parser(
         "plist", help="Transform plist dictionaries", description="Clean up or merge plist dictionaries"
     )
     from dotman.transforms.plist import PlistTransformEngine
 
-    configure_parser(plist_parser, PlistTransformEngine())
-    plist_parser.set_defaults(transform_parser=plist_parser)
+    plist_engine = PlistTransformEngine()
+    configure_parser(plist_parser, plist_engine)
+    plist_parser.set_defaults(transform_parser=plist_parser, transform_engine=plist_engine)
 
     xml_parser = transform_subparsers.add_parser(
         "xml", help="Transform XML trees", description="Clean up or merge XML trees"
     )
     from dotman.transforms.xml import XmlTransformEngine
 
-    configure_parser(xml_parser, XmlTransformEngine())
-    xml_parser.set_defaults(transform_parser=xml_parser)
+    xml_engine = XmlTransformEngine()
+    configure_parser(xml_parser, xml_engine)
+    xml_parser.set_defaults(transform_parser=xml_parser, transform_engine=xml_engine)
 
     yaml_parser = transform_subparsers.add_parser(
         "yaml", help="Transform YAML mappings", description="Clean up or merge YAML mappings"
     )
     from dotman.transforms.yaml import YamlTransformEngine
 
-    configure_parser(yaml_parser, YamlTransformEngine())
-    yaml_parser.set_defaults(transform_parser=yaml_parser)
+    yaml_engine = YamlTransformEngine()
+    configure_parser(yaml_parser, yaml_engine)
+    yaml_parser.set_defaults(transform_parser=yaml_parser, transform_engine=yaml_engine)
     return parser

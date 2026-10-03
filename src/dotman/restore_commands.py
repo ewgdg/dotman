@@ -5,8 +5,10 @@ from typing import Any
 
 from dotman import cli_emit, cli_interaction
 from dotman.engine import DotmanEngine
+from dotman.interaction_policy import InteractionRequiredError
 from dotman.operation_runner import run_restore_operation
 from dotman.snapshot import RestoreAction, SnapshotRecord, build_restore_actions
+from dotman.terminal import emit_interrupt_notice
 from dotman.ui_context import ui_config_scope
 
 
@@ -37,7 +39,7 @@ class RestoreCommandRunner:
         )
         actions = build_restore_actions(snapshot)
         if not args.dry_run and not getattr(args, "unattended", False) and not cli_interaction.interactive_mode_enabled(json_output=args.json_output):
-            raise cli_interaction.InteractionRequiredError("restore requires confirmation; use --unattended to accept default work")
+            raise InteractionRequiredError("restore requires confirmation; use --unattended to accept default work")
         if not cli_interaction.review_restore_actions_for_interactive_diffs(
             snapshot=snapshot,
             actions=actions,
@@ -45,7 +47,7 @@ class RestoreCommandRunner:
             full_paths=full_paths,
             unattended=getattr(args, "unattended", False),
         ):
-            cli_interaction.emit_interrupt_notice()
+            emit_interrupt_notice()
             return INTERRUPTED_EXIT_CODE
         if args.dry_run:
             return cli_emit.emit_restore_payload(

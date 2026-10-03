@@ -92,10 +92,10 @@ def test_unattended_rejects_editor_commands_before_opening(command, capsys, monk
 
 
 def test_unattended_disables_terminal_interaction_scope(monkeypatch) -> None:
-    from dotman import cli_interaction
+    from dotman import cli_interaction, interaction_policy
     monkeypatch.setattr("sys.stdin", StringIO())
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    with cli_interaction.interaction_scope(unattended=True):
+    with interaction_policy.interaction_scope(unattended=True):
         assert not cli_interaction.interactive_mode_enabled(json_output=False)
     assert cli_interaction.interactive_mode_enabled(json_output=False)
 

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from dotman import cli_emit
-from dotman.cli_interaction import InteractionRequiredError
+from dotman.interaction_policy import InteractionRequiredError
 from dotman.add import AddOperationResult, AddReviewResult, prepare_add_to_package, write_add_result
 from dotman.add_resolution import AddResolver
 from dotman.config import default_config_path, load_manager_config

@@ -68,21 +68,6 @@ def test_root_rewrite_home_preserves_byte_fidelity_around_matches(
     assert capsysbinary.readouterr().out == expected
 
 
-def test_root_rewrite_home_dispatch_does_not_construct_sync_engine(
-    monkeypatch,
-    capsysbinary,
-) -> None:
-    monkeypatch.setenv("HOME", "/home/alice")
-    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"~")))
-    monkeypatch.setattr(
-        "dotman.cli.DotmanEngine.from_config_path",
-        lambda *_args, **_kwargs: pytest.fail("rewrite must not construct the sync engine"),
-    )
-
-    assert cli.main(["rewrite", "home", "expand"]) == 0
-    assert capsysbinary.readouterr().out == b"/home/alice"
-
-
 @pytest.mark.parametrize("home", [None, "", "relative/home", "/", "///"])
 def test_root_rewrite_home_invalid_home_fails_without_stdout(
     home: str | None,

@@ -7,6 +7,10 @@ from collections.abc import Iterator
 _unattended = ContextVar("unattended", default=False)
 
 
+class InteractionRequiredError(ValueError):
+    """Execution requires a decision unavailable in this invocation."""
+
+
 def unattended_enabled() -> bool:
     return _unattended.get()
 

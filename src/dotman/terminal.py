@@ -117,3 +117,7 @@ def _prompt_with_toolkit(message: str, *, escape_result: str | None = None) -> s
         event.app.exit(result=escape_result)
 
     return prompt_toolkit_prompt(prompt_message, key_bindings=key_bindings)
+
+
+def emit_interrupt_notice() -> None:
+    sys.stderr.write("\ninterrupted\n")

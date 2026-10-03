@@ -20,3 +20,33 @@ def test_cli_import_defers_modules_only_some_commands_need(module: str) -> None:
     )
 
     assert completed.stdout.strip() == "False"
+
+
+# Repo manifests call these helpers from every render, capture, and probe, so
+# dotman's startup cost is paid once per call. They must not load the sync
+# engine that only repo-aware commands use.
+@pytest.mark.parametrize(
+    ("argv", "stdin"),
+    [
+        (["transform", "json", "-", "--stdout", "--mode", "cleanup"], "{}"),
+        (["rewrite", "home", "expand", "-"], "~/x\n"),
+    ],
+)
+def test_standalone_helpers_skip_repo_engine_imports(argv: list[str], stdin: str) -> None:
+    script = (
+        "import sys\n"
+        "from dotman.cli import main\n"
+        f"exit_code = main({argv!r})\n"
+        "loaded = [name for name in ('dotman.engine', 'dotman.models', 'dotman.cli_emit') if name in sys.modules]\n"
+        "print(exit_code, loaded, file=sys.stderr)\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+
+    assert completed.stderr.strip().splitlines()[-1] == "0 []"

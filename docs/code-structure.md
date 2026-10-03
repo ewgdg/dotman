@@ -26,7 +26,12 @@ Focused CLI responsibilities live in dedicated modules:
 - `cli_parser.py` — argparse construction
 - `cli_emit.py` — text/JSON output formatting
 - `standalone_commands.py` — configuration-independent rewrite, transform,
-  elevation, capture, editor, and render workflows
+  elevation, capture, editor, and render workflows. Repo manifests call these
+  once per render, capture, or probe, so `cli.py` dispatches them before
+  importing the engine, and each branch imports only its own command
+  (`tests/test_startup_imports.py` guards this)
+- `template_commands.py` — Jinja render and patch-capture helpers behind the
+  standalone `render` and `capture` commands
 - `inspection_commands.py` — configuration-aware list, info, search, and doctor
   workflows
 - `state_commands.py` — track, untrack, add, and edit workflows composed with

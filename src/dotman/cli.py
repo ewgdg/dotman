@@ -3,18 +3,16 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
-from dotman import cli_emit, cli_interaction
 from dotman.cli_parser import build_parser, normalize_edit_query_argv
 from dotman.command_runtime import command_operation
-from dotman.engine import DotmanEngine
-from dotman.inspection_commands import InspectionCommandRunner
-from dotman.interaction import Interaction, TerminalInteraction
+from dotman.interaction_policy import InteractionRequiredError, interaction_scope
 from dotman.standalone_commands import StandaloneCommandRunner
-from dotman.state_commands import StateCommandRunner
-from dotman.sync_base_store import SyncBaseStoreError
-from dotman.restore_commands import RestoreCommandRunner
-from dotman.sync_deck_command import SyncDeckCommandRunner, PullDeckCommandRunner, PushDeckCommandRunner
+from dotman.terminal import emit_interrupt_notice
+
+if TYPE_CHECKING:
+    from dotman.interaction import Interaction
 
 
 INTERRUPTED_EXIT_CODE = 130
@@ -34,71 +32,104 @@ def main(
         raw_argv = list(argv) if argv is not None else sys.argv[1:]
         args = build_parser().parse_args(normalize_edit_query_argv(raw_argv))
         unattended = args.unattended
-        active_interaction = None if unattended else interaction
-        stdin_isatty = getattr(sys.stdin, "isatty", None)
-        if not args.unattended and active_interaction is None and stdin_isatty is not None and stdin_isatty():
-            active_interaction = TerminalInteraction()
-        engine_factory = lambda config_path: DotmanEngine.from_config_path(
-            config_path,
-            file_symlink_mode=args.file_symlink_mode,
-            dir_symlink_mode=args.dir_symlink_mode,
-        )
-        use_color = colors_enabled()
-        command_runners = (
-            StandaloneCommandRunner(),
-            InspectionCommandRunner(
-                engine_factory=engine_factory,
-                runtime=cli_interaction.InspectionRuntime(),
-                use_color=use_color,
-            ),
-            StateCommandRunner(
-                engine_factory=engine_factory,
-                runtime=cli_interaction.StateRuntime(active_interaction),
-                use_color=use_color,
-            ),
-            SyncDeckCommandRunner(
-                engine_factory=engine_factory,
-                use_color=use_color,
-                interaction=active_interaction,
-            ),
-            PullDeckCommandRunner(
-                engine_factory=engine_factory,
-                use_color=use_color,
-                interaction=active_interaction,
-            ),
-            PushDeckCommandRunner(
-                engine_factory=engine_factory,
-                use_color=use_color,
-                interaction=active_interaction,
-            ),
-            RestoreCommandRunner(
-                engine_factory=engine_factory,
-                use_color=use_color,
-            ),
-        )
-        runner_by_command = {
-            command_name: runner
-            for runner in command_runners
-            for command_name in runner.command_names
-        }
-        selected_runner = runner_by_command.get(args.command)
-        if selected_runner is None:
-            raise ValueError(f"unsupported command '{args.command}'")
-        with command_operation(), cli_interaction.interaction_scope(unattended=args.unattended):
+        if args.command in StandaloneCommandRunner.command_names:
+            selected_runner = StandaloneCommandRunner()
+        else:
+            selected_runner = _repo_command_runner(args, None if unattended else interaction)
+        with command_operation(), interaction_scope(unattended=args.unattended):
             return selected_runner.run(args)
-    except cli_interaction.InteractionRequiredError as exc:
-        cli_emit.emit_error(exc, use_color=colors_enabled())
+    except InteractionRequiredError as exc:
+        _emit_error(exc, use_color=colors_enabled())
         return 1
     except KeyboardInterrupt:
-        cli_interaction.emit_interrupt_notice()
+        emit_interrupt_notice()
         return INTERRUPTED_EXIT_CODE
-    except (ValueError, SyncBaseStoreError) as exc:
-        cli_emit.emit_error(
-            exc,
-            use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None,
-        )
+    except ValueError as exc:
+        _emit_error(exc, use_color=_stderr_colors_enabled())
+        return 1 if unattended else 2
+    except RuntimeError as exc:
+        # Imported here because only repo commands load the Sync Base store.
+        from dotman.sync_base_store import SyncBaseStoreError
+
+        if not isinstance(exc, SyncBaseStoreError):
+            raise
+        _emit_error(exc, use_color=_stderr_colors_enabled())
         return 1 if unattended else 2
 
+
+def _stderr_colors_enabled() -> bool:
+    return sys.stderr.isatty() and os.environ.get("NO_COLOR") is None
+
+
+def _emit_error(exc: Exception, *, use_color: bool) -> None:
+    from dotman.cli_emit import emit_error
+
+    emit_error(exc, use_color=use_color)
+
+
+def _repo_command_runner(args: Any, interaction: Interaction | None) -> Any:
+    """Build the runner for commands that read a dotman repo.
+
+    The engine and sync stack load here rather than at module level, so the
+    standalone helpers that repo manifests call on every sync stay cheap.
+    """
+    from dotman import cli_interaction
+    from dotman.engine import DotmanEngine
+    from dotman.inspection_commands import InspectionCommandRunner
+    from dotman.interaction import TerminalInteraction
+    from dotman.restore_commands import RestoreCommandRunner
+    from dotman.state_commands import StateCommandRunner
+    from dotman.sync_deck_command import PullDeckCommandRunner, PushDeckCommandRunner, SyncDeckCommandRunner
+
+    stdin_isatty = getattr(sys.stdin, "isatty", None)
+    if not args.unattended and interaction is None and stdin_isatty is not None and stdin_isatty():
+        interaction = TerminalInteraction()
+    engine_factory = lambda config_path: DotmanEngine.from_config_path(
+        config_path,
+        file_symlink_mode=args.file_symlink_mode,
+        dir_symlink_mode=args.dir_symlink_mode,
+    )
+    use_color = colors_enabled()
+    command_runners = (
+        InspectionCommandRunner(
+            engine_factory=engine_factory,
+            runtime=cli_interaction.InspectionRuntime(),
+            use_color=use_color,
+        ),
+        StateCommandRunner(
+            engine_factory=engine_factory,
+            runtime=cli_interaction.StateRuntime(interaction),
+            use_color=use_color,
+        ),
+        SyncDeckCommandRunner(
+            engine_factory=engine_factory,
+            use_color=use_color,
+            interaction=interaction,
+        ),
+        PullDeckCommandRunner(
+            engine_factory=engine_factory,
+            use_color=use_color,
+            interaction=interaction,
+        ),
+        PushDeckCommandRunner(
+            engine_factory=engine_factory,
+            use_color=use_color,
+            interaction=interaction,
+        ),
+        RestoreCommandRunner(
+            engine_factory=engine_factory,
+            use_color=use_color,
+        ),
+    )
+    runner_by_command = {
+        command_name: runner
+        for runner in command_runners
+        for command_name in runner.command_names
+    }
+    selected_runner = runner_by_command.get(args.command)
+    if selected_runner is None:
+        raise ValueError(f"unsupported command '{args.command}'")
+    return selected_runner
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

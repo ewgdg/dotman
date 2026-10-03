@@ -27,7 +27,7 @@ from dotman.diff_review import (
 )
 from dotman.engine import DotmanEngine
 from dotman.interaction import Interaction
-from dotman.interaction_policy import interaction_scope, unattended_enabled  # noqa: F401 -- interaction_scope re-exported for cli.py
+from dotman.interaction_policy import unattended_enabled
 from dotman.models import (
     FullSpecSelector,
     SelectorKind,
@@ -517,10 +517,6 @@ def print_review_command_help() -> None:
     print("  ?          show this help")
 
 
-class InteractionRequiredError(ValueError):
-    """Execution requires a decision unavailable in this invocation."""
-
-
 def interactive_mode_enabled(*, json_output: bool) -> bool:
     return not unattended_enabled() and not json_output and sys.stdin.isatty()
 
@@ -941,10 +937,6 @@ def run_diff_review_menu(
             except ValueError as exc:
                 print(f"review unavailable: {exc}", file=sys.stderr)
             continue
-
-
-def emit_interrupt_notice() -> None:
-    sys.stderr.write("\ninterrupted\n")
 
 
 def display_cli_path(reference_path: Path | str, *, full_paths: bool) -> str:

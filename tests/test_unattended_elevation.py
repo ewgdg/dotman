@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from dotman import cli_interaction
+from dotman import interaction_policy
 from dotman.command_runtime import ArgvCommand, CommandResult, MemoryCommandRuntime
 from dotman.file_access import _SudoLease
 
@@ -13,7 +13,7 @@ def test_unattended_elevation_never_requests_password(monkeypatch, exit_code) ->
     runtime = MemoryCommandRuntime([CommandResult(exit_code=exit_code)])
     lease = _SudoLease(runtime)
     try:
-        with cli_interaction.interaction_scope(unattended=True):
+        with interaction_policy.interaction_scope(unattended=True):
             if exit_code:
                 with pytest.raises(ValueError, match="unattended"):
                     lease.request("publish files")
@@ -33,6 +33,6 @@ def test_unattended_runtime_rejects_tty_before_elevation() -> None:
             raise AssertionError("TTY execution must fail before elevation")
 
     runtime = ProductionCommandRuntime(elevation=UnexpectedElevation())
-    with cli_interaction.interaction_scope(unattended=True):
+    with interaction_policy.interaction_scope(unattended=True):
         with pytest.raises(ValueError, match="unattended"):
             runtime.run(CommandRequest(command=ArgvCommand(("unused",)), io="tty"))

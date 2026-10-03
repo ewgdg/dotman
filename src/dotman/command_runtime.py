@@ -14,10 +14,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
 from types import MappingProxyType
-from typing import Callable, Iterable, Iterator, Literal, Mapping, Protocol, Sequence, TextIO, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Literal, Mapping, Protocol, Sequence, TextIO, TypeAlias, TypeVar
 
-from dotman.models import ElevationMode
 from dotman.terminal import preserve_terminal_state
+
+if TYPE_CHECKING:
+    # Annotation-only: loading models costs every standalone helper call ~16ms.
+    from dotman.models import ElevationMode
 
 
 INTERRUPTED_EXIT_CODE = 130
