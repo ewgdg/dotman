@@ -907,9 +907,9 @@ class SyncDeckApp(App[bool]):
         Binding("N", "step(-1)", "Previous match or change", priority=True),
         Binding("tab,shift+tab", "toggle_detail_focus", "Detail", priority=True),
         # x mirrors the "[x]" Selection marker; Space stays for the common TUI toggle convention.
-        Binding("space,x,X", "approve", "Select", priority=True),
-        Binding("a,A", "approve_all", "Select all", priority=True),
-        Binding("u,U", "clear_all", "Clear all", priority=True),
+        Binding("space,x,X", "select", "Select", priority=True),
+        Binding("a,A", "select_all", "Select all", priority=True),
+        Binding("u,U", "clear_selection", "Clear selection", priority=True),
         Binding("enter", "review_or_confirm", "Review / Confirm", priority=True),
         Binding("c,C", "confirm", "Preview / Execute", priority=True),
         # Ctrl+C stays Abort, so copying needs its own key (vim-style yank).
@@ -1194,20 +1194,20 @@ class SyncDeckApp(App[bool]):
         elif self.deck.full_view is not None:
             hints = [*review_lead, ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            hints = [*review_lead, ("Space/x", "approval"), ("v", "full view"), ("y", "copy"), review_scroll,
+            hints = [*review_lead, ("Space/x", "select"), ("v", "full view"), ("y", "copy"), review_scroll,
                      ("Ctrl+C", "abort")]
         elif self.deck.reviewing:
-            hints = [*review_lead, ("Space/x", "approval"), ("e", "edit"), ("t", "retry"), ("v", "full view"),
+            hints = [*review_lead, ("Space/x", "select"), ("e", "edit"), ("t", "retry"), ("v", "full view"),
                      ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.detail_focused:
-            hints = [("Tab/Esc", "return"), review_scroll, ("Space/x", "mark"), bulk_selection,
+            hints = [("Tab/Esc", "return"), review_scroll, ("Space/x", "select"), bulk_selection,
                      ("Enter", "view"), ("e", "edit"), ("t", "retry"), ("y", "copy")]
         elif self.deck.filter:
             hints = [(f"/{self.deck.filter}", f"{len(self.deck.visible_rows)}/{len(self.deck.session.view.rows)}"),
-                     ("Esc", "clear"), ("c", "confirm"), ("Space/x", "mark"), bulk_selection, ("Enter", "view"),
+                     ("Esc", "clear"), ("c", "confirm"), ("Space/x", "select"), bulk_selection, ("Enter", "view"),
                      ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         else:
-            hints = [("q", "abort"), ("c", "confirm"), ("Space/x", "mark"), bulk_selection, ("/", "filter"),
+            hints = [("q", "abort"), ("c", "confirm"), ("Space/x", "select"), bulk_selection, ("/", "filter"),
                      ("Enter", "view"), ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
@@ -1287,7 +1287,7 @@ class SyncDeckApp(App[bool]):
         if not self.deck.reviewing and not self.deck.confirming:
             self.deck.focus = self.query_one(WorksetTable).cursor_row
 
-    def action_approve(self) -> None:
+    def action_select(self) -> None:
         if self.busy or self.deck.full_view is not None:
             return
         if self.query_one(OptionList).display:
@@ -1295,14 +1295,14 @@ class SyncDeckApp(App[bool]):
         self.sync_focus()
         self.materialize(self.deck.select)
 
-    def action_approve_all(self) -> None:
+    def action_select_all(self) -> None:
         if self.busy or self.deck.full_view is not None:
             return
         if self.query_one(OptionList).display:
             return
         self.materialize(lambda: self.deck.select_all(True), row_ids=self.all_row_ids())
 
-    def action_clear_all(self) -> None:
+    def action_clear_selection(self) -> None:
         if self.busy or self.deck.full_view is not None:
             return
         if self.query_one(OptionList).display:

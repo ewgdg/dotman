@@ -205,6 +205,8 @@ def test_review_title_shows_approval_after_toggle(tmp_path, monkeypatch):
                 await pilot.press("enter")
                 await pilot.pause()
                 assert title_text(app) == ":: Proposal Review (unapproved)"
+                # Review names the toggle like the workset; the title shows what Selection means here.
+                assert "Space/x select" in help_text(app)
                 # The Decision section scrolls away; the title keeps Approval in view.
                 await pilot.press("space")
                 await pilot.pause()
@@ -402,7 +404,7 @@ def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monke
                 styled = {segment.text.strip() for strip in strips for segment in strip if segment.style != plain}
                 assert {"main", "bad", "error"} <= styled
                 hints = app.query_one("#help", Static).render()
-                assert hints.plain.startswith("q abort · c confirm · Space/x mark")
+                assert hints.plain.startswith("q abort · c confirm · Space/x select")
                 bold = {hints.plain[span.start:span.end] for span in hints.spans if "bold" in str(span.style)}
                 assert {"q", "c", "Space/x"} <= bold and "confirm" not in bold
         run(interact())
@@ -752,7 +754,7 @@ def test_materialization_keeps_deck_responsive_and_gates_actions(tmp_path, monke
                     table = app.query_one(WorksetTable)
                     help_widget = app.query_one("#help", Static)
                     spinning = lambda: any(frame in str(table.get_cell_at((0, 0))) for frame in SPINNER_FRAMES)
-                    app.action_approve()
+                    app.action_select()
                     # Quick work must not flash progress; it appears only once work lingers,
                     # in the row's Selection cell rather than on an extra line.
                     assert not spinning()
@@ -768,8 +770,8 @@ def test_materialization_keeps_deck_responsive_and_gates_actions(tmp_path, monke
                     assert spinning()
                     assert "Ctrl+C abort" in str(help_widget.render())
                     revision = session.view.revision
-                    app.action_clear_all()
-                    app.action_approve_all()
+                    app.action_clear_selection()
+                    app.action_select_all()
                     app.action_review_or_confirm()
                     app.action_retry()
                     app.action_confirm()
@@ -814,7 +816,7 @@ def test_abort_waits_for_materialization_before_terminalizing_and_stops_batch(tm
 
         async def interact():
             async with app.run_test() as pilot:
-                app.action_approve_all()
+                app.action_select_all()
                 try:
                     for _ in range(100):
                         if ready.is_set():
@@ -1081,7 +1083,7 @@ def test_review_search_box_keeps_deck_keys_out_of_the_query(tmp_path, monkeypatc
                 await pilot.pause()
                 assert not app.query_one("#search-bar").display
                 assert title_text(app) == ":: Proposal Review (unapproved)"
-                assert "/ev axq" not in help_text(app)
+                assert "/ev acq" not in help_text(app)
         run(interact())
 
 
