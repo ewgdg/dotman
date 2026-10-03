@@ -906,11 +906,12 @@ class SyncDeckApp(App[bool]):
         Binding("n", "step(1)", "Next match or change", priority=True),
         Binding("N", "step(-1)", "Previous match or change", priority=True),
         Binding("tab,shift+tab", "toggle_detail_focus", "Detail", priority=True),
-        Binding("space", "approve", "Select", priority=True),
+        # x mirrors the "[x]" Selection marker; Space stays for the common TUI toggle convention.
+        Binding("space,x,X", "approve", "Select", priority=True),
         Binding("a,A", "approve_all", "Select all", priority=True),
         Binding("u,U", "clear_all", "Clear all", priority=True),
         Binding("enter", "review_or_confirm", "Review / Confirm", priority=True),
-        Binding("x,X", "confirm", "Preview / Execute", priority=True),
+        Binding("c,C", "confirm", "Preview / Execute", priority=True),
         # Ctrl+C stays Abort, so copying needs its own key (vim-style yank).
         Binding("y,Y", "copy", "Copy", priority=True),
         Binding("escape", "back", "Back", priority=True),
@@ -1193,20 +1194,20 @@ class SyncDeckApp(App[bool]):
         elif self.deck.full_view is not None:
             hints = [*review_lead, ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            hints = [*review_lead, ("Space", "approval"), ("v", "full view"), ("y", "copy"), review_scroll,
+            hints = [*review_lead, ("Space/x", "approval"), ("v", "full view"), ("y", "copy"), review_scroll,
                      ("Ctrl+C", "abort")]
         elif self.deck.reviewing:
-            hints = [*review_lead, ("Space", "approval"), ("e", "edit"), ("t", "retry"), ("v", "full view"),
+            hints = [*review_lead, ("Space/x", "approval"), ("e", "edit"), ("t", "retry"), ("v", "full view"),
                      ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.detail_focused:
-            hints = [("Tab/Esc", "return"), review_scroll, ("Space", "mark"), bulk_selection,
+            hints = [("Tab/Esc", "return"), review_scroll, ("Space/x", "mark"), bulk_selection,
                      ("Enter", "view"), ("e", "edit"), ("t", "retry"), ("y", "copy")]
         elif self.deck.filter:
             hints = [(f"/{self.deck.filter}", f"{len(self.deck.visible_rows)}/{len(self.deck.session.view.rows)}"),
-                     ("Esc", "clear"), ("x", "confirm"), ("Space", "mark"), bulk_selection, ("Enter", "view"),
+                     ("Esc", "clear"), ("c", "confirm"), ("Space/x", "mark"), bulk_selection, ("Enter", "view"),
                      ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         else:
-            hints = [("q", "abort"), ("x", "confirm"), ("Space", "mark"), bulk_selection, ("/", "filter"),
+            hints = [("q", "abort"), ("c", "confirm"), ("Space/x", "mark"), bulk_selection, ("/", "filter"),
                      ("Enter", "view"), ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
@@ -1324,7 +1325,7 @@ class SyncDeckApp(App[bool]):
         self.query_one(ReviewBody).document = self.deck.review_document()
         row = self.deck.focused_row
         title = ":: Additional Source Review" if isinstance(row, AdditionalRow) else ":: Proposal Review"
-        # Space toggles Approval while the Decision section may be scrolled away; the title keeps it in view.
+        # Space/x toggle Approval while the Decision section may be scrolled away; the title keeps it in view.
         approval = render_sync_term(review_approval_term(row), use_color=self.deck.use_color)
         self.query_one("#title", Static).update(Text.from_ansi(f"{title} ({approval})"))
         log.focus()

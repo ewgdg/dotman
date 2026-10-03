@@ -98,7 +98,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   (every target in sync, no warnings, hooks or probes; Guard skips alone do not count), it skips the Deck and
   logs directly, printing any Guard skips above the summary.
   Its Textual table aligns Selection (headed `✓`), Target, Policy, and Resolution columns.
-  `Space` toggles Selection, `a` selects eligible rows, and `u` clears Selection.
+  `Space` or `x` toggles Selection, `a` selects eligible rows, and `u` clears Selection.
   Selection means independent Proposal or Additional Source Change Approval,
   or direct auxiliary inclusion. Batch actions establish all final states before
   rematerializing dependent Proposals.
@@ -129,8 +129,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   `Esc` returns to the same workset. Source Change Review shows the preimage diff,
   referencing Proposals and independent Approval; Proposal Review lists source
   references without a duplicate Additional Approval control. Both review titles
-  annotate the focused row's Approval (`:: Proposal Review (approved)`) so `Space`
-  shows its effect while the Decision section is scrolled away. Proposal Review
+  annotate the focused row's Approval (`:: Proposal Review (approved)`) so `Space`/`x`
+  show their effect while the Decision section is scrolled away. Proposal Review
   opens with the target and groups facts under full-width titled rules
   (`── Decision ───`; copied text uses `:: Decision`): Decision (Approval, Resolution, effective
   policy, and configured policy only when it differs), Paths, State (Observation,
@@ -163,7 +163,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   In both search lines `↑`/`↓` recall the last 10 queries, newest first; workset
   filters and reader searches keep separate histories for the session, and `↓` past
   the newest query restores the text typed before recalling.
-  `x` opens one compact confirmation with selected units, repository changes,
+  `c` opens one compact confirmation with selected units, repository changes,
   and changed live targets, each counted once whether written, deleted,
   mode-changed, or reapplied; deletions and reapplies are also shown in brackets
   (`live: 3 (1 deleted, 1 reapplied)`). Confirming with nothing selected is allowed
@@ -236,7 +236,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   from successful completion.
 - A No-op Proposal (nothing to write and no new Sync Base to record) keeps its
   row as evidence but offers no Approval: the row shows `[-]` with Resolution
-  `No-op`, Space explains why, Review shows `Approval: not needed` plus a
+  `No-op`, Space/x explains why, Review shows `Approval: not needed` plus a
   hint that `compare` does not match Capture, and results report `noop`
   (listed only with `--report`).
 - JSON emits one clean final document with `operation`, `mode`, `status`,
@@ -426,7 +426,7 @@ workset and Command Deck with Sync and Pull, but its only resolution is
   scopes to use all tracked targets, including dependency closure and ownership
   winners. Untracked input fails; use `track` first.
 - Only push-capable targets (`push-only`, `push-only-delete`, `both`) participate.
-  Drifted Proposals start approved. Space opts out; Enter inspects frozen Views
+  Drifted Proposals start approved. Space/x opts out; Enter inspects frozen Views
   and the live outcome; E edits the repository source transactionally; T retries
   a failed Proposal. There is no Resolution Intent or Merge choice.
 - Noninteractive use requires global `--unattended`, including `--dry-run` and
@@ -474,7 +474,7 @@ Merge choice and never publishes to live paths.
 
 - `dotman pull [repo:package.target ...]` resolves exact tracked scopes. Omit
   scopes to use all tracked targets; package instances use `repo:package<instance>.target`.
-- Drifted Proposals start approved. Space opts out; Enter inspects frozen Views
+- Drifted Proposals start approved. Space/x opts out; Enter inspects frozen Views
   and the repository outcome; E edits transactionally; T retries a failed Proposal.
 - Raw, verified Patch Capture and Missing outcomes use frozen opening evidence.
   Capture reads the live endpoint; its result is reused, not rerun for review.

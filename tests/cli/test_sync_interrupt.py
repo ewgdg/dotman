@@ -31,7 +31,7 @@ def wait_until(predicate, process, read_output=lambda: None):
 @pytest.mark.parametrize("keys,title", [
     (b"", b"Merge"),
     (b"\r", b"Proposal Review"),
-    (b" x", b"Confirmation"),
+    (b" c", b"Confirmation"),
 ], ids=["workset", "review", "confirmation"])
 def test_ctrl_c_with_sync_base_exits_cleanly(tmp_path, monkeypatch, keys, title):
     established(tmp_path, monkeypatch)
@@ -54,10 +54,10 @@ def test_ctrl_c_with_sync_base_exits_cleanly(tmp_path, monkeypatch, keys, title)
     try:
         wait_until(lambda: b"Merge" in output, process, read_output)
         if keys:
-            if keys == b" x":
+            if keys == b" c":
                 os.write(master, b" ")
                 wait_until(lambda: b"[x]" in output, process, read_output)
-                os.write(master, b"x")
+                os.write(master, b"c")
             else:
                 os.write(master, keys)
             wait_until(lambda: title in output, process, read_output)

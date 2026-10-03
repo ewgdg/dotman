@@ -119,7 +119,7 @@ def test_editor_key_saves_in_place_and_is_disabled_after_confirmation(tmp_path, 
                 assert (tmp_path / "live/unit").read_bytes() == b"live"
                 await pilot.press("escape")
                 assert "Edited" in app.query_one(DataTable).render_line(1).text
-                await pilot.press("x")
+                await pilot.press("c")
                 frozen = session.view
                 await pilot.press("e")
                 assert session.view == frozen
@@ -197,7 +197,7 @@ def test_tty_editor_returns_terminal_and_cancel_preserves_selected_proposal(tmp_
         assert process.poll() is None
         assert (tmp_path / "repo/packages/app/unit").read_bytes() == b"repo"
         assert (tmp_path / "live/unit").read_bytes() == b"live"
-        os.write(master, b"x")
+        os.write(master, b"c")
         wait_until(lambda: b"approved:" in output, process, read_output)
         os.write(master, b"\x03")
         wait_until(lambda: process.poll() is not None, process, read_output)

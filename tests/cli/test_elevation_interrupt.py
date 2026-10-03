@@ -192,7 +192,7 @@ def test_cli_broker_password_prompt_result_and_terminal_lifecycle(
         )
         # Keep the initially selected hook-only workset and confirm execution.
         _wait_for(lambda: b"Hook Work" in output, process, master, output)
-        os.write(master, b"x")
+        os.write(master, b"c")
         _wait_for(lambda: b"Confirmation" in output, process, master, output)
         os.write(master, b"\r")
         _wait_for(
@@ -316,7 +316,7 @@ def test_broker_password_prompt_in_tty_editor_cancels_only_editor_attempt(
         assert (source.read_bytes(), live.read_bytes()) == before
         _wait_for(lambda: all(_stopped(pid) for pid in second_pids), process, master, output)
         assert not (termios.tcgetattr(slave)[3] & termios.ICANON), output.decode(errors="replace")
-        os.write(master, b"x")
+        os.write(master, b"c")
         _wait_for(lambda: b"approved:" in output, process, master, output)
         os.write(master, b"\x03")
         _wait_for(lambda: process.poll() is not None, process, master, output)

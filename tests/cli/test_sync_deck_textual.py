@@ -159,11 +159,12 @@ def test_keyboard_review_scroll_return_approval_and_confirmation(tmp_path, monke
                 await pilot.press("escape", "enter")
                 await pilot.pause()
                 assert log.scroll_y == position
-                await pilot.press("escape", "space", "x")
+                # x toggles Selection like Space; c opens the confirmation.
+                await pilot.press("escape", "x", "c")
                 frozen = session.view
                 await pilot.press("space", "a", "u", "down")
                 assert session.view == frozen
-                await pilot.press("escape", "x", "enter")
+                await pilot.press("escape", "c", "enter")
                 assert app.return_value is True
         run(interact())
         assert [row.approved for row in session.view.rows] == [False, True]
@@ -401,9 +402,9 @@ def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monke
                 styled = {segment.text.strip() for strip in strips for segment in strip if segment.style != plain}
                 assert {"main", "bad", "error"} <= styled
                 hints = app.query_one("#help", Static).render()
-                assert hints.plain.startswith("q abort · x confirm")
+                assert hints.plain.startswith("q abort · c confirm · Space/x mark")
                 bold = {hints.plain[span.start:span.end] for span in hints.spans if "bold" in str(span.style)}
-                assert {"q", "x", "Space"} <= bold and "confirm" not in bold
+                assert {"q", "c", "Space/x"} <= bold and "confirm" not in bold
         run(interact())
 
 
@@ -425,7 +426,7 @@ def test_pull_review_keeps_frozen_evidence_and_never_approves_on_open(tmp_path, 
                 assert not session.view.rows[0].approved
                 await pilot.press("space")
                 assert session.view.rows[0].approved
-                await pilot.press("escape", "x")
+                await pilot.press("escape", "c")
                 assert "repos: 1 · live: 0" in str(app.query_one("#confirmation", Static).render())
                 await pilot.press("ctrl+c")
                 assert app.return_value is False
@@ -590,7 +591,7 @@ def test_help_area_click_cannot_authorize_after_clear_key(tmp_path, monkeypatch)
                 rendered_help = " ".join(
                     help_widget.render_line(y).text for y in range(help_widget.size.height)
                 )
-                assert "q abort" in rendered_help and "x confirm" in rendered_help
+                assert "q abort" in rendered_help and "c confirm" in rendered_help
         run(interact())
 
 
@@ -1068,9 +1069,9 @@ def test_review_search_box_keeps_deck_keys_out_of_the_query(tmp_path, monkeypatc
                 await pilot.pause()
                 frozen = session.view
                 # Every typed key is also a deck key: edit, full view, approve, select all, confirm, quit.
-                await pilot.press("slash", "e", "v", "space", "a", "x", "q")
+                await pilot.press("slash", "e", "v", "space", "a", "c", "q")
                 await pilot.pause()
-                assert app.query_one("#search").value == "ev ax" + "q"
+                assert app.query_one("#search").value == "ev ac" + "q"
                 assert help_text(app) == "Enter search · ↑/↓ history · Ctrl+U clear · Esc cancel · Ctrl+C abort"
                 assert session.view == frozen
                 assert title_text(app) == ":: Proposal Review (unapproved)"
