@@ -623,7 +623,7 @@ def test_help_chips_click_through_confirmation(tmp_path, monkeypatch):
                 post_help_click(app, "[c confirm]")
                 await pilot.pause()
                 assert app.deck.confirming
-                assert help_text(app) == "[Enter preview] · [Esc return] · Ctrl+C abort"
+                assert help_text(app) == "[Esc return] · [Enter preview] · Ctrl+C abort"
                 post_help_click(app, "[Esc return]")
                 await pilot.pause()
                 assert not app.deck.confirming
@@ -634,6 +634,23 @@ def test_help_chips_click_through_confirmation(tmp_path, monkeypatch):
                 assert app.return_value is True
         run(interact())
         assert [row.approved for row in session.view.rows] == [True]
+
+
+def test_double_click_on_confirm_chip_cannot_execute(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", b"repo", b"live", "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=False) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(100, 24)) as pilot:
+                await pilot.press("x")
+                # No pause between clicks: the second lands on whatever chip the
+                # first click's view put under the pointer.
+                post_help_click(app, "[c confirm]")
+                post_help_click(app, "[c confirm]")
+                await pilot.pause()
+                assert app.return_value is None and not app.deck.confirming
+        run(interact())
 
 
 def test_hovered_help_chip_lights_up(tmp_path, monkeypatch):

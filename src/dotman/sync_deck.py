@@ -1088,6 +1088,8 @@ class SyncDeckApp(App[bool]):
         if self.busy and isinstance(event, events.InputEvent):
             if isinstance(event, events.Key) and event.key == "ctrl+c":
                 self.action_abort()
+            # A dropped press must not pair with a later release on a chip.
+            self._pressed_hint_action = None
             event.stop()
             event.prevent_default()
             return
@@ -1228,7 +1230,9 @@ class SyncDeckApp(App[bool]):
             hints = [("↑/↓/j/k", "move"), ("Enter", "choose"), ("Esc", "dismiss")]
         elif self.deck.confirming:
             verb = "preview" if self.deck.session.view.preview else "execute"
-            hints = [HintChip("Enter", verb, "review_or_confirm"), HintChip("Esc", "return", "back"),
+            # Return takes the spot of the workset's leading confirm chip, so a
+            # double-click on [c confirm] cannot land on execute.
+            hints = [HintChip("Esc", "return", "back"), HintChip("Enter", verb, "review_or_confirm"),
                      ("Ctrl+C", "abort")]
         elif self.deck.full_view is not None:
             hints = [*review_lead, ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
