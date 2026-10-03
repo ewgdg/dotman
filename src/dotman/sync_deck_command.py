@@ -148,7 +148,6 @@ class SyncDeckCommandRunner:
         self._engine_factory = engine_factory
         self._use_color = use_color
         self._interaction = interaction
-        self._on_demand_skips = ()
 
     def run(self, args) -> int:
         with interaction_scope(unattended=args.unattended):
@@ -181,7 +180,7 @@ class SyncDeckCommandRunner:
                 "code": "interrupted", "message": f"{self.operation.title()} preflight interrupted",
             })
             return 130
-        self._on_demand_skips = scope.on_demand_skips_for(self.operation)
+        on_demand_skips = scope.on_demand_skips_for(self.operation)
         ui = engine.config.ui
         if getattr(args, 'full_path', None) is not None:
             ui = replace(ui, full_paths=args.full_path)
@@ -189,7 +188,7 @@ class SyncDeckCommandRunner:
             timeline = None if args.json_output or args.dry_run else SyncTimelineRenderer(use_color=self._use_color)
             opened = self._open(engine, scope, args, timeline)
             if isinstance(opened, SessionOpenFailed):
-                self._emit(args, None, None, diagnostic={
+                self._emit(args, None, None, on_demand_skips=on_demand_skips, diagnostic={
                     "code": opened.diagnostic.code, "message": opened.diagnostic.message,
                 }, output_line=opened.output_line)
                 return 130 if opened.diagnostic.code == "interrupted" else 1
@@ -208,7 +207,7 @@ class SyncDeckCommandRunner:
                         confirmed = False
                     if not confirmed:
                         aborted = session.abort()
-                        self._emit(args, session, aborted.result, diagnostic={
+                        self._emit(args, session, aborted.result, on_demand_skips=on_demand_skips, diagnostic={
                             "code": "interrupted", "message": f"{self.operation.title()} aborted",
                         }, deck_dismissed=True)
                         return 130
@@ -227,7 +226,7 @@ class SyncDeckCommandRunner:
                         for row in session.view.rows
                         for item in row_diagnostics(row)
                     )
-                    self._emit(args, session, None, diagnostic={
+                    self._emit(args, session, None, on_demand_skips=on_demand_skips, diagnostic={
                         "code": "interrupted", "message": f"{self.operation.title()} materialization interrupted",
                     } if interrupted else None)
                     return 130 if interrupted else 1
@@ -236,7 +235,7 @@ class SyncDeckCommandRunner:
                     and "set-approval" not in row.allowed_commands
                     for row in session.view.rows
                 ):
-                    self._emit(args, session, None, diagnostic={
+                    self._emit(args, session, None, on_demand_skips=on_demand_skips, diagnostic={
                         "code": "unattended-decision",
                         "message": "Participating drift has no supported automatic resolution.",
                     })
@@ -256,15 +255,15 @@ class SyncDeckCommandRunner:
                                 () if deck_review else guard_skip_summaries(
                                     row for row in session.view.rows if isinstance(row, AuxiliaryRow)),
                                 () if deck_review else no_base_skip_summaries(args, session.view.rows),
-                                on_demand_skip_summaries(self._on_demand_skips))
+                                on_demand_skip_summaries(on_demand_skips))
                     dispatched = session.execute()
                 if isinstance(dispatched, CommandRejected):
-                    self._emit(args, session, None, diagnostic={
+                    self._emit(args, session, None, on_demand_skips=on_demand_skips, diagnostic={
                         "code": dispatched.diagnostics[0].code if dispatched.diagnostics else "command-rejected",
                         "message": dispatched.diagnostics[0].message if dispatched.diagnostics else dispatched.reason,
                     })
                     return 1
-                self._emit(args, session, dispatched.result, timeline=timeline)
+                self._emit(args, session, dispatched.result, on_demand_skips=on_demand_skips, timeline=timeline)
                 return dispatched.result.exit_code
 
     def _print_planning_skips(self, guard_skips, no_base_skips, on_demand_skips) -> None:
@@ -285,9 +284,9 @@ class SyncDeckCommandRunner:
         print(f":: {self.operation.title()}" + (" preview" if args.dry_run else ""), flush=True)
 
     def _emit(self, args, session: SyncSession | None, result, *, diagnostic=None, output_line=None,
-              timeline: SyncTimelineRenderer | None = None, deck_dismissed: bool = False) -> None:
-        payload = sync_document(args, session, result, diagnostic=diagnostic,
-                                on_demand_skips=self._on_demand_skips)
+              timeline: SyncTimelineRenderer | None = None, deck_dismissed: bool = False,
+              on_demand_skips=()) -> None:
+        payload = sync_document(args, session, result, diagnostic=diagnostic, on_demand_skips=on_demand_skips)
         if args.json_output:
             print(json.dumps(payload))
             return
