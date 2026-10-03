@@ -176,6 +176,7 @@ class EditResolver:
             subject=subject,
             header_text=f"Select a {subject} for '{query_text}':",
             value_of=lambda candidate: candidate.ref_text,
+            include_probes=True,
         )
 
     def _resolve_tracked_query(
@@ -186,12 +187,15 @@ class EditResolver:
         subject: str,
         header_text: str,
         value_of: Callable[[_EditQueryCandidate], CandidateValue],
+        include_probes: bool = False,
     ) -> CandidateValue:
         engine = self._require_engine()
         _package_query, _bound_profile, package_exact, package_partial = (
             engine.find_tracked_package_matches(query)
         )
-        _target_query, target_exact, target_partial = engine.find_tracked_target_matches(query)
+        _target_query, target_exact, target_partial = engine.find_tracked_target_matches(
+            query, include_probes=include_probes,
+        )
         exact_candidates = [
             self._edit_package_candidate(*match) for match in package_exact
         ] + [self._edit_target_candidate(match) for match in target_exact]

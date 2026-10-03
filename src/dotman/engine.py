@@ -393,8 +393,12 @@ class DotmanEngine:
     ) -> tuple[str, str | None, list[tuple[Repository, str, str | None]], list[tuple[Repository, str, str | None]]]:
         return tracked_packages.find_tracked_package_matches(self._tracked_state_context, package_text)
 
-    def find_tracked_target_matches(self, target_text: str) -> tuple[str, list[Any], list[Any]]:
-        return tracked_packages.find_tracked_target_matches(self._planning_context, target_text)
+    def find_tracked_target_matches(
+        self, target_text: str, *, include_probes: bool = False,
+    ) -> tuple[str, list[Any], list[Any]]:
+        return tracked_packages.find_tracked_target_matches(
+            self._planning_context, target_text, include_probes=include_probes,
+        )
 
     def preview_package_selection_implicit_overrides(self, selection: ResolvedPackageSelection) -> list[TrackedTargetOverride]:
         return planning.preview_package_selection_implicit_overrides(self._planning_context, selection)

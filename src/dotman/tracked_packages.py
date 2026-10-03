@@ -47,7 +47,8 @@ class TrackedTargetMatch:
     repo_name: str
     package_id: str
     target_name: str
-    repo_path: Path
+    # Probe targets have no repository path; their kind is "probe".
+    repo_path: Path | None
     target_kind: str
     bound_profile: str | None = None
 
@@ -149,7 +150,10 @@ def describe_tracked_package(context: "PlanningContext", package_text: str) -> T
 def find_tracked_target_matches(
     context: "PlanningContext",
     target_text: str,
+    *,
+    include_probes: bool = False,
 ) -> tuple[str, list[TrackedTargetMatch], list[TrackedTargetMatch]]:
+    """Match tracked targets; probes only when the caller selects identities, not paths."""
     _explicit_repo, selector, profile = parse_full_spec_selector_text(target_text)
     if profile is not None:
         raise ValueError("tracked target lookup expects a target selector, not a binding")
@@ -162,6 +166,8 @@ def find_tracked_target_matches(
         parse_package_ref_text(package_query)
 
     tracked_targets = list_tracked_targets(context)
+    if include_probes:
+        tracked_targets += list_tracked_probe_targets(context)
     exact_matches: list[TrackedTargetMatch] = []
     partial_matches: list[TrackedTargetMatch] = []
     for candidate in tracked_targets:
@@ -222,6 +228,27 @@ def list_tracked_targets(context: "PlanningContext") -> list[TrackedTargetMatch]
             "" if item.bound_profile is None else item.bound_profile,
         ),
     )
+
+
+def list_tracked_probe_targets(context: "PlanningContext") -> list[TrackedTargetMatch]:
+    """Probes claim no path, so path ownership never lists them."""
+    from dotman import planning
+
+    return [
+        TrackedTargetMatch(
+            repo_name=selection.identity.repo,
+            package_id=selection.identity.package_id,
+            target_name=target_name,
+            repo_path=None,
+            target_kind="probe",
+            bound_profile=selection.identity.bound_profile,
+        )
+        for selection in planning.resolve_tracked_package_selections(context)
+        for target_name, target in (
+            context.repositories[selection.identity.repo].resolve_package(selection.identity.package_id).targets or {}
+        ).items()
+        if target.probe is not None and not target.disabled
+    ]
 
 
 def find_tracked_package_matches(

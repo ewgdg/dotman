@@ -254,3 +254,29 @@ def test_mixed_policy_execution_keeps_frozen_target_order(tmp_path, monkeypatch,
         result = session.execute().result
         assert result.status == 'completed'
     assert log.read_text().splitlines() == ['first', 'second']
+
+
+@pytest.mark.parametrize('selector', ['main:app.check', 'app.check'])
+def test_exact_cli_selector_resolves_probe_target(tmp_path, monkeypatch, capsys, selector):
+    import json
+    from dotman.cli import main
+
+    log = tmp_path / 'log'
+    engine = auxiliary_engine(tmp_path, monkeypatch, f'''
+[targets.check]
+probe = "echo probe >> {log}"
+sync_policy = "push-only"
+''')
+    assert main(['--config', str(engine.config.config_path), '--json', '--unattended', 'push', selector]) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert [work['identity'] for work in document['probe_work']] == ['main:app.check']
+    assert log.read_text().splitlines() == ['probe']
+
+
+def test_edit_query_never_resolves_to_a_probe_target(tmp_path, monkeypatch):
+    from dotman.edit_resolution import EditResolver
+
+    engine = auxiliary_engine(tmp_path, monkeypatch, '[targets.check]\nprobe = "true"\n')
+    resolver = EditResolver(engine.config, engine=engine, interaction=None, use_color=False)
+    with pytest.raises(ValueError, match='did not match'):
+        resolver.resolve_query_path('app.check')
