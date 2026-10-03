@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import sys
 from datetime import datetime, timezone
 from typing import Sequence
 
@@ -47,10 +45,6 @@ SNAPSHOT_STATUS_STYLE_BY_NAME: dict[str, tuple[str, ...]] = {
     "failed": ("1", "31"),
 }
 SUDO_BADGE_STYLE = ("1", "33")
-
-
-def colors_enabled() -> bool:
-    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 
 def style_text(text: str, *codes: str) -> str:

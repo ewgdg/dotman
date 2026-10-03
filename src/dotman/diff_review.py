@@ -17,6 +17,7 @@ from dotman.command_runtime import (
     raise_for_command_interruption,
 )
 from dotman.models import AdditionalSource, EditorSpec
+from dotman.terminal import colors_enabled
 from dotman.ui_context import current_ui_config
 
 
@@ -61,7 +62,7 @@ def _render_hook_command_summary(summary: str) -> str:
     if ": " not in summary:
         return summary
     hook_name, command = summary.split(": ", 1)
-    hook_badge = cli_style.render_menu_badge(f"[{hook_name}]", use_color=cli_style.colors_enabled())
+    hook_badge = cli_style.render_menu_badge(f"[{hook_name}]", use_color=colors_enabled(sys.stdout))
     return f"{hook_badge} {command}"
 
 

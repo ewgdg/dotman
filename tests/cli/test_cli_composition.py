@@ -91,6 +91,15 @@ def test_unattended_rejects_editor_commands_before_opening(command, capsys, monk
     assert "unattended" in capsys.readouterr().err
 
 
+def test_interaction_required_error_colors_follow_stderr(capsys, monkeypatch) -> None:
+    # The error is written to stderr, so `2>log` must stay plain even when stdout is a terminal.
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr("sys.stderr.isatty", lambda: False)
+    assert main(["--unattended", "edit", "config"]) == 1
+    assert "\x1b[" not in capsys.readouterr().err
+
+
 def test_unattended_disables_terminal_interaction_scope(monkeypatch) -> None:
     from dotman import cli_interaction, interaction_policy
     monkeypatch.setattr("sys.stdin", StringIO())

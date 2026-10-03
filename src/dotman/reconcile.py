@@ -15,7 +15,7 @@ from dotman.atomic_files import write_text_atomic
 from dotman.models import AdditionalSource, EditorSpec
 from dotman.command_runtime import ArgvCommand, CommandRequest, CommandResult, current_command_runtime
 from dotman.file_access import chmod, read_bytes, write_bytes_atomic as sudo_write_bytes_atomic
-from dotman.terminal import read_prompt_line
+from dotman.terminal import colors_enabled, read_prompt_line
 
 
 ANSI_RESET = "\033[0m"
@@ -37,10 +37,6 @@ class EditableSourceCopy:
 
 def prompt(message: str) -> str:
     return read_prompt_line(message, input_stream=sys.stdin, output_stream=sys.stdout)
-
-
-def colors_enabled() -> bool:
-    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 
 def style_text(text: str, *codes: str) -> str:
@@ -219,7 +215,7 @@ def _changed_editable_sources(editable_sources: list[EditableSourceCopy]) -> lis
 def _reconcile_write_confirmation_prompt() -> str:
     prompt_text = "Write these changes?"
     hint_text = "[y/n]"
-    if not colors_enabled():
+    if not colors_enabled(sys.stdout):
         return f"{prompt_text} {hint_text} "
     # Keep reconcile prompt styling aligned with CLI confirmation prompts without
     # importing dotman.cli and creating a circular dependency.

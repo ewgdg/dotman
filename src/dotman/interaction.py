@@ -15,7 +15,7 @@ from dotman.command_runtime import (
     CommandRuntime,
     current_command_runtime,
 )
-from dotman.terminal import read_prompt_line
+from dotman.terminal import colors_enabled, read_prompt_line
 from dotman.ui_context import current_ui_config
 
 ChoiceValue = TypeVar("ChoiceValue")
@@ -190,7 +190,7 @@ class TerminalInteraction:
     def _colors_enabled(self) -> bool:
         if self.use_color is not None:
             return self.use_color
-        return self.output_stream.isatty() and os.environ.get("NO_COLOR") is None
+        return colors_enabled(self.output_stream)
 
     def _menus_bottom_up_enabled(self) -> bool:
         if self.menus_bottom_up is not None:

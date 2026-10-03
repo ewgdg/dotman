@@ -52,7 +52,7 @@ from dotman.snapshot import (
     SnapshotRecord,
     find_snapshot_matches,
 )
-from dotman.terminal import ESCAPE_INPUT, read_prompt_line
+from dotman.terminal import ESCAPE_INPUT, colors_enabled as terminal_colors_enabled, read_prompt_line
 from dotman.ui_context import current_ui_config
 
 MENU_HEADER_MARKER = cli_style.MENU_HEADER_MARKER
@@ -78,7 +78,7 @@ def prompt(message: str, *, escape_result: str | None = None) -> str:
 
 
 def colors_enabled() -> bool:
-    return cli_style.colors_enabled()
+    return terminal_colors_enabled(sys.stdout)
 
 
 def style_text(text: str, *codes: str) -> str:
@@ -1041,7 +1041,7 @@ class StateRuntime:
     def emit_resolution_error(self, error: ValueError) -> None:
         cli_emit.emit_error(
             error,
-            use_color=sys.stderr.isatty() and os.environ.get("NO_COLOR") is None,
+            use_color=terminal_colors_enabled(sys.stderr),
         )
 
     def emit_resolution_message(self, message: str) -> None:

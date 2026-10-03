@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 import sys
 from contextlib import contextmanager
-from typing import Iterator, Sequence
+from typing import Iterator, Sequence, TextIO
 
 try:
     import termios
@@ -12,6 +13,12 @@ except ImportError:  # pragma: no cover - non-POSIX platforms do not expose term
 
 type TerminalStateSnapshot = tuple[int, list[int | bytes]]
 ESCAPE_INPUT = "\x1b"
+
+
+# Lives here rather than in cli_style so dotman.cli can use it without loading
+# dotman.models at startup. Callers pass the stream they actually write to.
+def colors_enabled(stream: TextIO) -> bool:
+    return stream.isatty() and os.environ.get("NO_COLOR") is None
 
 
 @contextmanager

@@ -21,6 +21,7 @@ from dotman.command_runtime import (
 )
 
 from dotman.interaction_policy import unattended_enabled
+from dotman.terminal import colors_enabled
 
 _SUDO_KEEPALIVE_INTERVAL_SECONDS = 30
 _PRIVILEGED_HELPER_MODULE = "dotman.privileged_ops"
@@ -134,7 +135,7 @@ def _emit_sudo_notice(reason: str | None, *, password_required: bool) -> None:
     from dotman import cli_style
 
     detail = reason or "perform privileged operation"
-    use_color = sys.stderr.isatty() and os.environ.get("NO_COLOR") is None
+    use_color = colors_enabled(sys.stderr)
     badge = cli_style.render_sudo_badge(use_color=use_color)
     print(f"{badge} {'password required to ' if password_required else ''}{detail}", file=sys.stderr)
 
