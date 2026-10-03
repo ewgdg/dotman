@@ -13,6 +13,8 @@ MENU_HEADER_MARKER_STYLE = ("1", "34")
 MENU_INDEX_STYLE = ("1", "36")
 MENU_PROMPT_STYLE = ("1",)
 MENU_HINT_STYLE = ("2",)
+# Yellow, the Command Deck title's accent; a hovered chip lights its brackets with it.
+HOVERED_CHIP_BRACKET_STYLE = ("1", "33")
 KEY_HINT_SEPARATOR = " · "
 MENU_REPO_STYLE = ("2", "34")
 # Target segment needs stronger contrast than repo + separator, and should not
@@ -421,10 +423,19 @@ def render_key_hint(key: str, action: str, *, use_color: bool) -> str:
     return f"{style_text(key, *MENU_PROMPT_STYLE)} {style_text(action, *MENU_HINT_STYLE)}"
 
 
-def render_key_hint_chip(key: str, action: str, *, use_color: bool) -> str:
-    """Render a clickable hint. Brackets mark it with or without color; color only adds emphasis."""
-    chip = f"[{key} {action}]"
-    return style_text(chip, *MENU_PROMPT_STYLE) if use_color else chip
+def render_key_hint_chip(key: str, action: str, *, use_color: bool, hovered: bool = False) -> str:
+    """Render a clickable hint. Brackets mark it with or without color, around the usual hint style.
+
+    Hovering lights the chip up: accent brackets and an undimmed action.
+    """
+    if not use_color:
+        return f"[{key} {action}]"
+    if hovered:
+        bracket_style, action_style = HOVERED_CHIP_BRACKET_STYLE, ()
+    else:
+        bracket_style, action_style = MENU_HINT_STYLE, MENU_HINT_STYLE
+    return (f"{style_text('[', *bracket_style)}{style_text(key, *MENU_PROMPT_STYLE)} "
+            f"{style_text(action, *action_style)}{style_text(']', *bracket_style)}")
 
 
 def render_execution_action(action: str, *, use_color: bool) -> str:

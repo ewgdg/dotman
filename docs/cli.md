@@ -125,7 +125,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   confirmation, wrapping to two lines on narrow terminals. Bracketed hints are
   clickable chips that run like their key: `[c confirm]` leads the workset hints, and
   confirmation offers `[Enter execute]` (`[Enter preview]` under `--dry-run`) and
-  `[Esc return]`. A chip runs only when the click is pressed and released on it.
+  `[Esc return]`. Chips keep the hint style and light up under the mouse (accent
+  brackets, undimmed label). A chip runs only when the click is pressed and released on it.
   Other hints are not clickable.
   Long Target identities are shortened in the middle (`…`) so every column fits
   the terminal width; the focused detail line shows the full identity. Arrow keys

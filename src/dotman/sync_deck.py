@@ -83,17 +83,19 @@ class HintChip:
     action: str
 
 
-def render_hint(hint: tuple[str, str] | HintChip, *, use_color: bool) -> Text:
+def render_hint(hint: tuple[str, str] | HintChip, *, use_color: bool, hovered_action: str | None) -> Text:
     if isinstance(hint, tuple):
         return Text.from_ansi(render_key_hint(*hint, use_color=use_color))
-    chip = Text.from_ansi(render_key_hint_chip(hint.key, hint.label, use_color=use_color))
+    chip = Text.from_ansi(render_key_hint_chip(hint.key, hint.label, use_color=use_color,
+                                               hovered=hint.action == hovered_action))
     chip.stylize(Style(meta={HINT_ACTION_KEY: hint.action}))
     return chip
 
 
-def render_hint_line(hints: list[tuple[str, str] | HintChip], *, use_color: bool) -> Text:
+def render_hint_line(hints: list[tuple[str, str] | HintChip], *, use_color: bool,
+                     hovered_action: str | None) -> Text:
     separator = Text.from_ansi(render_key_hint_separator(use_color=use_color))
-    return separator.join(render_hint(hint, use_color=use_color) for hint in hints)
+    return separator.join(render_hint(hint, use_color=use_color, hovered_action=hovered_action) for hint in hints)
 
 
 class SearchMarks:
@@ -951,6 +953,7 @@ class SyncDeckApp(App[bool]):
         self.review_positions: dict[str, tuple[float, float]] = {}
         self._workset_mouse_down = False
         self._pressed_hint_action: str | None = None
+        self._hovered_hint_action: str | None = None
         self._detail_row_id: str | None = None
         self._lane = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sync-materialization")
         self._materialization: asyncio.Task | None = None
@@ -1150,6 +1153,7 @@ class SyncDeckApp(App[bool]):
     def on_mount(self) -> None:
         self.query_one(OptionList).display = False
         self.query_one("#search-bar").display = False
+        self.watch(self.query_one("#help"), "hover_style", self.hover_hint, init=False)
         table = self.query_one(WorksetTable)
         # The Selection header matches its narrow "[ ]" markers, leaving width for targets.
         table.add_columns("✓", "Target", "Policy", "Resolution")
@@ -1251,7 +1255,16 @@ class SyncDeckApp(App[bool]):
         if (resolution_choosable(row) and not self.deck.reviewing and not self._search_open
                 and not self.query_one(OptionList).display and not self.deck.confirming):
             hints.append(("r", "intent"))
-        self.query_one("#help", Static).update(render_hint_line(hints, use_color=self.deck.use_color))
+        self.query_one("#help", Static).update(render_hint_line(
+            hints, use_color=self.deck.use_color, hovered_action=self._hovered_hint_action))
+
+    def hover_hint(self, hover_style: Style) -> None:
+        # Textual's own link hover only follows "@click" metadata, whose deferred
+        # widget dispatch could let a chip click overtake a later key.
+        hovered_action = hover_style.meta.get(HINT_ACTION_KEY)
+        if hovered_action != self._hovered_hint_action:
+            self._hovered_hint_action = hovered_action
+            self.update_hints()
 
     def update_detail(self) -> None:
         row = self.deck.focused_row

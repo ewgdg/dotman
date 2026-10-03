@@ -408,8 +408,7 @@ def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monke
                 hints = app.query_one("#help", Static).render()
                 assert hints.plain.startswith("[c confirm] · q abort · x select")
                 bold = {hints.plain[span.start:span.end] for span in hints.spans if "bold" in str(span.style)}
-                # The clickable chip stays undimmed; plain hints dim their action.
-                assert {"[c confirm]", "q", "x"} <= bold and "abort" not in bold
+                assert {"q", "c", "x"} <= bold and "confirm" not in bold
         run(interact())
 
 
@@ -635,6 +634,30 @@ def test_help_chips_click_through_confirmation(tmp_path, monkeypatch):
                 assert app.return_value is True
         run(interact())
         assert [row.approved for row in session.view.rows] == [True]
+
+
+def test_hovered_help_chip_lights_up(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("one", "push-only", b"repo", b"live", "")])
+    with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=True))
+
+        def chip_styles():
+            hints = app.query_one("#help", Static).render()
+            chip_end = hints.plain.index("]") + 1
+            return {(hints.plain[span.start:span.end], str(span.style)) for span in hints.spans if span.end <= chip_end}
+
+        async def interact():
+            async with app.run_test(size=(100, 24)) as pilot:
+                resting = chip_styles()
+                await pilot.hover("#help", offset=(3, 0))
+                await pilot.pause()
+                hovered = chip_styles()
+                assert not any(text == "confirm" and "dim" in style for text, style in hovered)
+                assert any(text == "[" and "yellow" in style for text, style in hovered)
+                await pilot.hover("#workset")
+                await pilot.pause()
+                assert chip_styles() == resting
+        run(interact())
 
 
 def test_resolution_key_toggles_between_two_intents_without_menu(tmp_path, monkeypatch):
