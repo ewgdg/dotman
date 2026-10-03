@@ -933,7 +933,6 @@ class SyncDeckApp(App[bool]):
         self._editing = False
         # One OptionList serves the Resolution and Full View menus.
         self._menu_choose = None
-        self._menu_subject = ""
         # Full View reuses the review scroller; the review offset is restored on return.
         self._review_position_before_full_view = (0.0, 0.0)
         # A plain flag: Textual may ask check_action before the search box is composed.
@@ -1189,7 +1188,7 @@ class SyncDeckApp(App[bool]):
             hints = [("Enter", "search" if self.deck.reviewing else "filter"), ("↑/↓", "history"),
                      ("Ctrl+U", "clear"), ("Esc", "cancel"), ("Ctrl+C", "abort")]
         elif self.query_one(OptionList).display:
-            hints = [("↑/↓/j/k", "move"), ("Enter", f"choose {self._menu_subject}"), ("Esc", "dismiss")]
+            hints = [("↑/↓/j/k", "move"), ("Enter", "choose"), ("Esc", "dismiss")]
         elif self.deck.confirming:
             hints = [("Enter", "confirm"), ("Esc", "return"), ("Ctrl+C", "abort")]
         elif self.deck.full_view is not None:
@@ -1370,7 +1369,7 @@ class SyncDeckApp(App[bool]):
         elif len(titles) == 1:
             self.open_full_view(titles[0])
         else:
-            self.open_menu([Text(title) for title in titles], highlighted=0, subject="Full View",
+            self.open_menu([Text(title) for title in titles], highlighted=0,
                            choose=lambda index: self.open_full_view(titles[index]))
             self.update_hints()
 
@@ -1537,9 +1536,8 @@ class SyncDeckApp(App[bool]):
         # Keyboard toggles and mouse clicks both move focus; hints follow either.
         self.update_hints()
 
-    def open_menu(self, labels: list[Text], *, highlighted: int, subject: str, choose) -> None:
-        # Set before focusing: the focus event refreshes the hints.
-        self._menu_choose, self._menu_subject = choose, subject
+    def open_menu(self, labels: list[Text], *, highlighted: int, choose) -> None:
+        self._menu_choose = choose
         menu = self.query_one(OptionList)
         menu.clear_options()
         menu.add_options(labels)
@@ -1566,7 +1564,7 @@ class SyncDeckApp(App[bool]):
             return
         self.open_menu([Text.from_ansi(render_sync_term(resolution_label(intent), use_color=self.deck.use_color))
                         for intent in row.allowed_intents],
-                       highlighted=row.allowed_intents.index(row.intent), subject="Resolution",
+                       highlighted=row.allowed_intents.index(row.intent),
                        choose=self.choose_resolution)
         self.update_workset()
 

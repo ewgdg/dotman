@@ -694,7 +694,7 @@ def test_resolution_cell_and_menu_support_mouse(tmp_path, monkeypatch):
                 await pilot.pause()
                 assert app.query_one(OptionList).display
                 # "select" names only the row toggle; the menu's Enter picks an option.
-                assert help_text(app) == "↑/↓/j/k move · Enter choose Resolution · Esc dismiss"
+                assert help_text(app) == "↑/↓/j/k move · Enter choose · Esc dismiss"
                 await pilot.click('#resolution', offset=(2, 1))
                 assert session.view.rows[0].intent == 'use-repository'
                 assert not session.view.rows[0].approved
