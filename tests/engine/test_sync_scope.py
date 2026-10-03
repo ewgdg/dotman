@@ -393,3 +393,29 @@ def test_resolved_sync_scope_checks_nested_push_only_primary_sources(
 def test_split_scope_child_path_keeps_package_slashes(text, expected):
     from dotman.sync_scope import split_scope_child_path
     assert split_scope_child_path(text) == expected
+
+
+def test_dependency_on_demand_targets_skip_quietly_while_the_named_package_reports_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    (repo_root / "packages" / "base").mkdir()
+    (repo_root / "packages" / "base" / "package.toml").write_text(
+        'id = "base"\n[targets.update]\nprobe = "true"\non_demand = true\n', encoding="utf-8",
+    )
+    app_manifest = repo_root / "packages" / "app" / "package.toml"
+    app_manifest.write_text(
+        'depends = ["base"]\n' + app_manifest.read_text(encoding="utf-8")
+        + '\n[targets.check]\nprobe = "true"\non_demand = true\n',
+        encoding="utf-8",
+    )
+    write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "default")])
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope(["main:app"])
+
+    assert [item.canonical for item in scope.targets] == ["main:app.config", "main:app.settings"]
+    assert [item.canonical for item in scope.on_demand_skips] == ["main:app.check"]
+    named = engine.resolve_sync_scope(["main:base.update"])
+    assert [item.canonical for item in named.targets] == ["main:base.update"]

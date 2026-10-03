@@ -18,7 +18,7 @@ VALID_SYNC_POLICY_VALUES = ("push-only", "pull-only", "both", "push-only-delete"
 VALID_TARGET_TYPE_VALUES = ("file", "directory")
 FORCED_COMMAND_PREFIX = "__dotman_command__:"
 TARGET_MANIFEST_KEYS = frozenset(
-    {"capture", "chmod", "compare", "disabled", "editor", "hooks", "ignore",
+    {"capture", "chmod", "compare", "disabled", "editor", "hooks", "ignore", "on_demand",
      "path", "path_rules", "preset", "probe", "render", "source", "sync_policy", "type"}
 )
 
@@ -586,6 +586,9 @@ def build_target_spec(
     probe = normalize_target_command(value("probe"), field_name="probe", manifest_path=manifest_path, target_name=target_name)
     target_type = normalize_target_type(value("type"))
     sync_policy = normalize_sync_policy(value("sync_policy"))
+    on_demand = value("on_demand", False)
+    if not isinstance(on_demand, bool):
+        raise ValueError(f"package manifest {manifest_path} target '{target_name}' on_demand must be a boolean")
     chmod = value("chmod")
     if chmod is not None and (not isinstance(chmod, str) or _invalid_octal(chmod)):
         raise ValueError(f"package manifest {manifest_path} target '{target_name}' chmod must be an octal string")
@@ -688,7 +691,7 @@ def build_target_spec(
                       editor_explicit=("editor" in target_payload or "editor" in preset_payload),
                       ignore_patterns=patterns, ignore_command=ignore_command,
                       path_rules=path_rules, hooks=hooks,
-                      disabled=bool(value("disabled", False)))
+                      disabled=bool(value("disabled", False)), on_demand=on_demand)
 
 def build_hook_spec(
     *,
@@ -871,6 +874,7 @@ def merge_target_specs(base: TargetSpec, override: TargetSpec) -> TargetSpec:
         ignore_command=override.ignore_command if override.ignore_command is not None else base.ignore_command,
         path_rules=tuple(sorted(base_rules.values(), key=lambda r: (r.priority, r.name))),
         hooks=hooks, disabled=override.disabled or base.disabled,
+        on_demand=override.on_demand or base.on_demand,
     )
 
 

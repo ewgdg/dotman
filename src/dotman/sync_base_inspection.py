@@ -113,7 +113,7 @@ def info_sync_base(context, text: str):
 
 
 def list_sync_bases(context):
-    scope = resolve_sync_scope(context)
+    scope = resolve_sync_scope(context, include_on_demand=True)
     inputs, _ = _resolve_inputs(scope)
     entries = []
     for repo_config in context.config.ordered_repos:
@@ -158,7 +158,7 @@ def doctor_sync_bases(context):
     checks = []
     # Failed static resolution is not evidence that stored identities are orphaned.
     try:
-        scope = resolve_sync_scope(context)
+        scope = resolve_sync_scope(context, include_on_demand=True)
         inputs, _ = _resolve_inputs(scope)
     except ValueError:
         inputs = None

@@ -251,7 +251,15 @@ def _target_is_directory(context, selection: ResolvedPackageSelection, target_na
 def resolve_sync_scope(
     context,
     selectors: Sequence[str] | None = None,
+    *,
+    include_on_demand: bool = False,
 ) -> ResolvedSyncScope:
+    """Resolve selectors to owning tracked targets.
+
+    On-demand targets enter scope only through an exact target selector unless
+    ``include_on_demand`` asks for every tracked target, as metadata-only
+    inspection does.
+    """
     raw_selectors = () if selectors is None else ((selectors,) if isinstance(selectors, str) else tuple(selectors))
     parsed = tuple(_parse_scope_selector(text) for text in raw_selectors)
     all_selections = _tracked_selections(context)
@@ -355,6 +363,7 @@ def resolve_sync_scope(
 
     selected_targets: list[ResolvedSyncTarget] = []
     selected_target_keys: set[tuple[str, str, str | None, str, str | None]] = set()
+    on_demand_candidates: list[ResolvedSyncTarget] = []
     for item, closure in zip(parsed, selected_closures if parsed else ()):
         repo = context.repositories[item.repo]
         root = _matching_selection(item, repo=repo, selections=all_selections)
@@ -379,7 +388,7 @@ def resolve_sync_scope(
         else:
             for selection in closure:
                 package = context.repositories[selection.identity.repo].resolve_package(selection.identity.package_id)
-                for target_name in (package.targets or {}):
+                for target_name, target_spec in (package.targets or {}).items():
                     target = ResolvedSyncTarget(
                         repo=item.repo,
                         package_id=selection.identity.package_id,
@@ -387,6 +396,12 @@ def resolve_sync_scope(
                         bound_profile=selection.bound_profile,
                     )
                     if not any(_target_key(target) in keys for keys in winner_keys_by_operation.values()):
+                        continue
+                    if target_spec.on_demand and not include_on_demand:
+                        # Dependencies' on-demand targets skip quietly, as in a
+                        # selector-less run; only the named package reports them.
+                        if selection.identity == root.identity:
+                            on_demand_candidates.append(target)
                         continue
                     key = (*_target_key(target), None)
                     if key not in selected_target_keys:
@@ -397,7 +412,9 @@ def resolve_sync_scope(
         for selection in selected_selections:
             repo = context.repositories[selection.identity.repo]
             package = repo.resolve_package(selection.identity.package_id)
-            for target_name in (package.targets or {}):
+            for target_name, target_spec in (package.targets or {}).items():
+                if target_spec.on_demand and not include_on_demand:
+                    continue
                 target = ResolvedSyncTarget(
                     repo=selection.identity.repo,
                     package_id=selection.identity.package_id,
@@ -411,6 +428,11 @@ def resolve_sync_scope(
                     selected_target_keys.add(key)
                     selected_targets.append(target)
 
+    # Another selector may name a skipped target exactly; then it is not skipped.
+    selected_keys_without_child = {_target_key(target) for target in selected_targets}
+    on_demand_skips = tuple(dict.fromkeys(
+        target for target in on_demand_candidates if _target_key(target) not in selected_keys_without_child
+    ))
     normalized_selectors = tuple(dict.fromkeys(raw_selectors))
     public_selections = tuple(
         replace(selection, owner_identity=None, owner_selection_label=None)
@@ -421,6 +443,7 @@ def resolve_sync_scope(
         package_selections=public_selections,
         targets=tuple(selected_targets),
         planning_inputs=planning_inputs_by_operation,
+        on_demand_skips=on_demand_skips,
     )
 
 

@@ -208,6 +208,8 @@ class TargetSpec:
     path_rules: tuple[TargetPathRule, ...] = ()
     hooks: dict[str, "HookSpec"] | None = None
     disabled: bool = False
+    # Planned only when selected by exact target selector.
+    on_demand: bool = False
     probe: str | None = None
 
 
@@ -412,6 +414,9 @@ class ResolvedSyncScope:
     # The full tracked graph's static planning by direction, kept so a session
     # observes exactly what ownership and collisions validated without planning again.
     planning_inputs: dict[str, tuple[PackagePlanningInput, ...]] = field(compare=False, repr=False)
+    # On-demand targets of a selector's root package that the package selector
+    # left out; reported so skipping them is never silent.
+    on_demand_skips: tuple[ResolvedSyncTarget, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {

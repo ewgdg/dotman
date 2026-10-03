@@ -70,19 +70,24 @@ def test_unattended_selects_auxiliary_and_forwards_run_noop(capsys):
     from dotman.sync_deck_command import SyncDeckCommandRunner
     session = auxiliary_session()
     opened = []
+    resolved = []
     def open_session(scope, *, preview, run_noop, sink, **_live_options):
         opened.append((scope, preview, run_noop))
         return session
+    def resolve_sync_scope(scopes):
+        resolved.append(scopes)
+        return SimpleNamespace(on_demand_skips=())
     engine = SimpleNamespace(
         config=SimpleNamespace(ui=UiConfig()),
-        resolve_sync_scope=lambda scopes: scopes,
+        resolve_sync_scope=resolve_sync_scope,
         open_sync_session=open_session,
     )
     args = SimpleNamespace(config=None, scopes=[], dry_run=True,
                            unattended=True, json_output=False, run_noop=True)
     runner = SyncDeckCommandRunner(engine_factory=lambda _: engine, use_color=False)
     assert runner.run(args) == 0
-    assert opened == [([], True, True)]
+    assert resolved == [[]]
+    assert [(preview, run_noop) for _scope, preview, run_noop in opened] == [(True, True)]
     output = capsys.readouterr().out
     assert "[would-apply] r:p.check" in output
     assert "Probe Work" in output
