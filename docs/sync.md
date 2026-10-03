@@ -53,7 +53,9 @@ FIFOs, sockets, and other unsupported nodes are Observation failures, not absenc
 InSync**, **Drifted**, or **Observation Failed**. Direct agreement has no drift
 row; drift has one stable canonical row, initially unapproved.
 Observation failures stay visible and non-approvable. Base read or acknowledgment
-failures are warnings, not failed Observations. An unavailable Base uses the
+failures are warnings, not failed Observations. Endpoint reads and comparison
+commands for different units run concurrently, up to four at a time. Base reads
+and acknowledgments stay serial, and results keep target order. An unavailable Base uses the
 normal no-Base resolution rules; explicit Merge remains blocked without a usable Base.
 A Guard-removed route is a visible diagnostic, not permission to use the opposite
 direction. A unit-local failure does not discard unrelated evidence.
@@ -161,7 +163,9 @@ A restricted census is deliberately not used as absence proof.
 
 An active Probe becomes **Probe Work** only when at least one configured
 capability survives Guards. Its command runs once: exit 0 keeps the row, 100
-omits inactive work, and any other non-zero exit aborts planning. A Probe cannot
+omits inactive work, and any other non-zero exit aborts planning. Probes run
+concurrently, like comparison projections during Observation; when several
+fail, the earliest in target order is reported. A Probe cannot
 use `push-only-delete`; it has no live endpoint to delete.
 
 Probe Work starts unselected and has no file Observation, payload, comparison,

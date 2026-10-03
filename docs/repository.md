@@ -182,6 +182,7 @@ preset = "jinja-patch"
   - `0`: active; the target appears in normal selection and makes package/target hooks eligible.
   - `100`: inactive/noop; the target stays out of normal selection and hooks run only if explicitly noop-eligible.
   - any other non-zero status: hard planning failure.
+- Planning runs probes concurrently, up to four at a time, so a probe must not depend on another probe or share scratch files with it.
 - Probe targets do not claim repo/live paths, do not participate in target ownership conflicts, do not create snapshots, and never execute file push/pull steps.
 - Use `sync_policy = "push-only"` for install/update probes that should run only before push-style setup.
 - Probes reject effective `push-only-delete`, including inherited package policy:
@@ -209,6 +210,9 @@ a table accepts only `run`; for example `render = { run = "jinja" }` forces
 command interpretation. Explicit `raw` cancels inherited Render or Capture.
 
 Projection commands are non-interactive, side-effect-free stdout producers.
+Planning runs comparison projections concurrently, up to four at a time, so a
+projection must not depend on another target's projection or share scratch
+files with it.
 Dotman owns managed-path access, including privileged reads. Projections neither
 inherit default command elevation nor accept elevation configuration. Only exit
 `0` produces a valid result; all non-zero exits are failures.

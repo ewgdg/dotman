@@ -161,7 +161,9 @@ Each step is its own commit.
   wall ~4.4s -> ~2.75s; push/pull `-d` JSON identical to a bound of 1.
 - [x] 4. parallel probes. Real repo wall ~2.75s -> ~1.8s (baseline ~4.6s);
   push/pull `-d` JSON identical to a bound of 1.
-- [ ] 5. docs and skill
+- [x] 5. docs: `docs/repository.md` (probe and projection contract) and
+  `docs/sync.md` (Observation, Probe Work). The skill is unchanged: it is an
+  index that already routes probe and projection authoring to those sections.
 
 ## Surprises & Discoveries
 
@@ -183,4 +185,11 @@ Each step is its own commit.
 
 ## Outcomes & Retrospective
 
-(Fill in when done.)
+- `dotman --unattended --json push -d` on the real dotfiles repo: ~4.6s ->
+  ~1.8s. Push and pull JSON are byte-identical to a bound of 1.
+- Ctrl-C with four 30s probes running: exit 130 in 0.5s, no children left.
+- The `_wait` fix alone was worth less than estimated (~0.25s, not ~0.7s).
+- Parallel speedup came in close to the ideal-makespan estimate, as expected
+  with 24 idle cores; smaller machines will see less.
+- Lesson: never revert a single line in a dirty file with `git checkout -p`.
+  It reverted the wrong hunk, and step 3 had to be amended.
