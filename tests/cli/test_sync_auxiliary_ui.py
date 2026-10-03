@@ -93,3 +93,11 @@ def test_unattended_selects_auxiliary_and_forwards_run_noop(capsys):
     assert "Probe Work" in output
     assert "[would-apply] r:p (pull-hooks)" in output
     assert "Hook Work" in output
+
+
+def test_completed_run_keeps_auxiliary_error_and_unrun_hook_outcomes():
+    from dotman.sync_deck_command import auxiliary_outcome
+    error = [{"code": "probe-failed", "message": "boom"}]
+    # Only a hookless probe finishes during planning; errors and unrun hooks are not done.
+    assert auxiliary_outcome("r:p.check", [], kind="probe", preview=False, run_completed=True, diagnostics=error) == "failed"
+    assert auxiliary_outcome("r:p", [], kind="hook", preview=False, run_completed=True, diagnostics=[]) == "pending"
