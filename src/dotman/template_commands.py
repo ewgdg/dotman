@@ -6,14 +6,6 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from dotman.capture import capture_patch
-from dotman.command_runtime import (
-    CommandRequest,
-    ShellCommand,
-    current_command_runtime,
-    raise_for_command_interruption,
-)
-from dotman.manifest import flatten_vars
 from dotman.templates import (
     JinjaRenderError,
     build_template_context,
@@ -91,6 +83,10 @@ def _build_patch_capture_cli_env(
     inferred_os: str,
     cpu_arch: str,
 ) -> dict[str, str]:
+    # Local import: `render jinja` loads this module and must not pay for the
+    # manifest/models import chain that only patch capture needs.
+    from dotman.manifest import flatten_vars
+
     env = {
         "DOTMAN_REPO_PATH": str(repo_path),
         "DOTMAN_SOURCE": str(repo_path),
@@ -125,6 +121,14 @@ def _build_cli_patch_capture_projector(
             return rendered
 
         return project
+
+    # Local import keeps the command runtime off the `render jinja` startup path.
+    from dotman.command_runtime import (
+        CommandRequest,
+        ShellCommand,
+        current_command_runtime,
+        raise_for_command_interruption,
+    )
 
     base_env = _build_patch_capture_cli_env(
         repo_path=repo_path,
@@ -180,6 +184,11 @@ def run_patch_capture(
     cpu_arch: str | None,
     var_assignments: Sequence[str],
 ) -> int:
+    # Local imports keep capture and the command runtime off the `render jinja`
+    # startup path; manifests call that helper on every render.
+    from dotman.capture import capture_patch
+    from dotman.command_runtime import current_command_runtime
+
     resolved_repo_path = Path(repo_path).expanduser().resolve()
     variables = _template_vars_from_dotman_env(dict(os.environ))
     _apply_template_var_assignments(variables, var_assignments)

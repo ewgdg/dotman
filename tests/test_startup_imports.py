@@ -30,9 +30,13 @@ def test_cli_import_defers_modules_only_some_commands_need(module: str) -> None:
     [
         (["transform", "json", "-", "--stdout", "--mode", "cleanup"], "{}"),
         (["rewrite", "home", "expand", "-"], "~/x\n"),
+        (["render", "jinja", "{template}"], ""),
     ],
 )
-def test_standalone_helpers_skip_repo_engine_imports(argv: list[str], stdin: str) -> None:
+def test_standalone_helpers_skip_repo_engine_imports(tmp_path, argv: list[str], stdin: str) -> None:
+    template = tmp_path / "template.j2"
+    template.write_text("{{ profile }}\n")
+    argv = [arg.format(template=template) for arg in argv]
     script = (
         "import sys\n"
         "from dotman.cli import main\n"
