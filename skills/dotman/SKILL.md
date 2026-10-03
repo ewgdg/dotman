@@ -22,6 +22,7 @@ This file is an index. Read only the entries your task needs.
 - Every other command (`push`, `pull`, `sync`, `restore`, `track`, `untrack`, `add`, `capture`, `reset`, ...) writes to the user's machine, repo or dotman state. Run it only when the user asks. `reset sync-base` has no confirmation and no dry-run.
 - Leave elevation (sudo) prompts to the user.
 - Name targets as `repo:package.target` and package instances as `repo:package<profile>.target`.
+- `on_demand = true` targets run only when named exactly (`dotman push repo:package.target`); package selectors and plain `push`/`pull`/`sync` skip them (`docs/cli.md` § Sync scope resolution).
 
 ## Index
 
@@ -39,7 +40,7 @@ This file is an index. Read only the entries your task needs.
 | Need | Read |
 | --- | --- |
 | Adopt an existing live file into a package | `docs/cli.md` § Add |
-| Target fields: `path`, `type`, `chmod`, `sync_policy`, `path_rules`; install/update `probe` targets | `docs/repository.md` § Targets |
+| Target fields: `path`, `type`, `chmod`, `sync_policy`, `on_demand`, `path_rules`; install/update `probe` targets | `docs/repository.md` § Targets |
 | Package instances and inheritance | `docs/repository.md` § Package Identity Modes, § Package Inheritance |
 | Skip files or subtrees in directory targets | `docs/repository.md` § Unified exclusions |
 | Sync only part of a JSON/YAML/TOML/plist/XML settings file | `references/noise-filtering.md` |
