@@ -415,8 +415,15 @@ class ResolvedSyncScope:
     # observes exactly what ownership and collisions validated without planning again.
     planning_inputs: dict[str, tuple[PackagePlanningInput, ...]] = field(compare=False, repr=False)
     # On-demand targets of a selector's root package that the package selector
-    # left out; reported so skipping them is never silent.
-    on_demand_skips: tuple[ResolvedSyncTarget, ...] = ()
+    # left out, by direction that could run them; reported so skipping is never silent.
+    on_demand_skips: dict[str, tuple[ResolvedSyncTarget, ...]] = field(
+        default_factory=lambda: {"push": (), "pull": ()}
+    )
+
+    def on_demand_skips_for(self, operation: str) -> tuple[ResolvedSyncTarget, ...]:
+        """Skips the operation could have run; naming the rest would plan nothing."""
+        directions = ("push", "pull") if operation == "sync" else (operation,)
+        return tuple(dict.fromkeys(target for direction in directions for target in self.on_demand_skips[direction]))
 
     def to_dict(self) -> dict[str, Any]:
         return {

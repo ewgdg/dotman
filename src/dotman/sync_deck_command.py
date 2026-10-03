@@ -181,7 +181,7 @@ class SyncDeckCommandRunner:
                 "code": "interrupted", "message": f"{self.operation.title()} preflight interrupted",
             })
             return 130
-        self._on_demand_skips = scope.on_demand_skips
+        self._on_demand_skips = scope.on_demand_skips_for(self.operation)
         ui = engine.config.ui
         if getattr(args, 'full_path', None) is not None:
             ui = replace(ui, full_paths=args.full_path)

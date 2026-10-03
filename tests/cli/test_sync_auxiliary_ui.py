@@ -76,7 +76,7 @@ def test_unattended_selects_auxiliary_and_forwards_run_noop(capsys):
         return session
     def resolve_sync_scope(scopes):
         resolved.append(scopes)
-        return SimpleNamespace(on_demand_skips=())
+        return SimpleNamespace(on_demand_skips_for=lambda operation: ())
     engine = SimpleNamespace(
         config=SimpleNamespace(ui=UiConfig()),
         resolve_sync_scope=resolve_sync_scope,

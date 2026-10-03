@@ -70,7 +70,8 @@ them exactly, e.g. `dotman push niri-custom-git.niri_custom_git_update`.
 Package inputs and selector-less runs leave them out. Ownership and collision
 checks still cover the whole tracked graph, so naming one never meets a conflict
 a plain run would not report. When a package input skips on-demand targets of
-that package, human output prints one dimmed line per target, e.g.
+that package whose `sync_policy` allows the operation (either direction for
+`sync`), human output prints one dimmed line per target, e.g.
 `[skipped] main:app.check (on-demand: select it by name to run it)`, and JSON
 lists them in `on_demand_skips` as `{"identity": "main:app.check"}`. On-demand
 targets of its dependencies, and of selector-less runs, are skipped quietly

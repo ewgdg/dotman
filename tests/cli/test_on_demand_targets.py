@@ -66,6 +66,19 @@ def test_package_selector_skips_on_demand_targets_and_names_them(tmp_path, monke
     assert not (tmp_path / "probe.log").exists()
 
 
+@pytest.mark.parametrize("operation,expected", [
+    ("pull", ["main:app.extra"]),
+    ("sync", ["main:app.extra", "main:app.check"]),
+])
+def test_package_selector_reports_only_on_demand_targets_the_operation_could_run(
+    tmp_path, monkeypatch, capsys, operation, expected,
+):
+    # main:app.check is push-only: naming it in a pull would plan nothing.
+    engine = on_demand_engine(tmp_path, monkeypatch)
+    _code, document = run(engine, capsys, operation, "--dry-run", "main:app")
+    assert [skip["identity"] for skip in document["on_demand_skips"]] == expected
+
+
 def test_executed_package_selector_names_skipped_targets_before_the_timeline(tmp_path, monkeypatch, capsys):
     engine = on_demand_engine(tmp_path, monkeypatch)
     code, output = run(engine, capsys, "push", "main:app", json_output=False)
@@ -98,7 +111,7 @@ def test_exact_selector_beside_its_package_selector_is_not_reported_skipped(tmp_
     engine = on_demand_engine(tmp_path, monkeypatch)
     scope = engine.resolve_sync_scope(["main:app", "main:app.check"])
     assert {target.canonical for target in scope.targets} == {"main:app.plain", "main:app.check"}
-    assert [target.canonical for target in scope.on_demand_skips] == ["main:app.extra"]
+    assert [target.canonical for target in scope.on_demand_skips_for("push")] == ["main:app.extra"]
 
 
 def test_on_demand_false_keeps_targets_in_every_scope(tmp_path, monkeypatch, capsys):

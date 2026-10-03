@@ -416,6 +416,6 @@ def test_dependency_on_demand_targets_skip_quietly_while_the_named_package_repor
     scope = engine.resolve_sync_scope(["main:app"])
 
     assert [item.canonical for item in scope.targets] == ["main:app.config", "main:app.settings"]
-    assert [item.canonical for item in scope.on_demand_skips] == ["main:app.check"]
+    assert [item.canonical for item in scope.on_demand_skips_for("push")] == ["main:app.check"]
     named = engine.resolve_sync_scope(["main:base.update"])
     assert [item.canonical for item in named.targets] == ["main:base.update"]

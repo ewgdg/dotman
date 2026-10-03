@@ -430,9 +430,15 @@ def resolve_sync_scope(
 
     # Another selector may name a skipped target exactly; then it is not skipped.
     selected_keys_without_child = {_target_key(target) for target in selected_targets}
-    on_demand_skips = tuple(dict.fromkeys(
-        target for target in on_demand_candidates if _target_key(target) not in selected_keys_without_child
-    ))
+    # Each direction's ownership winners already respect sync_policy.
+    on_demand_skips = {
+        direction: tuple(dict.fromkeys(
+            target for target in on_demand_candidates
+            if _target_key(target) not in selected_keys_without_child
+            and _target_key(target) in winner_keys_by_operation[direction]
+        ))
+        for direction in ("push", "pull")
+    }
     normalized_selectors = tuple(dict.fromkeys(raw_selectors))
     public_selections = tuple(
         replace(selection, owner_identity=None, owner_selection_label=None)
