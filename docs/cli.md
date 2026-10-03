@@ -98,7 +98,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   (every target in sync, no warnings, hooks or probes; Guard skips alone do not count), it skips the Deck and
   logs directly, printing any Guard skips above the summary.
   Its Textual table aligns Selection (headed `✓`), Target, Policy, and Resolution columns.
-  `Space` or `x` toggles Selection, `a` selects eligible rows, and `u` clears Selection.
+  `x` toggles Selection (`Space` also works but goes unhinted), `a` selects eligible rows, and `u` clears Selection.
   Selection means independent Proposal or Additional Source Change Approval,
   or direct auxiliary inclusion. Batch actions establish all final states before
   rematerializing dependent Proposals.
@@ -129,8 +129,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   `Esc` returns to the same workset. Source Change Review shows the preimage diff,
   referencing Proposals and independent Approval; Proposal Review lists source
   references without a duplicate Additional Approval control. Both review titles
-  annotate the focused row's Approval (`:: Proposal Review (approved)`) so `Space`/`x`
-  show their effect while the Decision section is scrolled away. Proposal Review
+  annotate the focused row's Approval (`:: Proposal Review (approved)`) so `x`
+  shows its effect while the Decision section is scrolled away. Proposal Review
   opens with the target and groups facts under full-width titled rules
   (`── Decision ───`; copied text uses `:: Decision`): Decision (Approval, Resolution, effective
   policy, and configured policy only when it differs), Paths, State (Observation,
@@ -236,7 +236,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   from successful completion.
 - A No-op Proposal (nothing to write and no new Sync Base to record) keeps its
   row as evidence but offers no Approval: the row shows `[-]` with Resolution
-  `No-op`, Space/x explains why, Review shows `Approval: not needed` plus a
+  `No-op`, `x` explains why, Review shows `Approval: not needed` plus a
   hint that `compare` does not match Capture, and results report `noop`
   (listed only with `--report`).
 - JSON emits one clean final document with `operation`, `mode`, `status`,
@@ -426,8 +426,8 @@ workset and Command Deck with Sync and Pull, but its only resolution is
   scopes to use all tracked targets, including dependency closure and ownership
   winners. Untracked input fails; use `track` first.
 - Only push-capable targets (`push-only`, `push-only-delete`, `both`) participate.
-  Drifted Proposals start approved. Space/x opts out; Enter inspects frozen Views
-  and the live outcome; E edits the repository source transactionally; T retries
+  Drifted Proposals start approved. `x` opts out; Enter inspects frozen Views
+  and the live outcome; `e` edits the repository source transactionally; `t` retries
   a failed Proposal. There is no Resolution Intent or Merge choice.
 - Noninteractive use requires global `--unattended`, including `--dry-run` and
   `--json`; without a terminal Push otherwise fails with `unattended-decision`.
@@ -474,8 +474,8 @@ Merge choice and never publishes to live paths.
 
 - `dotman pull [repo:package.target ...]` resolves exact tracked scopes. Omit
   scopes to use all tracked targets; package instances use `repo:package<instance>.target`.
-- Drifted Proposals start approved. Space/x opts out; Enter inspects frozen Views
-  and the repository outcome; E edits transactionally; T retries a failed Proposal.
+- Drifted Proposals start approved. `x` opts out; Enter inspects frozen Views
+  and the repository outcome; `e` edits transactionally; `t` retries a failed Proposal.
 - Raw, verified Patch Capture and Missing outcomes use frozen opening evidence.
   Capture reads the live endpoint; its result is reused, not rerun for review.
 - Saved Additional Source Changes start approved independently of their Primary

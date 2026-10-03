@@ -54,7 +54,7 @@ def test_workset_hints_list_bulk_selection_and_copy_within_two_rows_at_80_column
                         help_widget.render_line(y).text for y in range(help_widget.size.height)
                     )
                     assert help_widget.size.height <= 2
-                    for hint in ("a/u all/none", "y copy", "L authorize link replacement"):
+                    for hint in ("a/u all/none", "y copy", "L link"):
                         assert hint in rendered, (focus, rendered)
                     await pilot.press("tab")
                     await pilot.pause()

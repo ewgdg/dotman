@@ -349,12 +349,12 @@ class CommandDeck:
         if selection:
             self.select()
 
-    def select(self, approved: bool | None = None) -> None:
+    def select(self, selected: bool | None = None) -> None:
         row = self.focused_row
         if row is None or self.confirming:
             return
-        selected = row.included if selection_uses_inclusion(row) else row.approved
-        result = set_selected(self.session, row, not selected if approved is None else approved)
+        current = row.included if selection_uses_inclusion(row) else row.approved
+        result = set_selected(self.session, row, not current if selected is None else selected)
         # Selecting may materialize the Proposal and only then reveal it as a no-op.
         focused = self.focused_row
         if isinstance(focused, SessionRow) and focused.proposal is not None and focused.proposal.noop:
@@ -362,10 +362,10 @@ class CommandDeck:
         else:
             self.notice = result.reason if isinstance(result, CommandRejected) else ""
 
-    def select_all(self, approved: bool) -> None:
+    def select_all(self, selected: bool) -> None:
         if self.reviewing or self.confirming:
             return
-        result = set_all_selected(self.session, approved, tuple(row.row_id for row in self.visible_rows))
+        result = set_all_selected(self.session, selected, tuple(row.row_id for row in self.visible_rows))
         self.notice = result.reason if isinstance(result, CommandRejected) else ""
 
     def open_review(self) -> None:
@@ -896,26 +896,26 @@ class SyncDeckApp(App[bool]):
                 ("ctrl+end", "scroll_bottom", "scroll_end"),
             )
         ],
-        Binding("r,R", "resolution", "Resolution", priority=True),
-        Binding("t,T", "retry", "Retry", priority=True),
+        Binding("r", "resolution", "Resolution", priority=True),
+        Binding("t", "retry", "Retry", priority=True),
         # Lowercase l is vim-style right; authorization needs the deliberate Shift+L.
         Binding("L", "authorize_link", "Authorize link replacement", priority=True),
-        Binding("e,E", "editor", "Editor", priority=True),
-        Binding("v,V", "full_view", "Full view", priority=True),
+        Binding("e", "editor", "Editor", priority=True),
+        Binding("v", "full_view", "Full view", priority=True),
         Binding("slash", "open_search", "Search", priority=True),
         Binding("n", "step(1)", "Next match or change", priority=True),
         Binding("N", "step(-1)", "Previous match or change", priority=True),
         Binding("tab,shift+tab", "toggle_detail_focus", "Detail", priority=True),
-        # x mirrors the "[x]" Selection marker; Space stays for the common TUI toggle convention.
-        Binding("space,x,X", "select", "Select", priority=True),
-        Binding("a,A", "select_all", "Select all", priority=True),
-        Binding("u,U", "clear_selection", "Clear selection", priority=True),
+        # x mirrors the "[x]" Selection marker; Space stays as the common TUI toggle but goes unhinted.
+        Binding("space,x", "select", "Select", priority=True),
+        Binding("a", "select_all", "Select all", priority=True),
+        Binding("u", "clear_selection", "Clear selection", priority=True),
         Binding("enter", "review_or_confirm", "Review / Confirm", priority=True),
-        Binding("c,C", "confirm", "Preview / Execute", priority=True),
+        Binding("c", "confirm", "Preview / Execute", priority=True),
         # Ctrl+C stays Abort, so copying needs its own key (vim-style yank).
-        Binding("y,Y", "copy", "Copy", priority=True),
+        Binding("y", "copy", "Copy", priority=True),
         Binding("escape", "back", "Back", priority=True),
-        # Lowercase only, matching the q-to-quit convention of other TUIs.
+        # Lowercase like every other letter key, matching the q-to-quit convention of other TUIs.
         Binding("q", "quit_workset", "Abort", priority=True),
         Binding("ctrl+c", "abort", "Abort", priority=True),
     ]
@@ -933,7 +933,7 @@ class SyncDeckApp(App[bool]):
         self._editing = False
         # One OptionList serves the Resolution and Full View menus.
         self._menu_choose = None
-        self._menu_hint = ""
+        self._menu_subject = ""
         # Full View reuses the review scroller; the review offset is restored on return.
         self._review_position_before_full_view = (0.0, 0.0)
         # A plain flag: Textual may ask check_action before the search box is composed.
@@ -1174,6 +1174,7 @@ class SyncDeckApp(App[bool]):
 
     def update_hints(self) -> None:
         review_scroll = ("↑/↓/j/k", "scroll")
+        select_hint = ("x", "select")
         bulk_selection = ("a/u", "all/none")
         body = self.query_one(ReviewBody)
         if body.search:
@@ -1188,31 +1189,31 @@ class SyncDeckApp(App[bool]):
             hints = [("Enter", "search" if self.deck.reviewing else "filter"), ("↑/↓", "history"),
                      ("Ctrl+U", "clear"), ("Esc", "cancel"), ("Ctrl+C", "abort")]
         elif self.query_one(OptionList).display:
-            hints = [("↑/↓/j/k", self._menu_hint), ("Enter", "select"), ("Esc", "dismiss")]
+            hints = [("↑/↓/j/k", "move"), ("Enter", f"choose {self._menu_subject}"), ("Esc", "dismiss")]
         elif self.deck.confirming:
             hints = [("Enter", "confirm"), ("Esc", "return"), ("Ctrl+C", "abort")]
         elif self.deck.full_view is not None:
             hints = [*review_lead, ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.deck.reviewing and isinstance(self.deck.focused_row, AdditionalRow):
-            hints = [*review_lead, ("Space/x", "select"), ("v", "full view"), ("y", "copy"), review_scroll,
+            hints = [*review_lead, select_hint, ("v", "full view"), ("y", "copy"), review_scroll,
                      ("Ctrl+C", "abort")]
         elif self.deck.reviewing:
-            hints = [*review_lead, ("Space/x", "select"), ("e", "edit"), ("t", "retry"), ("v", "full view"),
+            hints = [*review_lead, select_hint, ("e", "edit"), ("t", "retry"), ("v", "full view"),
                      ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
         elif self.detail_focused:
-            hints = [("Tab/Esc", "return"), review_scroll, ("Space/x", "select"), bulk_selection,
-                     ("Enter", "view"), ("e", "edit"), ("t", "retry"), ("y", "copy")]
+            hints = [("Tab/Esc", "return"), review_scroll, select_hint, bulk_selection,
+                     ("Enter", "review"), ("e", "edit"), ("t", "retry"), ("y", "copy")]
         elif self.deck.filter:
             hints = [(f"/{self.deck.filter}", f"{len(self.deck.visible_rows)}/{len(self.deck.session.view.rows)}"),
-                     ("Esc", "clear"), ("c", "confirm"), ("Space/x", "select"), bulk_selection, ("Enter", "view"),
+                     ("Esc", "clear"), ("c", "confirm"), select_hint, bulk_selection, ("Enter", "review"),
                      ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         else:
-            hints = [("q", "abort"), ("c", "confirm"), ("Space/x", "select"), bulk_selection, ("/", "filter"),
-                     ("Enter", "view"), ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
+            hints = [("q", "abort"), ("c", "confirm"), select_hint, bulk_selection, ("/", "filter"),
+                     ("Enter", "review"), ("e", "edit"), ("t", "retry"), ("y", "copy"), ("Tab", "detail")]
         row = self.deck.focused_row
         if (row and "authorize-symlink-replacement" in row.allowed_commands and not self.deck.confirming
                 and not self._search_open and self.deck.full_view is None):
-            hints.append(("L", "authorize link replacement"))
+            hints.append(("L", "link"))
         if (resolution_choosable(row) and not self.deck.reviewing and not self._search_open
                 and not self.query_one(OptionList).display and not self.deck.confirming):
             hints.append(("r", "intent"))
@@ -1325,7 +1326,7 @@ class SyncDeckApp(App[bool]):
         self.query_one(ReviewBody).document = self.deck.review_document()
         row = self.deck.focused_row
         title = ":: Additional Source Review" if isinstance(row, AdditionalRow) else ":: Proposal Review"
-        # Space/x toggle Approval while the Decision section may be scrolled away; the title keeps it in view.
+        # x toggles Approval while the Decision section may be scrolled away; the title keeps it in view.
         approval = render_sync_term(review_approval_term(row), use_color=self.deck.use_color)
         self.query_one("#title", Static).update(Text.from_ansi(f"{title} ({approval})"))
         log.focus()
@@ -1369,7 +1370,7 @@ class SyncDeckApp(App[bool]):
         elif len(titles) == 1:
             self.open_full_view(titles[0])
         else:
-            self.open_menu([Text(title) for title in titles], highlighted=0, hint="choose Full View",
+            self.open_menu([Text(title) for title in titles], highlighted=0, subject="Full View",
                            choose=lambda index: self.open_full_view(titles[index]))
             self.update_hints()
 
@@ -1536,9 +1537,9 @@ class SyncDeckApp(App[bool]):
         # Keyboard toggles and mouse clicks both move focus; hints follow either.
         self.update_hints()
 
-    def open_menu(self, labels: list[Text], *, highlighted: int, hint: str, choose) -> None:
+    def open_menu(self, labels: list[Text], *, highlighted: int, subject: str, choose) -> None:
         # Set before focusing: the focus event refreshes the hints.
-        self._menu_choose, self._menu_hint = choose, hint
+        self._menu_choose, self._menu_subject = choose, subject
         menu = self.query_one(OptionList)
         menu.clear_options()
         menu.add_options(labels)
@@ -1565,7 +1566,7 @@ class SyncDeckApp(App[bool]):
             return
         self.open_menu([Text.from_ansi(render_sync_term(resolution_label(intent), use_color=self.deck.use_color))
                         for intent in row.allowed_intents],
-                       highlighted=row.allowed_intents.index(row.intent), hint="choose Resolution",
+                       highlighted=row.allowed_intents.index(row.intent), subject="Resolution",
                        choose=self.choose_resolution)
         self.update_workset()
 
@@ -1633,7 +1634,7 @@ class SyncDeckApp(App[bool]):
         if row is None:
             return
         if self.deck.reviewing and (selected := self.screen.get_selected_text()):
-            # Ctrl+C is Abort, so Y also copies a mouse selection.
+            # Ctrl+C is Abort, so y also copies a mouse selection.
             text, subject = selected, "selection"
             self.screen.clear_selection()
         elif self.deck.reviewing:

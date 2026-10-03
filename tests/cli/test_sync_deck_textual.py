@@ -164,7 +164,9 @@ def test_keyboard_review_scroll_return_approval_and_confirmation(tmp_path, monke
                 frozen = session.view
                 await pilot.press("space", "a", "u", "down")
                 assert session.view == frozen
-                await pilot.press("escape", "c", "enter")
+                await pilot.press("escape", "C", "X")
+                assert not app.deck.confirming and session.view == frozen
+                await pilot.press("c", "enter")
                 assert app.return_value is True
         run(interact())
         assert [row.approved for row in session.view.rows] == [False, True]
@@ -206,7 +208,7 @@ def test_review_title_shows_approval_after_toggle(tmp_path, monkeypatch):
                 await pilot.pause()
                 assert title_text(app) == ":: Proposal Review (unapproved)"
                 # Review names the toggle like the workset; the title shows what Selection means here.
-                assert "Space/x select" in help_text(app)
+                assert "x select" in help_text(app) and "Space" not in help_text(app)
                 # The Decision section scrolls away; the title keeps Approval in view.
                 await pilot.press("space")
                 await pilot.pause()
@@ -305,7 +307,7 @@ def test_fixed_resolution_is_recessive_and_offers_no_intent_key(tmp_path, monkey
 
         async def interact():
             async with app.run_test(size=(140, 24)) as pilot:
-                assert "r intent" in help_text(app)
+                assert "r intent" in help_text(app) and "Enter review" in help_text(app)
                 await pilot.press("down")
                 assert "r intent" not in help_text(app)
                 await pilot.press("down")
@@ -404,9 +406,9 @@ def test_detail_styles_identity_and_diagnostics_like_the_workset(tmp_path, monke
                 styled = {segment.text.strip() for strip in strips for segment in strip if segment.style != plain}
                 assert {"main", "bad", "error"} <= styled
                 hints = app.query_one("#help", Static).render()
-                assert hints.plain.startswith("q abort · c confirm · Space/x select")
+                assert hints.plain.startswith("q abort · c confirm · x select")
                 bold = {hints.plain[span.start:span.end] for span in hints.spans if "bold" in str(span.style)}
-                assert {"q", "c", "Space/x"} <= bold and "confirm" not in bold
+                assert {"q", "c", "x"} <= bold and "confirm" not in bold
         run(interact())
 
 
@@ -691,6 +693,8 @@ def test_resolution_cell_and_menu_support_mouse(tmp_path, monkeypatch):
                 post_cell_click(app, (resolution_x, 1))
                 await pilot.pause()
                 assert app.query_one(OptionList).display
+                # "select" names only the row toggle; the menu's Enter picks an option.
+                assert help_text(app) == "↑/↓/j/k move · Enter choose Resolution · Esc dismiss"
                 await pilot.click('#resolution', offset=(2, 1))
                 assert session.view.rows[0].intent == 'use-repository'
                 assert not session.view.rows[0].approved

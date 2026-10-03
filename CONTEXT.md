@@ -145,7 +145,7 @@ The Command Deck state that authorizes a Proposal or Additional Source Change fo
 _Avoid_: Inspection status, execution result
 
 **Selection**:
-The Command Deck's per-row checkbox state and the single user-facing name for toggling it. Selecting a Proposal or Additional Source Change sets its Approval; selecting auxiliary work (probes, hooks, directory-root modes) includes it. Row states and the review title name the effect (`approved`, `selected`), while the toggle itself is always "select".
+The Command Deck's per-row checkbox state and the single user-facing name for toggling it. Selecting a Proposal or Additional Source Change sets its Approval; selecting auxiliary work (probes, hooks, directory-root modes) includes it. Row states and the review title name the effect (`approved`, `selected`), while the toggle itself is always "select". Menus pick an option with "choose", never "select".
 _Avoid_: Mark, approve (as the toggle's name)
 
 **Command Deck**:
