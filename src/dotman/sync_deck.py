@@ -34,7 +34,7 @@ from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
 from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, MENU_HINT_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hint, render_key_hint_chip, render_key_hint_separator, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
-from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_resolution, resolution_label, live_counts, summary_stats
+from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_guess_annotation, render_resolution, resolution_label, live_counts, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SessionRow, SyncSession, conflict_diagnostic
 
 
@@ -509,7 +509,9 @@ class CommandDeck:
 
         decision = [
             approval,
-            ReviewFact("Resolution", render_row_resolution(row, use_color=color) if intent or self.session.view.operation == "pull" else term("blocked")),
+            ReviewFact("Resolution", render_row_resolution(row, use_color=color)
+                       + render_guess_annotation(resolution_guess_shown(row), use_color=color)
+                       if intent or self.session.view.operation == "pull" else term("blocked")),
             ReviewFact("Policy", observation.effective_policy),
         ]
         if observation.configured_policy != observation.effective_policy:
@@ -517,8 +519,6 @@ class CommandDeck:
         if "authorize-symlink-replacement" in row.allowed_commands:
             link = "Link replacement authorized" if row.symlink_authorized else "Link replacement requires authorization"
             decision.append(ReviewNote(f"{term(link)} (L)"))
-        if row.resolution_guessed:
-            decision.append(ReviewNote(f"{term('Fallback')}: {row.fallback_reason}"))
         decision.extend(ReviewNote(f"{term(item.severity)}: {item.message}") for item in row_diagnostics(row))
         sections = [
             ReviewSection("Decision", tuple(decision)),
@@ -732,12 +732,15 @@ def resolution_choosable(row) -> bool:
 POLICY_DIRECTION_LABELS = (resolution_label("use-repository"), resolution_label("use-live"))
 
 
+def resolution_guess_shown(row) -> bool:
+    # Failures and No-op describe the row itself, so they outrank the guess.
+    return isinstance(row, SessionRow) and row.resolution_guessed and row_resolution(row) == resolution_label(row.intent)
+
+
 def render_row_resolution(row, *, use_color: bool) -> str:
     label = row_resolution(row)
-    # Failures and No-op describe the row itself, so they outrank the guess color.
-    guessed = isinstance(row, SessionRow) and row.resolution_guessed and label == resolution_label(row.intent)
     fixed = isinstance(row, SessionRow) and not resolution_choosable(row) and label in POLICY_DIRECTION_LABELS
-    return render_resolution(label, guessed=guessed, fixed=fixed, use_color=use_color)
+    return render_resolution(label, guessed=resolution_guess_shown(row), fixed=fixed, use_color=use_color)
 
 
 def elide_middle(label: Text, width: int) -> Text:
@@ -1300,8 +1303,6 @@ class SyncDeckApp(App[bool]):
                 facts.append((render_sync_term('Guard skipped', use_color=use_color), guard_skip_explanation(row)))
         else:
             identity = unit_label(row, use_color=use_color)
-            if row.resolution_guessed:
-                facts.append((render_sync_term('Fallback', use_color=use_color), row.fallback_reason))
             facts += included_via_fact(row, use_color=use_color)
             facts += unit_detail_facts(row.observation, use_color=use_color)
         if row.row_id != self._detail_row_id:

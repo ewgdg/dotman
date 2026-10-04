@@ -11,7 +11,7 @@ from dotman.interaction import Interaction
 from dotman.interaction_policy import interaction_scope
 from dotman.progress import make_planning_sink
 from dotman.sync_timeline import SyncTimelineRenderer
-from dotman.cli_style import SYNC_TERM_STYLE_BY_NAME, render_sync_term, render_package_label, render_summary_stat, style_text, MENU_REPO_STYLE
+from dotman.cli_style import SYNC_TERM_STYLE_BY_NAME, render_annotation_parentheses, render_sync_term, render_package_label, render_summary_stat, style_text, MENU_REPO_STYLE
 from dotman.sync_scope import _parse_scope_selector, split_scope_child_path
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_session import (
@@ -327,9 +327,9 @@ class SyncDeckCommandRunner:
             if not recap:
                 if unit["resolution"]:
                     label = resolution_label(unit["resolution"])
-                    print(f"      {render_resolution(label, guessed=unit['resolution_guessed'], use_color=self._use_color)}")
-                if unit["resolution_guessed"]:
-                    print(f"      {term('Fallback')}: {unit['fallback_reason']}")
+                    guessed = unit["resolution_guessed"]
+                    print(f"      {render_resolution(label, guessed=guessed, use_color=self._use_color)}"
+                          f"{render_guess_annotation(guessed, use_color=self._use_color)}")
                 if unit["primary_source_change"]:
                     print(f"      repository {unit['primary_source_change']['kind']}")
                 for effect in unit["effects"]:
@@ -626,11 +626,16 @@ def resolution_label(intent: str) -> str:
 
 
 def render_resolution(label: str, *, guessed: bool, use_color: bool, fixed: bool = False) -> str:
-    """A guessed Resolution takes the guess color; its Fallback cause explains it without color."""
+    """A guessed Resolution takes the guess color; review and output add `render_guess_annotation` for NO_COLOR."""
     style = "guess" if guessed else "fixed" if fixed else None
     if style is None:
         return render_sync_term(label, use_color=use_color)
     return style_text(label, *SYNC_TERM_STYLE_BY_NAME[style]) if use_color else label
+
+
+def render_guess_annotation(guessed: bool, *, use_color: bool) -> str:
+    """Name a guessed Resolution in words; the workset column relies on color alone to save width."""
+    return render_annotation_parentheses("guessed", use_color=use_color) if guessed else ""
 
 
 def primary_change_summary(proposal, path) -> dict | None:

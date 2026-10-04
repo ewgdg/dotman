@@ -189,8 +189,9 @@ Drifted push-only and push-only-delete files offer **Use repository**; pull-only
 **Merge** when a usable Sync Base exists. Their default is Merge with a usable
 Base; otherwise the default keeps whichever side still has the file when exactly one
 side is Missing, else Use repository. Such a guessed default shows as a warning-colored
-Resolution in the workset, review, and command output (`resolution_guessed` in JSON),
-explained by a Fallback cause in the focused detail, review, and command output. Choosing a Resolution or editing the outcome ends the guess for good;
+Resolution in the workset, review, and command output (`resolution_guessed` in JSON);
+review and command output also annotate it `(guessed)` so it reads without color. The
+missing Base itself shows on the Sync Base line. Choosing a Resolution or editing the outcome ends the guess for good;
 Approval does not. Without a Base, nothing shows
 which side changed beyond presence. The repository is the declared configuration, and live writes
 are snapshotted while repository writes are not, so the fallback stays Use repository

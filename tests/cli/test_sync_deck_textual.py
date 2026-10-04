@@ -281,7 +281,9 @@ def test_both_fallback_is_distinct_from_observation_failure(tmp_path, monkeypatc
                 table = app.query_one(DataTable)
                 assert "Use repository" in table.render_line(1).text
                 assert "Observation failed" in table.render_line(2).text
-                assert detail_facts(app)[:2] == ["main:app.both", "Fallback: absent"]
+                # The warning-colored Resolution and the Sync Base line carry the guess; no Fallback fact repeats it.
+                assert detail_facts(app)[0] == "main:app.both"
+                assert detail_facts(app)[1].startswith("Live path:")
                 await pilot.press("space", "a")
                 assert [row.approved for row in session.view.rows] == [True, False]
                 await pilot.press("down")
@@ -332,19 +334,20 @@ def test_fixed_resolution_is_recessive_and_offers_no_intent_key(tmp_path, monkey
         run(interact())
 
 
-def test_review_shows_the_fallback_cause_only_while_guessed(tmp_path, monkeypatch):
+def test_review_marks_the_resolution_guessed_only_while_guessed(tmp_path, monkeypatch):
     from dotman.sync_session import SetResolutionIntent
 
     engine = make_engine(tmp_path, monkeypatch, [("both", "both", b"repo", b"live", "")])
     with engine.open_sync_session(engine.resolve_sync_scope([]), preview=True) as session:
         deck = CommandDeck(session, use_color=False)
         deck.open_review()
-        assert "Fallback: absent" in deck.review_text()
+        assert "Use repository (guessed)" in deck.review_text()
+        assert "Fallback:" not in deck.review_text()
         deck.back()
         view = session.view
         session.dispatch(SetResolutionIntent(view.session_id, view.revision, "main:app.both", "use-live"))
         deck.open_review()
-        assert "Fallback:" not in deck.review_text()
+        assert "(guessed)" not in deck.review_text()
 
 
 def test_detail_ring_shows_full_paths_and_state_with_hanging_indent(tmp_path, monkeypatch):
@@ -707,19 +710,19 @@ def test_resolution_key_toggles_between_two_intents_without_menu(tmp_path, monke
             async with app.run_test() as pilot:
                 table = app.query_one(DataTable)
                 assert session.view.rows[0].intent == 'use-repository'
-                assert any(line.startswith('Fallback:') for line in detail_facts(app))
+                assert session.view.rows[0].resolution_guessed
                 await pilot.press('r')
                 await pilot.pause()
                 assert not app.query_one(OptionList).display
                 assert session.view.rows[0].intent == 'use-live'
                 assert not session.view.rows[0].approved
-                # A chosen side is no longer a fallback, so its cause stops being shown.
-                assert not any(line.startswith('Fallback:') for line in detail_facts(app))
+                # A chosen side is no longer a guess.
+                assert not session.view.rows[0].resolution_guessed
                 await pilot.press('r')
                 await pilot.pause()
                 assert session.view.rows[0].intent == 'use-repository'
                 # Toggling back is an explicit choice, so the guess stays gone.
-                assert not any(line.startswith('Fallback:') for line in detail_facts(app))
+                assert not session.view.rows[0].resolution_guessed
         run(interact())
 
 
