@@ -710,14 +710,15 @@ def test_resolution_key_toggles_between_two_intents_without_menu(tmp_path, monke
             async with app.run_test() as pilot:
                 table = app.query_one(DataTable)
                 assert session.view.rows[0].intent == 'use-repository'
-                assert session.view.rows[0].resolution_guessed
+                # The ? marks the guess without relying on color.
+                assert 'Use repository?' in table.render_line(1).text
                 await pilot.press('r')
                 await pilot.pause()
                 assert not app.query_one(OptionList).display
                 assert session.view.rows[0].intent == 'use-live'
                 assert not session.view.rows[0].approved
                 # A chosen side is no longer a guess.
-                assert not session.view.rows[0].resolution_guessed
+                assert 'Use live' in table.render_line(1).text and '?' not in table.render_line(1).text
                 await pilot.press('r')
                 await pilot.pause()
                 assert session.view.rows[0].intent == 'use-repository'

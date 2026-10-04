@@ -737,10 +737,14 @@ def resolution_guess_shown(row) -> bool:
     return isinstance(row, SessionRow) and row.resolution_guessed and row_resolution(row) == resolution_label(row.intent)
 
 
-def render_row_resolution(row, *, use_color: bool) -> str:
+def render_row_resolution(row, *, use_color: bool, mark_guess: bool = False) -> str:
     label = row_resolution(row)
     fixed = isinstance(row, SessionRow) and not resolution_choosable(row) and label in POLICY_DIRECTION_LABELS
-    return render_resolution(label, guessed=resolution_guess_shown(row), fixed=fixed, use_color=use_color)
+    guessed = resolution_guess_shown(row)
+    # The workset cell has no room for "(guessed)"; a "?" keeps the guess readable without color.
+    if guessed and mark_guess:
+        label += "?"
+    return render_resolution(label, guessed=guessed, fixed=fixed, use_color=use_color)
 
 
 def elide_middle(label: Text, width: int) -> Text:
@@ -1204,7 +1208,7 @@ class SyncDeckApp(App[bool]):
                               Text.from_ansi(render_sync_term(term, use_color=self.deck.use_color).replace(term, marker)),
                               update_width=True)
             table.update_cell(row.row_id, table.ordered_columns[3].key,
-                              Text.from_ansi(render_row_resolution(row, use_color=self.deck.use_color)),
+                              Text.from_ansi(render_row_resolution(row, use_color=self.deck.use_color, mark_guess=True)),
                               update_width=True)
         # Resolution width varies with intent, so refit after every cell update.
         table.fit_targets()

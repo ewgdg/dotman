@@ -190,7 +190,8 @@ Drifted push-only and push-only-delete files offer **Use repository**; pull-only
 Base; otherwise the default keeps whichever side still has the file when exactly one
 side is Missing, else Use repository. Such a guessed default shows as a warning-colored
 Resolution in the workset, review, and command output (`resolution_guessed` in JSON);
-review and command output also annotate it `(guessed)` so it reads without color. The
+so it reads without color, the workset marks it with a trailing `?` (`Use repository?`)
+and review and command output annotate it `(guessed)`. The
 missing Base itself shows on the Sync Base line. Choosing a Resolution or editing the outcome ends the guess for good;
 Approval does not. Without a Base, nothing shows
 which side changed beyond presence. The repository is the declared configuration, and live writes
