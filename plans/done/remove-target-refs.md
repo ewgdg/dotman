@@ -101,7 +101,7 @@ Core removal targets:
 - `tests/cli/test_info_tracked.py`
 - `docs/repository.md`
 - `docs/target-refs.md`
-- `plans/completed/target-refs-plan.md`
+- `plans/done/target-refs-plan.md`
 
 Likely follow-on touch points:
 
