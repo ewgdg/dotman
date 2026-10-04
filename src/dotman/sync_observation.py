@@ -528,8 +528,9 @@ def observe_scope(
                 continue
             attempted.add(identity.repo)
             try:
-                # Even malformed existing storage must be validated, never
-                # mistaken for absence and automatically recreated.
+                # An established store must be validated, never mistaken for
+                # absence; only an unversioned one reads as absent until a real
+                # run replaces it.
                 # Only eligible units can acknowledge; ineligible-only repos
                 # must not create storage they will never use.
                 needs_store = not preview and any(

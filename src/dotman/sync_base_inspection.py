@@ -56,6 +56,13 @@ def _store_exists(context, repo) -> bool:
         raise SyncBaseStoreError(f"{repo.config.name}: {exc}") from exc
 
 
+def _store_unversioned(context, repo) -> bool:
+    try:
+        return SyncBaseStore.unversioned(context.tracked_state.state_root, repo.config.state_key)
+    except SyncBaseStoreError as exc:
+        raise SyncBaseStoreError(f"{repo.config.name}: {exc}") from exc
+
+
 @contextmanager
 def _open(context, repo, *, read_only=True):
     try:
@@ -167,6 +174,13 @@ def doctor_sync_bases(context):
         repo = context.repositories[repo_config.name]
         path = context.tracked_state.state_root / "repos" / repo.config.state_key
         try:
+            if _store_unversioned(context, repo):
+                checks.append(DoctorCheck(
+                    key="sync_bases_store", status="warn",
+                    detail="unversioned Sync Base store; the next real Push, Pull, or Sync replaces it",
+                    path=path, repo_name=repo.config.name,
+                ))
+                continue
             if not _store_exists(context, repo):
                 continue
             corrupt = 0

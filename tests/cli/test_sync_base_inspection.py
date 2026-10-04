@@ -5,7 +5,7 @@ import pytest
 
 from dotman.cli import main
 from dotman.operation_lock import OperationLock, OperationBusy
-from dotman.sync_base_store import SyncBaseRecord, SyncBaseStore, FilePresent, Missing
+from dotman.sync_base_store import LAYOUT_FILE_NAME, SyncBaseRecord, SyncBaseStore, FilePresent, Missing
 from tests.engine.test_sync_session import make_engine
 
 
@@ -188,6 +188,15 @@ def test_store_failure_is_cli_error_and_doctor_failure_without_repair(tmp_path, 
     assert database.stat().st_mode & 0o777 == 0o644
     assert database.read_bytes() == before
 
+
+
+def test_doctor_warns_that_the_next_real_run_replaces_an_unversioned_store(tmp_path, monkeypatch):
+    engine = fixture_engine(tmp_path, monkeypatch)
+    directory = store_record(engine).parents[2]
+    (directory / LAYOUT_FILE_NAME).unlink()
+    check = next(check for check in engine.doctor().checks if check.key == "sync_bases_store")
+    assert check.status == "warn" and check.path == directory and check.repo_name == "main"
+    assert "unversioned" in check.detail
 
 @pytest.mark.parametrize("reason,expected", [
     ("record_corrupt", "corrupt"), ("payload_corrupt", "corrupt"),

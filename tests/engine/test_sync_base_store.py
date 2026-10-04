@@ -468,3 +468,17 @@ def test_unversioned_store_is_absent_until_creation_drops_its_records(tmp_path):
     assert unrelated.read_bytes() == b"kept"
     with SyncBaseStore.open(root, "repo", read_only=True) as store:
         assert store.identities() == (b"main:app.unit",)
+
+
+def test_marker_only_store_completes_on_next_writable_open(tmp_path):
+    from dotman import sync_base_store
+
+    root = tmp_path / "manager"
+    with SyncBaseStore.open(root, "repo") as store:
+        directory = store.repo_state_directory
+    # Holds no records, so recreating its lock cannot adopt untrusted data.
+    (directory / sync_base_store.LOCK_FILE_NAME).unlink()
+
+    with SyncBaseStore.open(root, "repo") as store:
+        store.replace(record())
+        assert store.read(b"main:app.unit") == record()

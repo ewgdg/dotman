@@ -27,10 +27,11 @@ or snapshots. Deleting a group's last record removes the group.
 format epoch: a layout change moves records without changing their bytes, so
 record epochs cannot detect it. Only this marker establishes a store, and
 creation writes it last. Without it, a directory holds no trusted records:
-preview and inspection read it as absent, and the first real Push, Pull, or
-Sync drops its records (an interrupted creation or an older dotman's
-unversioned store) before writing the marker. A store whose marker names
-another layout fails every open, so it never reads as empty.
+preview and inspection read it as absent, `dotman doctor` warns, and the first
+real Push, Pull, or Sync drops any records under `bases/` before writing the
+marker. Other files, such as the flat `sync-base-*.json` records of the oldest
+layout, are ignored and left in place. A store whose marker names another
+layout fails every open, so it never reads as empty.
 
 ## Records and atomic acknowledgment
 
@@ -146,7 +147,8 @@ proof; preview and aborted sessions do no reclamation.
 - `dotman doctor` warns with aggregate corrupt and proven orphaned record counts
   per repository, without identities or repair plans. A complete unrestricted
   directory census can prove absent children; excluded, guarded, or failed
-  discovery cannot. Unsafe/unreadable stores report repository, path, and cause.
+  discovery cannot. Unsafe/unreadable stores report repository, path, and cause;
+  unversioned stores warn that the next real Push, Pull, or Sync replaces them.
 
 Info reports `usable`, `unavailable`, or human `not applicable` (structured
 `not-applicable`). Unavailable/ineligible inspection succeeds; invalid identities
