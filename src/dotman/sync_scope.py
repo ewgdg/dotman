@@ -278,7 +278,9 @@ def resolve_sync_scope(
             if repo is None:
                 raise ValueError(f"unknown repo '{item.repo}'")
             root = _matching_selection(item, repo=repo, selections=all_selections)
-            closure = _scope_closure(context, all_selections, root) if include_dependencies else [root]
+            # Only package inputs opt out; a target input keeps its package's dependency planning and hooks.
+            skip_dependencies = not include_dependencies and item.target_name is None
+            closure = [root] if skip_dependencies else _scope_closure(context, all_selections, root)
             selected_closures.append(closure)
             for selection in closure:
                 key = (

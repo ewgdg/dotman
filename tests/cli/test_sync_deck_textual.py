@@ -252,10 +252,20 @@ def test_dependency_rows_name_the_package_input_that_included_them(tmp_path, mon
     engine = make_engine(tmp_path, monkeypatch, [("own", "push-only", b"r", b"l", "")],
                          dependency_targets=[("shared", "push-only", b"r", b"l", "")])
     with engine.open_sync_session(engine.resolve_sync_scope(["main:app"]), preview=True) as session:
-        app = SyncDeckApp(CommandDeck(session, use_color=False))
+        app = SyncDeckApp(CommandDeck(session, use_color=True))
+
+        def package_segment_dim(package_id):
+            table = app.query_one(DataTable)
+            for y in range(1, len(session.view.rows) + 1):
+                for segment in table.render_line(y):
+                    if segment.text == package_id or segment.text.startswith(f"main:{package_id}."):
+                        return bool(segment.style and segment.style.dim)
+            raise AssertionError(f"no Target label for {package_id}")
 
         async def interact():
             async with app.run_test(size=(110, 24)) as pilot:
+                # Only the row a dependency brought in recedes.
+                assert package_segment_dim("base") and not package_segment_dim("app")
                 facts_by_row = {}
                 for row in session.view.rows:
                     facts_by_row[row.row_id] = detail_facts(app)

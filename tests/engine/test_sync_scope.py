@@ -151,6 +151,10 @@ def test_resolved_sync_scope_without_dependencies_keeps_only_requested_packages(
     assert [selection.package_id for selection in scope.package_selections] == ["app"]
     assert [item.canonical for item in scope.targets] == ["main:app.config", "main:app.settings"]
     assert scope.included_via == {}
+    # A target input's package still brings its dependencies' planning and hooks along.
+    assert engine.resolve_sync_scope(["main:app.config"], include_dependencies=False).package_selections == (
+        engine.resolve_sync_scope(["main:app.config"]).package_selections
+    )
 
 
 def test_resolved_sync_scope_without_inputs_expands_tracked_state_across_repositories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

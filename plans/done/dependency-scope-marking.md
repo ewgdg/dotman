@@ -79,6 +79,10 @@ Commits: feature 1–3, feature 4, cleanup 5; docs travel with their change.
   unreviewed changes behind one keypress and duplicates `--no-deps`. Demo:
   `~/.agents/artifacts/outputs/dotman/2026-10-03/dep-rows-demo/index.html`.
 - `--no-deps` follows pip / docker compose naming.
+- `--no-deps` skips the closure of package inputs only. A target input still carries its
+  package's dependency planning and hooks, as before (caught in review).
+- Requesting one directory child counts as requesting its whole target, so its sibling
+  children are not marked as dependency rows. Rare overlap; not worth child-level provenance.
 
 ## Outcomes & Retrospective
 
