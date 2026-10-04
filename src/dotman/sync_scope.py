@@ -6,6 +6,7 @@ from typing import Sequence
 
 from dotman import planning, tracking
 from dotman.models import (
+    ResolvedPackageIdentity,
     ResolvedPackageSelection,
     ResolvedSyncScope,
     ResolvedSyncTarget,
@@ -253,12 +254,14 @@ def resolve_sync_scope(
     selectors: Sequence[str] | None = None,
     *,
     include_on_demand: bool = False,
+    include_dependencies: bool = True,
 ) -> ResolvedSyncScope:
     """Resolve selectors to owning tracked targets.
 
     On-demand targets enter scope only through an exact target selector unless
     ``include_on_demand`` asks for every tracked target, as metadata-only
-    inspection does.
+    inspection does. ``include_dependencies`` expands package inputs to their
+    dependency closure.
     """
     raw_selectors = () if selectors is None else ((selectors,) if isinstance(selectors, str) else tuple(selectors))
     parsed = tuple(_parse_scope_selector(text) for text in raw_selectors)
@@ -275,7 +278,7 @@ def resolve_sync_scope(
             if repo is None:
                 raise ValueError(f"unknown repo '{item.repo}'")
             root = _matching_selection(item, repo=repo, selections=all_selections)
-            closure = _scope_closure(context, all_selections, root)
+            closure = _scope_closure(context, all_selections, root) if include_dependencies else [root]
             selected_closures.append(closure)
             for selection in closure:
                 key = (
@@ -363,6 +366,8 @@ def resolve_sync_scope(
 
     selected_targets: list[ResolvedSyncTarget] = []
     selected_target_keys: set[tuple[str, str, str | None, str, str | None]] = set()
+    requested_target_keys: set[tuple[str, str, str | None, str]] = set()
+    dependency_roots: dict[ResolvedSyncTarget, dict[ResolvedPackageIdentity, None]] = {}
     for item, closure in zip(parsed, selected_closures if parsed else ()):
         repo = context.repositories[item.repo]
         root = _matching_selection(item, repo=repo, selections=all_selections)
@@ -380,6 +385,7 @@ def resolve_sync_scope(
             )
             if not any(_target_key(target) in keys for keys in winner_keys_by_operation.values()):
                 raise ValueError(f"sync scope '{item.text}' is not an owning tracked target")
+            requested_target_keys.add(_target_key(target))
             key = (*_target_key(target), target.child_path)
             if key not in selected_target_keys:
                 selected_target_keys.add(key)
@@ -398,6 +404,10 @@ def resolve_sync_scope(
                         continue
                     if target_spec.on_demand and not include_on_demand:
                         continue
+                    if selection.identity == root.identity:
+                        requested_target_keys.add(_target_key(target))
+                    else:
+                        dependency_roots.setdefault(target, {})[root.identity] = None
                     key = (*_target_key(target), None)
                     if key not in selected_target_keys:
                         selected_target_keys.add(key)
@@ -432,6 +442,11 @@ def resolve_sync_scope(
         selectors=normalized_selectors,
         package_selections=public_selections,
         targets=tuple(selected_targets),
+        # A target any input requests directly is not there because of a dependency.
+        included_via={
+            target: tuple(roots) for target, roots in dependency_roots.items()
+            if _target_key(target) not in requested_target_keys
+        },
         planning_inputs=planning_inputs_by_operation,
     )
 

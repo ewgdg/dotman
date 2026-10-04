@@ -76,9 +76,8 @@ def test_resolved_sync_scope_preserves_angle_brackets_in_directory_child_names(
         assert scope.targets[0].canonical == f"main:app.settings/{child_name}"
 
 
-def test_resolved_sync_scope_expands_dependencies_and_deduplicates_union(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    repo_root = tmp_path / "repo"
-    _write_repo(repo_root, repo_name="main")
+def _write_base_dependency(repo_root: Path) -> None:
+    """Add package `base` and make `app` depend on it."""
     base_root = repo_root / "packages" / "base" / "files"
     base_root.mkdir(parents=True)
     (base_root / "base.conf").write_text("base\n", encoding="utf-8")
@@ -99,6 +98,12 @@ def test_resolved_sync_scope_expands_dependencies_and_deduplicates_union(tmp_pat
         'depends = ["base"]\n' + app_manifest,
         encoding="utf-8",
     )
+
+
+def test_resolved_sync_scope_expands_dependencies_and_deduplicates_union(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    _write_base_dependency(repo_root)
     write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "default")])
     engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
 
@@ -111,6 +116,41 @@ def test_resolved_sync_scope_expands_dependencies_and_deduplicates_union(tmp_pat
         "main:app.config",
         "main:app.settings",
     ]
+
+
+def test_resolved_sync_scope_records_which_package_input_included_a_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    _write_base_dependency(repo_root)
+    write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "default")])
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope(["main:app"])
+
+    assert {target.canonical: [identity.package_id for identity in via] for target, via in scope.included_via.items()} == {
+        "main:base.base": ["app"],
+    }
+    # A requested package, or a selector-less run, includes nothing through a dependency.
+    assert engine.resolve_sync_scope(["main:app", "main:base"]).included_via == {}
+    assert engine.resolve_sync_scope().included_via == {}
+
+
+def test_resolved_sync_scope_without_dependencies_keeps_only_requested_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    _write_repo(repo_root, repo_name="main")
+    _write_base_dependency(repo_root)
+    write_tracked_packages_state(tmp_path / "state", repo_name="main", entries=[("app", "default")])
+    engine = _engine(tmp_path, {"main": repo_root}, monkeypatch)
+
+    scope = engine.resolve_sync_scope(["main:app"], include_dependencies=False)
+
+    assert [selection.package_id for selection in scope.package_selections] == ["app"]
+    assert [item.canonical for item in scope.targets] == ["main:app.config", "main:app.settings"]
+    assert scope.included_via == {}
 
 
 def test_resolved_sync_scope_without_inputs_expands_tracked_state_across_repositories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -32,7 +32,7 @@ from textual.widgets import DataTable, Input, OptionList, Static
 
 from dotman.diff_review import display_review_path
 from dotman.ui_context import current_ui_config
-from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hint, render_key_hint_chip, render_key_hint_separator, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
+from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, MENU_HINT_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hint, render_key_hint_chip, render_key_hint_separator, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_resolution, resolution_label, live_counts, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SessionRow, SyncSession, conflict_diagnostic
@@ -641,7 +641,19 @@ def workset_target_label(row, *, use_color: bool) -> str:
         return additional_label(row, use_color=use_color)
     if isinstance(row, AuxiliaryRow):
         return auxiliary_row_label(row, use_color=use_color)
+    if row.included_via and use_color:
+        # Rows only a dependency closure brought in recede; the detail panel says which input did.
+        return style_text(unit_label(row, use_color=False), *MENU_HINT_STYLE)
     return unit_label(row, use_color=use_color)
+
+
+def included_via_fact(row: SessionRow, *, use_color: bool) -> list[tuple[str, str]]:
+    if not row.included_via:
+        return []
+    labels = (render_package_label(repo_name=identity.repo, package_id=identity.package_id,
+                                   bound_profile=identity.bound_profile, use_color=use_color)
+              for identity in row.included_via)
+    return [("Included via", ", ".join(labels))]
 
 
 def row_selected(row) -> bool:
@@ -1290,6 +1302,7 @@ class SyncDeckApp(App[bool]):
             identity = unit_label(row, use_color=use_color)
             if row.resolution_guessed:
                 facts.append((render_sync_term('Fallback', use_color=use_color), row.fallback_reason))
+            facts += included_via_fact(row, use_color=use_color)
             facts += unit_detail_facts(row.observation, use_color=use_color)
         if row.row_id != self._detail_row_id:
             # A newly focused row starts from its identity, not the old scroll offset.

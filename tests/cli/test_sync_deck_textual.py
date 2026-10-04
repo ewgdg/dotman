@@ -248,6 +248,23 @@ def test_mouse_click_focuses_identity_and_toggles_only_approval(tmp_path, monkey
         run(interact())
 
 
+def test_dependency_rows_name_the_package_input_that_included_them(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("own", "push-only", b"r", b"l", "")],
+                         dependency_targets=[("shared", "push-only", b"r", b"l", "")])
+    with engine.open_sync_session(engine.resolve_sync_scope(["main:app"]), preview=True) as session:
+        app = SyncDeckApp(CommandDeck(session, use_color=False))
+
+        async def interact():
+            async with app.run_test(size=(110, 24)) as pilot:
+                facts_by_row = {}
+                for row in session.view.rows:
+                    facts_by_row[row.row_id] = detail_facts(app)
+                    await pilot.press("down")
+                assert "Included via: main:app" in facts_by_row["main:base.shared"]
+                assert not any(fact.startswith("Included via:") for fact in facts_by_row["main:app.own"])
+        run(interact())
+
+
 def test_both_fallback_is_distinct_from_observation_failure(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [
         ("both", "both", b"repo", b"live", ""),

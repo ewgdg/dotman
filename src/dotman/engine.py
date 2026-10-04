@@ -263,9 +263,11 @@ class DotmanEngine:
         return PushSession.open(self._planning_context, scope, preview=preview,
                                 run_noop=run_noop, event_sink=event_sink, sink=sink, stream_output=stream_output)
 
-    def resolve_sync_scope(self, selectors: Sequence[str] | None = None) -> ResolvedSyncScope:
+    def resolve_sync_scope(
+        self, selectors: Sequence[str] | None = None, *, include_dependencies: bool = True,
+    ) -> ResolvedSyncScope:
         """Resolve exact tracked identities for a SyncSession."""
-        return resolve_sync_scope(self._planning_context, selectors)
+        return resolve_sync_scope(self._planning_context, selectors, include_dependencies=include_dependencies)
 
 
 

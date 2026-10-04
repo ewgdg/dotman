@@ -65,6 +65,10 @@ including dependency closure and ownership winners. Groups are catalog
 selectors, not tracked identities, and are never returned as Sync scope
 members.
 
+A package input also covers its dependency closure. Units it reaches only through that closure are
+marked in the Command Deck: a dimmed Target label and an `Included via:` detail
+line naming the package inputs.
+
 On-demand targets (`on_demand = true`) are in scope only when an input names
 them exactly, e.g. `dotman push niri-custom-git.niri_custom_git_update`.
 Package inputs, including their dependency closure, and selector-less runs

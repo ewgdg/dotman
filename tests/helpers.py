@@ -134,17 +134,14 @@ SyncTarget = tuple[str, str, bytes | None, bytes | None, str]
 """(name, sync_policy, repository bytes or None, live bytes or None, extra target TOML)."""
 
 
-def write_sync_repository(root: Path, targets: list[SyncTarget] | tuple[SyncTarget, ...]) -> Path:
-    """Write a committed one-package repo, live files and tracked state; return the config path.
-
-    Tracked state lands in `root/state`, so callers point XDG_STATE_HOME there.
-    """
-    repo = root / "repo"
-    package = repo / "packages" / "app"
+def _write_sync_package(
+    root: Path, package_id: str, targets: list[SyncTarget] | tuple[SyncTarget, ...], *, depends: tuple[str, ...] = (),
+) -> None:
+    package = root / "repo" / "packages" / package_id
     package.mkdir(parents=True)
-    (repo / "profiles").mkdir()
-    (repo / "profiles" / "default.toml").write_text("")
-    lines = ['id = "app"']
+    lines = [f'id = "{package_id}"']
+    if depends:
+        lines.append("depends = [" + ", ".join(f'"{name}"' for name in depends) + "]")
     for name, policy, source, live, extra in targets:
         lines += [
             f"[targets.{name}]",
@@ -160,6 +157,25 @@ def write_sync_repository(root: Path, targets: list[SyncTarget] | tuple[SyncTarg
             (root / "live").mkdir(exist_ok=True)
             (root / "live" / name).write_bytes(live)
     (package / "package.toml").write_text("\n".join(lines))
+
+
+def write_sync_repository(
+    root: Path,
+    targets: list[SyncTarget] | tuple[SyncTarget, ...],
+    *,
+    dependency_targets: list[SyncTarget] | tuple[SyncTarget, ...] = (),
+) -> Path:
+    """Write a committed one-package repo, live files and tracked state; return the config path.
+
+    Tracked state lands in `root/state`, so callers point XDG_STATE_HOME there.
+    `dependency_targets` adds an untracked package `base` that the tracked `app` depends on.
+    """
+    repo = root / "repo"
+    (repo / "profiles").mkdir(parents=True)
+    (repo / "profiles" / "default.toml").write_text("")
+    _write_sync_package(root, "app", targets, depends=("base",) if dependency_targets else ())
+    if dependency_targets:
+        _write_sync_package(root, "base", dependency_targets)
     runtime = current_command_runtime()
     for args in [
         ("init", "-q"),

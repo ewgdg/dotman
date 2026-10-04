@@ -411,6 +411,9 @@ class ResolvedSyncScope:
     selectors: tuple[str, ...]
     package_selections: tuple[ResolvedPackageSelection, ...]
     targets: tuple[ResolvedSyncTarget, ...]
+    # Targets that entered scope only through a package input's dependency
+    # closure, keyed by target identity, valued by the package inputs that pulled them in.
+    included_via: dict[ResolvedSyncTarget, tuple[ResolvedPackageIdentity, ...]]
     # The full tracked graph's static planning by direction, kept so a session
     # observes exactly what ownership and collisions validated without planning again.
     planning_inputs: dict[str, tuple[PackagePlanningInput, ...]] = field(compare=False, repr=False)

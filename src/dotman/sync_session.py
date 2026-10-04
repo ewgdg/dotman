@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
-from typing import Callable, Literal
+from typing import Callable, Literal, Mapping
 from pathlib import Path
 from uuid import uuid4
 import stat
@@ -19,7 +19,7 @@ from dotman.sync_observation import _identity
 from dotman.sync_auxiliary import AuxiliaryRow, guard_skip_rows, plan_auxiliary, retain_directional_hooks
 from dotman.sync_reconciliation import reconcile, unresolved_conflict_blocks, ReconciliationConflict, ReconciliationFailed
 from dotman.projection import PlanningCommandError, project_file_view
-from dotman.models import GuardSkip, ResolvedSyncScope, package_ref_text, repo_qualified_target_text
+from dotman.models import GuardSkip, ResolvedPackageIdentity, ResolvedSyncScope, ResolvedSyncTarget, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
 from dotman.planning_guards import GuardPlanningError
 from dotman.progress import ProgressSink
@@ -242,6 +242,8 @@ class SessionRow:
     # Choosing a Resolution or editing the outcome is a decision; Approval only accepts a default.
     resolution_chosen: bool = False
     diagnostics: tuple[Diagnostic, ...] = ()
+    # Package inputs whose dependency closure brought this row into scope; empty when requested.
+    included_via: tuple[ResolvedPackageIdentity, ...] = ()
 
     @property
     def resolution_guessed(self) -> bool:
@@ -541,7 +543,9 @@ class ProposalSession:
         preview: bool,
         auxiliary: tuple[AuxiliaryRow, ...] = (),
         event_sink: SessionEventSink | None = None,
+        included_via: Mapping[ResolvedSyncTarget, tuple[ResolvedPackageIdentity, ...]] | None = None,
     ) -> None:
+        included_via = included_via or {}
         self._command_operation = CommandOperation()
         self._editor_operation = CommandOperation()
         self._additional_candidates = {}
@@ -589,6 +593,7 @@ class ProposalSession:
                     intent=default_intent(unit),
                     fallback_reason=(unit.base.reason or "absent")
                     if supports_proposal(unit) and unit.effective_policy == "both" and unit.base.status != "usable" else None,
+                    included_via=included_via.get(replace(unit.identity, child_path=None), ()),
                 )
                 for unit in observations
                 if unit.state != "directly-in-sync" or unit.diagnostics
@@ -688,7 +693,8 @@ class ProposalSession:
                 if sink is not None:
                     sink.close()
             resolved_inputs = (observed.inputs, resolved_inputs[1])
-            session = cls(observations, preview=preview, auxiliary=auxiliary, event_sink=event_sink)
+            session = cls(observations, preview=preview, auxiliary=auxiliary, event_sink=event_sink,
+                          included_via=scope.included_via)
             session._obsolete_bases = obsolete_bases
             session._root_inputs = {_identity(target): (item, target) for item in selected_inputs.values() for target in item.target_metadata}
             session._run_noop = run_noop

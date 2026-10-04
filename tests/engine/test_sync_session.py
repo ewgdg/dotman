@@ -11,9 +11,9 @@ from dotman.sync_base_store import FilePresent, Missing
 from tests.helpers import write_sync_repository
 
 
-def make_engine(tmp_path, monkeypatch, targets):
+def make_engine(tmp_path, monkeypatch, targets, **repository):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    return DotmanEngine.from_config_path(write_sync_repository(tmp_path, targets))
+    return DotmanEngine.from_config_path(write_sync_repository(tmp_path, targets, **repository))
 
 
 def open_session(engine, *, preview=True, **kwargs):
