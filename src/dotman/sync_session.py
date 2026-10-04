@@ -19,7 +19,7 @@ from dotman.sync_observation import _identity
 from dotman.sync_auxiliary import AuxiliaryRow, guard_skip_rows, plan_auxiliary, retain_directional_hooks
 from dotman.sync_reconciliation import reconcile, unresolved_conflict_blocks, ReconciliationConflict, ReconciliationFailed
 from dotman.projection import PlanningCommandError, project_file_view
-from dotman.models import GuardSkip, ResolvedPackageIdentity, ResolvedSyncScope, ResolvedSyncTarget, package_ref_text, repo_qualified_target_text
+from dotman.models import GuardSkip, ResolvedPackageIdentity, ResolvedSyncScope, package_ref_text, repo_qualified_target_text
 from dotman.planning import PlanningContext
 from dotman.planning_guards import GuardPlanningError
 from dotman.progress import ProgressSink
@@ -543,7 +543,7 @@ class ProposalSession:
         preview: bool,
         auxiliary: tuple[AuxiliaryRow, ...] = (),
         event_sink: SessionEventSink | None = None,
-        included_via: Mapping[ResolvedSyncTarget, tuple[ResolvedPackageIdentity, ...]] | None = None,
+        included_via: Mapping[str, tuple[ResolvedPackageIdentity, ...]] | None = None,
     ) -> None:
         included_via = included_via or {}
         self._command_operation = CommandOperation()
@@ -593,11 +593,11 @@ class ProposalSession:
                     intent=default_intent(unit),
                     fallback_reason=(unit.base.reason or "absent")
                     if supports_proposal(unit) and unit.effective_policy == "both" and unit.base.status != "usable" else None,
-                    included_via=included_via.get(replace(unit.identity, child_path=None), ()),
+                    included_via=included_via.get(replace(unit.identity, child_path=None).canonical, ()),
                 )
                 for unit in observations
                 if unit.state != "directly-in-sync" or unit.diagnostics
-            ) + auxiliary,
+            ) + tuple(replace(row, included_via=included_via.get(row.scope, ())) for row in auxiliary),
             ("batch-set-approval", "preview", "abort") if preview else ("batch-set-approval", "preview", "execute", "abort"),
             operation=self.operation,
         )

@@ -211,9 +211,9 @@ independent Approval and directly includes auxiliary work. Unsupported resolutio
 from Observation and Proposal failures. A ringed detail panel below the table
 describes the focused row: its full canonical identity, diagnostics, and for units
 the full live and repository paths, Observation state, Sync Base status and any
-differing configured policy. A unit that only a package input's dependency closure
-brought into scope shows `Included via:` with those package inputs, and its Target
-label is dimmed in the table. Wrapped values keep a hanging indent under their
+differing configured policy. A unit, Probe or hook row that only a package input's
+dependency closure brought into scope shows `Included via:` with those package inputs,
+and its Target label is dimmed in the table. Wrapped values keep a hanging indent under their
 value column, and **Tab** focuses the panel for keyboard scrolling. Directory child rows use the same opt-in Approval as file targets. The deck and
 output adapter also recognize semantic **Directory Root Work** as direct Auxiliary
 inclusion, without Proposal or Approval. Root work uses the same selection styling

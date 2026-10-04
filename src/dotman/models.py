@@ -320,6 +320,10 @@ class ResolvedPackageIdentity:
     package_id: str
     bound_profile: str | None
 
+    @property
+    def canonical(self) -> str:
+        return f"{self.repo}:{package_ref_text(package_id=self.package_id, bound_profile=self.bound_profile)}"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "repo": self.repo,
@@ -411,9 +415,9 @@ class ResolvedSyncScope:
     selectors: tuple[str, ...]
     package_selections: tuple[ResolvedPackageSelection, ...]
     targets: tuple[ResolvedSyncTarget, ...]
-    # Targets that entered scope only through a package input's dependency
-    # closure, keyed by target identity, valued by the package inputs that pulled them in.
-    included_via: dict[ResolvedSyncTarget, tuple[ResolvedPackageIdentity, ...]]
+    # Package and target scopes that entered only through a package input's dependency
+    # closure, keyed by canonical scope label, valued by the package inputs that pulled them in.
+    included_via: dict[str, tuple[ResolvedPackageIdentity, ...]]
     # The full tracked graph's static planning by direction, kept so a session
     # observes exactly what ownership and collisions validated without planning again.
     planning_inputs: dict[str, tuple[PackagePlanningInput, ...]] = field(compare=False, repr=False)

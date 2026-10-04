@@ -91,5 +91,7 @@ Commits: feature 1–3, feature 4, cleanup 5; docs travel with their change.
 - Default scope semantics unchanged; dependency rows are dimmed with an `Included via:`
   detail fact; `--no-deps` keeps a package input to its own targets.
 - The unused `Fallback` style term was removed with the line it styled.
+- Dependency Probe and hook rows are marked like units: provenance is keyed by canonical
+  package and target scope label, so auxiliary rows resolve it from their scope.
 - Follow-up candidates, not done: expose included-via in JSON `sync_units`; mark
   dependency units in the review page.

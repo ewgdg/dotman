@@ -368,11 +368,13 @@ def resolve_sync_scope(
 
     selected_targets: list[ResolvedSyncTarget] = []
     selected_target_keys: set[tuple[str, str, str | None, str, str | None]] = set()
-    requested_target_keys: set[tuple[str, str, str | None, str]] = set()
-    dependency_roots: dict[ResolvedSyncTarget, dict[ResolvedPackageIdentity, None]] = {}
+    # Canonical package and target scope labels: what inputs name, and what only a closure brought in.
+    requested_scopes: set[str] = set()
+    dependency_roots: dict[str, dict[ResolvedPackageIdentity, None]] = {}
     for item, closure in zip(parsed, selected_closures if parsed else ()):
         repo = context.repositories[item.repo]
         root = _matching_selection(item, repo=repo, selections=all_selections)
+        requested_scopes.add(root.identity.canonical)
         if item.target_name is not None:
             if not _target_exists(context, root, item.target_name):
                 raise ValueError(f"sync scope '{item.text}' did not match an exact target")
@@ -387,13 +389,16 @@ def resolve_sync_scope(
             )
             if not any(_target_key(target) in keys for keys in winner_keys_by_operation.values()):
                 raise ValueError(f"sync scope '{item.text}' is not an owning tracked target")
-            requested_target_keys.add(_target_key(target))
+            requested_scopes.add(replace(target, child_path=None).canonical)
             key = (*_target_key(target), target.child_path)
             if key not in selected_target_keys:
                 selected_target_keys.add(key)
                 selected_targets.append(target)
         else:
             for selection in closure:
+                is_dependency = selection.identity != root.identity
+                if is_dependency:
+                    dependency_roots.setdefault(selection.identity.canonical, {})[root.identity] = None
                 package = context.repositories[selection.identity.repo].resolve_package(selection.identity.package_id)
                 for target_name, target_spec in (package.targets or {}).items():
                     target = ResolvedSyncTarget(
@@ -406,10 +411,10 @@ def resolve_sync_scope(
                         continue
                     if target_spec.on_demand and not include_on_demand:
                         continue
-                    if selection.identity == root.identity:
-                        requested_target_keys.add(_target_key(target))
+                    if is_dependency:
+                        dependency_roots.setdefault(target.canonical, {})[root.identity] = None
                     else:
-                        dependency_roots.setdefault(target, {})[root.identity] = None
+                        requested_scopes.add(target.canonical)
                     key = (*_target_key(target), None)
                     if key not in selected_target_keys:
                         selected_target_keys.add(key)
@@ -444,10 +449,10 @@ def resolve_sync_scope(
         selectors=normalized_selectors,
         package_selections=public_selections,
         targets=tuple(selected_targets),
-        # A target any input requests directly is not there because of a dependency.
+        # A scope any input names directly is not there because of a dependency.
         included_via={
-            target: tuple(roots) for target, roots in dependency_roots.items()
-            if _target_key(target) not in requested_target_keys
+            scope_label: tuple(roots) for scope_label, roots in dependency_roots.items()
+            if scope_label not in requested_scopes
         },
         planning_inputs=planning_inputs_by_operation,
     )

@@ -250,27 +250,32 @@ def test_mouse_click_focuses_identity_and_toggles_only_approval(tmp_path, monkey
 
 def test_dependency_rows_name_the_package_input_that_included_them(tmp_path, monkeypatch):
     engine = make_engine(tmp_path, monkeypatch, [("own", "push-only", b"r", b"l", "")],
-                         dependency_targets=[("shared", "push-only", b"r", b"l", "")])
+                         dependency_targets=[("shared", "push-only", b"r", b"l", "")],
+                         dependency_extra='[hooks]\npre_push = [{ run = "true", run_noop = true }]')
     with engine.open_sync_session(engine.resolve_sync_scope(["main:app"]), preview=True) as session:
         app = SyncDeckApp(CommandDeck(session, use_color=True))
 
-        def package_segment_dim(package_id):
+        def label_dim(text):
+            # A dimmed label renders as one plain segment; a requested one splits into styled parts.
             table = app.query_one(DataTable)
             for y in range(1, len(session.view.rows) + 1):
                 for segment in table.render_line(y):
-                    if segment.text == package_id or segment.text.startswith(f"main:{package_id}."):
+                    if text in segment.text:
                         return bool(segment.style and segment.style.dim)
-            raise AssertionError(f"no Target label for {package_id}")
+            raise AssertionError(f"no Target label containing {text!r}")
 
         async def interact():
             async with app.run_test(size=(110, 24)) as pilot:
                 # Only the row a dependency brought in recedes.
-                assert package_segment_dim("base") and not package_segment_dim("app")
+                assert label_dim("main:base.shared") and label_dim("main:base (push-hooks)")
+                assert not label_dim("app")
                 facts_by_row = {}
                 for row in session.view.rows:
                     facts_by_row[row.row_id] = detail_facts(app)
                     await pilot.press("down")
                 assert "Included via: main:app" in facts_by_row["main:base.shared"]
+                # The dependency's hook work is there for the same reason.
+                assert "Included via: main:app" in facts_by_row["main:base (push-hooks)"]
                 assert not any(fact.startswith("Included via:") for fact in facts_by_row["main:app.own"])
         run(interact())
 

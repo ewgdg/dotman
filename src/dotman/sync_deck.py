@@ -639,15 +639,14 @@ def auxiliary_row_label(row: AuxiliaryRow, *, use_color: bool) -> str:
 def workset_target_label(row, *, use_color: bool) -> str:
     if isinstance(row, AdditionalRow):
         return additional_label(row, use_color=use_color)
-    if isinstance(row, AuxiliaryRow):
-        return auxiliary_row_label(row, use_color=use_color)
+    label = auxiliary_row_label if isinstance(row, AuxiliaryRow) else unit_label
     if row.included_via and use_color:
         # Rows only a dependency closure brought in recede; the detail panel says which input did.
-        return style_text(unit_label(row, use_color=False), *MENU_HINT_STYLE)
-    return unit_label(row, use_color=use_color)
+        return style_text(label(row, use_color=False), *MENU_HINT_STYLE)
+    return label(row, use_color=use_color)
 
 
-def included_via_fact(row: SessionRow, *, use_color: bool) -> list[tuple[str, str]]:
+def included_via_fact(row: SessionRow | AuxiliaryRow, *, use_color: bool) -> list[tuple[str, str]]:
     if not row.included_via:
         return []
     labels = (render_package_label(repo_name=identity.repo, package_id=identity.package_id,
@@ -1305,6 +1304,7 @@ class SyncDeckApp(App[bool]):
             identity = auxiliary_row_label(row, use_color=use_color)
             if row.guard_skip is not None:
                 facts.append((render_sync_term('Guard skipped', use_color=use_color), guard_skip_explanation(row)))
+            facts += included_via_fact(row, use_color=use_color)
         else:
             identity = unit_label(row, use_color=use_color)
             facts += included_via_fact(row, use_color=use_color)

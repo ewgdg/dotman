@@ -129,7 +129,9 @@ def test_resolved_sync_scope_records_which_package_input_included_a_dependency(
 
     scope = engine.resolve_sync_scope(["main:app"])
 
-    assert {target.canonical: [identity.package_id for identity in via] for target, via in scope.included_via.items()} == {
+    # Keyed by package and target scope, so hook and probe rows resolve the same way as units.
+    assert {scope_label: [identity.package_id for identity in via] for scope_label, via in scope.included_via.items()} == {
+        "main:base": ["app"],
         "main:base.base": ["app"],
     }
     # A requested package, or a selector-less run, includes nothing through a dependency.

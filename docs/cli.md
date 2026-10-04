@@ -65,9 +65,9 @@ including dependency closure and ownership winners. Groups are catalog
 selectors, not tracked identities, and are never returned as Sync scope
 members.
 
-A package input also covers its dependency closure. Units it reaches only through that closure are
-marked in the Command Deck: a dimmed Target label and an `Included via:` detail
-line naming the package inputs. `--no-deps` (on `sync`, `pull` and `push`)
+A package input also covers its dependency closure. Rows it reaches only through that
+closure, including the dependencies' Probe and hook work, are marked in the Command
+Deck: a dimmed Target label and an `Included via:` detail line naming the package inputs. `--no-deps` (on `sync`, `pull` and `push`)
 leaves the closure out, so a package input covers only its own targets and hooks.
 Target inputs never expand a closure: naming one target brings in no dependency
 package, so none of its hooks either. A selector-less run already covers the whole

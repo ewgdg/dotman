@@ -8,7 +8,7 @@ from typing import Literal
 import stat
 
 from dotman.command_runtime import CommandRuntime, run_ordered
-from dotman.models import GuardSkip, ResolvedSyncTarget, package_ref_text
+from dotman.models import GuardSkip, ResolvedPackageIdentity, ResolvedSyncTarget
 from dotman.planning import PackagePlanningInput
 from dotman.projection import run_probe_command
 from dotman.progress import ProgressSink
@@ -26,6 +26,8 @@ class AuxiliaryRow:
     allowed_commands: tuple[Literal["set-included"], ...] = ("set-included",)
     diagnostics: tuple[Diagnostic, ...] = ()
     guard_skip: GuardSkip | None = None
+    # Package inputs whose dependency closure brought this scope in; empty when requested.
+    included_via: tuple[ResolvedPackageIdentity, ...] = ()
 
 
 def guard_skip_rows(skips: tuple[tuple[str, GuardSkip], ...]) -> tuple[AuxiliaryRow, ...]:
@@ -41,7 +43,7 @@ def guard_skip_rows(skips: tuple[tuple[str, GuardSkip], ...]) -> tuple[Auxiliary
 
 
 def _package_scope(repo: str, package_id: str, profile: str | None) -> str:
-    return f"{repo}:{package_ref_text(package_id=package_id, bound_profile=profile)}"
+    return ResolvedPackageIdentity(repo, package_id, profile).canonical
 
 
 def retain_directional_hooks(
