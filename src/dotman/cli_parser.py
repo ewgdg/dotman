@@ -133,6 +133,15 @@ def add_run_noop_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_no_deps_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--no-deps",
+        action="store_true",
+        dest="no_deps",
+        help="Leave out the dependency closure of package scopes",
+    )
+
+
 def add_report_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--report",
@@ -345,6 +354,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_dry_run_argument(sync_parser)
     add_full_path_argument(sync_parser)
     add_report_argument(sync_parser)
+    add_no_deps_argument(sync_parser)
     add_run_noop_argument(sync_parser)
 
     push_parser = subparsers.add_parser(
@@ -359,6 +369,7 @@ def build_parser() -> argparse.ArgumentParser:
         "scopes", nargs="*", metavar="<repo:package.target>",
         help="Exact tracked scopes (default: all tracked targets)",
     )
+    add_no_deps_argument(push_parser)
     add_run_noop_argument(push_parser)
 
     pull_parser = subparsers.add_parser(
@@ -373,6 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
         "scopes", nargs="*", metavar="<repo:package.target>",
         help="Exact tracked scopes (default: all tracked targets)",
     )
+    add_no_deps_argument(pull_parser)
     add_run_noop_argument(pull_parser)
 
     subparsers.add_parser(

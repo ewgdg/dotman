@@ -75,10 +75,10 @@ def test_unattended_selects_auxiliary_and_forwards_run_noop(capsys):
         return session
     engine = SimpleNamespace(
         config=SimpleNamespace(ui=UiConfig()),
-        resolve_sync_scope=lambda scopes: scopes,
+        resolve_sync_scope=lambda scopes, **_options: scopes,
         open_sync_session=open_session,
     )
-    args = SimpleNamespace(config=None, scopes=[], dry_run=True,
+    args = SimpleNamespace(config=None, scopes=[], no_deps=False, dry_run=True,
                            unattended=True, json_output=False, run_noop=True)
     runner = SyncDeckCommandRunner(engine_factory=lambda _: engine, use_color=False)
     assert runner.run(args) == 0

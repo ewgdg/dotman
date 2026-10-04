@@ -10,7 +10,7 @@ from tests.engine.test_sync_session import make_engine
 
 def arguments(**overrides):
     return SimpleNamespace(**dict(
-        dict(command="sync", config=None, scopes=[], dry_run=True,
+        dict(command="sync", config=None, scopes=[], no_deps=False, dry_run=True,
              unattended=True, json_output=True), **overrides))
 
 
@@ -23,6 +23,22 @@ def test_sync_parser_accepts_multiple_exact_scopes_and_explicit_approval():
     args = build_parser().parse_args(["--unattended", "sync", "main:app.one", "main:app.two", "--dry-run"])
     assert args.scopes == ["main:app.one", "main:app.two"]
     assert args.unattended and args.dry_run
+
+
+@pytest.mark.parametrize("command", ["sync", "pull", "push"])
+def test_no_deps_leaves_dependency_targets_out_of_a_package_scope(tmp_path, monkeypatch, capsys, command):
+    engine = make_engine(tmp_path, monkeypatch, [("own", "push-only", b"r", b"l", "")],
+                         dependency_targets=[("shared", "push-only", b"r", b"l", "")])
+    args = build_parser().parse_args(["--unattended", "--json", command, "--dry-run", "--no-deps", "main:app"])
+    assert args.no_deps
+
+    assert runner_for(engine).run(arguments(scopes=["main:app"], no_deps=True)) == 0
+    units = [unit["identity"] for unit in json.loads(capsys.readouterr().out)["sync_units"]]
+    assert units == ["main:app.own"]
+
+    assert runner_for(engine).run(arguments(scopes=["main:app"])) == 0
+    units = [unit["identity"] for unit in json.loads(capsys.readouterr().out)["sync_units"]]
+    assert sorted(units) == ["main:app.own", "main:base.shared"]
 
 
 def test_unattended_preview_selects_defaults_without_writes_or_content_leaks(tmp_path, monkeypatch, capsys):
@@ -212,7 +228,7 @@ def test_json_summary_counts_only_selected_effects(tmp_path, monkeypatch):
 ])
 def test_json_preflight_failure_is_one_document(tmp_path, monkeypatch, capsys, failure, code, status):
     engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise failure
     monkeypatch.setattr(engine, "resolve_sync_scope", fail)
     assert runner_for(engine).run(arguments()) == code

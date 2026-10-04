@@ -256,7 +256,7 @@ def test_unattended_noop_is_reported_as_noop_only_on_request(tmp_path, monkeypat
     from dotman.sync_deck_command import PullDeckCommandRunner
 
     engine = make_engine(tmp_path, monkeypatch, [('unit', 'pull-only', b'a\n', b'A\n', FOLDING_CAPTURE)])
-    args = SimpleNamespace(config=engine.config.config_path, scopes=[], dry_run=True, unattended=True,
+    args = SimpleNamespace(config=engine.config.config_path, scopes=[], no_deps=False, dry_run=True, unattended=True,
                            json_output=False, run_noop=False, command='pull', report=report)
     assert PullDeckCommandRunner(engine_factory=lambda _: engine, use_color=False).run(args) == 0
     assert ('[noop] main:app.unit' in capsys.readouterr().out) == report

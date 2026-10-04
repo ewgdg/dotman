@@ -169,7 +169,7 @@ class SyncDeckCommandRunner:
         try:
             scope = engine.resolve_sync_scope(self._resolve_scope_inputs(
                 engine, args.scopes, interaction=self._interaction if interactive else None,
-            ))
+            ), include_dependencies=not args.no_deps)
         except ValueError as exc:
             self._emit(args, None, None, diagnostic={
                 "code": "invalid-input", "message": str(exc),

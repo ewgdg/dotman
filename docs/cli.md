@@ -67,7 +67,10 @@ members.
 
 A package input also covers its dependency closure. Units it reaches only through that closure are
 marked in the Command Deck: a dimmed Target label and an `Included via:` detail
-line naming the package inputs.
+line naming the package inputs. `--no-deps` (on `sync`, `pull` and `push`)
+leaves the closure out, so a package input covers only its own targets. Target
+inputs never expand a closure, and a selector-less run already covers the whole
+tracked state, so the flag changes nothing for them.
 
 On-demand targets (`on_demand = true`) are in scope only when an input names
 them exactly, e.g. `dotman push niri-custom-git.niri_custom_git_update`.
@@ -89,7 +92,7 @@ fails with the candidates rather than guessing.
 ## Sync
 
 ```text
-dotman [--config PATH] [--json] [--unattended] [--file-symlink-mode MODE] [--dir-symlink-mode MODE] sync [-d | --dry-run] [--full-path] [--report] [--run-noop] [<tracked-scope> ...]
+dotman [--config PATH] [--json] [--unattended] [--file-symlink-mode MODE] [--dir-symlink-mode MODE] sync [-d | --dry-run] [--full-path] [--report] [--no-deps] [--run-noop] [<tracked-scope> ...]
 ```
 
 File-symlink modes are `prompt` (default) and `follow`; directory-symlink modes
