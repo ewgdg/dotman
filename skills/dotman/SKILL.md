@@ -34,7 +34,7 @@ This file is an index. Read only the entries your task needs.
 | Install dotman, register a repo, first push | `README.md` § Install, § Quick start; `docs/config.md` § Repos |
 | Packages, targets, groups, profiles, vars, resolution | `docs/repository.md` § Core Objects, § Resolution Model |
 | Example repo and what each package demonstrates | `examples/repo/README.md` |
-| Sync vocabulary: Proposal, Sync Base, Capture, Guard | `CONTEXT.md` |
+| Sync vocabulary: Proposal, Sync Base, Capture, Guard | `GLOSSARY.md` |
 
 ### Writing manifests
 

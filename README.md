@@ -104,6 +104,6 @@ User guides:
 Contributors:
 
 - Architecture: [`docs/code-structure.md`](docs/code-structure.md)
-- Domain vocabulary: [`CONTEXT.md`](CONTEXT.md)
+- Domain vocabulary: [`GLOSSARY.md`](GLOSSARY.md)
 
 Agents: install the [`dotman` skill](skills/dotman/SKILL.md) with `npx skills add ewgdg/dotman -g`.
