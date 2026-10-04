@@ -61,12 +61,17 @@ Commits: feature 1–3, feature 4, cleanup 5; docs travel with their change.
 
 ## Progress
 
-- [ ] Scope provenance and deck marking
-- [ ] `--no-deps`
-- [ ] Fallback rework
-- [ ] Docs, skill, screenshot
+- [x] Scope provenance and deck marking (aa9f66c)
+- [x] `--no-deps` (de97d1a)
+- [x] Fallback rework (b56c0a6)
+- [x] Docs and skill; the README screenshot is unaffected (selector-less run with usable Bases)
 
 ## Surprises & Discoveries
+
+- The review repeated the cause three times (`Sync Base`, `Base reason`, `Fallback`);
+  only the guess itself was unique information.
+- Dependency rows sort before their requesting package because scope order follows the
+  closure order; marking makes that ordering legible without changing it.
 
 ## Decisions
 
@@ -76,3 +81,9 @@ Commits: feature 1–3, feature 4, cleanup 5; docs travel with their change.
 - `--no-deps` follows pip / docker compose naming.
 
 ## Outcomes & Retrospective
+
+- Default scope semantics unchanged; dependency rows are dimmed with an `Included via:`
+  detail fact; `--no-deps` keeps a package input to its own targets.
+- The unused `Fallback` style term was removed with the line it styled.
+- Follow-up candidates, not done: expose included-via in JSON `sync_units`; mark
+  dependency units in the review page.
