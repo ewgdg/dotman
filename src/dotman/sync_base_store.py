@@ -633,12 +633,14 @@ class SyncBaseStore:
 
     @staticmethod
     def exists(manager_state_root: str | Path, repo_state_key: str) -> bool:
-        """Whether storage was ever created, without opening or creating it."""
+        """Whether a store was established, without opening or creating it.
+
+        Only the layout marker establishes a store; an unversioned directory
+        holds no trusted records, so it reads as absent until creation.
+        """
         directory = Path(manager_state_root) / "repos" / repo_state_key
         try:
-            return bool(set(os.listdir(directory)) & {
-                LAYOUT_FILE_NAME, LOCK_FILE_NAME, BASES_DIRECTORY_NAME,
-            })
+            return LAYOUT_FILE_NAME in os.listdir(directory)
         except FileNotFoundError:
             return False
         except OSError as exc:
@@ -670,18 +672,10 @@ class SyncBaseStore:
             )
             try:
                 names = layout.root_names()
-                if LOCK_FILE_NAME in names:
-                    # Repair before opening: opening validates the private mode.
-                    layout._validate_file(layout.root, LOCK_FILE_NAME)
-                    lock = layout.open_file(LOCK_FILE_NAME)
-                elif create and names <= {LAYOUT_FILE_NAME}:
-                    # The layout is written first, so an interrupted creation
-                    # never leaves an unversioned store holding records.
-                    if not names:
-                        cls._create_layout_marker(layout)
-                    lock = layout.open_file(LOCK_FILE_NAME, create=True)
-                    os.fsync(lock)
-                    os.fsync(layout.descriptor)
+                if create and LAYOUT_FILE_NAME not in names:
+                    lock = cls._establish(layout, lock_exists=LOCK_FILE_NAME in names)
+                elif LOCK_FILE_NAME in names:
+                    lock = cls._open_lock(layout)
                 else:
                     raise SyncBaseStoreSecurityError("Sync Base store lock is missing")
                 with _locked(lock, write=False):
@@ -691,6 +685,42 @@ class SyncBaseStore:
             except BaseException:
                 layout.close()
                 raise
+
+    @staticmethod
+    def _open_lock(layout: _PrivateLayout) -> int:
+        # Repair before opening: opening validates the private mode.
+        layout._validate_file(layout.root, LOCK_FILE_NAME)
+        return layout.open_file(LOCK_FILE_NAME)
+
+    @classmethod
+    def _establish(cls, layout: _PrivateLayout, *, lock_exists: bool) -> int:
+        """Create the store; the layout marker is written last.
+
+        Without the marker no store exists, so an interrupted creation or an
+        older dotman's unversioned store leaves only untrusted records, which
+        are dropped rather than adopted.
+        """
+        if lock_exists:
+            lock = cls._open_lock(layout)
+        else:
+            lock = layout.open_file(LOCK_FILE_NAME, create=True)
+            os.fsync(lock)
+        with _locked(lock, write=True):
+            # A concurrent open may have established the store meanwhile.
+            if LAYOUT_FILE_NAME not in layout.root_names():
+                cls._drop_records(layout)
+                cls._create_layout_marker(layout)
+                os.fsync(layout.descriptor)
+        return lock
+
+    @staticmethod
+    def _drop_records(layout: _PrivateLayout) -> None:
+        for group in layout.group_names():
+            with layout.group(group) as directory:
+                assert directory is not None
+                for name in layout.file_names(directory[1]):
+                    os.unlink(name, dir_fd=directory[1])
+                layout.remove_group_if_empty(group)
 
     @staticmethod
     def _create_layout_marker(layout: _PrivateLayout) -> None:

@@ -25,9 +25,12 @@ or snapshots. Deleting a group's last record removes the group.
 
 `sync-bases.layout` holds the layout version (`2`), separate from the record
 format epoch: a layout change moves records without changing their bytes, so
-record epochs cannot detect it. Every open requires the current layout and
-fails otherwise, so a store in another layout never reads as empty. Creation
-writes the layout file before the lock and before any record.
+record epochs cannot detect it. Only this marker establishes a store, and
+creation writes it last. Without it, a directory holds no trusted records:
+preview and inspection read it as absent, and the first real Push, Pull, or
+Sync drops its records (an interrupted creation or an older dotman's
+unversioned store) before writing the marker. A store whose marker names
+another layout fails every open, so it never reads as empty.
 
 ## Records and atomic acknowledgment
 

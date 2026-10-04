@@ -3,7 +3,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from dotman.cli_style import render_sync_term
-from dotman.sync_base_store import FilePresent, SyncBaseRecord
+from dotman.sync_base_store import LAYOUT_FILE_NAME, FilePresent, SyncBaseRecord, SyncBaseStore
 from dotman.sync_deck import CommandDeck, row_resolution
 from dotman.sync_deck_command import sync_document
 from dotman.sync_session import AuxiliaryRow, SetApproval, SyncSession
@@ -168,6 +168,20 @@ def test_unavailable_base_store_warns_only_base_eligible_units(tmp_path, monkeyp
         assert set(rows) == {"shared"}
         assert any(item.code == "base-unavailable" for item in rows["shared"].observation.diagnostics)
         assert row_resolution(rows["shared"]) == "In sync"
+
+
+def test_unversioned_base_store_is_absent_until_a_real_run_replaces_it(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("shared", "both", b"same", b"same", "")])
+    manager_root = tmp_path / "state/dotman"
+    with SyncBaseStore.open(manager_root, "main") as store:
+        store.replace(SyncBaseRecord(b"main:app.stale", FilePresent(b"old")))
+        (store.repo_state_directory / LAYOUT_FILE_NAME).unlink()
+    for preview in (True, False):
+        with engine.open_sync_session(engine.resolve_sync_scope([]), preview=preview) as session:
+            # No per-unit store warning resurfaces in-sync rows.
+            assert session.view.rows == ()
+    with SyncBaseStore.open(manager_root, "main", read_only=True) as store:
+        assert store.identities() == (b"main:app.shared",)
 
 
 def test_review_explains_hook_reapply_with_its_drift(tmp_path, monkeypatch):

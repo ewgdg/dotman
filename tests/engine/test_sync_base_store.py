@@ -426,7 +426,7 @@ def _tree(root):
 
 
 @pytest.mark.parametrize("read_only", [False, True])
-@pytest.mark.parametrize("layout", [None, b"1\n", b"two"])
+@pytest.mark.parametrize("layout", [b"1\n", b"two"])
 def test_unsupported_store_layout_fails_every_open_without_changes(tmp_path, layout, read_only):
     from dotman import sync_base_store
 
@@ -434,11 +434,7 @@ def test_unsupported_store_layout_fails_every_open_without_changes(tmp_path, lay
     with SyncBaseStore.open(root, "repo") as store:
         store.replace(record())
         marker = store.repo_state_directory / sync_base_store.LAYOUT_FILE_NAME
-    # An unversioned store would otherwise look empty, silently dropping every Base.
-    if layout is None:
-        marker.unlink()
-    else:
-        marker.write_bytes(layout)
+    marker.write_bytes(layout)
     before = _tree(root)
 
     with pytest.raises(SyncBaseStoreError, match="layout"):
@@ -447,14 +443,28 @@ def test_unsupported_store_layout_fails_every_open_without_changes(tmp_path, lay
     assert _tree(root) == before
 
 
-def test_creation_interrupted_after_layout_marker_completes_on_next_open(tmp_path):
+def test_unversioned_store_is_absent_until_creation_drops_its_records(tmp_path):
     from dotman import sync_base_store
 
     root = tmp_path / "manager"
     with SyncBaseStore.open(root, "repo") as store:
+        store.replace(record(b"main:app.stale"))
         directory = store.repo_state_directory
-    (directory / sync_base_store.LOCK_FILE_NAME).unlink()
+    (directory / sync_base_store.LAYOUT_FILE_NAME).unlink()
+    unrelated = directory / "tracked-packages.toml"
+    unrelated.write_bytes(b"kept")
+    before = _tree(root)
+
+    assert not SyncBaseStore.exists(root, "repo")
+    for options in ({"read_only": True}, {"create": False}):
+        with pytest.raises(SyncBaseStoreError, match="layout"):
+            SyncBaseStore.open(root, "repo", **options)
+    assert _tree(root) == before
 
     with SyncBaseStore.open(root, "repo") as store:
+        assert store.identities() == ()
         store.replace(record())
-        assert store.read(b"main:app.unit") == record()
+    assert SyncBaseStore.exists(root, "repo")
+    assert unrelated.read_bytes() == b"kept"
+    with SyncBaseStore.open(root, "repo", read_only=True) as store:
+        assert store.identities() == (b"main:app.unit",)

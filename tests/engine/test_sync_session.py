@@ -602,12 +602,14 @@ def test_preview_rejects_unsafe_existing_store_instead_of_hiding_it(
     tmp_path, monkeypatch
 ):
     from dotman.sync_session import SessionOpenFailed
-    from dotman.sync_base_store import LOCK_FILE_NAME
+    from dotman.sync_base_store import LOCK_FILE_NAME, SyncBaseStore
 
     engine = make_engine(
         tmp_path, monkeypatch, [("unit", "both", b"same", b"same", "")]
     )
-    directory = tmp_path / "state/dotman/repos/main"
+    with SyncBaseStore.open(tmp_path / "state/dotman", "main") as store:
+        directory = store.repo_state_directory
+    (directory / LOCK_FILE_NAME).unlink()
     (directory / LOCK_FILE_NAME).symlink_to(tmp_path / "absent")
     with open_session(engine) as session:
         unit = session.view.observations[0]
