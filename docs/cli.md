@@ -69,9 +69,9 @@ A package input also covers its dependency closure. Units it reaches only throug
 marked in the Command Deck: a dimmed Target label and an `Included via:` detail
 line naming the package inputs. `--no-deps` (on `sync`, `pull` and `push`)
 leaves the closure out, so a package input covers only its own targets and hooks.
-It changes nothing for target inputs, which name one target but keep their
-package's dependency planning and hooks, or for a selector-less run, which already
-covers the whole tracked state.
+Target inputs never expand a closure: naming one target brings in no dependency
+package, so none of its hooks either. A selector-less run already covers the whole
+tracked state, so the flag changes nothing for it.
 
 On-demand targets (`on_demand = true`) are in scope only when an input names
 them exactly, e.g. `dotman push niri-custom-git.niri_custom_git_update`.

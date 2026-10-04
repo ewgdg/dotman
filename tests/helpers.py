@@ -135,13 +135,16 @@ SyncTarget = tuple[str, str, bytes | None, bytes | None, str]
 
 
 def _write_sync_package(
-    root: Path, package_id: str, targets: list[SyncTarget] | tuple[SyncTarget, ...], *, depends: tuple[str, ...] = (),
+    root: Path, package_id: str, targets: list[SyncTarget] | tuple[SyncTarget, ...], *,
+    depends: tuple[str, ...] = (), package_extra: str = "",
 ) -> None:
     package = root / "repo" / "packages" / package_id
     package.mkdir(parents=True)
     lines = [f'id = "{package_id}"']
     if depends:
         lines.append("depends = [" + ", ".join(f'"{name}"' for name in depends) + "]")
+    if package_extra:
+        lines.append(package_extra)
     for name, policy, source, live, extra in targets:
         lines += [
             f"[targets.{name}]",
@@ -164,18 +167,20 @@ def write_sync_repository(
     targets: list[SyncTarget] | tuple[SyncTarget, ...],
     *,
     dependency_targets: list[SyncTarget] | tuple[SyncTarget, ...] = (),
+    dependency_extra: str = "",
 ) -> Path:
     """Write a committed one-package repo, live files and tracked state; return the config path.
 
     Tracked state lands in `root/state`, so callers point XDG_STATE_HOME there.
-    `dependency_targets` adds an untracked package `base` that the tracked `app` depends on.
+    `dependency_targets` adds an untracked package `base` that the tracked `app` depends on;
+    `dependency_extra` is package-level TOML for `base`, such as hooks.
     """
     repo = root / "repo"
     (repo / "profiles").mkdir(parents=True)
     (repo / "profiles" / "default.toml").write_text("")
     _write_sync_package(root, "app", targets, depends=("base",) if dependency_targets else ())
     if dependency_targets:
-        _write_sync_package(root, "base", dependency_targets)
+        _write_sync_package(root, "base", dependency_targets, package_extra=dependency_extra)
     runtime = current_command_runtime()
     for args in [
         ("init", "-q"),

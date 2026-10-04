@@ -129,3 +129,16 @@ def test_pull_still_rejects_dangling_live_link(tmp_path, monkeypatch):
         unit, = session.view.observations
         assert unit.state == "observation-failed"
         assert unit.diagnostics[0].code == "symlink-referent"
+
+
+DEPENDENCY_NOOP_HOOK = '[hooks]\npre_push = [{ run = "true", run_noop = true }]'
+
+
+def test_target_input_runs_no_dependency_hooks(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, [("own", "push-only", b"r", b"l", "")],
+                         dependency_targets=[("shared", "push-only", b"r", b"l", "")],
+                         dependency_extra=DEPENDENCY_NOOP_HOOK)
+    with engine.open_push_session(engine.resolve_sync_scope(["main:app.own"]), preview=True) as session:
+        assert [row.row_id for row in session.view.rows] == ["main:app.own"]
+    with engine.open_push_session(engine.resolve_sync_scope(["main:app"]), preview=True) as session:
+        assert "main:base (push-hooks)" in [row.row_id for row in session.view.rows]
