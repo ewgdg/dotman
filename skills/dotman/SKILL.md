@@ -23,6 +23,7 @@ This file is an index. Read only the entries your task needs.
 - Leave elevation (sudo) prompts to the user.
 - Name targets as `repo:package.target` and package instances as `repo:package<profile>.target`.
 - A package scope (`dotman pull repo:package`) also covers the packages it depends on; add `--no-deps` to keep only its own targets (`docs/cli.md` § Sync scope resolution).
+- Scope a write command to what changed. Name the targets (`repo:package.target`) when only those files changed; their package hooks still run. Use a package scope with `--no-deps` when several targets changed or a shared input did (vars, templates, `package.toml`). Keep dependencies only when they changed too, or when the user asks for the full package. For `pull`, run `--dry-run` on the package first to find the drifted targets, then narrow.
 - `on_demand = true` targets run only when named exactly (`dotman push repo:package.target`); package selectors and plain `push`/`pull`/`sync` leave them out without any output (`docs/cli.md` § Sync scope resolution).
 
 ## Index
