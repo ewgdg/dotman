@@ -82,6 +82,9 @@ mentions it. Ownership and collision checks still cover the whole tracked
 graph, so naming one never meets a conflict a plain run would not report. Sync
 Base inspection (`list sync-bases`, `doctor`) still covers on-demand targets.
 
+Disabled targets (`disabled = true`) are never in scope: naming one exactly
+fails as an input that matches no tracked target.
+
 The `sync`, `pull` and `push` commands resolve each input before scope resolution,
 using the same package-or-target lookup as `edit query`: `claude`,
 `claude.settings` or `dot:claude` resolve to their canonical identity when one

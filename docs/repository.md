@@ -208,6 +208,14 @@ sync_policy = "push-only"
 on_demand = true
 ```
 
+- Targets may set `disabled = true` (boolean, default `false`) to switch a
+  target off without deleting its declaration. dotman then treats it as
+  undeclared: it is never in Push, Pull or Sync scope, an exact target selector
+  naming it matches nothing, `info tracked` and `info trackable` omit it, and it
+  claims no repo or live path. An overriding package may set it but cannot clear
+  an inherited `true`. Use `on_demand` instead when the target should still run
+  when named.
+
 ## Projection and Editor configuration
 
 Render, Capture, and Editor are flat inherited target and named Path Rule fields.

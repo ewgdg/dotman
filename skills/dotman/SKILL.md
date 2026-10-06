@@ -25,6 +25,7 @@ This file is an index. Read only the entries your task needs.
 - Name targets as `repo:package.target` and package instances as `repo:package<profile>.target`.
 - Scope a write command to what changed. Name the targets (`repo:package.target`) when only those files changed; their package hooks still run. A package scope (`dotman pull repo:package`) also covers the packages it depends on, so add `--no-deps` when several targets or a shared input (vars, templates, `package.toml`) changed but the dependencies did not. For `pull`, run `--dry-run` on the package first to find the drifted targets, then narrow (`docs/cli.md` § Sync scope resolution).
 - `on_demand = true` targets run only when named exactly (`dotman push repo:package.target`); package selectors and plain `push`/`pull`/`sync` leave them out without any output (`docs/cli.md` § Sync scope resolution).
+- `disabled = true` switches a target off entirely: no command runs it, even by exact name, and `info` omits it. Use it to park a target without deleting it; use `on_demand` when it should still run when named.
 
 ## Index
 
@@ -42,7 +43,7 @@ This file is an index. Read only the entries your task needs.
 | Need | Read |
 | --- | --- |
 | Adopt an existing live file into a package | `docs/cli.md` § Add |
-| Target fields: `path`, `type`, `chmod`, `sync_policy`, `on_demand`, `path_rules`; install/update `probe` targets | `docs/repository.md` § Targets |
+| Target fields: `path`, `type`, `chmod`, `sync_policy`, `on_demand`, `disabled`, `path_rules`; install/update `probe` targets | `docs/repository.md` § Targets |
 | Package instances and inheritance | `docs/repository.md` § Package Identity Modes, § Package Inheritance |
 | Skip files or subtrees in directory targets | `docs/repository.md` § Unified exclusions |
 | Sync only part of a JSON/YAML/TOML/plist/XML settings file | `references/noise-filtering.md` |
