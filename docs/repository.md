@@ -222,6 +222,11 @@ Render, Capture, and Editor are flat inherited target and named Path Rule fields
 Comparison uses the paired `compare.repo` and `compare.live` fields. Resolution
 Intent is a session choice, not manifest configuration.
 
+Render turns the repository file into the content written live by Push and
+Sync. Capture turns the live file into the content written to the repository
+by Pull and Sync. Both default to `raw`, a byte copy. By default, comparison
+checks the repository file against Capture of the live file.
+
 | Field | Default | Built-in values |
 | --- | --- | --- |
 | `render` | `raw` | `raw`, `jinja` |
@@ -233,14 +238,8 @@ Intent is a session choice, not manifest configuration.
 Other scalar strings denote custom commands. For Render, Capture, or comparison,
 a table accepts only `run`; for example `render = { run = "jinja" }` forces
 command interpretation. Explicit `raw` cancels inherited Render or Capture.
-
-Projection commands are non-interactive, side-effect-free stdout producers.
-Planning runs comparison projections concurrently, up to eight at a time (fewer on machines with fewer cores), so a
-projection must not depend on another target's projection or share scratch
-files with it.
-Dotman owns managed-path access, including privileged reads. Projections neither
-inherit default command elevation nor accept elevation configuration. Only exit
-`0` produces a valid result; all non-zero exits are failures.
+See [custom Render and Capture commands](#custom-render-and-capture-commands)
+for the command contract.
 
 The comparison pair produces repository and live Pull Views during Pull and
 live-to-repository-capable Sync. When that capability does not survive Guards,
@@ -277,6 +276,45 @@ Editor invocation is deliberate, never an automatic Capture-failure fallback.
 The `jinja-editor`, `jinja-patch`, and `jinja-patch-editor` presets expand
 into these flat fields. Explicit fields override preset values. See
 [template targets](templates.md) for complete examples.
+
+### Custom Render and Capture commands
+
+A custom Render, Capture or comparison command is a shell command that prints
+the projected file to stdout.
+
+- Jinja in the command string expands with the package context first, so
+  `{{ vars.app.key }}` works there. To template the file content itself, use
+  `render = "jinja"` ([template targets](templates.md)).
+- Commands read files, not stdin. `DOTMAN_REPO_PATH` names the repository file
+  and `DOTMAN_LIVE_PATH` the live file. A command runs only when its own input
+  exists (repository for Render, live for Capture); the other file may be
+  missing, for example the live file before the first Push.
+- Those paths may name private staged copies: a Sync Proposal, or a protected
+  file Dotman read for the command.
+- Commands also receive the target hook variables
+  ([Hooks And Commands](#hooks-and-commands)) except `DOTMAN_UNATTENDED`, and
+  run in the directory of the `package.toml` that declares the target.
+- Commands are non-interactive and side-effect-free. Planning runs comparison
+  projections concurrently, up to eight at a time (fewer on machines with fewer
+  cores), so a projection must not depend on another target's projection or
+  share scratch files with it.
+- Dotman owns managed-path access, including privileged reads. Projections
+  neither inherit default command elevation nor accept elevation configuration.
+- Only exit `0` produces a valid result; all non-zero exits are failures.
+- Capture of Render's output must reproduce the repository file. Otherwise,
+  with the default comparison, the target never shows as in sync after a Push.
+
+```toml
+# The repository keeps portable `~` paths; the app needs absolute ones.
+[targets.app_conf]
+source = "files/app.conf"
+path = "~/.config/app/app.conf"
+render = 'dotman rewrite home expand "$DOTMAN_REPO_PATH"'
+capture = 'dotman rewrite home collapse "$DOTMAN_LIVE_PATH"'
+```
+
+To sync only part of a settings file, see
+[Partial structured files](#partial-structured-files).
 
 ## Partial structured files
 

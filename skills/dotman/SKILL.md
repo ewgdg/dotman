@@ -47,7 +47,7 @@ This file is an index. Read only the entries your task needs.
 | Package instances and inheritance | `docs/repository.md` § Package Identity Modes, § Package Inheritance |
 | Skip files or subtrees in directory targets | `docs/repository.md` § Unified exclusions |
 | Sync only part of a JSON/YAML/TOML/plist/XML settings file | `references/noise-filtering.md` |
-| `render`, `capture`, `editor`, `compare` fields | `docs/repository.md` § Projection and Editor configuration |
+| `render`, `capture`, `editor`, `compare` fields; writing a custom Render/Capture command | `docs/repository.md` § Projection and Editor configuration, § Custom Render and Capture commands |
 | Per-machine values with Jinja templates | `docs/templates.md` |
 | Hooks, elevation, hook env vars | `docs/repository.md` § Hooks And Commands |
 | `~` vs absolute home paths inside file content | `docs/cli.md` § Home Path Rewrites |
