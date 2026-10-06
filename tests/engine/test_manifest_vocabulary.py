@@ -186,3 +186,10 @@ def test_ignore_schema_has_no_directional_or_anonymous_fields(tmp_path: Path) ->
     )
     with pytest.raises(ValueError, match=r"package manifest .+ ignore has unsupported keys: push"):
         load_manifest_repo(tmp_path, repo_root)
+
+
+def test_disabled_must_be_boolean(tmp_path: Path) -> None:
+    # A quoted "false" is truthy, so accepting strings would silently disable the target.
+    repo_root = write_manifest_repo(tmp_path, target_manifest=['disabled = "false"'])
+    with pytest.raises(ValueError, match=r"target 'config' disabled must be a boolean"):
+        load_manifest_repo(tmp_path, repo_root)

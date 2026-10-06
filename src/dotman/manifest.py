@@ -586,9 +586,14 @@ def build_target_spec(
     probe = normalize_target_command(value("probe"), field_name="probe", manifest_path=manifest_path, target_name=target_name)
     target_type = normalize_target_type(value("type"))
     sync_policy = normalize_sync_policy(value("sync_policy"))
-    on_demand = value("on_demand", False)
-    if not isinstance(on_demand, bool):
-        raise ValueError(f"package manifest {manifest_path} target '{target_name}' on_demand must be a boolean")
+    def boolean_value(field_name: str) -> bool:
+        field_value = value(field_name, False)
+        if not isinstance(field_value, bool):
+            raise ValueError(f"package manifest {manifest_path} target '{target_name}' {field_name} must be a boolean")
+        return field_value
+
+    disabled = boolean_value("disabled")
+    on_demand = boolean_value("on_demand")
     chmod = value("chmod")
     if chmod is not None and (not isinstance(chmod, str) or _invalid_octal(chmod)):
         raise ValueError(f"package manifest {manifest_path} target '{target_name}' chmod must be an octal string")
@@ -691,7 +696,7 @@ def build_target_spec(
                       editor_explicit=("editor" in target_payload or "editor" in preset_payload),
                       ignore_patterns=patterns, ignore_command=ignore_command,
                       path_rules=path_rules, hooks=hooks,
-                      disabled=bool(value("disabled", False)), on_demand=on_demand)
+                      disabled=disabled, on_demand=on_demand)
 
 def build_hook_spec(
     *,
