@@ -421,10 +421,9 @@ def test_failed_projection_json_never_exposes_command_output_or_workspace(tmp_pa
     assert "dotman-comparison-" not in output
 
 @pytest.mark.parametrize("full_path", [False, True])
-def test_sync_review_honors_full_path_option(tmp_path, monkeypatch, capsys, full_path):
+def test_sync_review_shows_full_paths_regardless_of_full_path_option(tmp_path, monkeypatch, capsys, full_path):
     import sys
     from dotman import sync_deck
-    from dotman.diff_review import display_review_path
 
     engine = make_engine(tmp_path, monkeypatch, [("unit", "push-only", b"repo", b"live", "")])
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
@@ -433,8 +432,8 @@ def test_sync_review_honors_full_path_option(tmp_path, monkeypatch, capsys, full
     def inspect(session, **kwargs):
         deck = sync_deck.CommandDeck(session, use_color=False)
         deck.open_review()
-        expected = display_review_path(tmp_path / "live/unit", compact=not full_path)
-        assert f"Live path: {expected}" in deck.review_text()
+        # The review wraps long values, so compaction would only hide path identity.
+        assert f"Live path: {tmp_path / 'live/unit'}" in deck.review_text()
         return True
 
     monkeypatch.setattr(sync_deck, "run_command_deck", inspect)

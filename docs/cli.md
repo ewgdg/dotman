@@ -101,7 +101,8 @@ dotman [--config PATH] [--json] [--unattended] [--file-symlink-mode MODE] [--dir
 
 File-symlink modes are `prompt` (default) and `follow`; directory-symlink modes
 are `fail` (default) and `follow`. Global mode flags override manager configuration.
-`--full-path` shows unabridged paths in detail output; deck identities remain canonical.
+`--full-path` shows unabridged paths in the execution timeline; deck identities remain canonical.
+The Deck detail panel and Proposal Review always show full paths because they wrap long values.
 `--report` (also on `push` and `pull`) prints the full entry log after the
 execution timeline instead of the short recap, including unselected,
 skipped and guard-skipped work.

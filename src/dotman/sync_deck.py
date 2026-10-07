@@ -31,7 +31,6 @@ from textual.widget import Widget
 from textual.widgets import DataTable, Input, OptionList, Static
 
 from dotman.diff_review import display_review_path
-from dotman.ui_context import current_ui_config
 from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, MENU_HINT_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hint, render_key_hint_chip, render_key_hint_separator, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_guess_annotation, render_resolution, resolution_label, live_counts, summary_stats
@@ -502,8 +501,8 @@ class CommandDeck:
         base = observation.base
         pull = self.session.view.operation == "pull" or intent in ("use-live", "merge")
         capture_required = pull and not (proposal and proposal.intent == "editor")
-        ui = current_ui_config()
-        display_path = lambda path: display_review_path(path, compact=not (ui and ui.full_paths))
+        # Full paths: the review wraps them, so compaction would only hide identity.
+        display_path = lambda path: display_review_path(path, compact=False)
         primary = primary_change_summary(proposal, observation.repository_path)
         presence = lambda state: "missing" if isinstance(state, Missing) else "present"
 
