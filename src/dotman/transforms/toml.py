@@ -829,10 +829,13 @@ def build_document_with_stripped_matchers(
     } | set(stripped_key_paths)
     # Delete only the topmost selections: deleting a descendant first can
     # leave tomlkit reporting an emptied dotted parent that no longer deletes.
+    # An exact selector may name a missing key; it deletes nothing, so it must
+    # not mark its already-empty table as emptied.
     deleted_paths = [
         item_path
         for item_path in selected_paths
         if not has_selected_ancestor(item_path, selected_paths)
+        and get_key_path_value(stripped_doc, item_path) is not None
     ]
     for item_path in deleted_paths:
         delete_key_path(stripped_doc, item_path)

@@ -1915,3 +1915,14 @@ def test_remove_drops_only_tables_the_removal_empties(tmp_path: Path) -> None:
     )
 
     assert tomllib.loads(removed) == {"empty": {}, "kept": {"x": 2}}
+
+
+@pytest.mark.parametrize("base_text", ["[a]\n\n[b]\nz = 1\n", "a = {}\nb = 1\n"])
+def test_remove_keeps_an_empty_table_a_selector_names_a_missing_key_in(
+    tmp_path: Path, base_text: str
+) -> None:
+    removed = run_toml_transform(
+        tmp_path, base_text, "--selector-type", "remove", "--selectors", "a.x"
+    )
+
+    assert tomllib.loads(removed) == tomllib.loads(base_text)
