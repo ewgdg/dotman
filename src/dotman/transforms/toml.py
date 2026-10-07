@@ -829,44 +829,34 @@ def build_document_with_stripped_matchers(
     } | set(stripped_key_paths)
     # Delete only the topmost selections: deleting a descendant first can
     # leave tomlkit reporting an emptied dotted parent that no longer deletes.
-    # An exact selector may name a missing key; it deletes nothing, so it must
-    # not mark its already-empty table as emptied.
-    deleted_paths = [
-        item_path
-        for item_path in selected_paths
-        if not has_selected_ancestor(item_path, selected_paths)
-        and get_key_path_value(stripped_doc, item_path) is not None
-    ]
-    for item_path in deleted_paths:
-        delete_key_path(stripped_doc, item_path)
+    for item_path in selected_paths:
+        if not has_selected_ancestor(item_path, selected_paths):
+            delete_key_path(stripped_doc, item_path)
 
-    # Prune on the reparsed text, where emptied dotted parents are already gone.
-    stripped_doc = normalize_document(stripped_doc)
-    if delete_emptied_tables(stripped_doc, deleted_paths):
-        stripped_doc = normalize_document(stripped_doc)
-    return stripped_doc
+    return normalize_document(stripped_doc)
 
 
-def delete_emptied_tables(root: TOMLDocument, deleted_paths: Iterable[tuple[str, ...]]) -> bool:
-    """Delete the tables that held deleted paths and are now empty; return whether any were.
+def without_emptied_tables(stripped_doc: TOMLDocument, source_doc: TOMLDocument) -> TOMLDocument:
+    """Drop the tables that removal emptied; one already empty in source_doc stays.
 
-    Each of these tables held a deleted path, so an empty one was emptied by the
-    deletion. Dropping it lets Capture reproduce a repo that deleted it, while a
-    table that was already empty stays.
+    Cleanup applies this so Capture reproduces a repo that deleted such a table.
+    Merge does not: there an emptied table still merges key by key, which keeps
+    the base's key order.
     """
     deleted_any = False
-    # Deepest first, so a parent left empty by deleting its emptied child goes too.
-    emptied_candidates = sorted(
-        {item_path[:length] for item_path in deleted_paths for length in range(1, len(item_path))},
-        key=len,
-        reverse=True,
-    )
-    for table_path in emptied_candidates:
-        table = get_container(root, table_path)
-        if table is not None and not child_key_names(table):
-            delete_key_path(root, table_path)
+    # Deepest first, so a parent left empty by dropping its emptied child goes too.
+    for table_path in sorted(iter_item_paths_in_order(stripped_doc), key=len, reverse=True):
+        table = get_container(stripped_doc, table_path)
+        source_table = get_container(source_doc, table_path)
+        if (
+            table is not None
+            and source_table is not None
+            and not child_key_names(table)
+            and child_key_names(source_table)
+        ):
+            delete_key_path(stripped_doc, table_path)
             deleted_any = True
-    return deleted_any
+    return normalize_document(stripped_doc) if deleted_any else stripped_doc
 
 
 def build_stripped_document_output(
@@ -877,10 +867,9 @@ def build_stripped_document_output(
     stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
     source_doc, source_line_ending = load_document(base_path, stdin_bytes=stdin_bytes)
-    normalized_doc = build_document_with_stripped_matchers(
+    normalized_doc = without_emptied_tables(
+        build_document_with_stripped_matchers(source_doc, stripped_key_paths, stripped_table_regexes),
         source_doc,
-        stripped_key_paths,
-        stripped_table_regexes,
     )
     return build_document_output(
         normalized_doc,

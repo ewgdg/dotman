@@ -1926,3 +1926,14 @@ def test_remove_keeps_an_empty_table_a_selector_names_a_missing_key_in(
     )
 
     assert tomllib.loads(removed) == tomllib.loads(base_text)
+
+
+def test_merge_remove_keeps_live_key_order_in_a_table_the_removal_empties(tmp_path: Path) -> None:
+    merged = run_toml_transform(
+        tmp_path,
+        "c = 1\n\n[a]\nx = 1\ny = 2\n",
+        "--selector-type", "remove", "--selectors", "a.x", "a.y",
+        overlay_text="[a]\ny = 20\nx = 10\n",
+    )
+
+    assert list(tomllib.loads(merged)["a"].items()) == [("x", 10), ("y", 20)]

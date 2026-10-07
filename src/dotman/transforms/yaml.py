@@ -25,6 +25,7 @@ from dotman.transforms.framework import (
     decode_reference_text,
     read_reference_bytes,
     read_reference_text,
+    without_emptied_mappings,
 )
 
 
@@ -327,10 +328,6 @@ def stripped_yaml_value(value: Any, selector: YamlPathSelector) -> Any:
         if stripped_value is not _MISSING:
             stripped_data[key] = stripped_value
 
-    # A mapping the removal empties goes too, so Capture reproduces a repo that
-    # deleted it; a mapping that was already empty stays.
-    if value and not stripped_data:
-        return _MISSING
     return stripped_data
 
 
@@ -646,6 +643,8 @@ class YamlTransformEngine(BaseTransformEngine):
             if request.has_selectors()
             else dict(base_data)
         )
+        if request.mode == TransformMode.CLEANUP:
+            transformed_data = without_emptied_mappings(transformed_data, base_data)
 
         if request.mode == TransformMode.MERGE:
             assert request.overlay_path is not None

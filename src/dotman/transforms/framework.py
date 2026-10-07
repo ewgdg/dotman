@@ -83,6 +83,25 @@ def subtract_excluded_key_paths(
     )
 
 
+def without_emptied_mappings(selected: Mapping[Any, Any], base: Mapping[Any, Any]) -> dict[Any, Any]:
+    """Drop the mappings that selection emptied; one already empty in base stays.
+
+    selected must come from selecting base, so each of its keys is in base.
+    Cleanup applies this so Capture reproduces a repo that deleted such a
+    mapping. Merge does not: there an emptied mapping still merges key by key,
+    which keeps the base's key order.
+    """
+    kept: dict[Any, Any] = {}
+    for key, value in selected.items():
+        base_value = base[key]
+        if isinstance(value, dict) and isinstance(base_value, dict):
+            value = without_emptied_mappings(value, base_value)
+            if base_value and not value:
+                continue
+        kept[key] = value
+    return kept
+
+
 def split_quoted_key_path(raw_key: str, format_name: str) -> tuple[str, ...]:
     """Split a dotted selector path; double quotes protect dots and allow ``""``.
 

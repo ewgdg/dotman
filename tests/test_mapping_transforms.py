@@ -14,8 +14,12 @@ from dotman import cli
 
 MAPPING_FORMATS = {
     "json": (lambda data: json.dumps(data).encode(), lambda content: json.loads(content)),
-    "yaml": (lambda data: yaml.safe_dump(data).encode(), lambda content: yaml.safe_load(content)),
-    "plist": (plistlib.dumps, plistlib.loads),
+    # Keep insertion order so tests can pin key order.
+    "yaml": (
+        lambda data: yaml.safe_dump(data, sort_keys=False).encode(),
+        lambda content: yaml.safe_load(content),
+    ),
+    "plist": (lambda data: plistlib.dumps(data, sort_keys=False), plistlib.loads),
 }
 
 
@@ -268,3 +272,24 @@ def test_remove_drops_only_mappings_the_removal_empties(transform_format, tmp_pa
         base,
         "--mode", "cleanup", "--selector-type", "remove", "--selectors", r"re:(^|\.)cache$",
     ) == {"empty": {}, "kept": {"x": 2}}
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+def test_merge_remove_keeps_live_key_order_in_a_mapping_the_removal_empties(
+    transform_format, tmp_path
+) -> None:
+    # Render keeps live order, so a repo copy with its keys in another order
+    # does not also move them in the live file.
+    overlay_path = write_mapping(
+        tmp_path / f"overlay.{transform_format}", transform_format, {"a": {"y": 20, "x": 10}}
+    )
+
+    rendered = run_transform(
+        transform_format,
+        tmp_path,
+        {"c": 1, "a": {"x": 1, "y": 2}},
+        "--mode", "merge", "--overlay-file", str(overlay_path),
+        "--selector-type", "remove", "--selectors", "a.x", "a.y",
+    )
+
+    assert list(rendered["a"].items()) == [("x", 10), ("y", 20)]
