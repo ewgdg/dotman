@@ -829,11 +829,41 @@ def build_document_with_stripped_matchers(
     } | set(stripped_key_paths)
     # Delete only the topmost selections: deleting a descendant first can
     # leave tomlkit reporting an emptied dotted parent that no longer deletes.
-    for item_path in selected_paths:
-        if not has_selected_ancestor(item_path, selected_paths):
-            delete_key_path(stripped_doc, item_path)
+    deleted_paths = [
+        item_path
+        for item_path in selected_paths
+        if not has_selected_ancestor(item_path, selected_paths)
+    ]
+    for item_path in deleted_paths:
+        delete_key_path(stripped_doc, item_path)
 
-    return normalize_document(stripped_doc)
+    # Prune on the reparsed text, where emptied dotted parents are already gone.
+    stripped_doc = normalize_document(stripped_doc)
+    if delete_emptied_tables(stripped_doc, deleted_paths):
+        stripped_doc = normalize_document(stripped_doc)
+    return stripped_doc
+
+
+def delete_emptied_tables(root: TOMLDocument, deleted_paths: Iterable[tuple[str, ...]]) -> bool:
+    """Delete the tables that held deleted paths and are now empty; return whether any were.
+
+    Each of these tables held a deleted path, so an empty one was emptied by the
+    deletion. Dropping it lets Capture reproduce a repo that deleted it, while a
+    table that was already empty stays.
+    """
+    deleted_any = False
+    # Deepest first, so a parent left empty by deleting its emptied child goes too.
+    emptied_candidates = sorted(
+        {item_path[:length] for item_path in deleted_paths for length in range(1, len(item_path))},
+        key=len,
+        reverse=True,
+    )
+    for table_path in emptied_candidates:
+        table = get_container(root, table_path)
+        if table is not None and not child_key_names(table):
+            delete_key_path(root, table_path)
+            deleted_any = True
+    return deleted_any
 
 
 def build_stripped_document_output(

@@ -1885,3 +1885,33 @@ def test_not_selector_keeps_a_key_at_any_depth_out_of_the_synced_region(tmp_path
         "state": 1,
         "settings": {"theme": "light", "cache": "L0", "a": {"x": 9, "cache": "L1"}},
     }
+
+
+def test_capture_reproduces_a_repo_that_deleted_a_table_holding_live_only_keys(
+    tmp_path: Path,
+) -> None:
+    # Issue #99: the repo deleted table `skills.b`, whose `hash` is live-only.
+    selectors = ("--selectors", r"re:^skills\..+\.hash$")
+    live_text = '[skills.a]\nsource = "x"\nhash = "1"\n\n[skills.b]\nsource = "y"\nhash = "2"\n'
+    repo_text = '[skills.a]\nsource = "x"\n'
+
+    rendered = run_toml_transform(
+        tmp_path, live_text, "--selector-type", "retain", *selectors, overlay_text=repo_text
+    )
+    # A live-only key survives Render even where the repo lacks its table.
+    assert tomllib.loads(rendered) == {
+        "skills": {"a": {"source": "x", "hash": "1"}, "b": {"hash": "2"}}
+    }
+
+    captured = run_toml_transform(tmp_path, rendered, "--selector-type", "remove", *selectors)
+    assert captured == repo_text
+
+
+def test_remove_drops_only_tables_the_removal_empties(tmp_path: Path) -> None:
+    base_text = "[empty]\n\n[emptied.nested]\ncache = 1\n\n[kept]\ncache = 1\nx = 2\n"
+
+    removed = run_toml_transform(
+        tmp_path, base_text, "--selector-type", "remove", "--selectors", r"re:(^|\.)cache$"
+    )
+
+    assert tomllib.loads(removed) == {"empty": {}, "kept": {"x": 2}}

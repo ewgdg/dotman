@@ -189,6 +189,10 @@ def stripped_json_value(value: Any, selector: JsonPathSelector) -> Any:
         if stripped_value is not _MISSING:
             stripped_data[key] = stripped_value
 
+    # A mapping the removal empties goes too, so Capture reproduces a repo that
+    # deleted it; a mapping that was already empty stays.
+    if value and not stripped_data:
+        return _MISSING
     return stripped_data
 
 

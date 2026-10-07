@@ -55,7 +55,7 @@ Run both commands by hand against the real live file, substituting paths for `$D
 
 - Capture output holds every portable key and no noise keys.
 - Render output equals the live file except for the portable keys taken from the repo.
-- Capturing the render output reproduces the repo file.
+- Capturing the render output reproduces the repo file, once that repo file came from a capture.
 
 Then, with the package tracked, `dotman --unattended pull --dry-run <repo>:<package>.<target>` shows `[would-apply] repository write` for a new target, and `push --dry-run` shows the expected live change. A `sync --dry-run` on a new target only reports that it needs a first review, so it verifies nothing.
 
