@@ -12,11 +12,11 @@ choice is per run and off by default.
   work tree, held on the session view (`commit_options`), not as a workset row.
   Sync and Pull only; Push writes no repository source outside deliberate edits.
 - Chosen on the confirmation screen: a scrollable per-repo toggle list
-  (Textual `SelectionList`) listing repos the selection writes. `x`/Space/click
+  (Textual `OptionList` with Deck `[x]`/`[ ]` markers) listing repos the selection writes. `x`/Space/click
   toggle one; `g` turns all on if any is off, else all off. `--commit`
   pre-selects all. Workset batch selection never touches it.
 - One commit per dotman repo, even when two share a git work tree.
-- Execution: after all other work, one commit per repo with the selected row.
+- Execution: after all other work, one commit per selected repo option.
   Skipped when any earlier work failed. Commits only paths dotman wrote
   (approved Primary Source Changes that converged plus applied Additional Source
   Changes): `git add -A -- <paths>`, then `git commit -- <paths>`, so unrelated
@@ -69,4 +69,17 @@ full suite once at the end.
 
 ## Surprises & Discoveries
 
+- `SelectionList` subclasses `OptionList`, so every bare `query_one(OptionList)`
+  in the Deck had to name `#resolution`. Its `X` glyph also broke Deck style,
+  so the list is a plain `OptionList` rendering the workset markers.
+- `max-height: 1fr` has no effect in a vertical layout; a 1-column grid
+  (`grid-rows: auto 1fr`) caps the list under the summary. A `%` max-height on
+  the auto row's child collapsed it to zero.
+
 ## Outcomes & Retrospective
+
+- Shipped on `feat/commit-work`: engine + config (6a35173), CLI `--commit` and
+  JSON/timeline output (edf4d30), test fixups (735f88e), Deck confirmation list
+  (00603f3), docs and skill (e7f9cfe). Full suite: 2152 passed.
+- README screenshot unchanged: the workset did not change.
+- Known gap kept: files written by pull hooks are not committed.
