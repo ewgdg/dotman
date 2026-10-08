@@ -87,9 +87,8 @@ def without_emptied_mappings(selected: Mapping[Any, Any], base: Mapping[Any, Any
     """Drop the mappings that selection emptied; one already empty in base stays.
 
     selected must come from selecting base, so each of its keys is in base.
-    Cleanup applies this so Capture reproduces a repo that deleted such a
-    mapping. Merge does not: there an emptied mapping still merges key by key,
-    which keeps the base's key order.
+    Capture then reproduces a repo that deleted such a mapping, and Render
+    drops one the repo deleted too.
     """
     kept: dict[Any, Any] = {}
     for key, value in selected.items():

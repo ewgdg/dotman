@@ -1351,7 +1351,7 @@ def test_crlf_multiline_string_keeps_its_value_when_moved_into_an_inline_table(
     base_text = '[t.c]\r\ns = """line1\r\nline2"""\r\n'
 
     output = run_toml_transform(
-        tmp_path, base_text, "--selectors", "t", overlay_text="t = {o = 1}\n"
+        tmp_path, base_text, "--selectors", "t.c", overlay_text="t = {o = 1}\n"
     )
 
     assert tomllib.loads(output) == {"t": {"c": {"s": "line1\nline2"}, "o": 1}}
@@ -1950,3 +1950,43 @@ def test_merge_remove_keeps_live_key_order_in_a_table_the_removal_empties(tmp_pa
     )
 
     assert list(tomllib.loads(merged)["a"].items()) == [("x", 10), ("y", 20)]
+
+
+def test_merge_retain_keeps_live_key_order_in_a_table_no_selector_reaches(tmp_path: Path) -> None:
+    merged = run_toml_transform(
+        tmp_path,
+        "live = 1\n\n[a]\nx = 1\ny = 2\n",
+        "--selector-type", "retain", "--selectors", "live",
+        overlay_text="[a]\ny = 20\nx = 10\n",
+    )
+
+    assert list(tomllib.loads(merged)["a"].items()) == [("x", 10), ("y", 20)]
+
+
+@pytest.mark.parametrize("selector_type", ["remove", "retain"])
+def test_merge_keeps_the_repo_layout_of_a_whole_selected_table(
+    tmp_path: Path, selector_type: str
+) -> None:
+    # A table selected whole is one value, so the repo's copy replaces it: an
+    # allowlist (remove) syncs it, and a denylist (retain) republishes it.
+    overlay_text = "[a]\ny = 20 # repo\nx = 10\n"
+
+    merged = run_toml_transform(
+        tmp_path,
+        "[a]\nx = 1\ny = 2\n",
+        "--selector-type", selector_type, "--selectors", "a",
+        overlay_text=overlay_text,
+    )
+
+    assert merged == overlay_text
+
+
+def test_merge_remove_drops_a_table_the_removal_empties_and_the_repo_deleted(tmp_path: Path) -> None:
+    merged = run_toml_transform(
+        tmp_path,
+        "b = 2\n\n[empty]\n\n[a]\nx = 1\n",
+        "--selector-type", "remove", "--selectors", "a.x", "b",
+        overlay_text="b = 3\n",
+    )
+
+    assert tomllib.loads(merged) == {"b": 3, "empty": {}}
