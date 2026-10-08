@@ -816,17 +816,26 @@ def ensure_container(
     return current
 
 
+def selected_item_paths(
+    doc: TOMLDocument,
+    key_paths: list[tuple[str, ...]],
+    table_regexes: list[re.Pattern[str]],
+) -> set[tuple[str, ...]]:
+    """Paths the selectors name in doc; each selects its whole subtree."""
+    return {
+        item_path
+        for item_path in iter_item_paths_in_order(doc)
+        if matches_path_regex(item_path, table_regexes)
+    } | set(key_paths)
+
+
 def build_document_with_stripped_matchers(
     source_doc: TOMLDocument,
     stripped_key_paths: list[tuple[str, ...]],
     stripped_table_regexes: list[re.Pattern[str]],
 ) -> TOMLDocument:
     stripped_doc = copy.deepcopy(source_doc)
-    selected_paths = {
-        item_path
-        for item_path in iter_item_paths_in_order(stripped_doc)
-        if matches_path_regex(item_path, stripped_table_regexes)
-    } | set(stripped_key_paths)
+    selected_paths = selected_item_paths(stripped_doc, stripped_key_paths, stripped_table_regexes)
     # Delete only the topmost selections: deleting a descendant first can
     # leave tomlkit reporting an emptied dotted parent that no longer deletes.
     for item_path in selected_paths:
@@ -839,9 +848,8 @@ def build_document_with_stripped_matchers(
 def without_emptied_tables(stripped_doc: TOMLDocument, source_doc: TOMLDocument) -> TOMLDocument:
     """Drop the tables that removal emptied; one already empty in source_doc stays.
 
-    Cleanup applies this so Capture reproduces a repo that deleted such a table.
-    Merge does not: there an emptied table still merges key by key, which keeps
-    the base's key order.
+    Capture then reproduces a repo that deleted such a table, and Render drops
+    one the repo deleted too.
     """
     deleted_any = False
     # Deepest first, so a parent left empty by dropping its emptied child goes too.
@@ -1055,12 +1063,14 @@ def merge_containers(
     base: TomlContainer,
     preserved_base: TomlContainer,
     overlay: TomlContainer,
+    selected_paths: set[tuple[str, ...]],
+    container_path: tuple[str, ...] = (),
 ) -> TomlContainer:
     """Merge overlay onto the kept base; every item brings its own comments.
 
     Keys follow the base order, then overlay-only, then kept-base-only keys, with
-    values before sections. A table on both sides takes its header from the
-    overlay and merges its body.
+    values before sections. A table in both base and overlay takes its header
+    from the overlay and merges its body, unless selected_paths selects it whole.
     """
     merged_is_inline = isinstance(overlay, InlineTable)
     # Tables are filled under blank trivia and take the overlay's trivia only
@@ -1080,11 +1090,23 @@ def merge_containers(
     overlay_block_texts = overlay_trivia.block_texts()
 
     def merged_value(entry: MergeEntry) -> Item:
-        if isinstance(entry.preserved_value, AbstractTable) and isinstance(
-            entry.overlay_value, AbstractTable
+        item_path = (*container_path, entry.key.key)
+        base_value = as_single_table(body_item(base, entry.key.key))
+        # A whole selection is one value, so the overlay's copy replaces it. Any
+        # other table in both base and overlay merges key by key, whether or not
+        # selection kept any of it, so its keys keep live order and the live keys
+        # selection kept survive.
+        if (
+            item_path not in selected_paths
+            and isinstance(base_value, AbstractTable)
+            and isinstance(entry.overlay_value, AbstractTable)
         ):
-            base_value = as_single_table(body_item(base, entry.key.key))
-            return merge_containers(base_value, entry.preserved_value, entry.overlay_value)
+            preserved_value = (
+                tomlkit.table() if entry.preserved_value is None else entry.preserved_value
+            )
+            return merge_containers(
+                base_value, preserved_value, entry.overlay_value, selected_paths, item_path
+            )
         if entry.overlay_value is not None:
             return adapt_merged_value(entry.overlay_value, overlay, merged_is_inline)
         return adapt_merged_value(entry.preserved_value, preserved_base, merged_is_inline)
@@ -1163,14 +1185,19 @@ def build_merged_document_output(
     stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
     base_doc, base_line_ending = load_document(base_path, stdin_bytes=stdin_bytes)
-    preserved_base = build_document_with_selector_action(
+    preserved_base = without_emptied_tables(
+        build_document_with_selector_action(base_doc, selector_action, key_paths, table_regexes),
         base_doc,
-        selector_action,
-        key_paths,
-        table_regexes,
     )
     overlay_doc, overlay_line_ending = load_document(overlay_path, stdin_bytes=stdin_bytes)
-    merged_doc = normalize_document(merge_containers(base_doc, preserved_base, overlay_doc))
+    merged_doc = normalize_document(
+        merge_containers(
+            base_doc,
+            preserved_base,
+            overlay_doc,
+            selected_item_paths(base_doc, key_paths, table_regexes),
+        )
+    )
     return build_document_output(
         merged_doc,
         mode_reference_path=base_path,

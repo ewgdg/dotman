@@ -293,3 +293,41 @@ def test_merge_remove_keeps_live_key_order_in_a_mapping_the_removal_empties(
     )
 
     assert list(rendered["a"].items()) == [("x", 10), ("y", 20)]
+
+
+# plist output sorts keys, so only JSON and YAML have a key order to keep.
+@pytest.mark.parametrize("transform_format", ["json", "yaml"])
+def test_merge_retain_keeps_live_key_order_in_a_mapping_no_selector_reaches(
+    transform_format, tmp_path
+) -> None:
+    # Retain keeps nothing of `a`, yet Render still merges it key by key, so the
+    # repo's key order does not move keys in the live file.
+    overlay_path = write_mapping(
+        tmp_path / f"overlay.{transform_format}", transform_format, {"a": {"y": 20, "x": 10}}
+    )
+
+    rendered = run_transform(
+        transform_format,
+        tmp_path,
+        {"live": 1, "a": {"x": 1, "y": 2}},
+        "--mode", "merge", "--overlay-file", str(overlay_path),
+        "--selector-type", "retain", "--selectors", "live",
+    )
+
+    assert list(rendered["a"].items()) == [("x", 10), ("y", 20)]
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+def test_merge_remove_drops_a_mapping_the_removal_empties_and_the_repo_deleted(
+    transform_format, tmp_path
+) -> None:
+    # The repo deleted `a`, whose keys are all synced, so Render leaves no `a: {}`.
+    overlay_path = write_mapping(tmp_path / f"overlay.{transform_format}", transform_format, {"b": 3})
+
+    assert run_transform(
+        transform_format,
+        tmp_path,
+        {"a": {"x": 1}, "b": 2, "empty": {}},
+        "--mode", "merge", "--overlay-file", str(overlay_path),
+        "--selector-type", "remove", "--selectors", "a.x", "b",
+    ) == {"b": 3, "empty": {}}

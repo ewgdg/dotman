@@ -341,7 +341,7 @@ between the two commands:
 - Live-only keys survive Render even when the repository lacks the mapping
   that holds them, and Capture drops a mapping it leaves empty. Deleting an
   entry from the repository therefore sticks, while its live-only keys stay in
-  the live file.
+  the live file; an entry with no live-only keys leaves no empty mapping.
 - To sync a subtree except some keys, add `not:` selectors, such as
   `settings 'not:settings.windowBounds'`, or `settings 'not:re:(^|\.)cache$'`
   for a key at any depth. The excluded live keys survive `render` because merge

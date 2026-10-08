@@ -411,27 +411,24 @@ def overlay_yaml_objects(
     # Keep surviving keys in live order so repo-managed value changes do not also
     # produce noisy key-movement diffs.
     for key in original_base_data:
-        overlay_has_key = key in overlay_data
-        preserved_has_key = key in preserved_base_data
         child_selector = child_overlay_selector(path_selector, yaml_key_text(key))
 
-        if overlay_has_key and preserved_has_key:
+        if key in overlay_data:
             overlay_value = overlay_data[key]
-            preserved_value = preserved_base_data[key]
             base_value = original_base_data[key]
             # A whole selection is one value, so the overlay's copy replaces it. Any
-            # other mapping on both sides merges key by key, so the live keys left in
-            # it after selection survive.
+            # other mapping in both base and overlay merges key by key, whether or
+            # not selection kept any of it, so its keys keep live order and the live
+            # keys selection kept survive.
             if (
                 not child_selector.include_subtree
                 and not matches_key_regexes((yaml_key_text(key),), whole_key_regexes)
                 and isinstance(base_value, dict)
-                and isinstance(preserved_value, dict)
                 and isinstance(overlay_value, dict)
             ):
                 merged_data[key] = overlay_yaml_objects(
                     base_value,
-                    preserved_value,
+                    preserved_base_data.get(key, {}),
                     overlay_value,
                     child_selector,
                     (),
@@ -441,10 +438,7 @@ def overlay_yaml_objects(
             merged_data[key] = overlay_value
             continue
 
-        if overlay_has_key:
-            merged_data[key] = overlay_data[key]
-            continue
-        if preserved_has_key:
+        if key in preserved_base_data:
             merged_data[key] = preserved_base_data[key]
 
     for source_data in (overlay_data, preserved_base_data):
@@ -643,8 +637,7 @@ class YamlTransformEngine(BaseTransformEngine):
             if request.has_selectors()
             else dict(base_data)
         )
-        if request.mode == TransformMode.CLEANUP:
-            transformed_data = without_emptied_mappings(transformed_data, base_data)
+        transformed_data = without_emptied_mappings(transformed_data, base_data)
 
         if request.mode == TransformMode.MERGE:
             assert request.overlay_path is not None
