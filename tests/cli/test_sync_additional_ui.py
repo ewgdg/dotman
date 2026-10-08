@@ -43,9 +43,9 @@ def test_batch_selection_and_source_review_use_session_commands():
 
 def test_canonical_json_reports_one_shared_source_and_execution_failure():
     row = additional_row()
-    session = SimpleNamespace(view=SimpleNamespace(rows=(row,), observations=()))
+    session = SimpleNamespace(view=SimpleNamespace(rows=(row,), observations=(), commit_options=()))
     result = SimpleNamespace(
-        units=(), status="execution-failed", diagnostics=(), steps=(),
+        units=(), status="execution-failed", diagnostics=(), steps=(), commits=(),
         additional_changes=(SimpleNamespace(
             row_id=row.row_id, status="execution-failed",
             diagnostics=(SimpleNamespace(code="source-changed", message="Source changed"),),
@@ -85,9 +85,9 @@ def test_plain_output_reports_source_approval_and_result(capsys):
     from dotman.sync_deck_command import SyncDeckCommandRunner
 
     row = additional_row()
-    session = SimpleNamespace(view=SimpleNamespace(rows=(row,), observations=()))
+    session = SimpleNamespace(view=SimpleNamespace(rows=(row,), observations=(), commit_options=()))
     result = SimpleNamespace(
-        units=(), status="previewed", diagnostics=(), steps=(),
+        units=(), status="previewed", diagnostics=(), steps=(), commits=(),
         additional_changes=(SimpleNamespace(row_id=row.row_id, status="would-apply", diagnostics=()),),
     )
     runner = SyncDeckCommandRunner(engine_factory=None, use_color=False)
