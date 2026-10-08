@@ -24,17 +24,18 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.errors import NoWidget
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import DataTable, Input, OptionList, Static
+from textual.widgets.option_list import Option
 
 from dotman.diff_review import display_review_path
-from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, MENU_HINT_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hint, render_key_hint_chip, render_key_hint_separator, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
+from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, MENU_HINT_STYLE, MENU_REPO_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hint, render_key_hint_chip, render_key_hint_separator, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_guess_annotation, render_resolution, resolution_label, live_counts, summary_stats
-from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, SessionRow, SyncSession, conflict_diagnostic
+from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, CommitOption, SessionRow, SetCommit, SyncSession, conflict_diagnostic
 
 
 @dataclass(frozen=True)
@@ -420,6 +421,25 @@ class CommandDeck:
         else:
             self.notice = "\n".join(item.message for item in result.result.diagnostics)
 
+    def commit_choices(self) -> tuple[tuple[CommitOption, str], ...]:
+        """Repos the selection writes, with the message Commit Work would use; preview never commits."""
+        if self.session.view.preview:
+            return ()
+        return tuple((option, message) for option in self.session.view.commit_options
+                     if (message := self.session.commit_message(option.repo)) is not None)
+
+    def set_commit(self, repo: str, selected: bool) -> None:
+        view = self.session.view
+        result = self.session.dispatch(SetCommit(view.session_id, view.revision, repo, selected))
+        self.notice = result.reason if isinstance(result, CommandRejected) else ""
+
+    def toggle_all_commits(self) -> None:
+        """Everything on unless everything already is."""
+        choices = self.commit_choices()
+        selected = not all(option.selected for option, _ in choices)
+        for option, _ in choices:
+            self.set_commit(option.repo, selected)
+
     def confirmation_text(self) -> str:
         selected = [row for row in self.session.view.rows if not isinstance(row, (AuxiliaryRow, AdditionalRow)) and row.approved]
         auxiliary_count = sum(row.included for row in self.session.view.rows if isinstance(row, AuxiliaryRow))
@@ -627,6 +647,22 @@ class CommandDeck:
             subject=unit_label(row, use_color=color),
             sections=tuple(sections), use_color=color,
         )
+
+
+def render_selection_marker(selected: bool, *, selectable: bool = True, term: str, use_color: bool) -> str:
+    """The workset `[x]`/`[ ]`/`[-]` marker, colored like its Selection term."""
+    marker = "[x]" if selected else "[ ]" if selectable else "[-]"
+    return render_sync_term(term, use_color=use_color).replace(term, marker)
+
+
+def commit_choice_label(option: CommitOption, message: str, *, use_color: bool) -> Text:
+    """`[x] repo@branch  subject`: the dotman repo name, as everywhere else in the Deck."""
+    marker = render_selection_marker(option.selected, term="selected" if option.selected else "unselected",
+                                     use_color=use_color)
+    repo = style_text(option.repo, *MENU_REPO_STYLE) if use_color else option.repo
+    branch = f"@{option.branch}" if option.branch else " (detached HEAD)"
+    branch = style_text(branch, *MENU_HINT_STYLE) if use_color else branch
+    return Text.from_ansi(f"{marker} {repo}{branch}  {message.splitlines()[0]}")
 
 
 def auxiliary_row_label(row: AuxiliaryRow, *, use_color: bool) -> str:
@@ -916,7 +952,13 @@ class SyncDeckApp(App[bool]):
     #detail:focus { border: round $accent; }
     #resolution { height: auto; max-height: 5; border: round $accent; margin: 0 1; }
     #review { height: 1fr; overflow-x: hidden; }
-    #confirmation { height: 1fr; padding: 1 2; overflow-y: auto; }
+    /* Grid, not vertical: the 1fr row caps the commit list at the space left
+       under the summary (max-height: 1fr has no effect in a vertical layout). */
+    #confirmation-page { height: 1fr; layout: grid; grid-size: 1; grid-rows: auto 1fr; }
+    #confirmation { height: auto; padding: 1 2; }
+    /* Scrolls itself, so many repos never push the summary or hints away. */
+    #commit-list { height: auto; max-height: 100%; border: round $foreground 30%; margin: 0 2; padding: 0 1; }
+    #commit-list:focus { border: round $accent; }
     #notice { height: auto; padding: 0 1; color: $warning; }
     #search-bar { height: 1; padding: 0 1; }
     #search-prompt { width: 1; }
@@ -955,6 +997,7 @@ class SyncDeckApp(App[bool]):
         Binding("u", "clear_selection", "Clear selection", priority=True),
         Binding("enter", "review_or_confirm", "Review / Confirm", priority=True),
         Binding("c", "confirm", "Preview / Execute", priority=True),
+        Binding("g", "commit_all", "Commit all", priority=True),
         # Ctrl+C stays Abort, so copying needs its own key (vim-style yank).
         Binding("y", "copy", "Copy", priority=True),
         Binding("escape", "back", "Back", priority=True),
@@ -1161,7 +1204,9 @@ class SyncDeckApp(App[bool]):
         # Review wraps instead of scrolling sideways; a Static re-wraps on resize, unlike a RichLog.
         with VerticalScroll(id="review"):
             yield ReviewBody(id="review-body")
-        yield Static(id="confirmation", markup=False)
+        with Vertical(id="confirmation-page"):
+            yield Static(id="confirmation", markup=False)
+            yield OptionList(id="commit-list")
         # After the pages, so menus open at the bottom above notice and help in every view.
         yield OptionList(id="resolution")
         yield Static(id="notice", markup=False)
@@ -1171,7 +1216,7 @@ class SyncDeckApp(App[bool]):
         yield Static(id="help", markup=False)
 
     def on_mount(self) -> None:
-        self.query_one(OptionList).display = False
+        self.query_one("#resolution", OptionList).display = False
         self.query_one("#search-bar").display = False
         self.watch(self.query_one("#help"), "hover_style", self.hover_hint, init=False)
         table = self.query_one(WorksetTable)
@@ -1200,10 +1245,10 @@ class SyncDeckApp(App[bool]):
             selected = row_selected(row)
             selectable = row.approvable if isinstance(row, SessionRow) else bool(
                 {"set-included", "set-approval"}.intersection(row.allowed_commands))
-            marker = "[x]" if selected else "[ ]" if selectable else "[-]"
             term = ("selected" if selected else "unselected") if auxiliary else ("approved" if selected else "unapproved")
             table.update_cell(row.row_id, table.ordered_columns[0].key,
-                              Text.from_ansi(render_sync_term(term, use_color=self.deck.use_color).replace(term, marker)),
+                              Text.from_ansi(render_selection_marker(selected, selectable=selectable, term=term,
+                                                                     use_color=self.deck.use_color)),
                               update_width=True)
             table.update_cell(row.row_id, table.ordered_columns[3].key,
                               Text.from_ansi(render_row_resolution(row, use_color=self.deck.use_color, mark_guess=True)),
@@ -1244,13 +1289,15 @@ class SyncDeckApp(App[bool]):
             # Deck keys type into the box, so only its own keys apply.
             hints = [("Enter", "search" if self.deck.reviewing else "filter"), ("↑/↓", "history"),
                      ("Ctrl+U", "clear"), ("Esc", "cancel"), ("Ctrl+C", "abort")]
-        elif self.query_one(OptionList).display:
+        elif self.query_one("#resolution", OptionList).display:
             hints = [("↑/↓/j/k", "move"), ("Enter", "choose"), ("Esc", "dismiss")]
         elif self.deck.confirming:
             verb = "preview" if self.deck.session.view.preview else "execute"
             # Return takes the spot of the workset's leading confirm chip, so a
             # double-click on [c confirm] cannot land on execute.
             hints = [HintChip("Esc", "return", "back"), HintChip("Enter", verb, "review_or_confirm"),
+                     *((("x", "commit"), ("g", "commit all"))
+                       if self.query_one("#commit-list", OptionList).display else ()),
                      ("Ctrl+C", "abort")]
         elif self.deck.full_view is not None:
             hints = [*review_lead, ("y", "copy"), review_scroll, ("Ctrl+C", "abort")]
@@ -1275,7 +1322,7 @@ class SyncDeckApp(App[bool]):
                 and not self._search_open and self.deck.full_view is None):
             hints.append(("L", "link"))
         if (resolution_choosable(row) and not self.deck.reviewing and not self._search_open
-                and not self.query_one(OptionList).display and not self.deck.confirming):
+                and not self.query_one("#resolution", OptionList).display and not self.deck.confirming):
             hints.append(("r", "intent"))
         self.query_one("#help", Static).update(render_hint_line(
             hints, use_color=self.deck.use_color, hovered_action=self._hovered_hint_action))
@@ -1325,7 +1372,7 @@ class SyncDeckApp(App[bool]):
         self.query_one("#workset").display = True
         self.query_one("#detail").display = True
         self.query_one("#review").display = False
-        self.query_one("#confirmation").display = False
+        self.query_one("#confirmation-page").display = False
         self.update_workset()
         self.query_one(WorksetTable).focus()
 
@@ -1335,11 +1382,14 @@ class SyncDeckApp(App[bool]):
         # Every native cursor action shares the Approval/Review queue. Otherwise
         # batched terminal keys can approve the old row before navigation runs.
         if self.deck.confirming:
+            commit_list = self.query_one("#commit-list", OptionList)
+            if commit_list.display and table_action in ("cursor_up", "cursor_down"):
+                await commit_list.run_action(table_action)
             return
-        if self.query_one(OptionList).display:
+        if self.query_one("#resolution", OptionList).display:
             menu_action = {"cursor_up": "cursor_up", "cursor_down": "cursor_down", "scroll_home": "first", "scroll_end": "last"}.get(table_action)
             if menu_action:
-                await self.query_one(OptionList).run_action(menu_action)
+                await self.query_one("#resolution", OptionList).run_action(menu_action)
             return
         if self.deck.reviewing:
             await self.query_one("#review").run_action(review_action)
@@ -1360,7 +1410,12 @@ class SyncDeckApp(App[bool]):
     def action_select(self) -> None:
         if self.busy or self.deck.full_view is not None:
             return
-        if self.query_one(OptionList).display:
+        if self.deck.confirming:
+            commit_list = self.query_one("#commit-list", OptionList)
+            if commit_list.display and commit_list.highlighted is not None:
+                self.toggle_commit(commit_list.highlighted)
+            return
+        if self.query_one("#resolution", OptionList).display:
             return
         self.sync_focus()
         self.materialize(self.deck.select)
@@ -1368,14 +1423,14 @@ class SyncDeckApp(App[bool]):
     def action_select_all(self) -> None:
         if self.busy or self.deck.full_view is not None:
             return
-        if self.query_one(OptionList).display:
+        if self.query_one("#resolution", OptionList).display:
             return
         self.materialize(lambda: self.deck.select_all(True), row_ids=self.all_row_ids())
 
     def action_clear_selection(self) -> None:
         if self.busy or self.deck.full_view is not None:
             return
-        if self.query_one(OptionList).display:
+        if self.query_one("#resolution", OptionList).display:
             return
         self.materialize(lambda: self.deck.select_all(False), row_ids=self.all_row_ids())
 
@@ -1404,7 +1459,7 @@ class SyncDeckApp(App[bool]):
     def action_review_or_confirm(self) -> None:
         if self.busy:
             return
-        menu = self.query_one(OptionList)
+        menu = self.query_one("#resolution", OptionList)
         if menu.display:
             if menu.highlighted is not None:
                 self._menu_choose(menu.highlighted)
@@ -1423,14 +1478,44 @@ class SyncDeckApp(App[bool]):
         if self.deck.confirming:
             self.query_one("#workset").display = False
             self.query_one("#detail").display = False
-            self.query_one("#confirmation").display = True
+            self.query_one("#confirmation-page").display = True
             self.query_one("#confirmation", Static).update(Text.from_ansi(self.deck.confirmation_text()))
             self.query_one("#title", Static).update(":: Confirmation")
-            self.set_focus(None)
+            self.show_commit_list()
         self.update_workset()
 
+    def show_commit_list(self) -> None:
+        """Render the commit toggles from session state, keeping the highlighted repo."""
+        commit_list = self.query_one("#commit-list", OptionList)
+        choices = self.deck.commit_choices()
+        highlighted = commit_list.highlighted if commit_list.option_count == len(choices) else None
+        commit_list.clear_options()
+        commit_list.add_options([
+            Option(commit_choice_label(option, message, use_color=self.deck.use_color), id=option.repo)
+            for option, message in choices
+        ])
+        commit_list.border_title = "Commit to git"
+        commit_list.display = bool(choices)
+        if choices:
+            commit_list.highlighted = highlighted or 0
+            commit_list.focus()
+        else:
+            self.set_focus(None)
+        self.update_hints()
+
+    def toggle_commit(self, index: int) -> None:
+        option, _ = self.deck.commit_choices()[index]
+        self.deck.set_commit(option.repo, not option.selected)
+        self.show_commit_list()
+
+    def action_commit_all(self) -> None:
+        if self.busy or not self.deck.confirming or not self.query_one("#commit-list", OptionList).display:
+            return
+        self.deck.toggle_all_commits()
+        self.show_commit_list()
+
     def action_full_view(self) -> None:
-        if self.busy or not self.deck.reviewing or self.deck.full_view is not None or self.query_one(OptionList).display:
+        if self.busy or not self.deck.reviewing or self.deck.full_view is not None or self.query_one("#resolution", OptionList).display:
             return
         titles = self.deck.full_view_titles()
         if not titles:
@@ -1498,7 +1583,7 @@ class SyncDeckApp(App[bool]):
         return not self._search_open or action in ("back", "abort")
 
     def action_open_search(self) -> None:
-        if self.busy or self.deck.confirming or self.query_one(OptionList).display:
+        if self.busy or self.deck.confirming or self.query_one("#resolution", OptionList).display:
             return
         self._search_open = True
         # Esc in the box restores the workset filter from before it opened.
@@ -1567,7 +1652,7 @@ class SyncDeckApp(App[bool]):
         if self._search_open:
             self.cancel_search_box()
             return
-        if self.query_one(OptionList).display:
+        if self.query_one("#resolution", OptionList).display:
             self.close_menu()
             self.update_workset()
             return
@@ -1595,7 +1680,7 @@ class SyncDeckApp(App[bool]):
             self.show_workset()
 
     def action_toggle_detail_focus(self) -> None:
-        if self.busy or self.deck.reviewing or self.deck.confirming or self.query_one(OptionList).display:
+        if self.busy or self.deck.reviewing or self.deck.confirming or self.query_one("#resolution", OptionList).display:
             return
         (self.query_one(WorksetTable) if self.detail_focused else self.query_one("#detail")).focus()
 
@@ -1608,7 +1693,7 @@ class SyncDeckApp(App[bool]):
 
     def open_menu(self, labels: list[Text], *, highlighted: int, choose) -> None:
         self._menu_choose = choose
-        menu = self.query_one(OptionList)
+        menu = self.query_one("#resolution", OptionList)
         menu.clear_options()
         menu.add_options(labels)
         menu.highlighted = highlighted
@@ -1616,7 +1701,7 @@ class SyncDeckApp(App[bool]):
         menu.focus()
 
     def close_menu(self) -> None:
-        self.query_one(OptionList).display = False
+        self.query_one("#resolution", OptionList).display = False
         self.query_one("#review" if self.deck.reviewing else WorksetTable).focus()
 
     def action_resolution(self) -> None:
@@ -1654,11 +1739,14 @@ class SyncDeckApp(App[bool]):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if self.busy:
             return
-        if self.query_one(OptionList).display:
+        # Enter belongs to execute, so only a click selects a commit toggle.
+        if event.option_list.id == "commit-list":
+            self.toggle_commit(event.option_index)
+        elif self.query_one("#resolution", OptionList).display:
             self._menu_choose(event.option_index)
 
     def action_editor(self) -> None:
-        if self.busy or self.deck.confirming or self.deck.full_view is not None or self.query_one(OptionList).display:
+        if self.busy or self.deck.confirming or self.deck.full_view is not None or self.query_one("#resolution", OptionList).display:
             return
         self.sync_focus()
         row = self.deck.focused_row
@@ -1667,7 +1755,7 @@ class SyncDeckApp(App[bool]):
         self.materialize(self.deck.edit, editor_io=row.editor_io)
 
     def action_authorize_link(self) -> None:
-        if self.busy or self.deck.confirming or self.deck.full_view is not None or self.query_one(OptionList).display:
+        if self.busy or self.deck.confirming or self.deck.full_view is not None or self.query_one("#resolution", OptionList).display:
             return
         self.sync_focus()
         row = self.deck.focused_row
@@ -1695,7 +1783,7 @@ class SyncDeckApp(App[bool]):
 
     def action_copy(self) -> None:
         """Copy the full Target identity, or the review selection or whole review, via the terminal clipboard (OSC 52)."""
-        if self.busy or self.deck.confirming or self.query_one(OptionList).display:
+        if self.busy or self.deck.confirming or self.query_one("#resolution", OptionList).display:
             return
         self.sync_focus()
         row = self.deck.focused_row
@@ -1729,7 +1817,7 @@ class SyncDeckApp(App[bool]):
         # Ctrl+C remains the abort from every screen. A filtered workset is not idle:
         # q right after Enter may be meant for the query and would discard the session.
         if (self.busy or self.deck.reviewing or self.deck.confirming or self.deck.filter
-                or self.query_one(OptionList).display):
+                or self.query_one("#resolution", OptionList).display):
             return
         self.action_abort()
 
