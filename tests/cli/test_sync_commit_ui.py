@@ -29,8 +29,10 @@ def test_confirmation_offers_commit_toggles_with_message(tmp_path, monkeypatch):
                 assert not app.query_one("#confirmation-page").display
                 await pilot.press("c")
                 assert app.query_one("#commit-list").display
-                assert any(f"[ ] main@{branch}  chore(dotman): pull app (2 targets)" in line
-                           for line in commit_list_lines(app))
+                # The subject sits on its own line under the repo it commits to.
+                lines = commit_list_lines(app)
+                index = lines.index(f"[ ] main@{branch}")
+                assert lines[index + 1] == "    chore(dotman): pull app (2 targets)"
                 assert "g commit all" in str(app.query_one("#help").render())
                 await pilot.press("x")
                 await pilot.pause()
