@@ -1680,11 +1680,24 @@ def test_output_does_not_end_with_blank_lines(tmp_path: Path) -> None:
     assert rendered == live
 
 
+@pytest.mark.parametrize("selector", ["a", "a.x"])
+def test_removing_the_first_table_leaves_no_leading_blank_line(
+    tmp_path: Path, selector: str
+) -> None:
+    live = "[a]\nx = 1\n\n[b]\nz = 1\n"
+
+    output = run_toml_transform(
+        tmp_path, live, "--selector-type", "remove", "--selectors", selector
+    )
+
+    assert output == "[b]\nz = 1\n"
+
+
 @pytest.mark.parametrize(
     ("live", "expected"),
     [
         ("x = 1\n  \n\t\n \ny = 2\n", "x = 1\n\ny = 2\n"),
-        ("\n\n\nx = 1\n", "\nx = 1\n"),
+        ("\n\n\nx = 1\n", "x = 1\n"),
         ("x = 1\n\n  \n", "x = 1\n"),
     ],
     ids=["whitespace-only", "leading", "trailing-whitespace-only"],

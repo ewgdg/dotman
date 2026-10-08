@@ -772,14 +772,14 @@ def compile_table_regexes(raw_table_regexes: Iterable[str]) -> list[re.Pattern[s
 TOML_STRING_COMMENT_OR_BLANK_RUN = re.compile(
     rf"(?P<opaque>{TOML_STRING_PATTERN}|#[^\r\n]*)"
     # A line holding only spaces or tabs counts as blank. Documents are LF text.
-    r"|(?P<leading_blank_run>\A(?:[ \t]*\n){2,})"
+    r"|(?P<leading_blank_run>\A(?:[ \t]*\n)+)"
     r"|(?P<trailing_blank_run>\n(?:[ \t]*\n)*[ \t]*\Z)"
     r"|(?P<blank_run>\n(?:[ \t]*\n){2,})",
     re.DOTALL,
 )
-# Runs collapse to one blank line; blank lines at the end separate nothing.
+# Runs collapse to one blank line; blank lines at either end separate nothing.
 BLANK_RUN_REPLACEMENTS = {
-    "leading_blank_run": "\n",
+    "leading_blank_run": "",
     "trailing_blank_run": "\n",
     "blank_run": "\n\n",
 }
