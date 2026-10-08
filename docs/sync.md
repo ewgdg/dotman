@@ -381,6 +381,30 @@ mutation. It covers only the frozen publication set and survives partial live
 failure. Preview, repository-only, no-write and hook-only operations create no
 snapshot. Restore never restores repository sources.
 
+### Commit Work
+
+Commit Work commits the repository sources a Sync or Pull wrote, so a run can
+leave a clean git history without a separate step. Push offers none: it writes
+repository sources only through deliberate Editor changes.
+
+- The session offers one option per dotman repo with drift that sits in a git
+  work tree; the Deck's confirmation lists those the selection writes. Options
+  start off unless opened with `--commit`. Two dotman repos sharing one git work
+  tree make two commits.
+- Commits run after all other work, in configured repo order, and only when the
+  run completed. A failed or interrupted run leaves every commit `skipped`
+  (`skip_reason: earlier-failure`); preview never commits.
+- Each commit covers only paths this run wrote: converged Primary Source Changes
+  and applied Additional Source Changes. dotman stages them with
+  `git add -A -- <paths>` and commits with `git commit -- <paths>`, so unrelated
+  staged or unstaged work stays out. Files a pull hook writes are not included.
+  A repo with nothing left to commit reports `no-changes`.
+- The message comes from `[git] commit_message` ([config](config.md#git)).
+- A failed commit fails the run; an interrupted one aborts it. Earlier commits
+  stay. Git hooks and signing run as configured in the repository.
+- The timeline shows each commit as a `commit` step under its repo, described
+  by the commit subject; the summary line adds `commits: N`.
+
 ### Result log
 
 Human execution streams a step timeline while it runs, grouped by package (repo

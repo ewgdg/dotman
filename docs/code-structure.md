@@ -83,6 +83,8 @@ Current responsibility split:
 - `sync_reconciliation.py` — typed three-way repository reconciliation from frozen Base, repository, and Capture evidence
 - `text_merge.py` — shared `git merge-file` three-way text merge used by Reconciliation and patch Capture
 - `sync_path_policy.py` — endpoint traversal, live-link interpretation, and execution-time path safety
+- `sync_commit.py` — Commit Work git boundary: work-tree probe, commit message
+  rendering and pathspec commits of written sources
 - `sync_session.py` — shared Proposal workset, immutable views, semantic commands, transactional Approval and Sync convergence orchestration
 - `pull_session.py` — fixed live-to-repository Observation, opt-out Proposal/Additional Approval and repository-only completion over the shared workset
 - `push_session.py` — fixed repository-to-live Observation, opt-out Use repository Approval and inherited Live Publication over the shared workset

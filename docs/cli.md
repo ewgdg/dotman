@@ -96,7 +96,7 @@ fails with the candidates rather than guessing.
 ## Sync
 
 ```text
-dotman [--config PATH] [--json] [--unattended] [--file-symlink-mode MODE] [--dir-symlink-mode MODE] sync [-d | --dry-run] [--full-path] [--report] [--no-deps] [--run-noop] [<tracked-scope> ...]
+dotman [--config PATH] [--json] [--unattended] [--file-symlink-mode MODE] [--dir-symlink-mode MODE] sync [-d | --dry-run] [--full-path] [--report] [--commit] [--no-deps] [--run-noop] [<tracked-scope> ...]
 ```
 
 File-symlink modes are `prompt` (default) and `follow`; directory-symlink modes
@@ -106,6 +106,8 @@ The Deck detail panel and Proposal Review always show full paths because they wr
 `--report` (also on `push` and `pull`) prints the full entry log after the
 execution timeline instead of the short recap, including unselected,
 skipped and guard-skipped work.
+`--commit` (also on `pull`) pre-selects **Commit Work** for every offered repo;
+see below and [Sync lifecycle](sync.md#commit-work).
 Resolution is chosen through policy defaults or the deck, not automation flags.
 
 Sync opens a one-shot session for file targets, independent directory children,
@@ -196,7 +198,15 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   (nothing to do is a valid decision) but adds a warning that the drift stays pending. Cancelling returns without
   changing Approval, inclusion or focus. Real execution is offered only for valid,
   completed approved Proposals; confirming executes the already-reviewed set without
-  further materialization. Review scroll position is retained per target; arrow keys, `j`/`k`,
+  further materialization.
+  Below the summary, a scrollable **Commit to git** list offers **Commit Work**
+  for each dotman repo the selection writes that has drift and sits in a git work
+  tree: `[x] main@main  chore(dotman): pull app (2 targets)` shows the repo, its
+  branch and the commit subject. `x`, `Space` or a click toggles one repo; `g`
+  turns every repo on unless all are on, then turns them all off. Choices are off
+  unless `--commit` pre-selects them, survive leaving confirmation, and are never
+  touched by workset batch selection. Preview offers no list.
+  Review scroll position is retained per target; arrow keys, `j`/`k`,
   Page Up/Down, and the mouse wheel scroll frozen evidence.
   `y` copies to the terminal clipboard (OSC 52): the full Target identity from the
   workset; in review, the mouse-dragged selection when there is one, otherwise the
@@ -235,6 +245,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   chmod affects live publication only; it is not repository or Merge ancestry.
   Controls and exclusions apply symmetrically even for an exact child scope.
 - `--unattended` uses policy defaults, selects every eligible Proposal, Additional Source Change and auxiliary row, materializes that set, and confirms execution.
+  Commit Work stays off unless `--commit` selects it.
   Both-policy drift without a usable Base is the exception: nothing shows which
   side changed, so it stays unselected and prints
   `[skipped] <identity> (no Base)` with a first-review hint. JSON lists it in
@@ -267,7 +278,7 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   (listed only with `--report`).
 - JSON emits one clean final document with `operation`, `mode`, `status`,
   `scope`, `summary`, `sync_units`, `additional_source_changes`, `probe_work`,
-  `directory_root_work`, `hook_work`, and `stages`. Hook output is captured
+  `directory_root_work`, `hook_work`, `commit_work`, and `stages`. Hook output is captured
   so stdout remains valid JSON. It reports
   evidence and effect metadata, never file content bytes, temporary paths, workspaces, handles, or private plans.
   Stage outcomes preserve the failed step and the ordered unattempted tail
@@ -279,6 +290,10 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   `probe_work`, `directory_root_work` and `hook_work` contain canonical `identity`, `selected`,
   `directions` and `diagnostics`, without file/Proposal/Base fields.
   `summary.selected_auxiliary` counts directly selected auxiliary rows.
+  `commit_work` lists each offered repo with `repo`, `branch` (null when detached),
+  `selected`, `result` (`committed`, `no-changes`, `skipped`, `failed`,
+  `interrupted`, or null when not run), short `commit` hash, full `message` and
+  `error`; `summary.commits` counts commits made.
   Each unit's `resolution_intent` reports the selected intent, `editor` once Edited is selected;
   `allowed_intents` includes `editor` after a save; `resolution` reports `editor` for an Edited Proposal and `generation` identifies
   the materialized generation. Top-level `additional_source_changes`
@@ -515,6 +530,8 @@ Merge choice and never publishes to live paths.
 - `-d` / `--dry-run` runs frozen planning and review without repository Apply.
   `--run-noop` retains eligible auxiliary hook work. Active Probes and retained
   hook work start selected and can be opted out in the deck.
+- `--commit` pre-selects Commit Work, as in Sync: after a completed run, each
+  selected repo commits the sources Pull wrote ([Sync lifecycle](sync.md#commit-work)).
 - Only pull Guards and hooks run. Guard exit 100 omits its scope before Observation.
   The deck keeps one unselectable **Guard skipped** row per omitted scope, e.g.
   `main:app.unit (guard_pull)`, whose detail names the Guard and its first output
@@ -534,7 +551,8 @@ Merge choice and never publishes to live paths.
   Observation constraints as Sync.
 
 Examples: `dotman pull main:git.config`,
-`dotman --unattended pull -d`, `dotman --json --unattended pull`.
+`dotman --unattended pull -d`, `dotman --json --unattended pull`,
+`dotman --unattended pull --commit`.
 
 ## Capture
 

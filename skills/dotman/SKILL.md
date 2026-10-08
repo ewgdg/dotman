@@ -61,6 +61,7 @@ This file is an index. Read only the entries your task needs.
 | Identifiers and selectors | `docs/cli.md` § Identifier Syntax, § Selectors |
 | Track and untrack packages, choose profiles | `docs/cli.md` § Track, § Untrack, § Profiles |
 | Push, pull and their flags | `docs/cli.md` § Confirmation and execution flags, § Push, § Pull |
+| Commit what sync/pull wrote (`--commit`, `[git] commit_message`) | `docs/sync.md` § Commit Work; `docs/config.md` § Git |
 | Sync, Proposals and Sync Bases | `docs/cli.md` § Sync, then `docs/sync.md` |
 | Inspect state, diagnose problems | `docs/cli.md` § Diagnostics And Catalog Inspection, § Tracked Package State |
 | Snapshots and restore | `docs/snapshot.md`, `docs/cli.md` § Restore |
