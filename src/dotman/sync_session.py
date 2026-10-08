@@ -11,12 +11,13 @@ import stat
 
 from dotman.interaction_policy import unattended_enabled
 from dotman.command_runtime import CommandOperation, command_operation, command_runtime_session
-from dotman.execution import ExecutionStep, StepFinished, StepStarted, directory_synced_file_mode
+from dotman.execution import ExecutionStep, ExecutionStepResult, StepFinished, StepStarted, directory_synced_file_mode
 from dotman.atomic_files import default_created_file_mode
 from dotman.capture import CaptureError
 from dotman.sync_capture import capture_observation
 from dotman.sync_observation import _identity
 from dotman.sync_auxiliary import AuxiliaryRow, guard_skip_rows, plan_auxiliary, retain_directional_hooks
+from dotman.sync_commit import CommitFailed, GitWorkTree, RepositoryCommit, commit_sources, probe_work_tree, render_commit_message
 from dotman.sync_reconciliation import reconcile, unresolved_conflict_blocks, ReconciliationConflict, ReconciliationFailed
 from dotman.projection import PlanningCommandError, project_file_view
 from dotman.models import GuardSkip, ResolvedPackageIdentity, ResolvedSyncScope, package_ref_text, repo_qualified_target_text
@@ -43,7 +44,7 @@ from dotman.sync_path_policy import SyncPathError
 ResolutionIntent = Literal["use-repository", "use-live", "merge", "editor"]
 
 
-CommandName = Literal["authorize-symlink-replacement", "batch-set-approval", "prepare-source-review", "edit-proposal", "set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
+CommandName = Literal["set-commit", "authorize-symlink-replacement", "batch-set-approval", "prepare-source-review", "edit-proposal", "set-resolution-intent", "retry-materialization", "set-included", "set-approval", "prepare-proposal-review", "preview", "execute", "abort"]
 
 
 @dataclass(frozen=True)
@@ -306,6 +307,30 @@ class AdditionalSourceResult:
 
 
 @dataclass(frozen=True)
+class CommitOption:
+    """Commit Work for one repo: commit what the run writes there, once it succeeds."""
+
+    repo: str
+    # None on a detached HEAD.
+    branch: str | None
+    selected: bool = False
+
+
+@dataclass(frozen=True)
+class SetCommit:
+    session_id: str
+    revision: int
+    repo: str
+    selected: bool
+
+
+@dataclass(frozen=True)
+class CommitChanged:
+    repo: str
+    selected: bool
+
+
+@dataclass(frozen=True)
 class SessionView:
     session_id: str
     revision: int
@@ -316,6 +341,7 @@ class SessionView:
     allowed_commands: tuple[CommandName, ...]
     topology_diagnostics: tuple[Diagnostic, ...] = ()
     operation: str = "sync"
+    commit_options: tuple[CommitOption, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -395,7 +421,7 @@ class ProposalEdit:
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
-SessionCommand = AuthorizeSymlinkReplacement | BatchSetApproval | PrepareSourceReview | EditProposal | SetResolutionIntent | RetryMaterialization | SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
+SessionCommand = SetCommit | AuthorizeSymlinkReplacement | BatchSetApproval | PrepareSourceReview | EditProposal | SetResolutionIntent | RetryMaterialization | SetIncluded | SetApproval | PrepareProposalReview | Preview | Execute | Abort
 
 
 @dataclass(frozen=True)
@@ -429,7 +455,7 @@ class SyncUnitResult:
 class SyncStepOutcome:
     """Semantic execution evidence without private plans or captured payloads."""
 
-    stage: Literal["repository-apply", "live-publication"]
+    stage: Literal["repository-apply", "live-publication", "repository-commit"]
     kind: str
     action: str
     scope: str
@@ -460,6 +486,12 @@ def _step_scope_identity(step: ExecutionStep) -> str | None:
     return f"{step.repo_name}:{package_ref_text(package_id=step.package_id, bound_profile=package.bound_profile)}"
 
 
+def _commit_step_outcome(repo: str, status: str, *, skip_reason: str | None = None,
+                         error: str | None = None) -> SyncStepOutcome:
+    return SyncStepOutcome("repository-commit", "commit", "commit", "repo", repo, repo, None, status,
+                           skip_reason=skip_reason, error=error)
+
+
 @dataclass(frozen=True)
 class SyncResult:
     status: Literal["completed", "incomplete", "failed", "aborted"]
@@ -467,6 +499,7 @@ class SyncResult:
     diagnostics: tuple[Diagnostic, ...] = ()
     steps: tuple[SyncStepOutcome, ...] = ()
     additional_changes: tuple[AdditionalSourceResult, ...] = ()
+    commits: tuple[RepositoryCommit, ...] = ()
 
     @property
     def exit_code(self) -> int:
@@ -478,7 +511,7 @@ class SyncResult:
 @dataclass(frozen=True)
 class CommandAccepted:
     view: SessionView
-    result: InclusionChanged | ApprovalChanged | BatchApprovalChanged | SourceReview | ProposalReview | ProposalEdit | SyncResult
+    result: CommitChanged | InclusionChanged | ApprovalChanged | BatchApprovalChanged | SourceReview | ProposalReview | ProposalEdit | SyncResult
 
 
 @dataclass(frozen=True)
@@ -528,6 +561,7 @@ class ProposalSession:
 
     operation = "sync"
     additional_default_approval = False
+    offers_commit = True
 
     @staticmethod
     def _observe(context, scope, **kwargs):
@@ -613,6 +647,7 @@ class ProposalSession:
         event_sink: SessionEventSink | None = None,
         sink: ProgressSink | None = None,
         stream_output: bool = False,
+        commit: bool = False,
     ) -> SyncSession | SessionOpenFailed:
         with command_operation() as operation, ExitStack() as resources:
             lock = None
@@ -655,6 +690,7 @@ class ProposalSession:
                     dir_symlink_mode=context.config.dir_symlink_mode,
                     command_runtime=context.projection.command_runtime, run_noop=run_noop, sink=sink,
                 ) + guard_skip_rows(observed.guard_skips)
+                commit_trees = cls._probe_commit_trees(context, observations) if cls.offers_commit else {}
                 try:
                     obsolete_bases = cls._freeze_obsolete_bases(context, observed) if not preview else ()
                 except (KeyboardInterrupt, InterruptedError):
@@ -696,6 +732,7 @@ class ProposalSession:
             session = cls(observations, preview=preview, auxiliary=auxiliary, event_sink=event_sink,
                           included_via=scope.included_via)
             session._obsolete_bases = obsolete_bases
+            session._commit_trees = commit_trees
             session._root_inputs = {_identity(target): (item, target) for item in selected_inputs.values() for target in item.target_metadata}
             session._run_noop = run_noop
             session._stream_output = stream_output
@@ -703,7 +740,9 @@ class ProposalSession:
             session._context = context
             session._command_operation = operation
             session._resolved_inputs = resolved_inputs[0]
-            session._view = replace(session.view, rows=tuple(
+            session._view = replace(session.view, commit_options=tuple(
+                CommitOption(repo, tree.branch, commit) for repo, tree in commit_trees.items()
+            ), rows=tuple(
                 replace(row, editor_io=resolved_inputs[0][row.observation.identity][1].editor.io)
                 if isinstance(row, SessionRow) and supports_proposal(row.observation) else row
                 for row in session.view.rows
@@ -734,6 +773,18 @@ class ProposalSession:
             session._emit(SessionOpened(session.view))
             resources.pop_all()
             return session
+
+    @staticmethod
+    def _probe_commit_trees(context, observations) -> dict[str, GitWorkTree]:
+        """Git work trees of repos with drift, in configured repo order."""
+        drifted = {unit.identity.repo for unit in observations if unit.state == "drifted"}
+        trees = {}
+        for repo in context.config.ordered_repos:
+            if repo.name in drifted:
+                tree = probe_work_tree(repo.path, context.projection.command_runtime)
+                if tree is not None:
+                    trees[repo.name] = tree
+        return trees
 
     @staticmethod
     def _freeze_obsolete_bases(context, observed) -> tuple:
@@ -778,7 +829,7 @@ class ProposalSession:
 
     def _dispatch(self, command: SessionCommand) -> CommandAccepted | CommandRejected:
         view = self.view
-        if type(command) not in (AuthorizeSymlinkReplacement, BatchSetApproval, PrepareSourceReview, EditProposal, SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
+        if type(command) not in (SetCommit, AuthorizeSymlinkReplacement, BatchSetApproval, PrepareSourceReview, EditProposal, SetResolutionIntent, RetryMaterialization, SetIncluded, SetApproval, PrepareProposalReview, Preview, Execute, Abort):
             return CommandRejected(view, "invalid")
         if view.terminal:
             return CommandRejected(view, "terminal")
@@ -858,6 +909,17 @@ class ProposalSession:
             if "edit-proposal" not in row.allowed_commands:
                 return CommandRejected(view, "disallowed")
             return self._edit_proposal(row)
+        if isinstance(command, SetCommit):
+            if type(command.repo) is not str or type(command.selected) is not bool:
+                return CommandRejected(view, "invalid")
+            if command.repo not in {option.repo for option in view.commit_options}:
+                return CommandRejected(view, "unknown-row")
+            self._view = replace(view, revision=view.revision + 1, commit_options=tuple(
+                replace(option, selected=command.selected) if option.repo == command.repo else option
+                for option in view.commit_options
+            ))
+            self._emit(SessionChanged(self.view))
+            return CommandAccepted(self.view, CommitChanged(command.repo, command.selected))
         if isinstance(command, SetIncluded):
             if type(command.row_id) is not str or type(command.included) is not bool:
                 return CommandRejected(view, "invalid")
@@ -1293,7 +1355,74 @@ class ProposalSession:
         ) if preview or aborted else self._additional_results
         if any(change.status == "execution-failed" for change in additional):
             status = "failed"
-        return SyncResult(status, tuple(units), operation_diagnostics, steps, additional)
+        commits, commit_steps = ((), ()) if preview or aborted else self._commit(run_completed=status == "completed")
+        if any(item.status == "interrupted" for item in commits):
+            status = "aborted"
+        elif any(item.status == "failed" for item in commits):
+            status = "failed"
+        return SyncResult(status, tuple(units), operation_diagnostics, steps + commit_steps, additional, commits)
+
+    def commit_paths(self, repo: str) -> tuple[tuple[Path, ...], tuple]:
+        """Repository paths the current selection writes in `repo`, and the targets they belong to."""
+        identities = {observation.identity.canonical: observation.identity for observation in self.view.observations}
+        paths, targets = [], []
+        for row in self.view.rows:
+            if (isinstance(row, SessionRow) and row.observation.identity.repo == repo and row.included
+                    and row.approved and row.proposal is not None
+                    and row.proposal.primary_source_change is not None
+                    and row.observation.repository_path is not None):
+                paths.append(row.observation.repository_path)
+                targets.append(row.observation.identity)
+            elif isinstance(row, AdditionalRow) and row.repo == repo and row.approved:
+                paths.append(row.change.path)
+                targets += [identities[reference] for reference in row.references if reference in identities]
+        return tuple(paths), tuple(targets)
+
+    def commit_message(self, repo: str) -> str | None:
+        """The message Commit Work would use for the current selection, or None when it writes nothing."""
+        paths, targets = self.commit_paths(repo)
+        if not paths:
+            return None
+        return render_commit_message(self._context.config.git.commit_message,
+                                     operation=self.operation, repo=repo, targets=targets)
+
+    def _commit(self, *, run_completed: bool) -> tuple[tuple[RepositoryCommit, ...], tuple[SyncStepOutcome, ...]]:
+        commits, steps = [], []
+        for option in self.view.commit_options:
+            if not option.selected:
+                continue
+            repo = option.repo
+            paths, _ = self.commit_paths(repo)
+            if not run_completed:
+                # A partial run leaves its writes for the user to inspect before committing.
+                commits.append(RepositoryCommit(repo, "skipped"))
+                steps.append(_commit_step_outcome(repo, "unattempted", skip_reason="earlier-failure"))
+                continue
+            if not paths:
+                commits.append(RepositoryCommit(repo, "no-changes"))
+                steps.append(_commit_step_outcome(repo, "skipped", skip_reason="no-changes"))
+                continue
+            message = self.commit_message(repo)
+            step = ExecutionStep(repo_name=repo, kind="commit", action="commit", scope_kind="repo",
+                                 description=message.splitlines()[0])
+            self._emit(StepStarted("repository-commit", step, 1, 1))
+            try:
+                self.check_cancelled()
+                commit = commit_sources(self._commit_trees[repo].root, paths, message,
+                                        self._context.projection.command_runtime)
+                outcome = RepositoryCommit(repo, "committed" if commit else "no-changes", commit, message)
+                result = ExecutionStepResult(step, "ok" if commit else "skipped",
+                                             skip_reason=None if commit else "no-changes")
+            except (KeyboardInterrupt, InterruptedError):
+                outcome = RepositoryCommit(repo, "interrupted", message=message, error="Commit interrupted")
+                result = ExecutionStepResult(step, "interrupted", error=outcome.error)
+            except (CommitFailed, OSError) as exc:
+                outcome = RepositoryCommit(repo, "failed", message=message, error=str(exc))
+                result = ExecutionStepResult(step, "failed", error=outcome.error)
+            self._emit(StepFinished("repository-commit", result, 1, 1))
+            commits.append(outcome)
+            steps.append(_commit_step_outcome(repo, result.status, skip_reason=result.skip_reason, error=result.error))
+        return tuple(commits), tuple(steps)
 
     def _capture(self, observation: Observation) -> SyncBasePayload:
         self.check_cancelled()

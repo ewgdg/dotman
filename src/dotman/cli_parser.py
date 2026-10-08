@@ -150,6 +150,14 @@ def add_report_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_commit_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--commit",
+        action="store_true",
+        help="Pre-select Commit Work: after a successful run, commit the repository files it wrote",
+    )
+
+
 def add_full_path_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--full-path",
@@ -354,6 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_dry_run_argument(sync_parser)
     add_full_path_argument(sync_parser)
     add_report_argument(sync_parser)
+    add_commit_argument(sync_parser)
     add_no_deps_argument(sync_parser)
     add_run_noop_argument(sync_parser)
 
@@ -380,6 +389,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_dry_run_argument(pull_parser)
     add_full_path_argument(pull_parser)
     add_report_argument(pull_parser)
+    add_commit_argument(pull_parser)
     pull_parser.add_argument(
         "scopes", nargs="*", metavar="<repo:package.target>",
         help="Exact tracked scopes (default: all tracked targets)",

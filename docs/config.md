@@ -67,6 +67,22 @@ This reference owns user-level manager configuration. See
 - `max_generations` is count-based retention. Dotman should prune the oldest snapshots when the retained snapshot count exceeds that limit.
 - Snapshot storage is distinct from repo tracked package state. Snapshots belong under data home, while tracked package state stays under state home.
 
+## Git
+
+- `[git]` holds settings for Sync and Pull **Commit Work**
+  ([Sync lifecycle](sync.md#commit-work)).
+- `git.commit_message` is optional and defaults to
+  `"chore(dotman): {summary}\n\n{packages}"`.
+- Placeholders:
+  - `{operation}`: `sync` or `pull`.
+  - `{count}`: number of targets committed.
+  - `{summary}`: operation and the narrowest scope: `pull zsh.zshrc` for one
+    target, `pull zsh (3 targets)` for one package, otherwise
+    `pull 5 targets in 3 packages`.
+  - `{packages}`: one package per line, sorted, instances kept (`git<work>`).
+  - `{repo}`: the dotman repo name.
+- An unknown placeholder fails config loading.
+
 ## UI
 
 - UI behavior is manager-level and applies across interactive selector pickers, exclusion menus, diff review screens, and shared human-readable path output.
@@ -95,6 +111,9 @@ state_key = "test"
 [snapshots]
 enabled = true
 max_generations = 10
+
+[git]
+commit_message = "chore(dotman): {summary}\n\n{packages}"
 
 [ui]
 full_paths = false

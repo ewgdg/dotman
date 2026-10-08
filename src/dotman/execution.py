@@ -28,6 +28,8 @@ class ExecutionStep:
     scope_kind: str = "package"
     hook_plan: HookPlan | None = None
     target_plan: TargetPlan | None = None
+    # Display text for steps that have neither a hook command nor a target path.
+    description: str | None = None
 
     @property
     def command(self) -> str | None:

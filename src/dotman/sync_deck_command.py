@@ -119,6 +119,7 @@ class SyncDeckCommandRunner:
     def _session_options(args, timeline) -> dict:
         # Only the human timeline shows live hook output; JSON stdout stays one document.
         return dict(preview=args.dry_run, run_noop=getattr(args, "run_noop", False),
+                    commit=getattr(args, "commit", False),
                     sink=make_planning_sink(json_output=args.json_output, unit="target"),
                     event_sink=timeline, stream_output=timeline is not None)
 
@@ -361,6 +362,12 @@ class SyncDeckCommandRunner:
                 print(f"      {term(auxiliary_resolution(kind))}")
                 for message in messages:
                     print(f"      {message}")
+        # A pre-approved commit that did not happen must be named; the timeline
+        # already showed a failed commit's error.
+        for work in payload["commit_work"]:
+            if work["result"] == "skipped" or work["result"] in ("failed", "interrupted") and work["error"] not in timeline_errors:
+                reason = "earlier work failed" if work["result"] == "skipped" else work["error"]
+                print(f"  [{term(work['result'])}] {work['repo']} commit ({reason})")
         # Execution diagnostics copy their failed step's error; print each failure once.
         shown = timeline_errors | {item["message"] for entry in (*payload["sync_units"], *payload["additional_source_changes"])
                                    for item in entry["diagnostics"]}
@@ -370,7 +377,8 @@ class SyncDeckCommandRunner:
         stats = summary_stats(
             (("approved", summary["approved_units"]), ("repos", summary["repository_changes"])),
             live=summary,
-            trailing=(("in-sync", summary["in_sync_units"]),) + ((("skipped", skipped_count),) if skipped_count else ()),
+            trailing=(("in-sync", summary["in_sync_units"]),) + ((("skipped", skipped_count),) if skipped_count else ())
+            + ((("commits", summary["commits"]),) if summary["commits"] else ()),
             use_color=self._use_color,
         )
         print(f":: {render_sync_term(payload['status'], use_color=self._use_color)} — {stats}")
@@ -496,6 +504,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
                  "diagnostics": [{"code": item.code, "message": item.message} for item in row.diagnostics]}
                 for row in auxiliary if row.kind == kind]
     outcomes = {unit.identity: unit for unit in result.units} if result else {}
+    commits = {item.repo: item for item in result.commits} if result else {}
     units = []
     in_sync_units = 0
     for observation in view.observations if view else ():
@@ -564,6 +573,7 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
             "approved_units": sum(unit["approved"] for unit in units),
             "repository_changes": sum(unit["primary_source_change"] is not None for unit in units if unit["selected"]) + sum(row.approved for row in additional),
             "approved_additional_sources": sum(row.approved for row in additional),
+            "commits": sum(item.status == "committed" for item in commits.values()),
             "live_writes": sum(effect["kind"] == "write" for unit in units if unit["selected"] for effect in unit["effects"]),
             **live_counts([effect["kind"] for effect in unit["effects"]] for unit in units if unit["selected"]),
             "diagnostics": ([diagnostic] if diagnostic else []) + [
@@ -591,6 +601,16 @@ def sync_document(args, session, result, *, diagnostic=None) -> dict:
         "probe_work": auxiliary_work("probe"),
         "directory_root_work": auxiliary_work("directory-root"),
         "hook_work": auxiliary_work("hook"),
+        "commit_work": [
+            {
+                "repo": option.repo, "branch": option.branch, "selected": option.selected,
+                "result": commits[option.repo].status if option.repo in commits else None,
+                "commit": commits[option.repo].commit if option.repo in commits else None,
+                "message": commits[option.repo].message if option.repo in commits else None,
+                "error": commits[option.repo].error if option.repo in commits else None,
+            }
+            for option in (view.commit_options if view else ())
+        ],
         # Preserve attempted and unattempted execution evidence, never infer success
         # from a materialized Proposal.
         "stages": [

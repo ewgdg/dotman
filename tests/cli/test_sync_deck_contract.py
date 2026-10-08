@@ -102,7 +102,7 @@ def test_single_resolution_is_static_and_blocked_rows_remain_visible(tmp_path, m
                         continue
                     table.move_cursor(row=index)
                     app.action_resolution()
-                    assert not app.query_one(OptionList).display
+                    assert not app.query_one("#resolution", OptionList).display
                     if not row.allowed_intents:
                         assert str(table.get_row_at(index)[0]) == "[-]"
                         assert row.observation.diagnostics or row.diagnostics

@@ -729,7 +729,7 @@ def test_resolution_key_toggles_between_two_intents_without_menu(tmp_path, monke
                 assert 'Use repository?' in table.render_line(1).text
                 await pilot.press('r')
                 await pilot.pause()
-                assert not app.query_one(OptionList).display
+                assert not app.query_one("#resolution", OptionList).display
                 assert session.view.rows[0].intent == 'use-live'
                 assert not session.view.rows[0].approved
                 # A chosen side is no longer a guess.
@@ -757,7 +757,7 @@ def test_resolution_key_on_edited_row_offers_edit_alongside_both_sides(tmp_path,
             async with app.run_test() as pilot:
                 # Edited is a third choice, so R must not silently flip to a side.
                 await pilot.press('r')
-                menu = app.query_one(OptionList)
+                menu = app.query_one("#resolution", OptionList)
                 assert menu.display and menu.option_count == 3
                 assert menu.highlighted == session.view.rows[0].allowed_intents.index('editor')
                 await pilot.press('escape')
@@ -777,7 +777,7 @@ def test_resolution_menu_changes_intent_without_approval(tmp_path, monkeypatch):
             async with app.run_test() as pilot:
                 assert session.view.rows[0].intent == 'merge'
                 await pilot.press('r')
-                menu = app.query_one(OptionList)
+                menu = app.query_one("#resolution", OptionList)
                 assert menu.display
                 assert menu.option_count == len(session.view.rows[0].allowed_intents)
                 await pilot.press('home', 'j')
@@ -806,13 +806,13 @@ def test_resolution_cell_and_menu_support_mouse(tmp_path, monkeypatch):
                 resolution_x = table.render_line(0).text.index('Resolution')
                 post_cell_click(app, (resolution_x, 1))
                 await pilot.pause()
-                assert app.query_one(OptionList).display
+                assert app.query_one("#resolution", OptionList).display
                 # "select" names only the row toggle; the menu's Enter picks an option.
                 assert help_text(app) == "↑/↓/j/k move · Enter choose · Esc dismiss"
                 await pilot.click('#resolution', offset=(2, 1))
                 assert session.view.rows[0].intent == 'use-repository'
                 assert not session.view.rows[0].approved
-                assert not app.query_one(OptionList).display
+                assert not app.query_one("#resolution", OptionList).display
         run(interact())
 
 
@@ -1159,7 +1159,7 @@ def test_full_view_menu_offers_each_diff_and_shows_whole_merge_output(tmp_path, 
                 await pilot.pause()
                 assert "ctx-9" not in app.deck.review_text()
                 await pilot.press("v")
-                menu = app.query_one(OptionList)
+                menu = app.query_one("#resolution", OptionList)
                 assert menu.display
                 assert [str(menu.get_option_at_index(index).prompt) for index in range(menu.option_count)] == [
                     "Merge conflicts", "Drift"]
@@ -1196,7 +1196,7 @@ def test_menus_open_at_the_bottom_above_help_in_workset_and_review(tmp_path, mon
 
         async def interact():
             async with app.run_test(size=(80, 40)) as pilot:
-                menu, help_line = app.query_one(OptionList), app.query_one("#help")
+                menu, help_line = app.query_one("#resolution", OptionList), app.query_one("#help")
                 await pilot.press("r")
                 await pilot.pause()
                 assert menu.region.y > app.query_one("#detail").region.y

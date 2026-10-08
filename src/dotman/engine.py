@@ -237,31 +237,33 @@ class DotmanEngine:
     def open_sync_session(
         self, scope: ResolvedSyncScope, *, preview: bool = False, run_noop: bool = False,
         event_sink: SessionEventSink | None = None, sink: "ProgressSink | None" = None,
-        stream_output: bool = False,
+        stream_output: bool = False, commit: bool = False,
     ) -> SyncSession | SessionOpenFailed:
         """Observe files and auxiliary work through the one-shot Sync boundary."""
         from dotman.sync_session import SyncSession
 
         return SyncSession.open(
             self._planning_context, scope, preview=preview, run_noop=run_noop, event_sink=event_sink, sink=sink,
-            stream_output=stream_output,
+            stream_output=stream_output, commit=commit,
         )
 
     def open_pull_session(self, scope: ResolvedSyncScope, *, preview: bool = False,
                           run_noop: bool = False, event_sink=None, sink: "ProgressSink | None" = None,
-                          stream_output: bool = False):
+                          stream_output: bool = False, commit: bool = False):
         """Open permanent fixed-direction Pull on the shared frozen workset."""
         from dotman.pull_session import PullSession
         return PullSession.open(self._planning_context, scope, preview=preview,
-                                run_noop=run_noop, event_sink=event_sink, sink=sink, stream_output=stream_output)
+                                run_noop=run_noop, event_sink=event_sink, sink=sink, stream_output=stream_output,
+                                commit=commit)
 
     def open_push_session(self, scope: ResolvedSyncScope, *, preview: bool = False,
                           run_noop: bool = False, event_sink=None, sink: "ProgressSink | None" = None,
-                          stream_output: bool = False):
+                          stream_output: bool = False, commit: bool = False):
         """Open permanent fixed-direction Push on the shared frozen workset."""
         from dotman.push_session import PushSession
         return PushSession.open(self._planning_context, scope, preview=preview,
-                                run_noop=run_noop, event_sink=event_sink, sink=sink, stream_output=stream_output)
+                                run_noop=run_noop, event_sink=event_sink, sink=sink, stream_output=stream_output,
+                                commit=commit)
 
     def resolve_sync_scope(
         self, selectors: Sequence[str] | None = None, *, include_dependencies: bool = True,

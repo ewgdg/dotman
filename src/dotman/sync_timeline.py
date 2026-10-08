@@ -66,7 +66,7 @@ def step_target_display(stage: str, step: ExecutionStep) -> str:
         return step.hook_plan.command
     target = step.target_plan
     if target is None:
-        return step.kind
+        return step.description or step.kind
     ui = current_ui_config()
     compact = not (ui and ui.full_paths)
     # Repository Apply writes sources; Live Publication writes live endpoints.
