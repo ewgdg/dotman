@@ -23,6 +23,7 @@ from dotman.transforms.framework import (
     read_reference_bytes,
     split_quoted_key_path,
     values_strictly_equal,
+    without_emptied_mappings,
 )
 
 
@@ -427,6 +428,8 @@ class PlistTransformEngine(BaseTransformEngine):
             if request.has_selectors()
             else dict(base_data)
         )
+        if request.mode == TransformMode.CLEANUP:
+            transformed_data = without_emptied_mappings(transformed_data, base_data)
 
         if request.mode == TransformMode.MERGE:
             assert request.overlay_path is not None

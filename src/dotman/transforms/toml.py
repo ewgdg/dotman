@@ -836,6 +836,29 @@ def build_document_with_stripped_matchers(
     return normalize_document(stripped_doc)
 
 
+def without_emptied_tables(stripped_doc: TOMLDocument, source_doc: TOMLDocument) -> TOMLDocument:
+    """Drop the tables that removal emptied; one already empty in source_doc stays.
+
+    Cleanup applies this so Capture reproduces a repo that deleted such a table.
+    Merge does not: there an emptied table still merges key by key, which keeps
+    the base's key order.
+    """
+    deleted_any = False
+    # Deepest first, so a parent left empty by dropping its emptied child goes too.
+    for table_path in sorted(iter_item_paths_in_order(stripped_doc), key=len, reverse=True):
+        table = get_container(stripped_doc, table_path)
+        source_table = get_container(source_doc, table_path)
+        if (
+            table is not None
+            and source_table is not None
+            and not child_key_names(table)
+            and child_key_names(source_table)
+        ):
+            delete_key_path(stripped_doc, table_path)
+            deleted_any = True
+    return normalize_document(stripped_doc) if deleted_any else stripped_doc
+
+
 def build_stripped_document_output(
     base_path: Path,
     stripped_key_paths: list[tuple[str, ...]],
@@ -844,10 +867,9 @@ def build_stripped_document_output(
     stdin_bytes: bytes | None = None,
 ) -> TransformOutput:
     source_doc, source_line_ending = load_document(base_path, stdin_bytes=stdin_bytes)
-    normalized_doc = build_document_with_stripped_matchers(
+    normalized_doc = without_emptied_tables(
+        build_document_with_stripped_matchers(source_doc, stripped_key_paths, stripped_table_regexes),
         source_doc,
-        stripped_key_paths,
-        stripped_table_regexes,
     )
     return build_document_output(
         normalized_doc,

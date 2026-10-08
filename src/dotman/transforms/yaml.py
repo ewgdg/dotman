@@ -25,6 +25,7 @@ from dotman.transforms.framework import (
     decode_reference_text,
     read_reference_bytes,
     read_reference_text,
+    without_emptied_mappings,
 )
 
 
@@ -642,6 +643,8 @@ class YamlTransformEngine(BaseTransformEngine):
             if request.has_selectors()
             else dict(base_data)
         )
+        if request.mode == TransformMode.CLEANUP:
+            transformed_data = without_emptied_mappings(transformed_data, base_data)
 
         if request.mode == TransformMode.MERGE:
             assert request.overlay_path is not None

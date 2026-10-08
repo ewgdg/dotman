@@ -14,8 +14,12 @@ from dotman import cli
 
 MAPPING_FORMATS = {
     "json": (lambda data: json.dumps(data).encode(), lambda content: json.loads(content)),
-    "yaml": (lambda data: yaml.safe_dump(data).encode(), lambda content: yaml.safe_load(content)),
-    "plist": (plistlib.dumps, plistlib.loads),
+    # Keep insertion order so tests can pin key order.
+    "yaml": (
+        lambda data: yaml.safe_dump(data, sort_keys=False).encode(),
+        lambda content: yaml.safe_load(content),
+    ),
+    "plist": (lambda data: plistlib.dumps(data, sort_keys=False), plistlib.loads),
 }
 
 
@@ -228,3 +232,64 @@ def test_empty_unquoted_selector_segment_is_an_error(
         ])
     assert exit_info.value.code == 2
     assert "empty segment" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+def test_capture_reproduces_a_repo_that_deleted_an_entry_holding_live_only_keys(
+    transform_format, tmp_path
+) -> None:
+    # Issue #99: the repo deleted entry `b`, whose `hash` is live-only.
+    selectors = ("--selectors", r"re:^skills\..+\.hash$")
+    live = {"skills": {"a": {"source": "x", "hash": "1"}, "b": {"source": "y", "hash": "2"}}}
+    repo = {"skills": {"a": {"source": "x"}}}
+    overlay_path = write_mapping(tmp_path / f"repo.{transform_format}", transform_format, repo)
+
+    rendered = run_transform(
+        transform_format,
+        tmp_path,
+        live,
+        "--mode", "merge", "--overlay-file", str(overlay_path), "--selector-type", "retain", *selectors,
+    )
+    # A live-only key survives Render even where the repo lacks its parent.
+    assert rendered == {"skills": {"a": {"source": "x", "hash": "1"}, "b": {"hash": "2"}}}
+
+    captured = run_transform(
+        transform_format,
+        tmp_path,
+        rendered,
+        "--mode", "cleanup", "--selector-type", "remove", *selectors,
+    )
+    assert captured == repo
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+def test_remove_drops_only_mappings_the_removal_empties(transform_format, tmp_path) -> None:
+    base = {"empty": {}, "emptied": {"nested": {"cache": 1}}, "kept": {"cache": 1, "x": 2}}
+
+    assert run_transform(
+        transform_format,
+        tmp_path,
+        base,
+        "--mode", "cleanup", "--selector-type", "remove", "--selectors", r"re:(^|\.)cache$",
+    ) == {"empty": {}, "kept": {"x": 2}}
+
+
+@pytest.mark.parametrize("transform_format", MAPPING_FORMATS)
+def test_merge_remove_keeps_live_key_order_in_a_mapping_the_removal_empties(
+    transform_format, tmp_path
+) -> None:
+    # Render keeps live order, so a repo copy with its keys in another order
+    # does not also move them in the live file.
+    overlay_path = write_mapping(
+        tmp_path / f"overlay.{transform_format}", transform_format, {"a": {"y": 20, "x": 10}}
+    )
+
+    rendered = run_transform(
+        transform_format,
+        tmp_path,
+        {"c": 1, "a": {"x": 1, "y": 2}},
+        "--mode", "merge", "--overlay-file", str(overlay_path),
+        "--selector-type", "remove", "--selectors", "a.x", "a.y",
+    )
+
+    assert list(rendered["a"].items()) == [("x", 10), ("y", 20)]

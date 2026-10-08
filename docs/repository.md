@@ -301,8 +301,9 @@ the projected file to stdout.
 - Dotman owns managed-path access, including privileged reads. Projections
   neither inherit default command elevation nor accept elevation configuration.
 - Only exit `0` produces a valid result; all non-zero exits are failures.
-- Capture of Render's output must reproduce the repository file. Otherwise,
-  with the default comparison, the target never shows as in sync after a Push.
+- Render and Capture must settle: once Capture has written the repository
+  file, capturing Render's output reproduces it. Otherwise, with the default
+  comparison, the target never shows as in sync after a Push.
 
 ```toml
 # The repository keeps portable `~` paths; the app needs absolute ones.
@@ -337,6 +338,10 @@ between the two commands:
   app added since the last Capture.
 - A repository key outside the synced region is published once, then dropped
   by Capture, so the target never converges.
+- Live-only keys survive Render even when the repository lacks the mapping
+  that holds them, and Capture drops a mapping it leaves empty. Deleting an
+  entry from the repository therefore sticks, while its live-only keys stay in
+  the live file.
 - To sync a subtree except some keys, add `not:` selectors, such as
   `settings 'not:settings.windowBounds'`, or `settings 'not:re:(^|\.)cache$'`
   for a key at any depth. The excluded live keys survive `render` because merge
