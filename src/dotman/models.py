@@ -86,12 +86,21 @@ class UiConfig:
     menus: UiMenusConfig = field(default_factory=UiMenusConfig)
 
 
+DEFAULT_COMMIT_MESSAGE = "chore(dotman): {summary}\n\n{packages}"
+
+
+@dataclass(frozen=True)
+class GitConfig:
+    commit_message: str = DEFAULT_COMMIT_MESSAGE
+
+
 @dataclass(frozen=True)
 class ManagerConfig:
     config_path: Path
     repos: dict[str, RepoConfig]
     snapshots: SnapshotConfig
     ui: UiConfig = field(default_factory=UiConfig)
+    git: GitConfig = field(default_factory=GitConfig)
     file_symlink_mode: str = "prompt"
     dir_symlink_mode: str = "fail"
 

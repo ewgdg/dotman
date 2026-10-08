@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dotman.models import ManagerConfig, RepoConfig, SnapshotConfig, UiConfig, UiMenusConfig
+from dotman.models import GitConfig, ManagerConfig, RepoConfig, SnapshotConfig, UiConfig, UiMenusConfig
+from dotman.sync_commit import validate_commit_message_template
 from dotman.toml_utils import load_toml_file
 
 
@@ -193,6 +194,12 @@ def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
     if not isinstance(bottom_up_value, bool):
         raise ValueError("config ui.menus.bottom_up must be a boolean")
 
+    git_payload = payload.get("git", {})
+    if not isinstance(git_payload, dict):
+        raise ValueError("config [git] must be a table")
+    git = GitConfig(**({"commit_message": validate_commit_message_template(git_payload["commit_message"])}
+                       if "commit_message" in git_payload else {}))
+
     return ManagerConfig(
         config_path=resolved_path,
         repos=repos,
@@ -206,6 +213,7 @@ def load_manager_config(config_path: str | Path | None = None) -> ManagerConfig:
             compact_path_tail_segments=compact_path_tail_segments_value,
             menus=UiMenusConfig(bottom_up=bottom_up_value),
         ),
+        git=git,
         file_symlink_mode=file_symlink_mode,
         dir_symlink_mode=dir_symlink_mode,
     )
