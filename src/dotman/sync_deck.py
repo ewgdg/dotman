@@ -655,14 +655,22 @@ def render_selection_marker(selected: bool, *, selectable: bool = True, term: st
     return render_sync_term(term, use_color=use_color).replace(term, marker)
 
 
-def commit_choice_label(option: CommitOption, message: str, *, use_color: bool) -> Text:
-    """`[x] repo@branch  subject`: the dotman repo name, as everywhere else in the Deck."""
+def commit_choice_label(option: CommitOption, message: str, *, use_color: bool) -> Table:
+    """`[x] repo@branch  subject`: the dotman repo name, as everywhere else in the Deck.
+
+    Long lines wrap under the repo, keeping the marker column clear: the list has
+    no detail panel to recover truncated text. Overlong words break mid-word.
+    """
     marker = render_selection_marker(option.selected, term="selected" if option.selected else "unselected",
                                      use_color=use_color)
     repo = style_text(option.repo, *MENU_REPO_STYLE) if use_color else option.repo
     branch = f"@{option.branch}" if option.branch else " (detached HEAD)"
     branch = style_text(branch, *MENU_HINT_STYLE) if use_color else branch
-    return Text.from_ansi(f"{marker} {repo}{branch}  {message.splitlines()[0]}")
+    label = Table.grid(padding=(0, 1))
+    label.add_column(no_wrap=True)
+    label.add_column(overflow="fold")
+    label.add_row(Text.from_ansi(marker), Text.from_ansi(f"{repo}{branch}  {message.splitlines()[0]}"))
+    return label
 
 
 def auxiliary_row_label(row: AuxiliaryRow, *, use_color: bool) -> str:

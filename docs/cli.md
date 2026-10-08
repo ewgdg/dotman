@@ -202,7 +202,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   Below the summary, a scrollable **Commit to git** list offers **Commit Work**
   for each dotman repo the selection writes that has drift and sits in a git work
   tree: `[x] main@main  chore(dotman): pull app (2 targets)` shows the repo, its
-  branch and the commit subject. `x`, `Space` or a click toggles one repo; `g`
+  branch and the commit subject; long lines wrap under the repo rather than being
+  cut, since the list has no detail panel. `x`, `Space` or a click toggles one repo; `g`
   turns every repo on unless all are on, then turns them all off. Choices are off
   unless `--commit` pre-selects them, survive leaving confirmation, and are never
   touched by workset batch selection. Preview offers no list.

@@ -93,3 +93,29 @@ def test_long_commit_list_scrolls_inside_the_page(tmp_path, monkeypatch):
                 assert app.query_one("#commit-list").region.bottom <= page.bottom
                 assert ":: Execute?" in str(app.query_one("#confirmation").render())
         run(interact())
+
+
+def test_long_commit_lines_wrap_under_the_repo(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, TWO_DRIFTED)
+    with engine.open_pull_session(engine.resolve_sync_scope()) as session:
+        deck = CommandDeck(session, use_color=False)
+        choices = (
+            (CommitOption("dotfiles", "feature/very-long-branch-name"),
+             "chore(dotman): pull 12 targets in 7 packages across the whole workstation"),
+            (CommitOption("work-laptop-dotfiles-shared-with-the-team-config", "main"), "chore(dotman): pull zsh.zshrc"),
+        )
+        monkeypatch.setattr(deck, "commit_choices", lambda: choices)
+        app = SyncDeckApp(deck)
+
+        async def interact():
+            async with app.run_test(size=(60, 24)) as pilot:
+                await pilot.press("c")
+                await pilot.pause()
+                lines = [line for line in commit_list_lines(app) if line.strip()]
+                # The toggle column stays clear and no text is cut off.
+                assert all(line.startswith(("[x] ", "[ ] ", "    ")) for line in lines)
+                text = "".join(line[4:] for line in lines).replace(" ", "")
+                assert "chore(dotman):pull12targetsin7packagesacrossthewholeworkstation" in text
+                assert "work-laptop-dotfiles-shared-with-the-team-config@main" in text
+                assert "…" not in text
+        run(interact())
