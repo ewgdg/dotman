@@ -32,7 +32,7 @@ from textual.widgets import DataTable, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from dotman.diff_review import display_review_path
-from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, MENU_HINT_STYLE, MENU_REPO_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hint, render_key_hint_chip, render_key_hint_separator, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
+from dotman.cli_style import MENU_HEADER_MARKER, MENU_HEADER_MARKER_STYLE, MENU_HINT_STYLE, MENU_PROMPT_STYLE, render_annotation_parentheses, render_conflict_lines, render_diff_line, render_info_section_header, render_key_hint, render_key_hint_chip, render_key_hint_separator, render_payload_action, render_payload_section_label, render_sync_term, render_package_label, style_text, SYNC_TERM_STYLE_BY_NAME
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_deck_command import selection_uses_inclusion, auxiliary_resolution, additional_label, guard_skip_explanation, guard_skip_label, set_all_selected, set_selected, row_diagnostics, auxiliary_label, review, edit_proposal, set_resolution_intent, retry_materialization, effect_summary, primary_change_summary, render_guess_annotation, render_resolution, resolution_label, live_counts, summary_stats
 from dotman.sync_session import AuthorizeSymlinkReplacement, AdditionalRow, AuxiliaryRow, CommandRejected, CommitOption, SessionRow, SetCommit, SyncSession, conflict_diagnostic
@@ -655,25 +655,38 @@ def render_selection_marker(selected: bool, *, selectable: bool = True, term: st
     return render_sync_term(term, use_color=use_color).replace(term, marker)
 
 
-def commit_choice_label(option: CommitOption, message: str, *, use_color: bool) -> Table:
+def commit_choice_label(option: CommitOption, message: str, *, use_color: bool,
+                        cursor_style: Style | None = None) -> Table:
     """`[x] repo@branch` over its dimmed commit subject; the dotman repo name, as everywhere else in the Deck.
 
     Long lines wrap under the repo, keeping the marker column clear: the list has
     no detail panel to recover truncated text. Overlong words break mid-word.
+    `cursor_style` marks the repo line the way the workset cursor marks a row.
     """
-    marker = render_selection_marker(option.selected, term="selected" if option.selected else "unselected",
-                                     use_color=use_color)
-    repo = style_text(option.repo, *MENU_REPO_STYLE) if use_color else option.repo
+    marker = Text.from_ansi(render_selection_marker(
+        option.selected, term="selected" if option.selected else "unselected", use_color=use_color))
+    repo = style_text(option.repo, *MENU_PROMPT_STYLE) if use_color else option.repo
     branch = f"@{option.branch}" if option.branch else " (detached HEAD)"
     branch = style_text(branch, *MENU_HINT_STYLE) if use_color else branch
+    identity = Text.from_ansi(f"{repo}{branch}")
     subject = message.splitlines()[0]
     subject = style_text(subject, *MENU_HINT_STYLE) if use_color else subject
-    label = Table.grid(padding=(0, 1))
+    if cursor_style is not None:
+        marker, identity = without_colors(marker), without_colors(identity)
+    label = Table.grid(padding=(0, 1), expand=True)
     label.add_column(no_wrap=True)
-    label.add_column(overflow="fold")
-    label.add_row(Text.from_ansi(marker), Text.from_ansi(f"{repo}{branch}"))
+    label.add_column(overflow="fold", ratio=1)
+    label.add_row(marker, identity, style=cursor_style)
     label.add_row("", Text.from_ansi(subject))
     return label
+
+
+def without_colors(text: Text) -> Text:
+    """Keep bold and dim but let the cursor colour show, as the workset's DataTable cursor does."""
+    flattened = Text(text.plain)
+    for span in text.spans:
+        flattened.stylize(Style(bold=span.style.bold, dim=span.style.dim), span.start, span.end)
+    return flattened
 
 
 def auxiliary_row_label(row: AuxiliaryRow, *, use_color: bool) -> str:
@@ -843,6 +856,13 @@ class ReviewBody(Widget):
         return Text("\n").join(lines)
 
 
+class CommitList(OptionList):
+    """Commit Work toggles. Each entry spans two lines, but the cursor marks only
+    its repo line (drawn by the label), as the workset cursor marks one row."""
+
+    COMPONENT_CLASSES = {"commit-list--cursor"}
+
+
 class WorksetTable(DataTable):
     """Render native cells; the app input boundary owns row actions."""
 
@@ -970,6 +990,12 @@ class SyncDeckApp(App[bool]):
     /* Scrolls itself, so many repos never push the summary or hints away. */
     #commit-list { height: auto; max-height: 100%; border: round $foreground 30%; margin: 0 2; padding: 0 1; }
     #commit-list:focus { border: round $accent; }
+    /* OptionList highlights every line of an entry; the label draws this cursor on its repo line instead. */
+    CommitList > .option-list--option-highlighted,
+    CommitList:focus > .option-list--option-highlighted { color: $foreground; background: transparent; text-style: none; }
+    CommitList > .commit-list--cursor {
+        color: $block-cursor-foreground; background: $block-cursor-background; text-style: $block-cursor-text-style;
+    }
     #notice { height: auto; padding: 0 1; color: $warning; }
     #search-bar { height: 1; padding: 0 1; }
     #search-prompt { width: 1; }
@@ -1217,7 +1243,7 @@ class SyncDeckApp(App[bool]):
             yield ReviewBody(id="review-body")
         with Vertical(id="confirmation-page"):
             yield Static(id="confirmation", markup=False)
-            yield OptionList(id="commit-list")
+            yield CommitList(id="commit-list")
         # After the pages, so menus open at the bottom above notice and help in every view.
         yield OptionList(id="resolution")
         yield Static(id="notice", markup=False)
@@ -1497,22 +1523,34 @@ class SyncDeckApp(App[bool]):
 
     def show_commit_list(self) -> None:
         """Render the commit toggles from session state, keeping the highlighted repo."""
-        commit_list = self.query_one("#commit-list", OptionList)
+        commit_list = self.query_one("#commit-list", CommitList)
         choices = self.deck.commit_choices()
-        highlighted = commit_list.highlighted if commit_list.option_count == len(choices) else None
-        commit_list.clear_options()
-        commit_list.add_options([
-            Option(commit_choice_label(option, message, use_color=self.deck.use_color), id=option.repo)
-            for option, message in choices
-        ])
+        if [item.id for item in commit_list.options] != [option.repo for option, _ in choices]:
+            commit_list.clear_options()
+            commit_list.add_options([Option("", id=option.repo) for option, _ in choices])
         commit_list.border_title = "Commit to git"
         commit_list.display = bool(choices)
         if choices:
-            commit_list.highlighted = highlighted or 0
+            if commit_list.highlighted is None:
+                commit_list.highlighted = 0
+            self.render_commit_labels()
             commit_list.focus()
         else:
             self.set_focus(None)
         self.update_hints()
+
+    def render_commit_labels(self) -> None:
+        """Redraw labels in place; the cursor lives in the highlighted label."""
+        commit_list = self.query_one("#commit-list", CommitList)
+        cursor_style = commit_list.get_component_rich_style("commit-list--cursor")
+        for index, (option, message) in enumerate(self.deck.commit_choices()):
+            commit_list.replace_option_prompt_at_index(index, commit_choice_label(
+                option, message, use_color=self.deck.use_color,
+                cursor_style=cursor_style if index == commit_list.highlighted else None))
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if event.option_list.id == "commit-list":
+            self.render_commit_labels()
 
     def toggle_commit(self, index: int) -> None:
         option, _ = self.deck.commit_choices()[index]

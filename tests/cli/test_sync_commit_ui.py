@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from textual.widgets import OptionList
 
-from dotman.sync_deck import CommandDeck, SyncDeckApp
+from dotman.sync_deck import CommandDeck, SyncDeckApp, WorksetTable
 from dotman.sync_session import CommitOption
 from tests.cli.test_sync_deck_textual import run
 from tests.engine.test_sync_commit import TWO_DRIFTED, git, git_identity  # noqa: F401 - autouse fixture
@@ -120,4 +120,44 @@ def test_long_commit_lines_wrap_under_the_repo(tmp_path, monkeypatch):
                 assert "chore(dotman):pull12targetsin7packagesacrossthewholeworkstation" in text
                 assert "work-laptop-dotfiles-shared-with-the-team-config@main" in text
                 assert "…" not in text
+        run(interact())
+
+
+def visible_segments(strip):
+    return [segment for segment in strip if segment.text.strip()]
+
+
+def test_cursor_marks_only_the_repo_line_in_workset_cursor_colours(tmp_path, monkeypatch):
+    engine = make_engine(tmp_path, monkeypatch, TWO_DRIFTED)
+    with engine.open_pull_session(engine.resolve_sync_scope()) as session:
+        deck = CommandDeck(session, use_color=True)
+        choices = ((CommitOption("main", "main"), "chore(dotman): pull app"),
+                   (CommitOption("work", "main"), "chore(dotman): pull zsh"))
+        monkeypatch.setattr(deck, "commit_choices", lambda: choices)
+        app = SyncDeckApp(deck)
+
+        async def interact():
+            async with app.run_test(size=(100, 24)) as pilot:
+                await pilot.pause()
+                workset_cursor = visible_segments(app.query_one(WorksetTable).render_line(1))[0].style
+                await pilot.press("c")
+                await pilot.pause()
+                commit_list = app.query_one("#commit-list", OptionList)
+
+                def entry_lines(index):
+                    return [visible_segments(commit_list.render_line(y)) for y in (2 * index, 2 * index + 1)]
+
+                def under_cursor(segments):
+                    return all((segment.style.color, segment.style.bgcolor)
+                               == (workset_cursor.color, workset_cursor.bgcolor) for segment in segments)
+
+                repo_line, subject_line = entry_lines(0)
+                # Like the workset cursor: one line, its text flattened to the cursor colour.
+                assert under_cursor(repo_line)
+                assert not any(segment.style.bgcolor == workset_cursor.bgcolor for segment in subject_line)
+                assert next(segment for segment in repo_line if segment.text == "main").style.bold
+                await pilot.press("j")
+                await pilot.pause()
+                assert not under_cursor(entry_lines(0)[0])
+                assert under_cursor(entry_lines(1)[0])
         run(interact())
