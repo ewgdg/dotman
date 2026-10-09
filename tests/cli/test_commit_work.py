@@ -58,6 +58,27 @@ def test_deck_opens_with_commit_work_selected(pull_repo, monkeypatch):
     assert git(pull_repo / "repo", "rev-parse", "HEAD") != head
 
 
+def test_deck_uncheck_keeps_history(pull_repo, monkeypatch):
+    import sys
+
+    from dotman import sync_deck
+    from dotman.sync_session import SetCommit
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    def uncheck(session, *, use_color):
+        view = session.view
+        session.dispatch(SetCommit(view.session_id, view.revision, "main", False))
+        return True
+
+    monkeypatch.setattr(sync_deck, "run_command_deck", uncheck)
+    head = git(pull_repo / "repo", "rev-parse", "HEAD")
+    assert main(["--config", str(pull_repo / "config.toml"), "pull"]) == 0
+
+    assert git(pull_repo / "repo", "rev-parse", "HEAD") == head
+
+
 def test_human_timeline_shows_commit_step(pull_repo, capsys):
     assert main(["--config", str(pull_repo / "config.toml"), "--unattended", "pull", "--commit"]) == 0
 
