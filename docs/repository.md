@@ -301,9 +301,8 @@ the projected file to stdout.
 - Dotman owns managed-path access, including privileged reads. Projections
   neither inherit default command elevation nor accept elevation configuration.
 - Only exit `0` produces a valid result; all non-zero exits are failures.
-- Render and Capture must settle: once Capture has written the repository
-  file, capturing Render's output reproduces it. Otherwise, with the default
-  comparison, the target never shows as in sync after a Push.
+- Capture of Render's output must reproduce the repository file. Otherwise,
+  with the default comparison, the target never shows as in sync after a Push.
 
 ```toml
 # The repository keeps portable `~` paths; the app needs absolute ones.
