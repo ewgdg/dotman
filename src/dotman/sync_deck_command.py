@@ -16,7 +16,7 @@ from dotman.sync_scope import _parse_scope_selector, split_scope_child_path
 from dotman.sync_base_store import DirectoryChildPresent, FilePresent, Missing
 from dotman.sync_session import (
     AdditionalRow, BatchSetApproval, PrepareSourceReview, AuxiliaryRow, CommandRejected, EditProposal, PrepareProposalReview, Preview, SessionOpenFailed,
-    SessionRow, SetApproval, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession, has_errors,
+    SessionRow, SetApproval, SetCommit, SetIncluded, SetResolutionIntent, RetryMaterialization, SyncSession, has_errors,
 )
 from dotman.ui_context import ui_config_scope
 
@@ -91,6 +91,12 @@ def review(session: SyncSession, row_id: str):
     row = next(row for row in view.rows if row.row_id == row_id)
     command = PrepareSourceReview if isinstance(row, AdditionalRow) else PrepareProposalReview
     return session.dispatch(command(view.session_id, view.revision, row_id))
+
+
+def select_all_commits(session: SyncSession) -> None:
+    for option in session.view.commit_options:
+        view = session.view
+        session.dispatch(SetCommit(view.session_id, view.revision, option.repo, True))
 
 
 def edit_proposal(session: SyncSession, row_id: str):
@@ -201,6 +207,9 @@ class SyncDeckCommandRunner:
                 )
                 if deck_review:
                     from dotman.sync_deck import run_command_deck
+                    # The Deck shows Commit Work on confirmation, so it starts on there;
+                    # runs that never show it commit only with --commit.
+                    select_all_commits(session)
                     try:
                         confirmed = run_command_deck(session, use_color=self._use_color)
                     except (KeyboardInterrupt, InterruptedError):

@@ -12,14 +12,6 @@ from tests.engine.test_sync_session import make_engine
 from tests.helpers import write_named_manager_config
 
 
-@pytest.fixture(autouse=True)
-def git_identity(monkeypatch):
-    # Commits need an identity; CI machines may have no global git config.
-    for key, value in (("GIT_AUTHOR_NAME", "Test"), ("GIT_AUTHOR_EMAIL", "test@example.test"),
-                       ("GIT_COMMITTER_NAME", "Test"), ("GIT_COMMITTER_EMAIL", "test@example.test")):
-        monkeypatch.setenv(key, value)
-
-
 def git(repo, *args) -> str:
     return subprocess.run(("git", *args), cwd=repo, check=True, capture_output=True, text=True).stdout
 

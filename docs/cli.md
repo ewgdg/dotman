@@ -106,8 +106,9 @@ The Deck detail panel and Proposal Review always show full paths because they wr
 `--report` (also on `push` and `pull`) prints the full entry log after the
 execution timeline instead of the short recap, including unselected,
 skipped and guard-skipped work.
-`--commit` (also on `pull`) pre-selects **Commit Work** for every offered repo;
-see below and [Sync lifecycle](sync.md#commit-work).
+`--commit` (also on `pull`) selects **Commit Work** for every offered repo in a
+run that does not open the Deck; the Deck starts with it on. See below and
+[Sync lifecycle](sync.md#commit-work).
 Resolution is chosen through policy defaults or the deck, not automation flags.
 
 Sync opens a one-shot session for file targets, independent directory children,
@@ -204,8 +205,8 @@ otherwise **Use repository** is the visible fallback and Merge is unavailable.
   tree: each entry shows `[x] main@main`, the repo and its branch, over its dimmed
   commit subject (`chore(dotman): pull app (2 targets)`); long lines wrap under
   the repo rather than being cut, since the list has no detail panel. `x`, `Space` or a click toggles one repo; `g`
-  turns every repo on unless all are on, then turns them all off. Choices are off
-  unless `--commit` pre-selects them, survive leaving confirmation, and are never
+  turns every repo on unless all are on, then turns them all off. Choices start on,
+  survive leaving confirmation, and are never
   touched by workset batch selection. Preview offers no list.
   Review scroll position is retained per target; arrow keys, `j`/`k`,
   Page Up/Down, and the mouse wheel scroll frozen evidence.
@@ -531,8 +532,8 @@ Merge choice and never publishes to live paths.
 - `-d` / `--dry-run` runs frozen planning and review without repository Apply.
   `--run-noop` retains eligible auxiliary hook work. Active Probes and retained
   hook work start selected and can be opted out in the deck.
-- `--commit` pre-selects Commit Work, as in Sync: after a completed run, each
-  selected repo commits the sources Pull wrote ([Sync lifecycle](sync.md#commit-work)).
+- `--commit` selects Commit Work outside the Deck, as in Sync: after a completed
+  run, each selected repo commits the sources Pull wrote ([Sync lifecycle](sync.md#commit-work)).
 - Only pull Guards and hooks run. Guard exit 100 omits its scope before Observation.
   The deck keeps one unselectable **Guard skipped** row per omitted scope, e.g.
   `main:app.unit (guard_pull)`, whose detail names the Guard and its first output

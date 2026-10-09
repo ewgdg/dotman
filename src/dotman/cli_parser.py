@@ -154,7 +154,7 @@ def add_commit_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--commit",
         action="store_true",
-        help="Pre-select Commit Work: after a successful run, commit the repository files it wrote",
+        help="Commit Work without the Deck: after a successful unattended run, commit the repository files it wrote (the Deck starts with it on)",
     )
 
 

@@ -5,7 +5,7 @@ from textual.widgets import OptionList
 from dotman.sync_deck import CommandDeck, SyncDeckApp, WorksetTable
 from dotman.sync_session import CommitOption
 from tests.cli.test_sync_deck_textual import run
-from tests.engine.test_sync_commit import TWO_DRIFTED, git, git_identity  # noqa: F401 - autouse fixture
+from tests.engine.test_sync_commit import TWO_DRIFTED, git
 from tests.engine.test_sync_session import make_engine
 
 

@@ -389,7 +389,8 @@ repository sources only through deliberate Editor changes.
 
 - The session offers one option per dotman repo with drift that sits in a git
   work tree; the Deck's confirmation lists those the selection writes. Options
-  start off unless opened with `--commit`. Two dotman repos sharing one git work
+  start on in the Deck, which shows them before execution; a run that does not
+  open the Deck commits only with `--commit`. Two dotman repos sharing one git work
   tree make two commits.
 - Commits run after all other work, in configured repo order, and only when the
   run completed. A failed or interrupted run leaves every commit `skipped`

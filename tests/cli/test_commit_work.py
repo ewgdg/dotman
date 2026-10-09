@@ -5,7 +5,7 @@ import json
 import pytest
 
 from dotman.cli import main
-from tests.engine.test_sync_commit import TWO_DRIFTED, git, git_identity  # noqa: F401 - autouse fixture
+from tests.engine.test_sync_commit import TWO_DRIFTED, git
 from tests.engine.test_sync_session import make_engine
 
 
@@ -34,6 +34,48 @@ def test_pull_without_commit_leaves_history_alone(pull_repo, capsys):
 
     payload = json.loads(capsys.readouterr().out)
     assert [(item["selected"], item["result"]) for item in payload["commit_work"]] == [(False, None)]
+    assert git(pull_repo / "repo", "rev-parse", "HEAD") == head
+
+
+def test_deck_opens_with_commit_work_selected(pull_repo, monkeypatch):
+    import sys
+
+    from dotman import sync_deck
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    seen = []
+
+    def confirm(session, *, use_color):
+        seen.extend(option.selected for option in session.view.commit_options)
+        return True
+
+    monkeypatch.setattr(sync_deck, "run_command_deck", confirm)
+    head = git(pull_repo / "repo", "rev-parse", "HEAD")
+    assert main(["--config", str(pull_repo / "config.toml"), "pull"]) == 0
+
+    assert seen == [True]
+    assert git(pull_repo / "repo", "rev-parse", "HEAD") != head
+
+
+def test_deck_uncheck_keeps_history(pull_repo, monkeypatch):
+    import sys
+
+    from dotman import sync_deck
+    from dotman.sync_session import SetCommit
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    def uncheck(session, *, use_color):
+        view = session.view
+        session.dispatch(SetCommit(view.session_id, view.revision, "main", False))
+        return True
+
+    monkeypatch.setattr(sync_deck, "run_command_deck", uncheck)
+    head = git(pull_repo / "repo", "rev-parse", "HEAD")
+    assert main(["--config", str(pull_repo / "config.toml"), "pull"]) == 0
+
     assert git(pull_repo / "repo", "rev-parse", "HEAD") == head
 
 

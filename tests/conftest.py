@@ -48,6 +48,15 @@ def isolate_xdg_state_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.fixture(autouse=True)
+def git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The Deck starts with Commit Work on, so any interactive run over a git repo
+    # commits; commits need an identity and HOME is isolated from the user's.
+    for key, value in (("GIT_AUTHOR_NAME", "Test"), ("GIT_AUTHOR_EMAIL", "test@example.test"),
+                       ("GIT_COMMITTER_NAME", "Test"), ("GIT_COMMITTER_EMAIL", "test@example.test")):
+        monkeypatch.setenv(key, value)
+
+
+@pytest.fixture(autouse=True)
 def disable_colors(monkeypatch: pytest.MonkeyPatch) -> None:
     # Output stays plain even under `pytest -s` in a real terminal. Tests that
     # check styling unset NO_COLOR and patch sys.stdout.isatty in the test body:
